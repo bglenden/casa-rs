@@ -48,8 +48,11 @@ use super::visibility_write::{VisibilityWriteTarget, VisibilityWriter};
 use super::{ImagingError, trace};
 use crate::compile::StartModel;
 
+mod continuation;
 mod seeding;
+use crate::restart::ExistingProducts;
 use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason};
+pub(crate) use continuation::Forms;
 
 /// What one native imaging run needs besides the compiled problem.
 pub(crate) struct ImagingInputs<'a> {
@@ -60,6 +63,11 @@ pub(crate) struct ImagingInputs<'a> {
     /// The main domain's start model, which the initial pass seeds the
     /// model from.
     pub(crate) start_model: Option<StartModel>,
+    /// The PSF, sums of weights and residual an earlier run left, which the
+    /// run reads where it does not form them.
+    pub(crate) existing: Option<ExistingProducts>,
+    /// What the run forms of its normal state (`calcpsf`, `calcres`).
+    pub(crate) forms: Forms,
     pub(crate) image_response: Option<MinorCycleImageResponse>,
     pub(crate) visibility_write: Option<VisibilityWriteTarget<'a>>,
     /// What the products hold on one lane, and the source's charge, which
@@ -130,6 +138,9 @@ struct Run<'a> {
     /// after an initial pass without it has formed the weights
     /// ([`seeding`]); `None` when it is physical already.
     reseed: Option<MinorCycleImageResponse>,
+    /// What the run reads in place of forming it ([`continuation`]).
+    existing: Option<ExistingProducts>,
+    forms: Forms,
     native_spacing_hz: f64,
     backend: BackendChoice,
     /// Whether each Metal backend logs its timing.
@@ -174,7 +185,9 @@ struct Major {
 }
 
 impl ImagingOutcome {
-    /// The outcome of a run that has done its initial major cycle `major`.
+    /// The outcome of a run that has formed its first normal state `major`:
+    /// its initial major cycle, unless the run read its residual rather
+    /// than form it (`calcres=False`), which CASA does not count.
     fn initial(major: Major, run: &Run<'_>) -> Self {
         Self {
             scientific: major.completion,
@@ -182,7 +195,7 @@ impl ImagingOutcome {
             minor_cycles: Vec::new(),
             final_residual_statistics: None,
             stop: None,
-            major_cycle_count: 1,
+            major_cycle_count: usize::from(run.forms.residual),
             total_minor_iterations: 0,
             total_actual_minor_iterations: 0,
             visibility_products: major.visibility,
@@ -230,29 +243,7 @@ pub(crate) fn run(
             0
         }
     };
-    // What a refresh pass holds beside its wave (#763 review): every cycle
-    // before it keeps its record, up to the last refresh `nmajor` allows,
-    // and the minor cycle's terms, which its solve holds too (#778 review).
-    let refresh = if cleaning {
-        Some(RefreshDemand {
-            masks: 2 * layout.mask_bytes(),
-            cached: layout.refresh_bytes(&setup),
-            results: layout.result_bytes(&setup, iterations),
-            records: layout.record_bytes()
-                * controls.maximum_major_cycles().unwrap_or(1).max(1) as u64,
-        })
-    } else {
-        // A run that reseeds refreshes its initial pass with no minor cycle
-        // before it (`seeding`).
-        seeding::reseed_response(inputs.start_model.as_ref(), inputs.image_response).map(|_| {
-            RefreshDemand {
-                masks: 0,
-                cached: 0,
-                results: 0,
-                records: 0,
-            }
-        })
-    };
+    let refresh = refresh_demand(&inputs, cleaning.then_some((&layout, &setup, iterations)));
     // Operators, the workers, the source, the imaging weights and the paged
     // cube state. The choice of workers is recorded as it is made, so a
     // setup that then fails still reports it.
@@ -270,11 +261,20 @@ pub(crate) fn run(
         .domains
         .first()
         .map(|domain| domain.operator.precision());
-    let major = run_phase("major cycle 1", &cancel, diagnostics, summary, || {
-        run.initial(!cleaning)
-    })?;
+    let major = run_phase(
+        run.forms.initial_phase(),
+        &cancel,
+        diagnostics,
+        summary,
+        || run.initial(!cleaning),
+    )?;
     let mut outcome = ImagingOutcome::initial(major, &run);
     if !cleaning {
+        if run.visibility_write.is_some() && outcome.visibility_products.is_none() {
+            outcome = run_phase("model prediction", &cancel, diagnostics, summary, || {
+                predict_final_model(&mut run, outcome)
+            })?;
+        }
         outcome.retained = std::mem::replace(&mut run.retained, Reservation::none());
         return Ok(outcome);
     }
@@ -427,6 +427,40 @@ pub(crate) fn run(
     Ok(outcome)
 }
 
+/// What a refresh pass holds beside its wave (#763 review), or `None` for a
+/// run that refreshes nothing. A cleaning run, with its minor cycle's
+/// `layout`, `setup` and cycle `iterations`: every cycle before the pass
+/// keeps its record, up to the last refresh `nmajor` allows, and the minor
+/// cycle's terms, which its solve holds too (#778 review). Without cleaning,
+/// a run that reseeds refreshes its initial pass ([`seeding`]), and so does
+/// one that reads its PSF and forms its residual, or reads its residual and
+/// writes the model ([`continuation`]).
+fn refresh_demand(
+    inputs: &ImagingInputs<'_>,
+    cleaning: Option<(&MinorLayout, &MinorCycleSetup, usize)>,
+) -> Option<RefreshDemand> {
+    if let Some((layout, setup, iterations)) = cleaning {
+        let controls = inputs.problem.reconstruction().controls();
+        return Some(RefreshDemand {
+            masks: 2 * layout.mask_bytes(),
+            cached: layout.refresh_bytes(setup),
+            results: layout.result_bytes(setup, iterations),
+            records: layout.record_bytes()
+                * controls.maximum_major_cycles().unwrap_or(1).max(1) as u64,
+        });
+    }
+    (seeding::reseed_response(inputs.start_model.as_ref(), inputs.image_response).is_some()
+        || inputs
+            .forms
+            .refreshes_without_cleaning(inputs.visibility_write.is_some()))
+    .then_some(RefreshDemand {
+        masks: 0,
+        cached: 0,
+        results: 0,
+        records: 0,
+    })
+}
+
 /// Fold one minor cycle into the run's totals and its controller
 /// (`mergeMinorCycleSummary`), record and log it; returns its ordinal.
 fn account_minor_cycle(
@@ -473,15 +507,25 @@ fn account_minor_cycle(
 }
 
 /// Predict the final model once more to write the model column: the pass
-/// that ended the run was not known to be the last when it ran.
+/// that ended the run was not known to be the last when it ran, or the run
+/// formed no residual with its model (CASA's `predictModel` after
+/// `calcres=False` with no iterations). That run's residual stands as the
+/// earlier run left it: it is read again over the one the prediction's pass
+/// formed.
 fn predict_final_model(
     run: &mut Run<'_>,
     mut outcome: ImagingOutcome,
 ) -> Result<ImagingOutcome, ImagingError> {
-    let major = run.refresh(outcome.scientific, (Vec::new(), Reservation::none()), true)?;
+    let mut major = run.refresh(outcome.scientific, (Vec::new(), Reservation::none()), true)?;
+    if outcome.major_cycle_count == 0 {
+        let visibility = major.visibility.take();
+        major = run.reread_residual(major.completion)?;
+        major.visibility = visibility;
+    } else {
+        outcome.major_cycle_count += 1;
+    }
     outcome.scientific = major.completion;
     outcome.visibility_products = major.visibility;
-    outcome.major_cycle_count += 1;
     Ok(outcome)
 }
 
@@ -598,7 +642,7 @@ impl<'a> Run<'a> {
             reseeds: reseed.is_some(),
             write: inputs.visibility_write.as_ref().map(|_| {
                 let seeded = (inputs.start_model.is_some(), reseed.is_some());
-                let (modes, with_model) = write_pass(problem, initial, seeded);
+                let (modes, with_model) = write_pass(problem, inputs.forms, initial, seeded);
                 (modes, with_model, visibility_write_bytes)
             }),
             spill_directory: inputs.spill_directory,
@@ -698,6 +742,8 @@ impl<'a> Run<'a> {
             lifecycle,
             start_model: inputs.start_model,
             reseed,
+            existing: inputs.existing,
+            forms: inputs.forms,
             native_spacing_hz: native_spacing_hz(problem),
             backend,
             metal_stage_timing: inputs.diagnostics.metal_stage_timing,
@@ -722,12 +768,13 @@ impl<'a> Run<'a> {
         }
         let (modes, with_model) = write_pass(
             self.problem,
+            self.forms,
             self.initial_modes(),
             (self.start_model.is_some(), self.reseed.is_some()),
         );
         // Without a minor cycle the first major cycle writes, and seeds
         // beside it.
-        let seeding = if writes_initially(self.problem) {
+        let seeding = if writes_initially(self.problem, self.forms) {
             self.seeding_bytes()
         } else {
             0
@@ -773,7 +820,7 @@ impl<'a> Run<'a> {
             model,
             self.normal_storage(plan.residency)?,
         )?;
-        let major = self.reconcile(cycle, false, true, last, plan)?;
+        let major = self.reconcile(cycle, ModeSet::DATA, true, last, plan)?;
         pass.join(results);
         self.retain(&major, pass)?;
         Ok(major)
@@ -827,23 +874,20 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    /// Run `cycle`'s pass and finish it. The initial pass grids the data,
-    /// predicting the cycle's model when `with_model` (a start model's);
-    /// every refresh grids the residual of the cycle's model.
+    /// Run `cycle`'s pass of `modes` and finish it. The initial pass grids
+    /// the data and PSF, predicting the cycle's model when `with_model` (a
+    /// start model's), or the PSF alone ([`continuation`]); every refresh
+    /// grids the residual of the cycle's model.
     fn reconcile(
         &mut self,
         mut cycle: MajorCycle,
-        initial: bool,
+        modes: ModeSet,
         with_model: bool,
         last: bool,
         plan: PassPlan,
     ) -> Result<Major, ImagingError> {
         let residency = plan.residency;
-        let modes = if initial {
-            self.initial_modes()
-        } else {
-            ModeSet::DATA
-        };
+        let initial = modes.psf;
         let transform = self.problem.visibility_transform();
         let mut writer = self
             .visibility_write
@@ -1111,9 +1155,21 @@ impl<'a> Run<'a> {
                     .accept(chart, pass_images(chart, &images, initial, basis))
                     .map_err(|error| PassError::Images(error.into()))?;
                 match images {
-                    Some(images) => state
-                        .append(images)
-                        .map_err(|error| PassError::Images(Box::new(error))),
+                    Some(mut images) => {
+                        // A pass of the PSF alone takes the residual it does
+                        // not form ([`continuation`]).
+                        if !modes.data {
+                            continuation::set_residual(
+                                self.existing.as_ref(),
+                                &mut images,
+                                basis.data_terms(),
+                            )
+                            .map_err(|error| PassError::Images(Box::new(error)))?;
+                        }
+                        state
+                            .append(images)
+                            .map_err(|error| PassError::Images(Box::new(error)))
+                    }
                     None => Ok(()),
                 }
             },
@@ -1220,14 +1276,15 @@ const fn initial_modes(weight_image: bool) -> ModeSet {
 /// The modes of the pass that writes visibilities, and whether it has a
 /// model: the initial pass, of modes `initial`, without cleaning, with the
 /// model when it was `seeded` from a start model; a residual refresh after
-/// cleaning, or after the initial pass of a run that `reseeds`
-/// ([`seeding`]).
+/// cleaning, after the initial pass of a run that `reseeds` ([`seeding`]),
+/// or after a run's PSF or residual was read ([`continuation`]).
 fn write_pass(
     problem: &CompiledProblem,
+    forms: Forms,
     initial: ModeSet,
     (seeded, reseeds): (bool, bool),
 ) -> (ModeSet, bool) {
-    if writes_initially(problem) && !reseeds {
+    if writes_initially(problem, forms) && !reseeds {
         (initial, seeded)
     } else {
         (ModeSet::DATA, true)
@@ -1235,10 +1292,10 @@ fn write_pass(
 }
 
 /// Whether the first major cycle writes visibilities: a run without
-/// cleaning, whose write is beside a start model's seeding
-/// ([`write_pass`]).
-fn writes_initially(problem: &CompiledProblem) -> bool {
-    problem.reconstruction().controls().max_minor_iterations() == 0
+/// cleaning that forms its PSF and residual in one pass, whose write is
+/// beside a start model's seeding ([`write_pass`]).
+fn writes_initially(problem: &CompiledProblem, forms: Forms) -> bool {
+    problem.reconstruction().controls().max_minor_iterations() == 0 && forms.psf && forms.residual
 }
 
 /// The output-frame frequency envelope of a plane range of a channel-local

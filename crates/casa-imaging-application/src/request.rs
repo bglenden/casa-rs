@@ -34,6 +34,10 @@ pub struct ImagingRequest {
     /// Task-only continuation, established by output preflight, never a catalog value.
     #[serde(skip)]
     pub(crate) tclean_restart: bool,
+    /// Whether the continuation found an earlier model, as it was before the
+    /// run wrote its own; never a catalog value.
+    #[serde(skip)]
+    pub(crate) continued_model: bool,
     /// A supplied region file with no regions means zero support, not no mask.
     /// Internal reader provenance only; this is never a catalog parameter.
     #[serde(default)]
@@ -153,6 +157,15 @@ pub struct ImagingRequest {
     /// with `pbcor`, `.image.pbcor` (and the spectral index of `mtmfs`);
     /// CASA's `restoration=False` writes none of them (`task_tclean.py`).
     pub restoration: bool,
+    /// CASA's `calcres`: form the residual with a major cycle before any
+    /// minor cycle. `false` takes the residual an earlier run left at
+    /// `imagename` and runs no initial major cycle; with no residual there,
+    /// a run of no iterations makes the PSF alone (`task_tclean.py`).
+    pub calcres: bool,
+    /// CASA's `calcpsf`: grid the PSF, its sums of weights and the primary
+    /// beam. `false` takes the PSF and sums of weights an earlier run left
+    /// at `imagename` (`SIImageStore` opens existing images).
+    pub calcpsf: bool,
     /// Whether a cube's density weighting is per output channel.
     pub perchanweightdensity: bool,
     /// Total minor-cycle iterations; zero writes the dirty products only.
@@ -497,13 +510,17 @@ pub struct InvalidRequest {
 }
 
 impl ImagingRequest {
-    /// Check the bounded default `tclean` restart lifecycle (#944).
+    /// Check that the request can continue on what an earlier run left at
+    /// its `imagename`, as tclean's `restart=True` does (#944): the same
+    /// run's family of products, a model with no `startmodel`, a CLEAN mask
+    /// with no new one, and what `calcpsf=False` and `calcres=False` read.
     /// Task entry points call this before creating a run summary.
     ///
     /// # Errors
     ///
-    /// An existing main/outlier scientific product, unreadable output
-    /// directory or invalid outlier-name file.
+    /// An existing product the request does not continue on, an outlier
+    /// field's existing product, an unreadable output directory, an invalid
+    /// outlier-name file, or an earlier PSF or residual that is missing.
     pub fn check_tclean_output_prefixes(&self) -> Result<(), crate::PrepareError> {
         crate::restart::check(self)
     }
@@ -517,12 +534,14 @@ impl ImagingRequest {
         self.check_tclean_output_prefixes()?;
         let mut request = self.clone();
         request.tclean_restart = !crate::restart::products(&self.imagename)?.is_empty();
+        request.continued_model = crate::restart::continues_model(&request);
         Ok(request)
     }
 
     /// Apply CASA's task output policy before summary creation or execution.
-    /// `restart=true` keeps bounded continuation; `false` selects the next
-    /// single-main-image namespace and protects every existing chosen product.
+    /// `restart=true` continues on the products at `imagename`; `false`
+    /// selects the next single-main-image namespace and protects every
+    /// existing chosen product.
     ///
     /// # Errors
     /// Unsupported coordinated outlier numbering, invalid numbered names,
@@ -540,6 +559,9 @@ impl ImagingRequest {
         let mut request = self.clone();
         request.imagename = crate::restart::next_prefix(&self.imagename)?;
         crate::restart::check_prefix(&request.imagename)?;
+        // A new namespace holds no PSF or residual for calcpsf or calcres to
+        // leave standing.
+        crate::restart::check_inputs(&request, false)?;
         request.tclean_restart = false;
         Ok(request)
     }
@@ -594,7 +616,9 @@ impl ImagingRequest {
                 "a solving run needs minor-cycle iterations",
             );
         }
-        if self.savemodel && !self.solves() && self.startmodel.is_none() {
+        // A continuation predicts the model an earlier run left, as CASA's
+        // `predictModel` does for `niter=0, calcres=False`.
+        if self.savemodel && !self.solves() && self.startmodel.is_none() && !self.tclean_restart {
             return invalid(
                 "savemodel, niter",
                 "MODEL_DATA needs a solved model or a start model",
@@ -642,6 +666,14 @@ impl ImagingRequest {
     #[must_use]
     pub fn solves(&self) -> bool {
         self.deconvolver == Deconvolver::Mtmfs || self.niter > 0
+    }
+
+    /// Whether the model starts from an image rather than empty: a
+    /// `startmodel`, or the model an earlier run left at `imagename` that a
+    /// continuation reads (#944).
+    #[must_use]
+    pub fn starts_from_model(&self) -> bool {
+        self.startmodel.is_some() || self.continued_model
     }
 
     /// Total minor-cycle iterations.

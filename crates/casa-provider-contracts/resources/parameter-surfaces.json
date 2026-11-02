@@ -8065,7 +8065,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 35,
+      "contract_version": 36,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -9386,7 +9386,7 @@
           "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "restart=true supports bounded same-grid single-term Stokes-I MFS continuation; restart=false selects the next single-main-image namespace using CASA filename numbering. Coordinated outliers and occupied chosen orphan namespaces remain refused (#944).",
+          "surface_note": "restart=true continues on an earlier run's products at imagename on the same grid, as CASA's SIImageStore opens them: the model (every Taylor term, cube channel and Stokes plane) is the start model, a CLEAN mask is reused when no new mask is given, and with calcpsf=false or calcres=false the PSF, sums of weights and residual are read rather than formed. restart=false selects the next single-main-image namespace using CASA filename numbering. Refused (#944, #980): continuing outlier fields or another deconvolver family's products, a new user mask or auto-multithresh over an existing CLEAN mask when cleaning, a CLEAN mask whose planes differ, and calcpsf=false or calcres=false with facets, mosaic, A-projection or outlier fields, or with no earlier PSF (calcpsf) or residual to clean (calcres with niter > 0).",
           "projections": {
             "cli": {"flags": ["--restart"], "false_flags": ["--no-restart"]},
             "provider": {"field": "restart"},
@@ -9420,8 +9420,7 @@
             "provider": {"field": "calcres"},
             "python": {"name": "calcres"},
             "presentation": {"label": "Calculate Residual", "group": "Stages", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "calcpsf",
@@ -9435,8 +9434,7 @@
             "provider": {"field": "calcpsf"},
             "python": {"name": "calcpsf"},
             "presentation": {"label": "Calculate PSF", "group": "Stages", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "psfcutoff",
@@ -9863,6 +9861,12 @@
         {
           "from_contract": 34,
           "to_contract": 35,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 35,
+          "to_contract": 36,
           "steps": [],
           "changed_defaults": []
         }

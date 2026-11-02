@@ -1,0 +1,456 @@
+{
+  "schema": "tclean-evidence-receipt/1",
+  "title": "tclean continuation (restart beyond Stokes-I MFS) and calcres/calcpsf, contract 36",
+  "work_issue": 980,
+  "related_issue": 944,
+  "date": "2026-11-02",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14",
+    "casa_source_tag": "6.7.6.14",
+    "casa_source_commit": "9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2"
+  },
+  "native_revision": "4fe0e56, a work-in-progress commit whose code is that of the commit adding this receipt (they differ only in documentation and this receipt)",
+  "binary_sha256": "19aa0dbc266efb370f40a15587befcbc20e9e05706e7101276fa4840ada75efb",
+  "host": "macOS-27.0.1-arm64-arm-64bit",
+  "backend": "cpu",
+  "precision": "f64",
+  "driver": "tools/casa-compat/tclean_case_matrix.py (absolute, unresolved --output: CASA cannot open the space in ~/ext's resolved path)",
+  "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
+  "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
+  "selection": "every resolved case the 74a3b85 classification refused for restart, calcres or calcpsf, and every other sequence (multi-call) case",
+  "before": "matrix casa-tests-r2-74a3b856f0-20261102T160716Z (the lead's run at 74a3b85)",
+  "run_directory": "/Users/brianglendenning/ext/SoftwareProjects/casa-rs-cloud/matrix/a758-continuation-4fe0e56-20261102T180759Z",
+  "limits": "exact image-product inventory, masks and finite support; NRMS <= 1e-3, .sumwt within 5e-5; WCS, units, beams; exact iterdone/nmajordone/stopcode; maxpsfsidelobe and cyclethreshold 1e-6 relative plus 1e-8 absolute",
+  "summary": {
+    "class_before": 31,
+    "class_after": 11,
+    "class_total": 48,
+    "other_before": 7,
+    "other_after": 7,
+    "other_total": 18,
+    "class_before_environment_corrected": 1
+  },
+  "cases": {
+    "test_onefield.test_onefield_autonames.1+2+3": {
+      "class": false,
+      "before_74a3b85": true,
+      "after": true
+    },
+    "test_onefield.test_onefield_restart_mfs.1+2+3+4": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": true
+    },
+    "test_onefield.test_onefield_restart_mtmfs.1+2+3+4+5": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_onefield.test_onefield_restore_mtmfs_niter0.1+2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": true
+    },
+    "test_onefield.test_onefield_gridders.1+2": {
+      "class": false,
+      "before_74a3b85": true,
+      "after": true
+    },
+    "test_onefield.test_onefield_psf_fit.1": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": true
+    },
+    "test_onefield.test_onefield_psf_fit.2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": true
+    },
+    "test_onefield.test_onefield_psf_fit.3": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": true
+    },
+    "test_iterbot.test_iterbot_nmajor_0.1+2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": true
+    },
+    "test_stokes.test_stokes_mtmfs_IQUV.1+2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_cube.test_cube_common_restoringbeam.1+2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": true
+    },
+    "test_widefield.test_widefield_mosaicft_mfs_mosweightTrue.1+2": {
+      "class": false,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_2.1+2": {
+      "class": false,
+      "before_74a3b85": true,
+      "after": true
+    },
+    "test_modelvis.test_modelvis_3.1+2": {
+      "class": false,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_5.1+2": {
+      "class": false,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_6.1+2": {
+      "class": false,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_7.1+2": {
+      "class": false,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_8.1+2": {
+      "class": false,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_9.1+2+3": {
+      "class": false,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_10.1+2+3": {
+      "class": false,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_11.1+2+3": {
+      "class": false,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_20.1+2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": true
+    },
+    "test_modelvis.test_modelvis_21.1+2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_22.1+2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": true
+    },
+    "test_modelvis.test_modelvis_23.1+2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_24.1+2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_25.1+2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_modelvis.test_modelvis_26.1+2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": true
+    },
+    "test_modelvis.test_modelvis_27.1+2": {
+      "class": true,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_startmodel.test_startmodel_regrid_mfs.1+2": {
+      "class": false,
+      "before_74a3b85": true,
+      "after": true
+    },
+    "test_startmodel.test_startmodel_regrid_cube.1+2": {
+      "class": false,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_startmodel.test_startmodel_mfs_continue.1+2": {
+      "class": false,
+      "before_74a3b85": true,
+      "after": true
+    },
+    "test_startmodel.test_startmodel_mfs_restart.1+2": {
+      "class": false,
+      "before_74a3b85": true,
+      "after": true
+    },
+    "test_startmodel.test_startmodel_mfs_changeshape_1.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": true
+    },
+    "test_startmodel.test_startmodel_mfs_changeshape_2.1+2": {
+      "class": false,
+      "before_74a3b85": true,
+      "after": true
+    },
+    "test_startmodel.test_startmodel_mtmfs_restart.1+2+3+4": {
+      "class": false,
+      "before_74a3b85": false,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_standard_onefield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_onefield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_twofield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_onefield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_twofield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_onefield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_onefield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_twofield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_onefield_upTrue.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_twofield_upTrue.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_onefield_upTrue.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield_upTrue.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_standard_onefield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_standard_twofield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_twofield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_mosaic_cbFalse_mwTrue_onefield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_mosaic_cbFalse_mwTrue_twofield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_onefield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_twofield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield_upTrue.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_twofield_upTrue.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield_upTrue.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield_upTrue.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_wproj_onefield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_wproj_onefield_autowprojplanes.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    },
+    "test_mosaic_cube.test_cube_wproj_twofield.1+2": {
+      "class": true,
+      "before_74a3b85": true,
+      "after": false
+    }
+  },
+  "environment_note": "The 74a3b85 run's 30 test_mosaic_mtmfs/test_mosaic_cube passes were environment failures: CASA could not open refim_oneshiftpoint.mosaic.ms (empty on the NAS then; restored by the lead) and casa-rs refused reffreq, so both refused. Counting CASA refusals as environment failures, the class passed 1/48 before (test_startmodel_mfs_changeshape_1, a shape change both refuse) and 11/48 after.",
+  "remaining_failures": {
+    "test_onefield.test_onefield_restart_mtmfs.1+2+3+4+5": "Every product passes (worst NRMS residual.tt0 4.8e-6, alpha 1.2e-6) and every count; call 5's cyclethreshold differs from CASA's by 3.1e-8 (4.5e-6 relative) against the 1e-6 relative + 1e-8 absolute limit. Calls 3-5 deepen a 2-term clean on read products: the scalar's absolute difference stays near 2-3e-8 (call 3 2.7e-7, call 4 1.1e-6, call 5 4.5e-6 relative) while the residual peak falls threefold per call; call 3 agrees as a fresh mtmfs run does (2.7e-7). This is the f32 rounding floor of a residual a fortieth of the dirty peak, not a semantic difference.",
+    "test_stokes.test_stokes_mtmfs_IQUV.1+2": "pbmask, usemask='pb' and a Taylor basis of Stokes other than I (other gaps)",
+    "test_modelvis.test_modelvis_21/23/25/27": "savemodel='virtual' (#823)",
+    "test_modelvis.test_modelvis_24/25": "call 1 (cube auto-multithresh) fails: 'the PSF has no positive finite peak' (pre-existing cube gap); call 2 then has no products",
+    "test_mosaic_mtmfs.* and test_mosaic_cube.*": "casa-rs refuses spw='*' at call 1 (selection grammar gap); several also need conjbeams, awproject cubes (#719) or mosaic EVLA primary beams. See mosaic_spw_evidence."
+  },
+  "mosaic_spw_evidence": {
+    "what": "evidence-only: six of these cases with spw='*' written as spw='' (CASA reads both as every window), same binary",
+    "passed": "1/6",
+    "cases": {
+      "test_mosaic_mtmfs.test_mtmfs_standard_onefield.1+2": "passed",
+      "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_onefield.1+2": "tclean failed: imaging application preparation failed: requested instrument response is unsupported for observation metadata [\"EVLA\"]",
+      "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_twofield.1+2": "tclean failed: imaging application preparation failed: requested instrument response is unsupported for observation metadata [\"EVLA\"]",
+      "test_mosaic_cube.test_cube_standard_onefield.1+2": "tclean failed: imaging application preparation failed: native cube imaging requires exactly one selected spectral window; 3 are selected",
+      "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield.1+2": "tclean failed: imaging application preparation failed: native cube imaging requires exactly one selected spectral window; 3 are selected",
+      "test_mosaic_cube.test_cube_wproj_onefield.1+2": "tclean failed: imaging application preparation failed: native cube imaging requires exactly one selected spectral window; 3 are selected"
+    },
+    "native_coverage": "crates/casars-imager/tests/t1/continuation.rs a_mosaic_continues_its_cube_and_taylor_models covers mosaic cube and Taylor restarts natively"
+  },
+  "merged_run": {
+    "native_revision": "254f02c (this work merged with codex/tclean-equivalence 541cf64, which adds CASA's spw grammar)",
+    "binary_sha256": "825b64bd32399ffc8fb81c72d76276e3587ad2c1587fa2dd7476d902b2be595c",
+    "run_directory": "/Users/brianglendenning/ext/SoftwareProjects/casa-rs-cloud/matrix/a758-merged-254f02c-20261102T185821Z",
+    "selection": "the 48 class cases",
+    "passed": "12/48",
+    "cases": {
+      "test_onefield.test_onefield_restart_mfs.1+2+3+4": true,
+      "test_onefield.test_onefield_restart_mtmfs.1+2+3+4+5": false,
+      "test_onefield.test_onefield_restore_mtmfs_niter0.1+2": true,
+      "test_onefield.test_onefield_psf_fit.1": true,
+      "test_onefield.test_onefield_psf_fit.2": true,
+      "test_onefield.test_onefield_psf_fit.3": true,
+      "test_iterbot.test_iterbot_nmajor_0.1+2": true,
+      "test_stokes.test_stokes_mtmfs_IQUV.1+2": false,
+      "test_cube.test_cube_common_restoringbeam.1+2": true,
+      "test_modelvis.test_modelvis_20.1+2": true,
+      "test_modelvis.test_modelvis_21.1+2": false,
+      "test_modelvis.test_modelvis_22.1+2": true,
+      "test_modelvis.test_modelvis_23.1+2": false,
+      "test_modelvis.test_modelvis_24.1+2": false,
+      "test_modelvis.test_modelvis_25.1+2": false,
+      "test_modelvis.test_modelvis_26.1+2": true,
+      "test_modelvis.test_modelvis_27.1+2": false,
+      "test_startmodel.test_startmodel_mfs_changeshape_1.1+2": true,
+      "test_mosaic_mtmfs.test_mtmfs_standard_onefield.1+2": true,
+      "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_onefield.1+2": false,
+      "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_twofield.1+2": false,
+      "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_onefield.1+2": false,
+      "test_mosaic_mtmfs.test_mtmfs_mosaic_cbTrue_twofield.1+2": false,
+      "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_onefield.1+2": false,
+      "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield.1+2": false,
+      "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_onefield.1+2": false,
+      "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_twofield.1+2": false,
+      "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_onefield_upTrue.1+2": false,
+      "test_mosaic_mtmfs.test_mtmfs_mosaic_cbFalse_twofield_upTrue.1+2": false,
+      "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_onefield_upTrue.1+2": false,
+      "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield_upTrue.1+2": false,
+      "test_mosaic_cube.test_cube_standard_onefield.1+2": false,
+      "test_mosaic_cube.test_cube_standard_twofield.1+2": false,
+      "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield.1+2": false,
+      "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_twofield.1+2": false,
+      "test_mosaic_cube.test_cube_mosaic_cbFalse_mwTrue_onefield.1+2": false,
+      "test_mosaic_cube.test_cube_mosaic_cbFalse_mwTrue_twofield.1+2": false,
+      "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield.1+2": false,
+      "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield.1+2": false,
+      "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_onefield.1+2": false,
+      "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_twofield.1+2": false,
+      "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield_upTrue.1+2": false,
+      "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_twofield_upTrue.1+2": false,
+      "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield_upTrue.1+2": false,
+      "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield_upTrue.1+2": false,
+      "test_mosaic_cube.test_cube_wproj_onefield.1+2": false,
+      "test_mosaic_cube.test_cube_wproj_onefield_autowprojplanes.1+2": false,
+      "test_mosaic_cube.test_cube_wproj_twofield.1+2": false
+    },
+    "first_native_failure_of_each_failing_case": {
+      "native cube imaging requires exactly one selected spectral window (3 selected)": 11,
+      "conjbeams=False with gridder='awproject' (#980)": 10,
+      "mosaic primary beam unsupported for EVLA metadata": 4,
+      "savemodel='virtual' (#823)": 3,
+      "cube auto-multithresh: the PSF has no positive finite peak": 2,
+      "conjbeams=True with gridder='mosaic' (#980)": 2,
+      "AW projection needs CASA's 32-plane EVLA cache (wprojplanes)": 2,
+      "f32-floor cyclethreshold (test_onefield_restart_mtmfs call 5)": 1,
+      "pbmask (#980)": 1
+    },
+    "note": "test_mosaic_mtmfs.test_mtmfs_standard_onefield (1024-pixel mtmfs restart) now passes as written; every other failure but restart_mtmfs's scalar is another gap."
+  }
+}

@@ -4674,6 +4674,11 @@
       "fingerprint": "7fd1d59254d275c5acef0b4419d26c8cdf94a064bed3fd4d4455eb658657c019"
     },
     {
+      "id": "tclean",
+      "contract_version": 36,
+      "fingerprint": "929f1115694db129085cc4dfa8bf39f8af25ea0272461eece90aa7b714d48233"
+    },
+    {
       "id": "uvcontsub",
       "contract_version": 1,
       "fingerprint": "2435bfb0428d488b10bff6339d782f63e2b03af7b9eb1b7e585c3080985c363e"

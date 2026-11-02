@@ -19,7 +19,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 7 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 6 | <code>calibration</code> | 53 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 5 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Tclean](#surface-tclean)<br><code>tclean</code> | task | 35 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
+| [Tclean](#surface-tclean)<br><code>tclean</code> | task | 36 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 8 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 5 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
@@ -219,7 +219,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Tclean (<code>tclean</code>)
 
 - Kind: `task`
-- Contract version: `35`
+- Contract version: `36`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.
@@ -312,7 +312,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>minpercentchange</code> | <code>parameter.minpercentchange@r1</code> | <code>float</code> | <code>-1.0</code>; optional | Stage Parameters | Mask change, in percent, below which auto-multithresh stops updating a channel; -1 for never. |
 | <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Stage Parameters | Verbose logging. |
 | <code>fastnoise</code> | <code>parameter.fastnoise@r1</code> | <code>bool</code> | <code>true</code>; optional | Stage Parameters | Estimate auto-multithresh's noise from the whole residual, unmasked. |
-| <code>restart</code> | <code>parameter.restart@r1</code> | <code>bool</code> | <code>true</code>; optional | Products | Continue from the products of an earlier run with the same imagename.<br><em>Surface:</em> restart=true supports bounded same-grid single-term Stokes-I MFS continuation; restart=false selects the next single-main-image namespace using CASA filename numbering. Coordinated outliers and occupied chosen orphan namespaces remain refused (#944). |
+| <code>restart</code> | <code>parameter.restart@r1</code> | <code>bool</code> | <code>true</code>; optional | Products | Continue from the products of an earlier run with the same imagename.<br><em>Surface:</em> restart=true continues on an earlier run's products at imagename on the same grid, as CASA's SIImageStore opens them: the model (every Taylor term, cube channel and Stokes plane) is the start model, a CLEAN mask is reused when no new mask is given, and with calcpsf=false or calcres=false the PSF, sums of weights and residual are read rather than formed. restart=false selects the next single-main-image namespace using CASA filename numbering. Refused (#944, #980): continuing outlier fields or another deconvolver family's products, a new user mask or auto-multithresh over an existing CLEAN mask when cleaning, a CLEAN mask whose planes differ, and calcpsf=false or calcres=false with facets, mosaic, A-projection or outlier fields, or with no earlier PSF (calcpsf) or residual to clean (calcres with niter &gt; 0). |
 | <code>savemodel</code> | <code>parameter.savemodel@r2</code> | <code>choice (3 values)</code> | <code>"none"</code>; optional | Products | Write the predicted final model into the MeasurementSet |
 | <code>calcres</code> | <code>parameter.calcres@r1</code> | <code>bool</code> | <code>true</code>; optional | Stages | Compute the initial residual image. |
 | <code>calcpsf</code> | <code>parameter.calcpsf@r1</code> | <code>bool</code> | <code>true</code>; optional | Stages | Compute the PSF image. |

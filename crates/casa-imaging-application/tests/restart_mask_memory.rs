@@ -115,4 +115,67 @@ fn restart_mask_read_and_retained_plans_fit_their_charges() {
             assert_eq!(support[x * side + y], x < side / 2);
         }
     }
+
+    // A cube's mask whose channels agree is one support, inside its charge;
+    // one whose channels differ is refused.
+    let channels = 4;
+    for differs in [false, true] {
+        let path = root.path().join(format!("cube-{differs}.mask"));
+        let shape = vec![side, side, 1, channels];
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.5],
+            [-1e-5, 1e-5],
+            [256.0, 256.0],
+        ));
+        coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+        coordinates.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            1e9,
+            1e6,
+            0.0,
+            1e9,
+        ));
+        let mut image = PagedImage::<f32>::create(shape.clone(), coordinates, &path).unwrap();
+        let pixels = ArrayD::from_shape_fn(IxDyn(&shape), |index| {
+            let edge = if differs && index[3] == channels - 1 {
+                side / 4
+            } else {
+                side / 2
+            };
+            if index[1] < edge { 1.0 } else { 0.0 }
+        });
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        image.save().unwrap();
+        drop((image, pixels));
+        let input = Input::open(&path).unwrap();
+        let reading = input.reading_bytes();
+        PEAK.store(0, Ordering::Relaxed);
+        BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let read = input.read();
+        MEASURING.store(false, Ordering::Relaxed);
+        let peak = PEAK.load(Ordering::Relaxed);
+        assert!(
+            peak <= reading,
+            "cube mask read held {peak}, admitted {reading}"
+        );
+        match read {
+            Ok(support) => {
+                assert!(!differs);
+                assert_eq!(support.len(), side * side);
+                for x in 0..side {
+                    for y in 0..side {
+                        assert_eq!(support[x * side + y], y < side / 2);
+                    }
+                }
+            }
+            Err(error) => {
+                assert!(differs, "{error}");
+                assert!(error.to_string().contains("planes"), "{error}");
+            }
+        }
+    }
 }
