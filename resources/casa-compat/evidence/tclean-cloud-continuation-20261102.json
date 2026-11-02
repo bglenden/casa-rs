@@ -41,6 +41,12 @@
       "native_revision": "2628d8b05902ee44ba63088f53a23efde8f8af1c",
       "binary_sha256": "0c41aecad85272ebb324ceec65b47386f55ae56433c44d61a446dbbf678d53e5",
       "result": "6/6 cases pass products, counts and both selected scalars (driver exit 0). point-cube-briggs maxpsfsidelobe 0.04809781536459923 vs CASA 0.048097819089889526 (relative 7.7e-8); its .psf NRMS 9.82e-8 (was 1.04e-5) and .residual NRMS 2.50e-6 (was 1.05e-5). Every case's .pb NRMS is 0.0."
+    },
+    {
+      "label": "empty-plane bound fix",
+      "native_revision": "8fcee924e29080d620247177116b4cfd1fc07562",
+      "binary_sha256": "3a584bf1f07b2523e798a3c052340f4fe6c6819a19dbaefbb708823bb45c42d1",
+      "result": "6/6 handoff cases still pass products, counts and both selected scalars (driver exit 0)"
     }
   ],
   "cube_briggs_diagnosis": {
@@ -61,6 +67,22 @@
     "bytes": 263898624,
     "members": 1659,
     "sha256": "d48d50e13357e7053d2105f89dd5f4af9acf7e8b6eaef0aaf457ada70b0d2055",
+    "verified": "shasum reread on the NAS"
+  },
+  "empty_plane_probe": {
+    "source": "SIImageStore::divideImageByWeightVal (CASA 6.7.6.14 9c42dc1): a plane is divided by its Float .sumwt only above 1e-07, else set to zero",
+    "fixture": "refim_point_withline.ms copy with WEIGHT_SPECTRUM from initweights; native channels 4-6 scaled so image channels 5 and 6 reach sumwt 1.194e-8, channels 11-13 so channel 12 reaches 9.55e-7; standard cube, natural, niter 20",
+    "before_fix": "at 2628d8b CASA zeroes channels 5 and 6 (PSF, residual, image, model), native images them (PSF peak 1, residual 0.418, image 1.20, model 0.78); channel 12 and channel 0 (sumwt 0) agree",
+    "after_fix": "at 8fcee92 channels 5 and 6 are zero in every product as in CASA; worst per-channel NRMS over the cube: psf 1.94e-5, residual 1.94e-5, image 9.5e-6, model 2.1e-7. The two boundary channels 4 and 11, which interpolate between an ordinary and a 1e-13-scaled weight, differ in sumwt by 3.1e-5 and 6.0e-5 relative: precision amplification of this constructed 10^13 weight step, not a T1.5 row",
+    "regression": "crates/casars-imager/tests/t1/cube.rs a_plane_at_casas_empty_sum_weight_bound_is_empty fails on the parent validity and passes at 8fcee92; normal_state.rs pins the Float comparison"
+  },
+  "moving_field_oracles": "At 8b0fe44 + 855abcc on the Mac mini with CASA_RS_TESTDATA_ROOT=/Volumes/home/casatestdata: t41 moving_field_mfs_envelope_matches_casa_field_origin_direction gives CASA's MFS increment 125020996.11132812 Hz exactly (relative 0) and t41_trackfield_phase_centre_matches_casa_at_three_row_times passes; the cubesource oracle needs separately frozen CASA products and was not run.",
+  "independent_review": "A fresh-context Claude reviewer (supplementary; the repository's required Astra review is unavailable in this environment and remains pending) found nothing blocking in 3016f1b, 2628d8b and 7b25e63; its follow-ups (envelope first-time cost, survey scan law, docs) are in 8b0fe44. Noted: the orientation fix also corrects the outermost u column on odd widths, and main's intent state ranges expand without bound.",
+  "archive_supplement": {
+    "nas_share_relative": "casa-rs/tclean/20261102/tclean-cloud-continuation-20261102b.tar",
+    "bytes": 84529152,
+    "members": 880,
+    "sha256": "8894d5754832688da6cea7acf8c9dcdc42f91e4c9875e716502b103dddc4d90a",
     "verified": "shasum reread on the NAS"
   }
 }
