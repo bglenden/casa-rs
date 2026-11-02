@@ -29,6 +29,8 @@ mod metal;
 mod model_column;
 #[path = "t1/mosaic.rs"]
 mod mosaic;
+#[path = "t1/mosaic_evla.rs"]
+mod mosaic_evla;
 #[path = "t1/msv4.rs"]
 mod msv4;
 #[path = "t1/mtmfs.rs"]

@@ -27,6 +27,12 @@ pub enum AntennaResponseClass {
     CasaAlma12m,
     /// Physical 7 m ACA dish evaluated with CASA's 6.25 m effective aperture.
     CasaAca7m,
+    /// Every antenna of an EVLA MeasurementSet, whatever its dish: CASA's
+    /// common EVLA beam (`PBMath1DEVLA`), which
+    /// `HetArrayConvFunc::findAntennaSizes` gives the whole array when
+    /// `SynthesisImagerVi2::createMosFTMachine` builds it for
+    /// `PBMath::EVLA` (`PBMathInterface::COMMONPB`).
+    CasaEvla,
 }
 
 impl AntennaResponseClass {
@@ -35,6 +41,14 @@ impl AntennaResponseClass {
     #[must_use]
     pub fn casa_alma_aca_telescope(telescope: &str) -> bool {
         matches!(telescope.trim(), "ALMA" | "ACA")
+    }
+
+    /// Whether CASA's mosaic gives `telescope` the common EVLA beam
+    /// ([`Self::CasaEvla`]): `PBMath::enumerateCommonPB` names it
+    /// `EVLA`, exactly.
+    #[must_use]
+    pub fn casa_evla_telescope(telescope: &str) -> bool {
+        telescope.trim() == "EVLA"
     }
 
     /// CASA's class of an ALMA or ACA dish `diameter_m` across: 12 m
@@ -55,7 +69,7 @@ impl AntennaResponseClass {
     /// kernels by.
     #[must_use]
     pub fn family_envelope(classes: &[Option<Self>]) -> Option<Self> {
-        [Self::CasaAlma12m, Self::CasaAca7m]
+        [Self::CasaAlma12m, Self::CasaAca7m, Self::CasaEvla]
             .into_iter()
             .find(|class| classes.contains(&Some(*class)))
     }

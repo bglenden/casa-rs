@@ -257,6 +257,11 @@ fn output_role_selection(
             if let Some(catalog) = selection.coordinate_catalog() {
                 output = output.with_coordinate_catalog(catalog.clone());
             }
+            if let Some(factor) = selection.first_buffer_lsrk_factor() {
+                output = output
+                    .with_first_buffer_lsrk_factor(factor)
+                    .expect("a bound factor is finite and positive");
+            }
             Ok(output)
         })
         .collect::<Result<Vec<_>, _>>()?;

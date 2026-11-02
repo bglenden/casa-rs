@@ -3,7 +3,9 @@
 //!
 //! Every sample is located on the host with the operator's one rounding rule
 //! ([`GridGeometry::locate`](casa_imaging_operator::GridGeometry::locate), in
-//! `f64`), its support is checked against the target tile, and its kernel
+//! `f64`), the cells its taps may land on are fixed by its set's grid edge
+//! ([`Reach`]), a support it predicts with is checked against the target
+//! tile, and its kernel
 //! norms come from [`TapLayout::norm`]; `sumwt` is accumulated here in `f64`
 //! exactly as the CPU backend does, and the device receives only what the
 //! tap loops need. The layouts below match `kernels.metal`.
@@ -13,7 +15,7 @@ use std::ops::Range;
 
 use casa_imaging_operator::{
     AccumulatorLayout, CellHold, CellLocation, CfKey, ConvolutionFunctionSet, KernelNormalisation,
-    Mode, SampleBlock, TapLayout,
+    Mode, Reach, SampleBlock, TapLayout,
 };
 use num_complex::{Complex32, Complex64};
 
@@ -35,8 +37,9 @@ const _: () = {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct SampleRecord {
-    /// First tap, relative to the accumulator tile.
-    pub origin: [u32; 2],
+    /// First tap, relative to the accumulator tile; negative where a
+    /// clipped support starts before it.
+    pub origin: [i32; 2],
     /// Fine-offset rows.
     pub fine: [u16; 2],
     /// Accumulator-local plane.
@@ -47,11 +50,21 @@ pub(crate) struct SampleRecord {
     pub table: u32,
     /// Taylor variable.
     pub spectral: f32,
-    /// Bit 0: gridding `w > 0`; bit 1: prediction `w > 0`.
+    /// Bit 0: gridding `w > 0`; bit 1: prediction `w > 0`; bit 2: the
+    /// sample is predicted ([`PREDICTS`]).
     pub flags: u32,
     /// Pointing phase gradient.
     pub gradient: [f32; 2],
+    /// The first tile cell a spread may write, `[x, y]` ([`Reach`]).
+    pub clip_low: [i32; 2],
+    /// One past the last tile cell a spread may write.
+    pub clip_high: [i32; 2],
 }
+
+/// [`SampleRecord::flags`] of a sample whose support lies wholly on the
+/// grid, which a prediction gathers; a mosaic predicts zero for a sample
+/// whose support overruns it (`fmosaic.f`'s `omos`).
+pub(crate) const PREDICTS: u32 = 1 << 2;
 
 /// Where one kernel cell's taps sit in the device arenas (`Table`);
 /// [`crate::kernel_bytes`] charges its size per cell.
@@ -299,10 +312,16 @@ impl Targets<'_> {
 /// other rules); add the adjoint's `W·s^t·n` to `sumwt` with `n` the
 /// set's rule: one, `Re N` or `|N|`, as the CPU backend does.
 ///
-/// Panics when a sample's support leaves the accumulator tile (the model's
-/// grid for a prediction) or its plane lies outside a target: the placement
-/// invariant the CPU backend asserts, checked here because the device
-/// trusts every record.
+/// Each record bounds the cells a spread writes by the sample's [`Reach`]
+/// under its set's grid edge, as the CPU backend's spread does, and adds
+/// its weight to `sumwt` only where the reach weighs it; a prediction
+/// gathers only a sample whose support lies wholly on the grid
+/// ([`PREDICTS`]).
+///
+/// Panics when a predicted or wholly gridded sample's support leaves the
+/// accumulator tile (the model's grid for a prediction) or its plane lies
+/// outside a target: the placement invariant the CPU backend asserts,
+/// checked here because the device trusts those records.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare(
     cf: &dyn ConvolutionFunctionSet,
@@ -360,7 +379,39 @@ pub(crate) fn prepare(
         let location = geometry.locate(u, v, table.oversampling);
         let w_positive = placement.w > 0.0;
         let prediction_w_positive = placement.prediction_w_positive;
-        let origin = tile_origin(origin_layout, location, table.half_support);
+        let predicts = geometry.fits(location, table.half_support);
+        let mode = match targets.kind {
+            TapsKind::Imaging => Mode::Data,
+            TapsKind::Weight => Mode::Weight,
+        };
+        let reach = Reach::of(
+            cf,
+            geometry,
+            (mode, placement),
+            location,
+            (table.half_support, table.oversampling),
+        );
+        let origin = tile_origin(
+            origin_layout,
+            location,
+            table.half_support,
+            predicts || reach == Reach::Whole,
+        );
+        let tile = origin_layout.tile();
+        let ([clip_low, clip_high], weighs) = match reach {
+            Reach::Whole => ([[0; 2], tile.shape.map(tile_extent)], true),
+            Reach::Clipped { cells, weighs } => {
+                let bound = |axis: usize, edge: usize| {
+                    let cell = cells[axis][edge] - tile.origin[axis] as i64;
+                    tile_extent(cell.clamp(0, tile.shape[axis] as i64) as usize)
+                };
+                (
+                    [[bound(0, 0), bound(1, 0)], [bound(0, 1), bound(1, 1)]],
+                    weighs,
+                )
+            }
+            Reach::Off => ([[0; 2]; 2], false),
+        };
         let plane = targets.adjoint.as_ref().map_or(0, |(layout, _)| {
             layout.planes().local(placement.plane) as u32
         });
@@ -374,10 +425,16 @@ pub(crate) fn prepare(
             model_plane,
             table: table.index,
             spectral: placement.spectral,
-            flags: u32::from(w_positive) | (u32::from(prediction_w_positive) << 1),
+            flags: u32::from(w_positive)
+                | (u32::from(prediction_w_positive) << 1)
+                | if predicts { PREDICTS } else { 0 },
             gradient: placement.gradient,
+            clip_low,
+            clip_high,
         };
-        if let (Some((layout, terms)), Some(sumwt)) = (&targets.adjoint, sumwt.as_deref_mut()) {
+        if let (Some((layout, terms)), Some(sumwt), true) =
+            (&targets.adjoint, sumwt.as_deref_mut(), weighs)
+        {
             spectral_powers(&mut powers, placement.spectral, terms.len());
             let weights = block.weights_of(index);
             for &Route {
@@ -435,20 +492,31 @@ fn spectral_powers(powers: &mut [f64; MAX_TERMS], spectral: f32, count: usize) {
     }
 }
 
+/// A tile extent as the device's signed cell bounds.
+fn tile_extent(cells: usize) -> i32 {
+    i32::try_from(cells).expect("a tile extent fits i32")
+}
+
 /// Tile-relative first tap of a support of `half` taps each side of
-/// `location`.
-fn tile_origin(layout: &AccumulatorLayout, location: CellLocation, half: [u16; 2]) -> [u32; 2] {
+/// `location`, which lies inside the tile when the support is `whole`.
+fn tile_origin(
+    layout: &AccumulatorLayout,
+    location: CellLocation,
+    half: [u16; 2],
+    whole: bool,
+) -> [i32; 2] {
     let tile = layout.tile();
     let x0 = location.x - i64::from(half[0]) - tile.origin[0] as i64;
     let y0 = location.y - i64::from(half[1]) - tile.origin[1] as i64;
     assert!(
-        x0 >= 0
-            && y0 >= 0
-            && x0 as usize + 2 * usize::from(half[0]) < tile.shape[0]
-            && y0 as usize + 2 * usize::from(half[1]) < tile.shape[1],
+        !whole
+            || (x0 >= 0
+                && y0 >= 0
+                && x0 as usize + 2 * usize::from(half[0]) < tile.shape[0]
+                && y0 as usize + 2 * usize::from(half[1]) < tile.shape[1]),
         "sample support lies outside the accumulator tile"
     );
-    [x0 as u32, y0 as u32]
+    [x0, y0].map(|first| i32::try_from(first).expect("a tile-relative tap fits i32"))
 }
 
 #[cfg(test)]

@@ -107,6 +107,31 @@ impl PrimaryBeam {
         self == Self::VLA || self == Self::VLA_NVSS || self == Self::Evla
     }
 
+    /// The radius the pattern is tabulated to, in arcmin times GHz
+    /// (`PBMath1D::maximumRadius_p`); the pattern is zero beyond it.
+    #[must_use]
+    pub const fn maximum_radius_arcmin_ghz(self) -> f64 {
+        match self {
+            Self::Airy {
+                maximum_radius_arcmin_ghz,
+                ..
+            } => maximum_radius_arcmin_ghz,
+            Self::Evla => EvlaPowerPattern::MAXIMUM_RADIUS_ARCMIN_GHZ,
+        }
+    }
+
+    /// `PBMath1D::support`: the pattern's diameter in pixels of
+    /// `increment_x_rad` at `frequency_hz`, rounded down, without
+    /// tabulating it.
+    #[must_use]
+    pub fn support_pixels(self, increment_x_rad: f64, frequency_hz: f64) -> usize {
+        support_pixels(
+            self.maximum_radius_arcmin_ghz(),
+            increment_x_rad,
+            frequency_hz,
+        )
+    }
+
     /// The pattern's lookup: an Airy pattern's table, shared by every
     /// frequency it is evaluated at, or the EVLA's fits, which hold none.
     #[must_use]
@@ -185,9 +210,16 @@ impl BeamPattern {
             Lookup::Airy(table) => table.maximum_radius(),
             Lookup::Evla => EvlaPowerPattern::MAXIMUM_RADIUS_ARCMIN_GHZ,
         };
-        let radius_rad = (maximum_arcmin_ghz / 60.0).to_radians();
-        (radius_rad / increment_x_rad.abs() * 2.0 * 1.0e9 / frequency_hz).floor() as usize
+        support_pixels(maximum_arcmin_ghz, increment_x_rad, frequency_hz)
     }
+}
+
+/// `PBMath1D::support`: the diameter in pixels of `increment_x_rad` at
+/// `frequency_hz` of a pattern tabulated to `maximum_arcmin_ghz`, rounded
+/// down.
+fn support_pixels(maximum_arcmin_ghz: f64, increment_x_rad: f64, frequency_hz: f64) -> usize {
+    let radius_rad = (maximum_arcmin_ghz / 60.0).to_radians();
+    (radius_rad / increment_x_rad.abs() * 2.0 * 1.0e9 / frequency_hz).floor() as usize
 }
 
 /// A pattern at one frequency ([`BeamPattern::at_frequency`]).
@@ -204,12 +236,19 @@ impl FrequencyPattern<'_> {
     /// `BeamSkyJones::apply` squares the voltage pattern).
     #[must_use]
     pub fn power(&self, radius_arcmin_ghz: f64) -> f32 {
+        let voltage = self.voltage(radius_arcmin_ghz);
+        voltage * voltage
+    }
+
+    /// The voltage at `radius_arcmin_ghz`, the radius in arcmin times the
+    /// frequency in GHz, and zero beyond the table: the `vp_p` sample
+    /// `PBMath1D::apply` multiplies an image by for a voltage pattern
+    /// (`applyVP`), and squares for a power pattern.
+    #[must_use]
+    pub fn voltage(&self, radius_arcmin_ghz: f64) -> f32 {
         match &self.0 {
-            FrequencyLookup::Airy(table) => {
-                let voltage = table.evaluate(radius_arcmin_ghz);
-                voltage * voltage
-            }
-            FrequencyLookup::Evla(fit) => fit.power(radius_arcmin_ghz),
+            FrequencyLookup::Airy(table) => table.evaluate(radius_arcmin_ghz),
+            FrequencyLookup::Evla(fit) => fit.voltage(radius_arcmin_ghz),
         }
     }
 }

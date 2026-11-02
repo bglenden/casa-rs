@@ -322,6 +322,11 @@ pub enum InstrumentModel {
     /// CASA-compatible paired voltage response for heterogeneous ALMA 12 m
     /// and ACA 7 m interferometric baselines, version 1.
     CasaAlmaAcaHeterogeneousInterferometricResponseV1,
+    /// CASA-compatible paired voltage response of CASA's common EVLA beam
+    /// (`PBMath1DEVLA`), which every EVLA interferometric baseline shares,
+    /// version 1: the mosaic gridder's `HetArrayConvFunc` of
+    /// `PBMathInterface::COMMONPB`.
+    CasaEvlaCommonInterferometricResponseV1,
     /// CASA-compatible EVLA wideband aperture, pointing, and conjugate-beam
     /// response consumed through validated paired AW convolution functions.
     CasaEvlaWidebandAwV1,
@@ -598,6 +603,7 @@ pub struct MeasurementEquationContract {
     inner_products: DeclaredInnerProducts,
     w_projection: Option<WProjectionContract>,
     aw_projection: Option<AwProjectionContract>,
+    mosaic_conjugate_beams: bool,
 }
 
 impl MeasurementEquationContract {
@@ -612,7 +618,26 @@ impl MeasurementEquationContract {
             inner_products,
             w_projection: None,
             aw_projection: None,
+            mosaic_conjugate_beams: false,
         }
+    }
+
+    /// Grid a mosaic's samples with each beam's response at its conjugate
+    /// frequency `√(2ν₀² − ν²)` about the image frequency `ν₀`, and predict
+    /// with the response at `ν`: tclean's `conjbeams` on a mosaic of one
+    /// image plane (`HetArrayConvFunc::fillConjConvFunc`). An A/W
+    /// projection states its own ([`AwProjectionContract`]).
+    #[must_use]
+    pub const fn with_mosaic_conjugate_beams(mut self) -> Self {
+        self.mosaic_conjugate_beams = true;
+        self
+    }
+
+    /// Whether a mosaic grids with its conjugate beams
+    /// ([`Self::with_mosaic_conjugate_beams`]).
+    #[must_use]
+    pub const fn mosaic_conjugate_beams(self) -> bool {
+        self.mosaic_conjugate_beams
     }
 
     /// Include one explicit paired W-projection transform.
@@ -2028,6 +2053,7 @@ fn validate_science(science: &ScientificContract) -> Result<(), CompileProblemEr
                 Some(
                     InstrumentModel::CasaAca7mInterferometricDirectPbV1
                         | InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+                        | InstrumentModel::CasaEvlaCommonInterferometricResponseV1
                         | InstrumentModel::CasaEvlaWidebandAwV1
                 )
             )
@@ -2048,6 +2074,19 @@ fn validate_science(science: &ScientificContract) -> Result<(), CompileProblemEr
     {
         return Err(CompileProblemError::InvalidScientificContract {
             reason: "the paired AW contract requires the exact EVLA wideband instrument model",
+        });
+    }
+    if science.measurement_equation.mosaic_conjugate_beams
+        && !matches!(
+            science.instrument_model,
+            Some(
+                InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+                    | InstrumentModel::CasaEvlaCommonInterferometricResponseV1
+            )
+        )
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "mosaic conjugate beams require a mosaic instrument model",
         });
     }
     Ok(())

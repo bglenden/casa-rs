@@ -17,7 +17,7 @@ use num_complex::{Complex32, Complex64};
 
 pub use self::prediction::{PlacedRow, PredictionScratch};
 use crate::accumulator::PlaneRange;
-use crate::convolution::{CellHold, ConvolutionFunctionSet, RowContext};
+use crate::convolution::{CellHold, ConvolutionFunctionSet, GridEdge, RowContext};
 use crate::error::OperatorError;
 use crate::geometry::{CellLocation, GridGeometry};
 use crate::native::{NO_CELL, NativeSource};
@@ -448,7 +448,10 @@ fn sample_weight(
                 Some(plane) => plane,
                 None => return 0.0,
             },
-            None => placement.plane,
+            None => match weighting.density_plane(placement.plane, row.context.field) {
+                Some(plane) => plane,
+                None => return 0.0,
+            },
         };
         let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
         // `VisImagingWeight` weighs, tapers and bins the MeasurementSet
@@ -546,7 +549,11 @@ fn locate_sample(
     }
     let (u, v) = (row.uvw_m[0] * scale, row.uvw_m[1] * scale);
     let location = geometry.locate(u, v, placing.oversampling);
-    if !geometry.fits(location, placing.half_support) {
+    let gridded = match cf.grid_edge() {
+        GridEdge::Whole => geometry.fits(location, placing.half_support),
+        GridEdge::Clipped => geometry.reaches(location, placing.half_support),
+    };
+    if !gridded {
         return None;
     }
     let gradient = placing.gradient;
@@ -1018,8 +1025,12 @@ impl SpectralResampler {
         };
         match rule {
             DensityCellRule::Standard => {
+                // `mosweight` grids each field's samples on its own plane.
+                let Some(plane) = shape.density_plane(0, row.context.field) else {
+                    return Ok(());
+                };
                 for (channel, frequency_hz) in row.frequencies_hz.iter().enumerate() {
-                    visit(0, *frequency_hz, Source::Channel(channel));
+                    visit(plane, *frequency_hz, Source::Channel(channel));
                 }
             }
             DensityCellRule::Cube => self

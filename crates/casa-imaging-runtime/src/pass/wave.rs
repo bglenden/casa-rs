@@ -114,16 +114,18 @@ impl Owner<'_> {
         }
         if let Some(sums) = own_weights {
             for chunk in chunks {
+                let geometry = target.operator.geometry();
                 let mut grid = weight_grid(backend, cf, acc);
-                sums.add(&chunk.owned[index].block(), &mut grid)?;
+                sums.add(&chunk.owned[index].block(), (cf, geometry), &mut grid)?;
             }
         }
         if weight_owner == Some(index)
             && let Some(sums) = weights
         {
             for chunk in chunks {
+                let geometry = target.operator.geometry();
                 let mut grid = weight_grid(backend, cf, acc);
-                sums.add(&chunk.weight_owned.block(), &mut grid)?;
+                sums.add(&chunk.weight_owned.block(), (cf, geometry), &mut grid)?;
             }
         }
         *busy += started.elapsed();
@@ -512,9 +514,10 @@ pub(super) const fn chunks(workers: usize) -> usize {
 
 /// Bytes a wave places with on `workers` workers over blocks of `block`,
 /// gridding the weight image when `weight`: its row chunks, their
-/// prediction ([`BlockPrediction::bytes`]) and, on the CPU with a model,
-/// each owner's batch when the pass forms residuals at native channels:
-/// the residual values of a chunk's placements ([`CpuBackend::batch_bytes`]).
+/// prediction ([`BlockPrediction::bytes`]) and, on the CPU, each owner's
+/// clipped-support block ([`CpuBackend::clip_bytes`]) and, with a model,
+/// its batch when the pass forms residuals at native channels: the residual
+/// values of a chunk's placements ([`CpuBackend::batch_bytes`]).
 /// They grow with the source's block only up to `placements` a chunk.
 pub(super) fn chunk_bytes(
     domains: &[PassDomain<'_>],
@@ -535,7 +538,18 @@ pub(super) fn chunk_bytes(
             .sum::<usize>(),
         BackendChoice::Cpu | BackendChoice::Metal => 0,
     };
+    let clips = match backend {
+        BackendChoice::Cpu => domains
+            .iter()
+            .map(|domain| {
+                domain.partition.owners() as u64
+                    * CpuBackend::clip_bytes(domain.operator.cf(), domain.operator.precision())
+            })
+            .sum::<u64>(),
+        BackendChoice::Metal => 0,
+    };
     count as u64 * shape.bytes()
+        + clips
         + owners as u64 * CpuBackend::batch_bytes(shape.npol, shape.placements)
         + BlockPrediction::bytes(
             domains

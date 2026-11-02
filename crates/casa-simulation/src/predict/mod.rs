@@ -64,11 +64,11 @@ use casa_coordinates::CoordinateError;
 use casa_images::ImageError;
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
-    AiryDish, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision,
-    ImageExtent, MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, MosaicPb, MosaicRules,
-    MosaicWindow, NativeRow, OperatorError, PaddingFactor, PlaneRange, PolarizationRouting,
-    PredictionScratch, PreparedModelGrids, RowContext, SpectralAxis, SpectralKernel,
-    SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent,
+    MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, MosaicPb, MosaicRules, MosaicWindow,
+    NativeRow, OperatorError, PaddingFactor, PlaneRange, PolarizationRouting, PredictionScratch,
+    PreparedModelGrids, RowContext, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal,
+    WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_types::Correlation;
@@ -135,8 +135,8 @@ impl FtMachine {
 /// and the spectral windows predicted.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MosaicBeams {
-    /// One dish per class, in class order.
-    pub(crate) dishes: Vec<AiryDish>,
+    /// One dish's Airy pattern per class, in class order.
+    pub(crate) dishes: Vec<PrimaryBeam>,
     /// The windows of the scans predicted, every channel selected.
     pub(crate) windows: Vec<MosaicWindow>,
 }

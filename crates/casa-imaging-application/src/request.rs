@@ -460,6 +460,13 @@ pub enum Gridder {
         /// Flat-noise or flat-sky products.
         #[serde(deserialize_with = "normalization")]
         normtype: ProductNormalization,
+        /// Grid with each beam at its conjugate frequency about the image
+        /// frequency, on an image of one plane (tclean `conjbeams`).
+        conjbeams: bool,
+        /// Weigh each field by its own visibility density (tclean
+        /// `mosweight`, which `task_tclean.py` keeps only for the gridder
+        /// named `mosaic`); density weighting only.
+        mosweight: bool,
     },
     /// EVLA A-projection with W-projection.
     Awproject(AwProjection),

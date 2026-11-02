@@ -327,6 +327,22 @@ pub enum KernelNormalisation {
     KernelSum,
 }
 
+/// How a set's gridding treats a sample whose support overruns the grid.
+/// Prediction drops such a sample under either rule: its model visibility
+/// is zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum GridEdge {
+    /// The sample is not gridded (`gridft.f`'s and `wprojgrid.f`'s
+    /// `ogrid`, `AWVisResampler::onGrid`).
+    Whole,
+    /// The taps of a sample whose support reaches the grid are gridded where
+    /// they fall on it, and its weight counts in `sumwt` only when its
+    /// anchor cell lies on the grid: `MosaicFT`'s sectioned gridders
+    /// (`fmosaic.f` `sectgmosd2` and `gmoswgtd2` through `onmosgrid`), whose
+    /// degridder keeps the whole support (`sectdmos2` through `omos`).
+    Clipped,
+}
+
 /// Which kernel Mueller plane serves each (grid polarization, visibility
 /// polarization) pair, per direction of the transform and sign of `w`.
 ///
@@ -656,6 +672,12 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// the largest of every tap layout the key can lend.
     fn placement_half_support(&self, key: CfKey, hold: &mut CellHold) -> [u16; 2] {
         self.taps(key, hold).half_support()
+    }
+
+    /// How the gridding treats a sample whose support overruns the grid
+    /// ([`GridEdge`]); every set but the mosaic drops it.
+    fn grid_edge(&self) -> GridEdge {
+        GridEdge::Whole
     }
 
     /// Whether a sample at `w_lambda` is gridded at all. `WProjectFT`'s

@@ -359,10 +359,14 @@ impl<'a> Tclean<'a> {
         self.ignore(&["selectdata"])?;
         let field = self.text("field")?;
         self.set("field", field);
-        for name in ["spw", "uvrange", "intent"] {
+        for name in ["uvrange", "intent"] {
             let value = self.text(name)?;
             self.set(name, value);
         }
+        // `MSSpwGram` reads a lone `*` as every spectral window, every
+        // channel: what an empty selector selects.
+        let spw = self.text("spw")?;
+        self.set("spw", if spw == "*" { "" } else { spw });
         // Scan, observation, antenna and time selectors keep their exact text:
         // CASA's tclean refuses whitespace-only text and `none`, and its
         // grammars give padding and case their own meanings.
@@ -588,14 +592,23 @@ impl<'a> Tclean<'a> {
             self.set("normtype", normtype);
         }
         // CASA weighs density by field only for the gridder named mosaic
-        // (`task_tclean.py`); casa-rs's mosaic weighs it over all fields,
-        // as CASA does for mosaicft and ftmosaic.
-        if self.flag("mosweight")? && modes.per_field_density && modes.density_weighting {
-            return Err(TcleanRefusal::not_yet(
-                "mosweight",
-                "True with density weighting (casa-rs weighs density over all fields)",
-                818,
-            ));
+        // (`task_tclean.py`), and over all fields for mosaicft and
+        // ftmosaic. A cube's per-channel density by field
+        // (`BriggsCubeWeightor`'s `multiField`) is not yet native.
+        let mosweight = self.flag("mosweight")?;
+        if modes.gridder == "mosaic" {
+            let mosweight = mosweight && modes.per_field_density;
+            let per_channel = modes.cube
+                && self.flag("perchanweightdensity")?
+                && modes.weighting != "superuniform";
+            if mosweight && modes.density_weighting && per_channel {
+                return Err(TcleanRefusal::not_yet(
+                    "mosweight",
+                    "True with a cube's per-channel density (perchanweightdensity=True)",
+                    818,
+                ));
+            }
+            self.set("mosweight", mosweight);
         }
         self.aw_terms(modes)?;
         let cfcache = self.text("cfcache")?;
@@ -634,7 +647,7 @@ impl<'a> Tclean<'a> {
     }
 
     /// casa-rs's AW projection runs as CASA's `aterm=True, psterm=False,
-    /// wbawp=True, conjbeams=True`, and its mosaic as `conjbeams=False`.
+    /// wbawp=True, conjbeams=True`; its mosaic reads `conjbeams`.
     fn aw_terms(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
         let fixed: &[(&str, bool)] = match modes.gridder {
             "awproject" => &[
@@ -643,7 +656,11 @@ impl<'a> Tclean<'a> {
                 ("wbawp", true),
                 ("conjbeams", true),
             ],
-            "mosaic" => &[("conjbeams", false)],
+            "mosaic" => {
+                let conjbeams = self.flag("conjbeams")?;
+                self.set("conjbeams", conjbeams);
+                &[]
+            }
             _ => &[],
         };
         for name in ["aterm", "psterm", "wbawp", "conjbeams"] {

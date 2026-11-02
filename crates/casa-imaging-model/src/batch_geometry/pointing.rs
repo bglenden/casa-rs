@@ -10,7 +10,8 @@ use casa_types::measures::{EpochRef, MjdHighPrec};
 use super::{BatchGeometry, BatchGeometryError, GeometryPlan};
 use crate::aw_pointing::{AwPointingEpochs, AwPointingGrouping};
 use crate::geometry::{
-    ObservationPointingLaw, PointingCentreLaw, PointingTimeSampling, SkyDirection,
+    MissingPointingPolicy, ObservationPointingLaw, PointingCentreLaw, PointingTimeSampling,
+    SkyDirection,
 };
 use crate::pointing_law::{PointingSample, PointingSamples};
 use crate::sample_antennas::SelectedPointingDirections;
@@ -104,6 +105,12 @@ impl GeometryPlan {
             PointingCentreLaw::Observation(law) => *law,
         };
         let series = series.ok_or(BatchGeometryError::MissingInput("pointing samples"))?;
+        if !series.store_has_pointing
+            && law.missing() == MissingPointingPolicy::FieldCentreWithoutPointingTable
+        {
+            fill(context, out, both(context.observation));
+            return Ok(());
+        }
         let batch = context.batch;
         let per_time = batch.samples_per_time();
         let centroid = match law.time_sampling() {
