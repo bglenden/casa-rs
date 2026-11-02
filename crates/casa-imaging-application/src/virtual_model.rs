@@ -48,7 +48,7 @@ use num_complex::Complex32;
 
 use crate::imaging::{self, ImagingError, KernelAdmission};
 use crate::native::NativeError;
-use crate::{ApplicationRuntime, ImagingRequest};
+use crate::{ApplicationRuntime, ImagingRequest, MeasurementSetSelection};
 use record::{FirstBuffer, GridFt};
 
 /// What saving a run's virtual model needs beyond the run: its
@@ -65,28 +65,31 @@ pub(crate) struct VirtualModelPlan {
 }
 
 impl VirtualModelPlan {
-    /// The plan of `request`, whose main image has `coordinates`.
+    /// The plan of `vis`, one MeasurementSet of `request` and its
+    /// selection, whose main image has `coordinates`. CASA saves the model
+    /// in each MeasurementSet of its list (`saveVirtualModel` per
+    /// MeasurementSet), so a run has one plan per MeasurementSet it reads.
     pub(crate) fn new(
-        request: &ImagingRequest,
+        (request, vis): (&ImagingRequest, &MeasurementSetSelection),
         coordinates: CoordinateSystem,
         measures: Arc<dyn MeasuresProvider>,
     ) -> Self {
         let selection = MsSelection {
-            field: request.field.clone(),
-            spw: request.spw.clone(),
-            timerange: request.timerange.clone(),
-            uvrange: request.uvrange.clone(),
-            antenna: request.antenna.clone(),
-            scan: request.scan.clone(),
-            observation: request.observation.clone(),
-            intent: request.intent.clone(),
+            field: vis.field.clone(),
+            spw: vis.spw.clone(),
+            timerange: vis.timerange.clone(),
+            uvrange: vis.uvrange.clone(),
+            antenna: vis.antenna.clone(),
+            scan: vis.scan.clone(),
+            observation: vis.observation.clone(),
+            intent: vis.intent.clone(),
             data_description: request.ddid.map(|ddid| ddid.to_string()),
             ..MsSelection::default()
         };
         Self {
-            ms: request.vis.clone(),
-            field: request.field.clone(),
-            spw: request.spw.clone(),
+            ms: vis.vis.clone(),
+            field: vis.field.clone(),
+            spw: vis.spw.clone(),
             selection,
             coordinates,
             interpolation: match request.interpolation {
@@ -377,7 +380,7 @@ fn write_machine(
         BackendChoice::Cpu,
         Some(GridPrecision::F64),
         None,
-        &[],
+        &imaging::StoreKeys::default(),
         KernelAdmission {
             host: &runtime.host,
             policy: &runtime.resource_policy,

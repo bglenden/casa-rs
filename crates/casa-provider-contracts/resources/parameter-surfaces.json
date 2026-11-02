@@ -8065,7 +8065,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 37,
+      "contract_version": 38,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -8106,15 +8106,13 @@
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "always"},
           "active_when": {"kind": "always"},
-          "refinements": [{"kind": "length", "min": 0, "max": 1}],
           "context_role": "input_dataset",
           "projections": {
             "cli": {"flags": ["--vis", "--ms"], "metavar": "MS"},
             "provider": {"field": "vis", "adapter": "identity"},
             "python": {"name": "vis"},
             "presentation": {"label": "MeasurementSet", "group": "Context"}
-          },
-          "unimplemented_forms": {"issue": 980, "forms": "a list of more than one MeasurementSet"}
+          }
         },
         {
           "name": "selectdata",
@@ -8133,7 +8131,8 @@
         },
         {
           "name": "field",
-          "concept": {"id": "ms.selection.field", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.field", "semantic_revision": 2},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 2 takes one selector per MeasurementSet of tclean's vis list, or one for all, as CASA's tclean does; revision-1 consumers remain unchanged."},
           "order": 2,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8141,14 +8140,15 @@
           "context_role": "field_selection",
           "projections": {
             "cli": {"flags": ["--field"], "metavar": "IDS"},
-            "provider": {"field": "field", "adapter": "omit_none"},
+            "provider": {"field": "field"},
             "python": {"name": "field"},
             "presentation": {"label": "Field IDs", "group": "Context"}
           }
         },
         {
           "name": "spw",
-          "concept": {"id": "ms.selection.spw", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.spw", "semantic_revision": 2},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 2 takes one selector per MeasurementSet of tclean's vis list, or one for all, as CASA's tclean does; revision-1 consumers remain unchanged."},
           "order": 3,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8156,15 +8156,15 @@
           "context_role": "spectral_window_selection",
           "projections": {
             "cli": {"flags": ["--spw"], "metavar": "SPEC"},
-            "provider": {"field": "spw", "adapter": "omit_none"},
+            "provider": {"field": "spw"},
             "python": {"name": "spw"},
             "presentation": {"label": "SPW Selector", "group": "Context"}
           }
         },
         {
           "name": "timerange",
-          "concept": {"id": "ms.selection.timerange", "semantic_revision": 2},
-          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 2 corrects normalized validity distinctions by preserving exact selector text; revision-1 consumers remain unchanged."},
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 3},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 3 takes one selector per MeasurementSet of tclean's vis list, or one for all, as CASA's tclean does; revision-1 and revision-2 consumers remain unchanged."},
           "order": 4,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8178,7 +8178,8 @@
         },
         {
           "name": "uvrange",
-          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.uvrange", "semantic_revision": 2},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 2 takes one selector per MeasurementSet of tclean's vis list, or one for all, as CASA's tclean does; revision-1 consumers remain unchanged."},
           "order": 5,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8186,15 +8187,15 @@
           "surface_note": "The complete CASA UV-range selector reaches the shared MeasurementSet selection engine.",
           "projections": {
             "cli": {"flags": ["--uvrange"], "metavar": "SELECTOR"},
-            "provider": {"field": "uvrange", "adapter": "omit_none"},
+            "provider": {"field": "uvrange"},
             "python": {"name": "uvrange"},
             "presentation": {"label": "UV Range", "group": "Context"}
           }
         },
         {
           "name": "antenna",
-          "concept": {"id": "ms.selection.antenna", "semantic_revision": 2},
-          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 2 corrects normalized validity distinctions by preserving exact selector text; revision-1 consumers remain unchanged."},
+          "concept": {"id": "ms.selection.antenna", "semantic_revision": 3},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 3 takes one selector per MeasurementSet of tclean's vis list, or one for all, as CASA's tclean does; revision-1 and revision-2 consumers remain unchanged."},
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8208,8 +8209,8 @@
         },
         {
           "name": "scan",
-          "concept": {"id": "ms.selection.scan", "semantic_revision": 2},
-          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet ID is unchanged. Revision 2 corrects normalized validity distinctions by preserving exact selector text; revision-1 consumers remain unchanged."},
+          "concept": {"id": "ms.selection.scan", "semantic_revision": 3},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 3 takes one selector per MeasurementSet of tclean's vis list, or one for all, as CASA's tclean does; revision-1 and revision-2 consumers remain unchanged."},
           "order": 7,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8224,8 +8225,8 @@
         },
         {
           "name": "observation",
-          "concept": {"id": "ms.selection.observation", "semantic_revision": 2},
-          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet ID is unchanged. Revision 2 corrects normalized validity distinctions by preserving exact selector text; revision-1 consumers remain unchanged."},
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 3},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 3 takes one selector per MeasurementSet of tclean's vis list, or one for all, as CASA's tclean does; revision-1 and revision-2 consumers remain unchanged."},
           "order": 8,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8240,7 +8241,8 @@
         },
         {
           "name": "intent",
-          "concept": {"id": "ms.selection.intent", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.intent", "semantic_revision": 2},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 2 takes one selector per MeasurementSet of tclean's vis list, or one for all, as CASA's tclean does; revision-1 consumers remain unchanged."},
           "order": 9,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8248,7 +8250,7 @@
           "surface_note": "The complete CASA intent selector reaches the shared MeasurementSet selection engine.",
           "projections": {
             "cli": {"flags": ["--intent"], "metavar": "SELECTOR"},
-            "provider": {"field": "intent", "adapter": "omit_none"},
+            "provider": {"field": "intent"},
             "python": {"name": "intent"},
             "presentation": {"label": "Observing Intent", "group": "Context"}
           }
@@ -9867,6 +9869,12 @@
         {
           "from_contract": 36,
           "to_contract": 37,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 37,
+          "to_contract": 38,
           "steps": [],
           "changed_defaults": []
         }

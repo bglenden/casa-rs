@@ -967,17 +967,25 @@ mod tests {
             assert!(resolved.diagnostics.is_empty(), "{label}");
             assert_eq!(
                 resolved.values["field"],
-                ParameterValue::String(expected_field.to_string()),
+                ParameterValue::Array(vec![ParameterValue::String(expected_field.to_string())]),
                 "{label}"
             );
             for (name, expected) in [
                 ("gridder", ParameterValue::String("awproject".into())),
                 ("stokes", ParameterValue::String("I".into())),
-                ("spw", ParameterValue::String("2~17".into())),
-                ("uvrange", ParameterValue::String("<12km".into())),
+                (
+                    "spw",
+                    ParameterValue::Array(vec![ParameterValue::String("2~17".into())]),
+                ),
+                (
+                    "uvrange",
+                    ParameterValue::Array(vec![ParameterValue::String("<12km".into())]),
+                ),
                 (
                     "intent",
-                    ParameterValue::String("OBSERVE_TARGET#UNSPECIFIED".into()),
+                    ParameterValue::Array(vec![ParameterValue::String(
+                        "OBSERVE_TARGET#UNSPECIFIED".into(),
+                    )]),
                 ),
                 ("usepointing", ParameterValue::Bool(true)),
                 ("nterms", ParameterValue::Integer(2)),

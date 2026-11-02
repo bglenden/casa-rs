@@ -1170,10 +1170,15 @@ the later one. They differ in:
 - the support search: in the simulator, inwards from the lattice's edge
   along the row and the column one cell off its centre, the radius found
   widened by √2; in tclean, outwards from the weight plane's peak;
-- the support a row is gridded with: the widest pair's of the window in the
-  simulator, each pair's own in tclean;
 - the channel frequencies: the window's own in the simulator; tclean
   converts them to the image's frame (LSRK).
+
+Both grid every row of a window with the widest pair's support
+(`MosaicFT` hands `sectgmosd2` and the degridders
+`max(convSupportPlanes_p)`), each pair normalised over its own; casa-rs
+took tclean's rows each with its own support until #980, which put mixed
+12 m and 7 m tclean mosaics 2.5e-3 normalized RMS from CASA, and 1.8e-2 for
+the 7 m antennas of a mixed array, where they agree to 6e-7.
 
 On the #875 probe (six 12 m and six 7 m ALMA antennas over three fields at
 230 GHz) CASA logs supports `[6, 6, 6]` for the simulator and `[7, 6, 6]`
@@ -1189,6 +1194,34 @@ rotation. At offsets of 10–17″ the two differ by a few 1e-4 cells, which
 flips the fine offset of a sample near a rounding boundary; with the
 mosaic's ten offsets a cell, such a sample moved by up to 10% (#841: 33 of
 4,752 rows, until the simulator took `girarUVW` too).
+
+## tclean's mosaic beams for a MeasurementSet know only the dishes met before it
+
+- Date noted: 2026-11-02
+- Status: casa-rs diverges (#980); one beam set over every MeasurementSet's
+  dishes for every pass
+- Affected code: `synthesis/TransformMachines2/HetArrayConvFunc.cc`
+  (`findAntennaSizes`, `findConvFunction`)
+
+With a list of MeasurementSets, `findAntennaSizes` adds each
+MeasurementSet's dish diameters to those of the ones the visibility
+iterator met before it, and `findConvFunction` rebuilds the beams of a
+MeasurementSet's window whenever the iterator moves to another
+MeasurementSet (`msId_p != vb.msId()`). In the first pass (the PSF and the
+weight image) the first MeasurementSet's beams therefore know only its own
+dishes, and in every later pass every MeasurementSet's: the screen size
+(the widest dish's support radius) and the gridding support (the widest
+pair's) of its rows change between passes, so the result depends on the
+order CASA visits the list in. casa-rs builds one set from every
+MeasurementSet's dishes and grids every pass with it.
+
+On CASA's own ALMA 12 m and ACA 7 m lists (`test_het_mosaic_mfs_alma_listofms`
+CAS-14255 and CAS-14350, 12 m data first, whose pair has the widest
+support) only the first pass's screen size differs: every product agrees to
+1.3e-5 normalized RMS. With the 7 m data made earlier, so that CASA meets
+it first, the first pass grids the 7 m rows with the 7 m support alone, and
+the products differ by up to 5.4e-4; each MeasurementSet imaged alone
+agrees to 7e-7.
 
 ## `sm.predict` phases a moved `observemany` pointing on its field
 

@@ -8,8 +8,11 @@
 //! image, both built on a screen covering the image field at the
 //! convolution-function size, quarter-cropped, support-searched on the
 //! weight plane, normalised over the support, cropped again and Lanczos
-//! resampled to ten fine offsets per cell. The pointing enters only through
-//! the per-row phase gradient ([`ConvolutionFunctionSet::pointing_ramp`]).
+//! resampled to ten fine offsets per cell. Every pair of a window grids
+//! with the widest pair's support: `MosaicFT` hands `sectgmosd2` and the
+//! degridders `max(convSupportPlanes_p)` for every row, though each pair
+//! is normalised over its own. The pointing enters only through the per-row
+//! phase gradient ([`ConvolutionFunctionSet::pointing_ramp`]).
 //!
 //! A dish class's voltage pattern is a [`PrimaryBeam`]: the annular Airy
 //! aperture `findAntennaSizes` builds per dish diameter ([`AiryDish`]), or
@@ -50,9 +53,10 @@ pub const MOSAIC_OVERSAMPLING: u16 = 10;
 const DISH_REFERENCE_GHZ: f64 = 100.0;
 
 /// Which of CASA's two heterogeneous-array mosaic machines a set follows.
-/// They build the same crops, normalisation and resampling, and differ in
-/// the screen's least size, in the frequency cells, in how the support is
-/// found and gridded and, through [`AiryDish`], in the 7 m dish's radius.
+/// They build the same crops, normalisation, resampling and gridding
+/// support, and differ in the screen's least size, in the frequency cells,
+/// in how the support is found and, through [`AiryDish`], in the 7 m dish's
+/// radius.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MosaicRules {
     /// tclean's `gridder='mosaic'`: `TransformMachines2/HetArrayConvFunc`
@@ -75,21 +79,11 @@ pub enum MosaicRules {
     /// beams'; its frequency cells come from the selected channels alone;
     /// its support search walks the weight plane inwards from the edge,
     /// along the row and the column one cell off its centre, and widens the
-    /// radius it finds by √2; and its `MosaicFT` grids every row of a
-    /// window with the widest pair's support.
+    /// radius it finds by √2.
     Simulator,
 }
 
 impl MosaicRules {
-    /// Taps on each side of a pair of `support` in a window whose widest
-    /// pair has `window_support`.
-    const fn taps(self, support: usize, window_support: usize) -> usize {
-        match self {
-            Self::Tclean | Self::TcleanConjugateBeams => support,
-            Self::Simulator => window_support,
-        }
-    }
-
     /// The conjugate of beam frequency `frequency_hz` about the image
     /// frequency `image_frequency_hz` under these rules, if they have one.
     fn conjugate_hz(
@@ -457,9 +451,7 @@ impl MosaicPb {
         // `conjSupport`: every pair of a window takes the support widened
         // by the root of the window's largest `ν_c/ν`, when that is wider.
         let mut ratios = Vec::new();
-        let mut widened = vec![false; cells.len()];
-        for ((window, support), widened) in cells.iter().zip(&mut window_support).zip(&mut widened)
-        {
+        for (window, support) in cells.iter().zip(&mut window_support) {
             let mut largest = f64::NEG_INFINITY;
             for &frequency_hz in &window.frequencies_hz {
                 if let Some(conjugate) = rules.conjugate_hz(image_frequency_hz, frequency_hz)? {
@@ -470,17 +462,14 @@ impl MosaicPb {
             let conjugate = (*support as f64 * largest.sqrt() / 2.0) as usize * 2;
             if largest.is_finite() && conjugate > *support {
                 *support = conjugate;
-                *widened = true;
             }
         }
         Ok(MosaicScreens {
-            rules,
             dishes: dishes.len(),
             windows: cells,
             cell_count,
             screened,
             window_support,
-            widened,
             ratios,
             lattice,
             conv_size,
@@ -521,17 +510,15 @@ fn frequency_cell_bytes(windows: &Vec<FrequencyCells>) -> u64 {
 /// cut and resampled ([`MosaicPb::screens`], [`Self::finish`]).
 #[derive(Debug)]
 pub struct MosaicScreens {
-    rules: MosaicRules,
     dishes: usize,
     windows: Vec<FrequencyCells>,
     cell_count: usize,
     /// Per dish pair and window: the window, the pair's support and its
     /// lattices at every beam frequency.
     screened: Vec<(usize, usize, Vec<PairLattices>)>,
+    /// Per window: the widest pair's support, which `conjSupport` may have
+    /// widened; every pair of the window grids with it.
     window_support: Vec<usize>,
-    /// Per window: whether `conjSupport` widened its supports, so every
-    /// pair grids with the window's.
-    widened: Vec<bool>,
     /// Per frequency cell, in cell order: `ν_c/ν` under
     /// [`MosaicRules::TcleanConjugateBeams`]; empty otherwise.
     ratios: Vec<f64>,
@@ -561,7 +548,6 @@ impl MosaicScreens {
             .sum::<usize>()
             + self.screened.capacity() * size_of::<(usize, usize, Vec<PairLattices>)>()
             + self.window_support.capacity() * size_of::<usize>()
-            + self.widened.capacity()
             + self.ratios.capacity() * size_of::<f64>()) as u64
             + frequency_cell_bytes(&self.windows)
             + self.mueller.bytes()
@@ -577,9 +563,9 @@ impl MosaicScreens {
         let cells = self
             .screened
             .iter()
-            .map(|(window_index, support, lattices)| {
+            .map(|(window_index, _, lattices)| {
                 let half =
-                    u16::try_from(self.taps(*window_index, *support)).expect("support fits u16");
+                    u16::try_from(self.window_support[*window_index]).expect("support fits u16");
                 kinds
                     * lattices.len() as u64
                     * dense_cell_bytes(1, MOSAIC_OVERSAMPLING, [half, half])
@@ -612,17 +598,6 @@ impl MosaicScreens {
         (2 * (support + 2)).min(self.lattice)
     }
 
-    /// Taps on each side of a pair of `support` in window `window`: the
-    /// window's widest when `conjSupport` widened it, else as the rules
-    /// grid.
-    fn taps(&self, window: usize, support: usize) -> usize {
-        if self.widened[window] {
-            self.window_support[window]
-        } else {
-            self.rules.taps(support, self.window_support[window])
-        }
-    }
-
     /// The second stage of building the cells: crop every pair of a window
     /// to the widest pair's `2(support + 2)`, normalise each over its own
     /// support, resample, and form the corrections.
@@ -635,9 +610,8 @@ impl MosaicScreens {
         let planes = pair_planes(self.dishes);
         // `findConvFunction` crops every pair of a window to the widest
         // pair's `2(support + 2)`; each pair is normalised over its own
-        // support. tclean grids each pair with its own support (or the
-        // window's, which `conjSupport` widened); the simulator's `MosaicFT`
-        // grids every row with the widest.
+        // support. Both machines' `MosaicFT` grids every row with the
+        // widest (`convSupport = max(convSupportPlanes_p)`).
         let mut imaging = Vec::with_capacity(planes * self.cell_count);
         let mut weight = Vec::with_capacity(planes * self.cell_count);
         let mut conjugate = Vec::with_capacity(if self.ratios.is_empty() {
@@ -647,8 +621,8 @@ impl MosaicScreens {
         });
         let max_half_support = self.window_support.iter().copied().max().unwrap_or(0);
         for (window_index, support, lattices) in &self.screened {
-            let crop = self.crop(self.window_support[*window_index]);
-            let taps = self.taps(*window_index, *support);
+            let taps = self.window_support[*window_index];
+            let crop = self.crop(taps);
             // `interpLanczos` zeroes within three input pixels of the edge, so
             // a crop under seven pixels resamples to nothing.
             if crop < 2 * LANCZOS_A as usize + 1 {

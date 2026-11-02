@@ -100,7 +100,7 @@ fn alma_antennas() -> Vec<SyntheticAntenna> {
 }
 
 /// West, centre and east pointings [`SPACING_PX`] cells apart along `l`.
-fn setup() -> Setup {
+pub(super) fn setup() -> Setup {
     let spacing_rad = f64::from(SPACING_PX) * GEOMETRY.cell_rad()[0];
     Setup {
         telescope: "ALMA".to_string(),

@@ -3,20 +3,20 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "f3f6d51de40cf9101ad7bbaec3203cbd00b2aec7",
-  "parameter_surfaces_sha256": "6dfe86d3ec834ff9db06b2b81f68c86d711ec3e272b37765a0c7484f3c716c00",
-  "parameter_catalog_sha256": "002cef5fea6a1ba030bc7b93a2caf0965092a276ea697503e58fc05c673123f8",
-  "tclean_rs_sha256": "93effd54e160b2d0f1670c1cfe489ab6b9306352638451f1c3317982aba1f86b",
-  "tclean_contract_version": 37
+  "casa_rs_revision": "3dc8d701bc4e84a2f80ab6aa33052c8ce1466024",
+  "parameter_surfaces_sha256": "b189c2cef9ff5195aec7bbaad31ad77cc9947a96234a57965bf737cf90e95b66",
+  "parameter_catalog_sha256": "cd8b35948c5298d59bb42e45ec9a3170a7d4062847e5be0076b16c8fa2d007ea",
+  "tclean_rs_sha256": "59053205d5ba9dca26c2c6e527aa73f7174770e2d5ac9be5655211e5438daa7b",
+  "tclean_contract_version": 38
  },
  "totals": {
   "resolved_cases": 354,
   "cases_where_casa_expects_an_error": 4,
   "cases_counted": 350,
-  "cases_with_no_refusal": 226,
-  "cases_with_a_gap": 124,
+  "cases_with_no_refusal": 239,
+  "cases_with_a_gap": 111,
   "cases_with_only_refusals_casa_shares": 0,
-  "single_call_cases_with_no_refusal": 183
+  "single_call_cases_with_no_refusal": 196
  },
  "gaps": [
   {
@@ -62,20 +62,6 @@
    ]
   },
   {
-   "reason": "vis: a list of more than one MeasurementSet",
-   "source": "surface: unimplemented_forms",
-   "issue": 980,
-   "cases": 13,
-   "sole_blocker": 5,
-   "examples": [
-    "test_onefield.test_onefield_twoMS.1",
-    "test_onefield.test_onefield_twoMS_Briggs.1",
-    "test_onefield.test_onefield_twoMS_weightSpectrum.1",
-    "test_onefield.test_onefield_twoMS_weightSpectrum2.1",
-    "test_onefield.test_onefield_mtmfs_2spws_2MSs.1"
-   ]
-  },
-  {
    "reason": "start='' with a channel selection in spw",
    "source": "tclean.rs not_yet",
    "issue": 980,
@@ -115,20 +101,6 @@
     "test_mtmfsviacube.test_mtmfsviacube_standard.1",
     "test_mtmfsviacube.test_mtmfsviacube_standard_startmodel.1",
     "test_mtmfsviacube.test_mtmfsviacube_mosaic.1"
-   ]
-  },
-  {
-   "reason": "spw given as a list",
-   "source": "catalog: value domain",
-   "issue": null,
-   "cases": 8,
-   "sole_blocker": 0,
-   "examples": [
-    "test_onefield.test_onefield_twoMS.1",
-    "test_onefield.test_onefield_twoMS_Briggs.1",
-    "test_onefield.test_onefield_twoMS_weightSpectrum.1",
-    "test_onefield.test_onefield_twoMS_weightSpectrum2.1",
-    "test_cube.test_cube_twoMS_startfreq.1"
    ]
   },
   {
@@ -588,72 +560,20 @@
    ]
   },
   "test_onefield.test_onefield_twoMS.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "spw given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 1
-    },
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_twoMS_Briggs.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "spw given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 1
-    },
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_twoMS_weightSpectrum.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "spw given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 1
-    },
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_twoMS_weightSpectrum2.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "spw given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 1
-    },
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_briggsabs.1": {
    "runs_without_refusal": true,
@@ -710,15 +630,8 @@
    "refusals": []
   },
   "test_onefield.test_onefield_mtmfs_2spws_2MSs.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_mtmfs_nterms1.1": {
    "runs_without_refusal": false,
@@ -1560,72 +1473,20 @@
    ]
   },
   "test_cube.test_cube_twoMS_startfreq.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "spw given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 1
-    },
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_cube.test_cube_twoMS_startfreq.2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "spw given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 2
-    },
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_cube.test_cube_twoMS_startvel.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "spw given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 1
-    },
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_cube.test_cube_twoMS_startvel.2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "spw given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 2
-    },
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_mask.test_mask_1.2": {
    "runs_without_refusal": false,
@@ -2255,26 +2116,12 @@
    ]
   },
   "test_modelvis.test_modelvis_28.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_29.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_startmodel.test_startmodel_regrid_mfs.1+2": {
    "runs_without_refusal": true,
@@ -2525,26 +2372,12 @@
    ]
   },
   "test_hetarray_imaging.test_het_mosaic_mfs_alma_listofms_CAS14255fix.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_hetarray_imaging.test_het_mosaic_mfs_alma_listofms_CAS14350fix.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "vis: a list of more than one MeasurementSet",
-     "source": "surface: unimplemented_forms",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_mtmfsviacube.test_mtmfsviacube_standard.1": {
    "runs_without_refusal": false,

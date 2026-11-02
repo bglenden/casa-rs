@@ -47,6 +47,10 @@ pub enum Unsupported {
     /// AW projection grids a square image of square cells: its native
     /// convolution functions and their cache are laid out on one axis.
     NonSquareAwProjection,
+    /// The AW catalog keys its cells on the first MeasurementSet's
+    /// frequencies and first cross-correlation sample; a list of them waits
+    /// for cells over all of them (#980).
+    SeveralMeasurementSetsAwProjection,
 }
 
 impl fmt::Display for Unsupported {
@@ -83,6 +87,10 @@ impl fmt::Display for Unsupported {
             Self::NonSquareAwProjection => formatter.write_str(
                 "AW projection images a square imsize of square cells; the standard, W and \
                  mosaic gridders image any other",
+            ),
+            Self::SeveralMeasurementSetsAwProjection => formatter.write_str(
+                "the awproject gridder images one MeasurementSet; the standard, wproject and \
+                 mosaic gridders image a list of them (#980)",
             ),
         }
     }
@@ -225,6 +233,10 @@ pub fn check(
         })
     {
         unsupported.push(Unsupported::NonSquareAwProjection);
+    }
+    if problem.observation().sources().len() > 1 && !crate::imaging::multi_store_kernel_set(problem)
+    {
+        unsupported.push(Unsupported::SeveralMeasurementSetsAwProjection);
     }
     if backend == BackendChoice::Metal {
         if !host.metal {
