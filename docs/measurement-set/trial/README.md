@@ -285,6 +285,25 @@ through their adapters: one source with a record per window, the same
 direction, transitions, rest frequencies and velocities (XRADIO's without a
 frame), and the MSv2 binds to its conversion.
 
+A third pair takes a window whose channels descend (#1014):
+
+- **MSv2 `mssel_test_small.ms`.** CASA's ALMA test MeasurementSet
+  (`crates/casa-ms/tests/fixtures/mssel_test_small.ms.tgz`): spectral
+  window 1 holds 64 channels from 86.29 GHz down at −31.25 MHz, window 2
+  one channel.
+- **MSv4 `mssel_test_small.ps.zarr`.** XRADIO's conversion with its default
+  partitioning (six datasets), without pointing (663 KB compressed), which
+  writes window 1 ascending.
+
+Regenerate it with `tools/ms-trial/make_descending_fixture.sh`. The law
+`a_descending_window_binds_to_xradios_ascending_conversion` binds the two
+catalogues both ways: window 1's three partitions bind reversed
+(`ChannelOrder::Reversed` in `Binding::channel_orders`), window 2's in the
+same order. Every partition delivers the same samples from either store,
+over the whole band and over channel windows mapped through the order
+(`ChannelOrder::channels`), once a reversed batch's channels are put back in
+the MSv2's order.
+
 ### Fixture findings
 
 - casa-rs's synthetic writer leaves `UVW`'s MEASINFO without `Ref`; XRADIO
@@ -319,8 +338,15 @@ frame), and the MSv2 binds to its conversion.
   `ANTENNA_RECEPTOR_ANGLE` but with `polarization_type`. The reader then
   gives its antennas no receptors, as the MSv2 adapter reads that `FEED`.
 - XRADIO writes a window whose channels descend (negative width) in
-  ascending order, so its partition does not bind to the MSv2's, whose
-  channels are in stored order (#1014). The lines fixture's windows ascend.
+  ascending order, with positive widths; the MSv2 adapter and casa-rs's own
+  converter keep the stored order, CASA's channel numbering. The owner
+  allowed both orders (#1014): `PartitionEntry::channel_order` matches a
+  partition to the same channels reversed (frequencies reversed, widths of
+  the same magnitudes, bit for bit), `Catalogue::bind_to` binds it and
+  `Binding::channel_orders` states the order, so a consumer carrying
+  per-channel values between the stores maps channel `c` through
+  `ChannelOrder::channel`. `check_convert.py compare` compares such a dataset
+  with its channels reversed and lists it.
 - XRADIO relabels MSv2's `UVW` ITRF as the phase centre's frame (`fk5`),
   following CASA `fixvis`'s note that the label is usually wrong; names
   antennas `NAME_STATION` and fields `NAME_FIELDID`; and declares the

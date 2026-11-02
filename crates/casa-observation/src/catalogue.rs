@@ -20,8 +20,11 @@ use casa_types::quanta::Quantity;
 use crate::ObservationError;
 use crate::ephemeris::FieldEphemeris;
 
+mod channel_order;
 mod held;
 mod metadata;
+
+pub use channel_order::ChannelOrder;
 
 pub use metadata::{
     IntentError, ProcessorEntry, ProcessorId, SourceEntry, SourceId, SourceRecord, SourceWindow,
@@ -398,6 +401,8 @@ impl PartitionEntry {
     /// Names, which converters rewrite, take no part; the keys that name
     /// other entities (observation, fields, scans) and the feed pair are
     /// compared by [`Catalogue::bind_to`] through the binding.
+    /// [`Self::channel_order`] also accepts the same channels in the
+    /// reverse order, as another store may keep them.
     #[must_use]
     pub fn same_content(&self, other: &Self) -> bool {
         let bitwise = |a: &[f64], b: &[f64]| {
@@ -470,6 +475,12 @@ pub struct Binding {
     pub observations: Vec<ObservationId>,
     /// Each partition's identity in the other catalogue.
     pub partitions: Vec<PartitionId>,
+    /// Each partition's channels along its bound partition's: the same
+    /// order, or reversed where one store keeps a window's channels
+    /// descending and the other ascending ([`ChannelOrder`]). A consumer
+    /// carrying per-channel values between the stores maps a channel
+    /// through it.
+    pub channel_orders: Vec<ChannelOrder>,
 }
 
 impl Catalogue {
@@ -539,7 +550,9 @@ impl Catalogue {
     /// (frame and angles within `tolerance`), scans by casacore number (by
     /// name when a scan has none), observing sessions by
     /// [`ObservationEntry::same_session`], and partitions by
-    /// [`PartitionEntry::same_content`] together with compatible window
+    /// [`PartitionEntry::channel_order`] (the same channels, in the same
+    /// order or reversed, which [`Binding::channel_orders`] records)
+    /// together with compatible window
     /// metadata ([`WindowEntry::compatible`]: a member one store leaves
     /// unstated does not distinguish), the bound session, the
     /// bound sets of fields and of scans (scans when both stores name
@@ -596,7 +609,7 @@ impl Catalogue {
             _ => true,
         };
         let partitions = bind_each("partition", &self.partitions, &other.partitions, |a, b| {
-            a.same_content(b)
+            a.channel_order(b).is_some()
                 && windows_agree(a.window, b.window)
                 && observations.get(a.observation.0 as usize) == Some(&b.observation.0)
                 && (a.feeds.is_none() || b.feeds.is_none() || a.feeds == b.feeds)
@@ -605,12 +618,22 @@ impl Catalogue {
                     || b.scans.is_empty()
                     || same_set(&a.scans, &b.scans, |scan| scan.0, &scans))
         })?;
+        let channel_orders = self
+            .partitions
+            .iter()
+            .zip(&partitions)
+            .map(|(ours, theirs)| {
+                ours.channel_order(&other.partitions[*theirs as usize])
+                    .unwrap_or(ChannelOrder::Same)
+            })
+            .collect();
         Ok(Binding {
             antennas: antennas.into_iter().map(AntennaId).collect(),
             fields: fields.into_iter().map(FieldId).collect(),
             scans: scans.into_iter().map(ScanId).collect(),
             observations: observations.into_iter().map(ObservationId).collect(),
             partitions: partitions.into_iter().map(PartitionId).collect(),
+            channel_orders,
         })
     }
 }
@@ -676,7 +699,7 @@ fn bind_each<T>(
 mod tests {
     use super::*;
 
-    fn session(project: &str, execution_block: Option<&str>) -> ObservationEntry {
+    pub(super) fn session(project: &str, execution_block: Option<&str>) -> ObservationEntry {
         ObservationEntry {
             telescope: "VLA".to_string(),
             observers: vec!["someone".to_string()],
@@ -686,7 +709,7 @@ mod tests {
         }
     }
 
-    fn partition(observation: u32, fields: &[u32], scans: &[u32]) -> PartitionEntry {
+    pub(super) fn partition(observation: u32, fields: &[u32], scans: &[u32]) -> PartitionEntry {
         PartitionEntry {
             spectral_window: "spw".to_string(),
             frequencies_hz: vec![1.0e9, 1.1e9],
@@ -733,7 +756,10 @@ mod tests {
     }
 
     /// Two fields, two scans, `observations` and `partitions`.
-    fn observed(observations: Vec<ObservationEntry>, partitions: Vec<PartitionEntry>) -> Catalogue {
+    pub(super) fn observed(
+        observations: Vec<ObservationEntry>,
+        partitions: Vec<PartitionEntry>,
+    ) -> Catalogue {
         Catalogue {
             fields: vec![field(0.0), field(0.1)],
             scans: vec![scan(1), scan(2)],
