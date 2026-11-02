@@ -816,41 +816,23 @@ pub fn auto_multithresh(
             - (controls.sidelobe_factor * sidelobe_level * absolute_peak)
                 .max(controls.negative_factor * robust_rms)
     });
-    let mut detected = residual
-        .iter()
-        .zip(valid_support)
-        .map(|(value, valid)| {
-            *valid
-                && (*value > positive_threshold
-                    || negative_threshold.is_some_and(|threshold| *value < threshold))
-        })
-        .collect::<Vec<_>>();
-    if evolution_stopped {
-        detected.fill(false);
-    }
-    if !evolution_stopped {
-        prune_regions(
-            &mut detected,
+    let detected = if evolution_stopped {
+        vec![false; residual.len()]
+    } else {
+        detect_regions(
+            &residual,
+            valid_support,
             shape,
-            (controls.minimum_beam_fraction * beam.area_pixels).ceil() as usize,
-        );
-        detected = smooth_and_cut(
-            &detected,
-            shape,
-            controls.smooth_factor,
+            Thresholds {
+                positive: positive_threshold,
+                low_noise: low_noise_threshold,
+                negative: negative_threshold,
+            },
+            completed_major_cycles > 0,
+            controls,
             beam,
-            controls.cut_threshold,
-        );
-        if completed_major_cycles > 0 {
-            grow_cross(
-                &mut detected,
-                shape,
-                &residual,
-                low_noise_threshold,
-                controls.grow_iterations,
-            );
-        }
-    }
+        )
+    };
     let mut support =
         previous.map_or_else(|| vec![false; detected.len()], |mask| mask.support.to_vec());
     let before = support.clone();
@@ -885,6 +867,74 @@ pub fn auto_multithresh(
             channel_stopped,
         },
     ))
+}
+
+/// One generation's detection thresholds on the residual.
+#[derive(Clone, Copy)]
+struct Thresholds {
+    positive: f64,
+    low_noise: f64,
+    negative: Option<f64>,
+}
+
+/// The regions one generation detects on `residual`'s `valid` pixels
+/// (`SDMaskHandler::autoMaskByMultiThreshold`). The emission mask is the
+/// pixels above the positive threshold, pruned of regions smaller than the
+/// minimum beam fraction, smoothed and cut, and after the first major cycle
+/// grown into the low-noise threshold. The absorption mask is CASA's own:
+/// the pixels below the negative threshold, smoothed and cut at their own
+/// peak, but neither pruned nor grown, and added to the emission mask.
+fn detect_regions(
+    residual: &[f64],
+    valid: &[bool],
+    shape: [usize; 2],
+    thresholds: Thresholds,
+    grow: bool,
+    controls: AutoMultithreshControls,
+    beam: AutoMaskBeam,
+) -> Vec<bool> {
+    let threshold_mask = |selected: &dyn Fn(f64) -> bool| {
+        residual
+            .iter()
+            .zip(valid)
+            .map(|(value, valid)| *valid && selected(*value))
+            .collect::<Vec<_>>()
+    };
+    let mut detected = threshold_mask(&|value| value > thresholds.positive);
+    prune_regions(
+        &mut detected,
+        shape,
+        (controls.minimum_beam_fraction * beam.area_pixels).ceil() as usize,
+    );
+    detected = smooth_and_cut(
+        &detected,
+        shape,
+        controls.smooth_factor,
+        beam,
+        controls.cut_threshold,
+    );
+    if grow {
+        grow_cross(
+            &mut detected,
+            shape,
+            residual,
+            thresholds.low_noise,
+            controls.grow_iterations,
+        );
+    }
+    if let Some(threshold) = thresholds.negative {
+        let absorption = smooth_and_cut(
+            &threshold_mask(&|value| value < threshold),
+            shape,
+            controls.smooth_factor,
+            beam,
+            controls.cut_threshold,
+        );
+        for (pixel, absorbing) in detected.iter_mut().zip(absorption) {
+            *pixel |= absorbing;
+        }
+    }
+    detected
 }
 
 /// Why a reconstruction mask could not be built.
@@ -1178,5 +1228,57 @@ mod tests {
         assert_eq!(outside.support(), &[false; 6]);
         let empty = ReconstructionMask::from_boxes(grid, [3, 2], []).unwrap();
         assert_eq!(empty.support(), &[false; 6]);
+    }
+
+    /// CASA prunes and grows only the emission mask: an absorption feature
+    /// smaller than the minimum beam fraction is masked where an emission
+    /// feature of the same size is pruned, and the absorption mask does not
+    /// grow into the low-noise residual around it
+    /// (`SDMaskHandler::autoMaskByMultiThreshold`).
+    #[test]
+    fn the_absorption_mask_is_neither_pruned_nor_grown() {
+        let shape = [16, 16];
+        let mut residual = vec![0.0; 256];
+        // One-pixel emission and absorption, each in a collar above the
+        // low-noise threshold.
+        let [emission, absorption] = [4 * 16 + 4, 11 * 16 + 11];
+        residual[emission] = 1.0;
+        residual[absorption] = -1.0;
+        for index in [emission, absorption] {
+            for neighbour in [index - 16, index + 16, index - 1, index + 1] {
+                residual[neighbour] = 0.3;
+            }
+        }
+        let controls = AutoMultithreshControls {
+            sidelobe_factor: 0.0,
+            noise_factor: 0.0,
+            low_noise_factor: 0.0,
+            negative_factor: 1.0,
+            minimum_beam_fraction: 0.3,
+            smooth_factor: 0.0,
+            cut_threshold: 0.0,
+            grow_iterations: 4,
+            minimum_percent_change: -1.0,
+        };
+        let detected = detect_regions(
+            &residual,
+            &[true; 256],
+            shape,
+            Thresholds {
+                positive: 0.5,
+                low_noise: 0.2,
+                negative: Some(-0.5),
+            },
+            true,
+            controls,
+            AutoMaskBeam::new(3.0, 3.0, 0.0, 0.1),
+        );
+        let masked = detected
+            .iter()
+            .enumerate()
+            .filter(|(_, masked)| **masked)
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        assert_eq!(masked, [absorption]);
     }
 }

@@ -30,6 +30,8 @@ casa-logging = { path = "../casa-logging" }
 tracing.workspace = true
 casa-coordinates = { path = "../casa-coordinates" }
 casa-images = { path = "../casa-images" }
+# T1's cube law measures each PSF plane's sidelobe as the minor cycle does.
+casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }
 casa-numerics = { path = "../casa-numerics" }
 casa-simulation-synthesis = { path = "../casa-simulation-synthesis" }
 casa-tables = { path = "../casa-tables" }

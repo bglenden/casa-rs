@@ -741,10 +741,28 @@ impl CubeSpectralSetup {
             }
         };
 
-        let start_frequency_hz = snap_default_frequency_like_start_to_source_grid(
+        let source_widths_in_output_frame = match frame.as_ref() {
+            Some(frame) => convert_channel_widths_to_frame_with_frames(
+                source_freq_ref,
+                output_freq_ref,
+                all_source_frequencies_hz,
+                all_source_channel_widths_hz,
+                frame,
+                frame,
+            )?,
+            None => all_source_channel_widths_hz
+                .iter()
+                .map(|width_hz| width_hz.abs())
+                .collect(),
+        };
+        let start_frequency_hz = casa_default_width_start_hz(
             axis_config,
-            &source_frequencies_in_output_frame,
+            (
+                &source_frequencies_in_output_frame,
+                &source_widths_in_output_frame,
+            ),
             start_frequency_hz,
+            nchan,
         );
 
         let output_channel_frequencies_hz =
@@ -1730,20 +1748,56 @@ fn default_generic_axis_start_hz(
     Ok(first_center_hz)
 }
 
-fn snap_default_frequency_like_start_to_source_grid(
+/// The first channel of a default-width cube whose `start` is a frequency
+/// or a velocity, as CASA's `MSTransformRegridder::regridChanBounds` places
+/// it: channels as wide as the lowest native channel `w`, on a band that
+/// `regridChanBounds` keeps within the native band `[low, high]` (in the
+/// output frame, every native channel of the window). A velocity start is
+/// the band's highest channel, and the band's centre, `w/2 − n·w/2` from
+/// it, moves up to `low` when it lies below it, or down to `high` when it
+/// lies more than 1 Hz above it. A frequency start is the band's lowest
+/// channel, whose lower edge is held so. A start that leaves its band
+/// inside the native band is kept as given.
+fn casa_default_width_start_hz(
     axis_config: &CubeAxisConfig,
-    source_frequencies_in_output_frame: &[f64],
+    native: (&[f64], &[f64]),
     start_frequency_hz: f64,
+    nchan: usize,
 ) -> f64 {
-    if axis_config.width.is_some() {
+    let (frequencies_hz, widths_hz) = native;
+    if axis_config.width.is_some() || frequencies_hz.is_empty() {
         return start_frequency_hz;
     }
-    if matches!(axis_config.start, None | Some(CubeAxisValue::Channel(_))) {
-        return start_frequency_hz;
+    let velocity = match axis_config.start {
+        Some(CubeAxisValue::VelocityMs { .. } | CubeAxisValue::Doppler { .. }) => true,
+        Some(CubeAxisValue::FrequencyHz { .. }) => false,
+        Some(CubeAxisValue::Channel(_)) | None => return start_frequency_hz,
+    };
+    let last = frequencies_hz.len() - 1;
+    let (lowest, highest) = if frequencies_hz[0] <= frequencies_hz[last] {
+        (0, last)
+    } else {
+        (last, 0)
+    };
+    let width_hz = widths_hz[lowest].abs();
+    let low_hz = frequencies_hz[lowest] - width_hz / 2.0;
+    let high_hz = frequencies_hz[highest] + widths_hz[highest].abs() / 2.0;
+    let within = |frequency_hz: f64| {
+        if frequency_hz - high_hz > 1.0 {
+            high_hz
+        } else if frequency_hz < low_hz {
+            low_hz
+        } else {
+            frequency_hz
+        }
+    };
+    let channels = nchan as f64;
+    if velocity {
+        within(start_frequency_hz + width_hz / 2.0 - channels * width_hz / 2.0)
+            + (channels - 1.0) * width_hz / 2.0
+    } else {
+        within(start_frequency_hz - width_hz / 2.0) + width_hz / 2.0
     }
-    nearest_channel_index(source_frequencies_in_output_frame, start_frequency_hz)
-        .map(|index| source_frequencies_in_output_frame[index])
-        .unwrap_or(start_frequency_hz)
 }
 
 /// Convert one scalar frequency between spectral frames using the MeasurementSet
@@ -3181,8 +3235,14 @@ mod tests {
         assert!((start_hz - 1.45e9).abs() < 1.0);
     }
 
+    /// CASA's `test_cube_11` and `test_cube_12`: ten default-width channels
+    /// down from a radio velocity. In TOPO the band's centre falls 7 Hz
+    /// below the native band, so `regridChanBounds` moves it up to the
+    /// band's edge and the channels land on the native ones (1200 MHz, as
+    /// CASA's image); in BARY the centre lies inside the band and the start
+    /// stays where the velocity puts it (CASA's 1200.058784 MHz).
     #[test]
-    fn default_width_frequency_like_start_snaps_to_nearest_source_channel_center() {
+    fn default_width_velocity_start_keeps_its_band_within_the_native_band() {
         let axis_config = CubeAxisConfig {
             specmode: CubeSpecMode::Cube,
             outframe: FrequencyRef::TOPO,
@@ -3195,12 +3255,47 @@ mod tests {
             }),
             width: None,
         };
-        let snapped_hz = snap_default_frequency_like_start_to_source_grid(
-            &axis_config,
-            &[1.0e9, 1.05e9, 1.10e9, 1.15e9, 1.20e9],
-            1_199_999_992.995_154,
-        );
-        assert_eq!(snapped_hz, 1.20e9);
+        let native_hz = (0..20)
+            .map(|index| 1.0e9 + index as f64 * 50.0e6)
+            .collect::<Vec<_>>();
+        let start = |native_hz: &[f64], width_hz: f64, start_hz: f64| {
+            casa_default_width_start_hz(
+                &axis_config,
+                (native_hz, &vec![width_hz; native_hz.len()]),
+                start_hz,
+                10,
+            )
+        };
+        assert_eq!(start(&native_hz, 50.0e6, 1_199_999_992.995_154), 1.20e9);
+        let factor = 1.000_048_8;
+        let bary_hz = native_hz.iter().map(|hz| hz * factor).collect::<Vec<_>>();
+        let requested_hz = 1_200_058_783.666_932_6;
+        assert_eq!(start(&bary_hz, 50.0e6 * factor, requested_hz), requested_hz);
+    }
+
+    /// A default-width frequency start is the band's lowest channel; its
+    /// lower edge is held within the native band.
+    #[test]
+    fn default_width_frequency_start_holds_its_lower_edge_in_the_native_band() {
+        let axis_config = CubeAxisConfig {
+            specmode: CubeSpecMode::Cube,
+            outframe: FrequencyRef::LSRK,
+            veltype: DopplerRef::RADIO,
+            interpolation: CubeInterpolation::Linear,
+            rest_frequency_hz: None,
+            start: Some(CubeAxisValue::FrequencyHz {
+                hz: 1.1e9,
+                frame: None,
+            }),
+            width: None,
+        };
+        let native_hz = [1.0e9, 1.05e9, 1.10e9, 1.15e9, 1.20e9];
+        let start = |start_hz: f64| {
+            casa_default_width_start_hz(&axis_config, (&native_hz, &[50.0e6; 5]), start_hz, 3)
+        };
+        assert_eq!(start(1.123e9), 1.123e9);
+        assert_eq!(start(0.9e9), 1.0e9);
+        assert_eq!(start(1.3e9), 1.25e9);
     }
 
     #[test]
@@ -3221,12 +3316,13 @@ mod tests {
             }),
         };
         let raw_hz = 1_199_999_992.995_154;
-        let snapped_hz = snap_default_frequency_like_start_to_source_grid(
+        let start_hz = casa_default_width_start_hz(
             &axis_config,
-            &[1.0e9, 1.05e9, 1.10e9, 1.15e9, 1.20e9],
+            (&[1.0e9, 1.05e9, 1.10e9, 1.15e9, 1.20e9], &[5.0e7; 5]),
             raw_hz,
+            10,
         );
-        assert_eq!(snapped_hz, raw_hz);
+        assert_eq!(start_hz, raw_hz);
     }
 
     #[test]

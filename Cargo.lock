@@ -725,6 +725,7 @@ dependencies = [
  "casa-coordinates",
  "casa-images",
  "casa-imaging-application",
+ "casa-imaging-deconvolution",
  "casa-logging",
  "casa-ms",
  "casa-numerics",
