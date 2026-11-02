@@ -92,7 +92,7 @@ impl PreparedImageDomain {
 pub(super) fn prepare_domains(
     request: &ImagingRequest,
     centre: &Centre,
-    spectral: ImageSpectralCoordinate,
+    spectral: &ImageSpectralCoordinate,
     observation: &ObsInfo,
 ) -> Result<Vec<PreparedImageDomain>, PrepareError> {
     let polarizations = &request.stokes;

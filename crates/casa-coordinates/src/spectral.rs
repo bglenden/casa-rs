@@ -61,6 +61,9 @@ pub struct SpectralCoordinate {
     conversion: Option<SpectralConversion>,
     /// The rest frequency in Hz (used for velocity conversions).
     rest_frequency: f64,
+    /// Every rest frequency the coordinate lists, the active one among them
+    /// (C++ `restFrequencies()`).
+    rest_frequencies: Vec<f64>,
     /// Pixel-to-world mapping state.
     mapping: SpectralMapping,
     /// The world axis name.
@@ -88,6 +91,7 @@ impl SpectralCoordinate {
             frequency_ref,
             conversion: None,
             rest_frequency,
+            rest_frequencies: vec![rest_frequency],
             mapping: SpectralMapping::Linear {
                 crval,
                 cdelt,
@@ -122,6 +126,7 @@ impl SpectralCoordinate {
             frequency_ref,
             conversion: None,
             rest_frequency,
+            rest_frequencies: vec![rest_frequency],
             mapping: SpectralMapping::Tabular {
                 pixel_values,
                 world_values,
@@ -191,6 +196,23 @@ impl SpectralCoordinate {
     /// Returns the rest frequency in Hz.
     pub fn rest_frequency(&self) -> f64 {
         self.rest_frequency
+    }
+
+    /// Sets the rest frequencies the coordinate lists, the first active,
+    /// as C++ `setRestFrequencies(frequencies, 0)` does. An empty list
+    /// leaves the coordinate as it is. Returns `self` for chaining.
+    pub fn with_rest_frequencies(mut self, frequencies: Vec<f64>) -> Self {
+        if let Some(&active) = frequencies.first() {
+            self.rest_frequency = active;
+            self.rest_frequencies = frequencies;
+        }
+        self
+    }
+
+    /// Returns every rest frequency in Hz the coordinate lists, the active
+    /// [`Self::rest_frequency`] among them (C++ `restFrequencies()`).
+    pub fn rest_frequencies(&self) -> &[f64] {
+        &self.rest_frequencies
     }
 
     /// Reconstructs a spectral coordinate from a serialized record.
@@ -263,6 +285,11 @@ impl SpectralCoordinate {
         }
         if let Some(conversion) = parse_conversion(rec) {
             coord = coord.with_conversion(conversion.frequency_ref, conversion.frame);
+        }
+        // C++ `restoreRestFrequencies`: the optional list, negative values
+        // clamped to zero; `restfreq` stays the active one.
+        if let Some(list) = get_optional_vec_f64(rec, "restfreqs").filter(|list| !list.is_empty()) {
+            coord.rest_frequencies = list.into_iter().map(|value| value.max(0.0)).collect();
         }
         Ok(coord)
     }
@@ -394,7 +421,7 @@ impl SpectralCoordinate {
         );
         rec.upsert(
             "restfreqs",
-            Value::Array(ArrayValue::from_f64_vec(vec![self.rest_frequency])),
+            Value::Array(ArrayValue::from_f64_vec(self.rest_frequencies.clone())),
         );
         rec.upsert("velType", Value::Scalar(ScalarValue::Int32(0)));
         rec.upsert("nativeType", Value::Scalar(ScalarValue::Int32(0)));
@@ -657,6 +684,29 @@ mod tests {
         let coord =
             SpectralCoordinate::new(FrequencyRef::LSRK, 1e9, 1e6, 0.0, 0.0).with_name("Velocity");
         assert_eq!(coord.axis_names(), vec!["Velocity"]);
+    }
+
+    /// C++ `setRestFrequencies(list, 0)` makes the first active, and the
+    /// record keeps the list (`restfreqs`) beside it (`restfreq`).
+    #[test]
+    fn rest_frequency_lists_keep_the_first_active_through_the_record() {
+        let coord = SpectralCoordinate::new(FrequencyRef::BARY, 1e9, 1e6, 0.0, 1.0e9)
+            .with_rest_frequencies(vec![1.42e9, 1.6e9, 1.7e9]);
+        assert_eq!(coord.rest_frequency(), 1.42e9);
+        assert_eq!(coord.rest_frequencies(), [1.42e9, 1.6e9, 1.7e9]);
+        let record = coord.to_record();
+        let restored = SpectralCoordinate::from_record(&record).expect("restored");
+        assert_eq!(restored.rest_frequency(), 1.42e9);
+        assert_eq!(restored.rest_frequencies(), [1.42e9, 1.6e9, 1.7e9]);
+        let single = SpectralCoordinate::new(FrequencyRef::LSRK, 1e9, 1e6, 0.0, 1.42e9);
+        assert_eq!(single.rest_frequencies(), [1.42e9]);
+        assert_eq!(
+            single
+                .clone()
+                .with_rest_frequencies(Vec::new())
+                .rest_frequencies(),
+            [1.42e9]
+        );
     }
 
     #[test]

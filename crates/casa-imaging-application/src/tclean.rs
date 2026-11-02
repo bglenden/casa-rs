@@ -471,32 +471,29 @@ impl<'a> Tclean<'a> {
         let width = self.text("width")?;
         let outframe = self.text("outframe")?;
         let veltype = self.text("veltype")?;
-        let restfreq = self.texts("restfreq")?;
+        let restfreq = self.rest_frequencies()?;
         let interpolation = self.text("interpolation")?;
+        // CASA's image header takes its spectral frame and rest frequencies
+        // from these in every mode (`buildCoordinateSystemCore`).
+        let frame = output_frame(outframe)?;
+        self.set("restfreq", restfreq);
         if !modes.cube {
-            // CASA's mfs image takes its spectral frame and rest frequency
-            // from these; casa-rs's is LSRK, with none.
-            if output_frame(outframe)? != "LSRK" {
+            // An mfs image's REST axis would grid the data's frequencies
+            // unconverted (CASA's `freqFrameValid` is false), which casa-rs's
+            // continuum does not.
+            if frame == "REST" {
                 return Err(TcleanRefusal::not_yet(
                     "outframe",
-                    format!("{outframe:?} with specmode='mfs'"),
+                    "'REST' with specmode='mfs'",
                     980,
                 ));
             }
-            if !restfreq.is_empty() {
-                return Err(TcleanRefusal::not_yet(
-                    "restfreq",
-                    "a rest frequency with specmode='mfs'",
-                    980,
-                ));
-            }
+            self.set("outframe", frame);
             // CASA reads none of the cube's other axis controls in mfs.
             for (field, value) in [
                 ("start", "none"),
                 ("width", "none"),
-                ("outframe", "LSRK"),
                 ("veltype", "RADIO"),
-                ("restfreq", "none"),
                 ("interpolation", "linear"),
             ] {
                 self.set(field, value);
@@ -506,25 +503,42 @@ impl<'a> Tclean<'a> {
         self.refuse_derived_extent(nchan, counted, start, width)?;
         self.set("start", start);
         self.set("width", width);
-        self.set("outframe", output_frame(outframe)?);
+        self.set("outframe", frame);
         self.set("veltype", velocity_convention(veltype)?);
-        let restfreq = match restfreq.as_slice() {
-            [] => "none",
-            [one] => one,
-            _ => {
-                return Err(TcleanRefusal::not_yet(
-                    "restfreq",
-                    "a list of rest frequencies",
-                    980,
-                ));
-            }
-        };
-        self.set("restfreq", restfreq);
         if interpolation == "cubic" {
             return Err(TcleanRefusal::not_yet("interpolation", "'cubic'", 823));
         }
         self.set("interpolation", interpolation);
         Ok(())
+    }
+
+    /// tclean's rest frequencies, `none` when it gives none. CASA's first is
+    /// the image's rest frequency and the others follow it in the header
+    /// (`buildCoordinateSystemCore`); CASA reads a blank entry as a zero
+    /// frequency, which casa-rs does not represent.
+    fn rest_frequencies(&mut self) -> Result<Value, TcleanRefusal> {
+        let value = self.value("restfreq")?;
+        let items = match value {
+            Value::Array(items) => items.iter().collect(),
+            value => vec![value],
+        };
+        let texts = items
+            .into_iter()
+            .map(|item| {
+                item.as_str()
+                    .map(str::trim)
+                    .ok_or_else(|| Self::mismatch("restfreq", "text", value))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        match texts.as_slice() {
+            [] | [""] => Ok(json!("none")),
+            texts if texts.contains(&"") => Err(TcleanRefusal::not_yet(
+                "restfreq",
+                "a list of rest frequencies with a blank entry",
+                980,
+            )),
+            texts => Ok(json!(texts)),
+        }
     }
 
     fn gridding(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
@@ -711,9 +725,15 @@ impl<'a> Tclean<'a> {
     }
 
     fn deconvolution(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
-        self.copy(&["smallscalebias", "pbcor", "robust", "uvtaper"])?;
+        self.copy(&[
+            "smallscalebias",
+            "pbcor",
+            "robust",
+            "uvtaper",
+            "restoration",
+        ])?;
         // `asp` reads these, and casa-rs refuses `asp`.
-        self.ignore(&["fusedthreshold", "largestscale", "restoration"])?;
+        self.ignore(&["fusedthreshold", "largestscale"])?;
         let scales = self.number_list("scales")?;
         let multiscale = matches!(modes.deconvolver.as_str(), "multiscale" | "mtmfs");
         self.set(
@@ -740,19 +760,39 @@ impl<'a> Tclean<'a> {
                 1
             },
         );
-        let beam = match self.texts("restoringbeam")?.as_slice() {
-            [] => "none",
-            ["common"] => "common",
-            _ => {
-                return Err(TcleanRefusal::not_yet(
-                    "restoringbeam",
-                    "a beam given by its axes and angle",
-                    980,
-                ));
-            }
-        };
+        let beam = self.restoring_beam()?;
         self.set("restoringbeam", beam);
         Ok(())
+    }
+
+    /// CASA's `restoringbeam` (`SynthesisParamsDeconv::fromRecord`), one
+    /// text or a list: `''` or `[]` restores each plane with its fitted
+    /// beam and `'common'` with one beam enclosing them; one, two or three
+    /// entries are a beam's `[major, minor, angle]`, a circle of the one
+    /// axis or an angle of zero when not given. CASA reads any other number
+    /// of entries as no beam, and restores with the fitted beams.
+    fn restoring_beam(&mut self) -> Result<Value, TcleanRefusal> {
+        let value = self.value("restoringbeam")?;
+        let items = match value {
+            Value::Array(items) => items.iter().collect(),
+            value => vec![value],
+        };
+        let texts = items
+            .into_iter()
+            .map(|item| {
+                item.as_str()
+                    .map(str::trim)
+                    .ok_or_else(|| Self::mismatch("restoringbeam", "text", value))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(match texts.as_slice() {
+            [] | [""] => json!("none"),
+            ["common"] => json!("common"),
+            [axis] => json!([axis, axis, "0deg"]),
+            [major, minor] => json!([major, minor, "0deg"]),
+            [major, minor, angle] => json!([major, minor, angle]),
+            _ => json!("none"),
+        })
     }
 
     fn iteration(&mut self) -> Result<(), TcleanRefusal> {
@@ -852,7 +892,7 @@ impl<'a> Tclean<'a> {
     }
 }
 
-/// A cube's spectral frame, in casacore's spelling.
+/// An image's spectral frame, in casacore's spelling.
 fn output_frame(text: &str) -> Result<String, TcleanRefusal> {
     let frame = text.to_ascii_uppercase();
     match frame.as_str() {

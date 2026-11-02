@@ -15,6 +15,7 @@ use crate::model_state::{
 };
 use crate::observation::ObservationSnapshot;
 use crate::product_list::{ProductList, compile_product_list};
+pub use crate::restoring_beam::RestoringBeamPolicy;
 use crate::transaction::{
     ObservationTransactionCompileError, ObservationTransactionContract,
     ObservationTransactionRequirements, compile_observation_transaction,
@@ -1051,17 +1052,6 @@ pub enum ProductNormalization {
     FlatNoise,
     /// Flat-sky normalization using sensitivity state.
     FlatSky,
-}
-
-/// Restoring-beam requirement for published products.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RestoringBeamPolicy {
-    /// Do not create a restored product.
-    None,
-    /// Fit and use an independent beam for each plane.
-    PerPlane,
-    /// Use one common enclosing beam across all spectral planes.
-    Common,
 }
 
 /// Comparison used to decide whether a product pixel has valid support.

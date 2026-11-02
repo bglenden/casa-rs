@@ -37,6 +37,8 @@ mod non_square;
 mod pb_default;
 #[path = "t1/restart.rs"]
 mod restart;
+#[path = "t1/restoration.rs"]
+mod restoration;
 #[path = "t1/routes.rs"]
 mod routes;
 #[path = "t1/selection.rs"]

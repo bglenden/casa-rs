@@ -426,12 +426,16 @@ pub(super) fn direction_spec(
 }
 
 /// The spectral axis an image header records.
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct ImageSpectralCoordinate {
     pub(super) frequency_reference: FrequencyRef,
     pub(super) reference_frequency_hz: f64,
     pub(super) increment_hz: f64,
     pub(super) rest_frequency_hz: f64,
+    /// The rest frequencies CASA lists after the active one: tclean's
+    /// `restfreq` entries after its first (`buildCoordinateSystemCore`'s
+    /// `setRestFrequencies(..., 0, true)`).
+    pub(super) additional_rest_frequencies_hz: Vec<f64>,
 }
 
 /// The coordinate system of one image domain's products.
@@ -439,7 +443,7 @@ pub(super) fn image_coordinates(
     direction: DirectionCoordinateSpec,
     image_size: [usize; 2],
     polarizations: &[PolarizationCoordinate],
-    spectral: ImageSpectralCoordinate,
+    spectral: &ImageSpectralCoordinate,
     observation: &ObsInfo,
 ) -> CoordinateSystem {
     let reference = direction.reference_direction();
@@ -454,13 +458,20 @@ pub(super) fn image_coordinates(
     coordinates.add_coordinate(StokesCoordinate::new(
         polarizations.iter().copied().map(stokes_type).collect(),
     ));
-    coordinates.add_coordinate(SpectralCoordinate::new(
-        spectral.frequency_reference,
-        spectral.reference_frequency_hz,
-        spectral.increment_hz,
-        0.0,
-        spectral.rest_frequency_hz,
-    ));
+    coordinates.add_coordinate(
+        SpectralCoordinate::new(
+            spectral.frequency_reference,
+            spectral.reference_frequency_hz,
+            spectral.increment_hz,
+            0.0,
+            spectral.rest_frequency_hz,
+        )
+        .with_rest_frequencies(
+            std::iter::once(spectral.rest_frequency_hz)
+                .chain(spectral.additional_rest_frequencies_hz.iter().copied())
+                .collect(),
+        ),
+    );
     *coordinates.obs_info_mut() = observation.clone();
     coordinates
 }
@@ -607,11 +618,12 @@ mod tests {
             direction_spec([64, 64], [8.0, 8.0], DirectionFrame::J2000, 0.0, 0.0),
             [64, 64],
             &[PolarizationCoordinate::StokesQ],
-            ImageSpectralCoordinate {
+            &ImageSpectralCoordinate {
                 frequency_reference: FrequencyRef::LSRK,
                 reference_frequency_hz: 1.0e9,
                 increment_hz: 1.0,
                 rest_frequency_hz: 1.0e9,
+                additional_rest_frequencies_hz: Vec::new(),
             },
             &ObsInfo::default(),
         );

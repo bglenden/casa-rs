@@ -30,8 +30,8 @@ use casa_imaging_model::{
 };
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
-    PlannedContinuumGeneration, ProductsError, fft_convolve, gaussian_beam_image,
-    produce_continuum_members,
+    PlannedContinuumGeneration, ProductsError, RestoringBeam, fft_convolve, gaussian_beam_image,
+    produce_continuum_members, rescale_residual_to_beam,
 };
 
 const SHAPE: [usize; 2] = [8, 8];
@@ -82,6 +82,22 @@ fn taylor_problem_with_fraction(
     response: InstrumentResponse,
     taylor_fraction: f32,
 ) -> casa_imaging_model::CompiledProblem {
+    taylor_problem_with_beam(
+        seed,
+        products,
+        response,
+        taylor_fraction,
+        RestoringBeamPolicy::Common,
+    )
+}
+
+fn taylor_problem_with_beam(
+    seed: u8,
+    products: &[ProductKind],
+    response: InstrumentResponse,
+    taylor_fraction: f32,
+    restoring_beam: RestoringBeamPolicy,
+) -> casa_imaging_model::CompiledProblem {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -129,7 +145,11 @@ fn taylor_problem_with_fraction(
             ScientificContract::new(
                 SpectralContract::new(
                     SpectralSamplingLaw::IDENTITY,
-                    SpectralCoupling::CommonRestoringBeam,
+                    if restoring_beam == RestoringBeamPolicy::Common {
+                        SpectralCoupling::CommonRestoringBeam
+                    } else {
+                        SpectralCoupling::Independent
+                    },
                 ),
                 MeasurementEquationContract::new(
                     response,
@@ -152,7 +172,7 @@ fn taylor_problem_with_fraction(
             ProductRequirements::new(
                 products.to_vec(),
                 ProductNormalization::UnitResponse,
-                RestoringBeamPolicy::Common,
+                restoring_beam,
                 validity_with_taylor_fraction(taylor_fraction),
             ),
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
@@ -799,5 +819,99 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     assert_eq!(
         demand.retained_metadata_bytes(),
         common::retained_metadata_bytes(&generated)
+    );
+}
+
+/// The algorithm scratch a generation of `problem` is charged.
+fn taylor_algorithm_scratch(
+    problem: &casa_imaging_model::CompiledProblem,
+    join: &MajorCycleCompletion,
+) -> u64 {
+    let inputs = ContinuumProductInputs::from_major_cycle(problem, join);
+    let planned = PlannedContinuumGeneration::new(&inputs, &ContinuumProductControls::default())
+        .expect("Taylor plan");
+    planned
+        .demand(
+            &inputs,
+            full_window(&planned),
+            &ImageOutput::for_problem(problem),
+        )
+        .expect("Taylor demand")
+        .algorithm_scratch_bytes()
+}
+
+/// A beam the request gives restores every Taylor term as
+/// `SIImageStore::restore` restores each: the term's model convolved with
+/// the given beam plus its principal residual rescaled from the PSF's
+/// fitted beam (`rescaleResolution`). The images and the spectral index
+/// record the given beam, the residuals and PSF the fitted one; the
+/// rescaled residual costs one plane more than a common beam's restoration.
+#[test]
+fn t44_a_given_beam_restores_every_term_with_rescaled_principal_residuals() {
+    let common = taylor_problem(213, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
+    let common_join = run_round(&common);
+    let fitted = *member(&generate(&common, &common_join), ".image.tt0")
+        .resolved_beam()
+        .expect("the fitted beam");
+    let given = RestoringBeam::new(
+        2.5 * fitted.major_fwhm_rad(),
+        2.0 * fitted.major_fwhm_rad(),
+        0.4,
+    )
+    .expect("a beam");
+    let problem = taylor_problem_with_beam(
+        213,
+        &TAYLOR_PRODUCTS,
+        InstrumentResponse::Scalar,
+        0.1,
+        RestoringBeamPolicy::Fixed(
+            casa_imaging_model::FixedRestoringBeam::new(
+                given.major_fwhm_rad(),
+                given.minor_fwhm_rad(),
+                given.position_angle_rad(),
+            )
+            .expect("a beam"),
+        ),
+    );
+    let join = run_round(&problem);
+    let generated = generate(&problem, &join);
+    for name in [".image.tt0", ".image.tt1", ".alpha", ".alpha.error"] {
+        assert_eq!(
+            member(&generated, name).resolved_beam(),
+            Some(&given),
+            "{name}"
+        );
+    }
+    for name in [".psf.tt0", ".residual.tt0", ".residual.tt1"] {
+        assert_eq!(
+            member(&generated, name).resolved_beam(),
+            Some(&fitted),
+            "{name}"
+        );
+    }
+    let principal = principal_residuals(&join);
+    let kernel = gaussian_beam_image(SHAPE, &given, [1.0e-6, 1.0e-6]);
+    for (term, principal) in principal.iter().enumerate() {
+        let scaling = rescale_residual_to_beam(principal, SHAPE, [1.0e-6; 2], fitted, given)
+            .expect("a rescaled residual");
+        assert!(scaling.applied(), "tt{term}");
+        let convolved = fft_convolve(
+            member(&generated, &format!(".model.tt{term}")).payload(),
+            kernel.as_slice().expect("contiguous kernel"),
+            SHAPE,
+        );
+        let restored = member(&generated, &format!(".image.tt{term}")).payload();
+        for index in 0..convolved.len() {
+            assert_close(
+                restored[index],
+                convolved[index] + scaling.values()[index],
+                &format!(".image.tt{term}: conv(model, given) + rescaled principal residual"),
+            );
+        }
+    }
+    let plane = (SHAPE[0] * SHAPE[1] * std::mem::size_of::<f32>()) as u64;
+    assert_eq!(
+        taylor_algorithm_scratch(&problem, &join),
+        taylor_algorithm_scratch(&common, &common_join) + plane
     );
 }

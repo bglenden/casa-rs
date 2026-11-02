@@ -53,6 +53,7 @@ use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::observation_io::Msv2Observation;
 use casa_observation::Catalogue;
 use casa_types::measures::frame::MeasFrame;
+use casa_types::measures::frequency::FrequencyRef;
 
 use crate::native::OpenedObservation;
 use crate::{
@@ -60,7 +61,7 @@ use crate::{
     AwProjection, BackendChoice, Deconvolver, Gridder, ImagingRequest, NativeAwCachePolicy,
     RunContext, SpecMode,
 };
-use direction::{Centre, ImageSpectralCoordinate};
+use direction::Centre;
 use domains::PreparedImageDomain;
 pub use error::{OutlierProblem, PrepareError};
 pub(crate) use partitions::{PartitionSelectionError, resolve_partitions};
@@ -151,8 +152,25 @@ pub(crate) fn prepare(
                 ))
             })
             .collect::<Result<WindowChannels, PrepareError>>()?;
-        let envelope = envelope::continuum_envelope((catalogue, &engine), &survey, &selected)?;
-        survey.continuum = Some((selected, envelope));
+        // CASA grids an MFS image's samples at their LSRK frequencies
+        // (`FTMachine::matchChannel`) whatever frame its header records.
+        let gridded = envelope::continuum_envelope(
+            (catalogue, &engine),
+            &survey,
+            &selected,
+            FrequencyRef::LSRK,
+        )?;
+        let recorded = if request.outframe == FrequencyRef::LSRK {
+            gridded
+        } else {
+            envelope::continuum_envelope(
+                (catalogue, &engine),
+                &survey,
+                &selected,
+                request.outframe,
+            )?
+        };
+        survey.continuum = Some((selected, gridded, recorded));
     }
     let centre = direction::resolve_centre(request, catalogue, &survey, &engine)?;
     let frame = FrameContext {
@@ -184,17 +202,8 @@ pub(crate) fn prepare(
     let surveyed = &surveyed_observation;
     let (continuum_transform, channels) = continuum_selection(request, surveyed, &centre)?;
     let observation_info = direction::observation_info(catalogue, &survey, &centre, &engine)?;
-    let mut domains = domains::prepare_domains(
-        request,
-        &centre,
-        ImageSpectralCoordinate {
-            frequency_reference: spectral.output_frequency_reference,
-            reference_frequency_hz: spectral.reference_frequency_hz,
-            increment_hz: spectral.increment_hz,
-            rest_frequency_hz: spectral.image_rest_frequency_hz,
-        },
-        &observation_info,
-    )?;
+    let mut domains =
+        domains::prepare_domains(request, &centre, &spectral.image, &observation_info)?;
     let primary_beam = primary_beam_model(request, catalogue)?;
     let primary_beam_centres = match primary_beam {
         None | Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => None,

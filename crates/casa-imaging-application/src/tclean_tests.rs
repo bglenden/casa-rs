@@ -263,11 +263,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "#823",
         ),
         (
-            json!({ "specmode": "cube", "restfreq": ["1GHz", "2GHz"] }),
-            "restfreq",
-            "#980",
-        ),
-        (
             json!({ "specmode": "cube", "outframe": "GALACTO" }),
             "outframe",
             "#980",
@@ -299,20 +294,20 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "#980",
         ),
         (
-            json!({ "restoringbeam": ["10arcsec"] }),
-            "restoringbeam",
-            "#980",
-        ),
-        (
             json!({ "mask": "circle[[10pix,10pix],5pix]" }),
             "mask",
             "#980",
         ),
         (json!({ "mask": ["one.mask", "two.mask"] }), "mask", "#980"),
         (json!({ "gridder": "awprojectft" }), "gridder", "#980"),
-        // mfs images take their frame and rest frequency from these.
-        (json!({ "outframe": "BARY" }), "outframe", "#980"),
-        (json!({ "restfreq": ["1GHz"] }), "restfreq", "#980"),
+        // An mfs image's REST axis grids the data's frequencies as they are.
+        (json!({ "outframe": "REST" }), "outframe", "#980"),
+        // CASA reads a blank rest frequency as zero.
+        (
+            json!({ "specmode": "cube", "restfreq": ["", "2GHz"] }),
+            "restfreq",
+            "#980",
+        ),
         (
             json!({ "deconvolver": "mtmfs", "nterms": 1 }),
             "nterms",
@@ -546,4 +541,113 @@ fn per_field_density_is_refused_for_superuniform_and_not_for_radial() {
         request(mosaic("radial")).weighting,
         crate::Weighting::Radial
     );
+}
+
+/// `restoringbeam` as `SynthesisParamsDeconv::fromRecord` reads it: one
+/// text or a list of one, two or three quantities (a circle, an ellipse at
+/// angle zero, or an ellipse at an angle); `''`, `[]` and any other count
+/// restore with the fitted beams, and a zero axis is casacore's null beam,
+/// which does too.
+#[test]
+fn restoringbeam_takes_casas_forms() {
+    use casa_imaging_model::{FixedRestoringBeam, RestoringBeamPolicy};
+    let arcsec = std::f64::consts::PI / (180.0 * 3600.0);
+    let fixed = |major: f64, minor: f64, angle_rad: f64| {
+        RestoringBeamPolicy::Fixed(
+            FixedRestoringBeam::new(major * arcsec, minor * arcsec, angle_rad).expect("a beam"),
+        )
+    };
+    let beam = |value: Value| request(json!({ "restoringbeam": value })).restoringbeam;
+    for value in [json!(""), json!([]), json!([""])] {
+        assert_eq!(
+            beam(value.clone()),
+            RestoringBeamPolicy::PerPlane,
+            "{value}"
+        );
+    }
+    for value in [json!("common"), json!(["common"])] {
+        assert_eq!(beam(value.clone()), RestoringBeamPolicy::Common, "{value}");
+    }
+    for value in [json!("10arcsec"), json!(["10arcsec"]), json!(["10 arcsec"])] {
+        assert_eq!(beam(value.clone()), fixed(10.0, 10.0, 0.0), "{value}");
+    }
+    assert_eq!(beam(json!(["10arcsec", "8arcsec"])), fixed(10.0, 8.0, 0.0));
+    assert_eq!(
+        beam(json!(["0.25arcmin", "8arcsec", "45deg"])),
+        fixed(15.0, 8.0, std::f64::consts::FRAC_PI_4)
+    );
+    // CASA ignores a list of any other length, and a zero axis.
+    for value in [
+        json!(["10arcsec", "8arcsec", "45deg", "1arcsec"]),
+        json!(["0arcsec"]),
+        json!(["10arcsec", "0arcsec"]),
+        json!(["0arcsec", "0arcsec", "30deg"]),
+    ] {
+        assert_eq!(
+            beam(value.clone()),
+            RestoringBeamPolicy::PerPlane,
+            "{value}"
+        );
+    }
+    // `GaussianBeam::setMajorMinor` and `setPA` throw for these, and CASA's
+    // tclean stops ("Cannot construct a restoringbeam from supplied
+    // parameters").
+    for value in [
+        json!(["8arcsec", "10arcsec"]),
+        json!(["0arcsec", "1arcsec"]),
+        json!("10"),
+        json!(["10", "8"]),
+        json!(["10arcsec", "8arcsec", "45"]),
+        json!(["10Jy"]),
+        json!(["-1arcsec"]),
+        json!(["common", "10arcsec"]),
+        json!(["10arcsec", ""]),
+        json!("COMMON"),
+    ] {
+        let refused = refusal(json!({ "restoringbeam": value }));
+        assert_eq!(refused.parameter, "restoringbeam", "{value}");
+        assert!(
+            refused.message.contains("Cannot construct a restoringbeam"),
+            "{value}: {}",
+            refused.message
+        );
+    }
+}
+
+/// tclean's `restoration`, which the catalog still holds at its default:
+/// the reader reads it, and `restoration=False` restores nothing.
+#[test]
+fn restoration_is_read() {
+    assert!(request(json!({})).restoration);
+    let mut values = crate::request::tests::resolved(json!({})).expect("catalog values");
+    values.insert("restoration".to_string(), json!(false));
+    let request = ImagingRequest::from_tclean(&values).expect("a request");
+    assert!(!request.restoration);
+}
+
+/// An mfs image's header takes its frame and rest frequencies from
+/// `outframe` and `restfreq`, as a cube's does; every entry of `restfreq`
+/// is read, the first the image's.
+#[test]
+fn mfs_reads_its_frame_and_rest_frequencies() {
+    use casa_types::measures::frequency::FrequencyRef;
+    let bary = request(json!({ "outframe": "bary", "restfreq": ["1.4GHz"] }));
+    assert_eq!(bary.outframe, FrequencyRef::BARY);
+    assert_eq!(bary.restfreq, [1.4e9]);
+    assert_eq!(
+        request(json!({ "outframe": "TOPO" })).outframe,
+        FrequencyRef::TOPO
+    );
+    assert_eq!(request(json!({})).outframe, FrequencyRef::LSRK);
+    assert!(request(json!({})).restfreq.is_empty());
+    for overrides in [
+        json!({ "restfreq": ["1.4GHz", "1.6GHz"] }),
+        json!({ "specmode": "cube", "nchan": 2, "restfreq": ["1.4GHz", "1.6GHz"] }),
+    ] {
+        assert_eq!(
+            request(overrides.clone()).restfreq,
+            [1.4e9, 1.6e9],
+            "{overrides}"
+        );
+    }
 }

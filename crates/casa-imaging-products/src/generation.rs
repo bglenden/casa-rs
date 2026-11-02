@@ -10,7 +10,7 @@ use casa_imaging_model::{
     ProductPixelMask, ProductRole, ProductTerm, ProductValidityRule, RestoringBeamPolicy,
 };
 
-use crate::beam::{RestoringBeam, fit_restoring_beam};
+use crate::beam::{RestoringBeam, fit_restoring_beam, fixed_restoring_beam};
 use crate::error::ProductsError;
 use crate::plan::{
     AnalyticPrimaryBeamModel, PlannedContinuumGeneration, PlannedMember,
@@ -143,8 +143,9 @@ fn fit_beams(
 }
 
 /// The beams each plane is restored with, by the problem's restoring-beam
-/// policy: none, each plane's fitted beam, or one beam enclosing a domain's
-/// fitted beams.
+/// policy: none, each plane's fitted beam, one beam enclosing a domain's
+/// fitted beams, or the beam the request gives. A plane with no fitted beam
+/// holds no data and restores with none.
 fn restoring_beams(
     inputs: &ContinuumProductInputs<'_>,
     fitted_beams: &[Option<RestoringBeam>],
@@ -152,6 +153,13 @@ fn restoring_beams(
     Ok(match inputs.problem().products().restoring_beam() {
         RestoringBeamPolicy::None => Box::new([]),
         RestoringBeamPolicy::PerPlane => fitted_beams.into(),
+        RestoringBeamPolicy::Fixed(beam) => {
+            let beam = fixed_restoring_beam(beam)?;
+            fitted_beams
+                .iter()
+                .map(|fitted| fitted.map(|_| beam))
+                .collect()
+        }
         RestoringBeamPolicy::Common => {
             let normal_state = inputs.normal_state();
             let planes = normal_state.channel_count() * normal_state.polarization_count();
@@ -421,9 +429,9 @@ fn produce_taylor_members(
     };
     let restoring_beams = match inputs.problem().products().restoring_beam() {
         RestoringBeamPolicy::None => Box::new([]),
-        RestoringBeamPolicy::PerPlane | RestoringBeamPolicy::Common => {
-            vec![products.restoring_beam()].into_boxed_slice()
-        }
+        RestoringBeamPolicy::PerPlane
+        | RestoringBeamPolicy::Common
+        | RestoringBeamPolicy::Fixed(_) => vec![products.restoring_beam()].into_boxed_slice(),
     };
     for member in &planned.members {
         let mut payload = products.payload(member.role)?;

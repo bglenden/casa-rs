@@ -111,8 +111,9 @@ fn selected_edges(
     }
 }
 
-/// The LSRK envelope of the `selected` channels of `windows` over each
-/// window's epochs in `survey`.
+/// The envelope in frame `output` of the `selected` channels of `windows`
+/// over each window's epochs in `survey`: LSRK, where CASA grids an MFS
+/// image's samples, or the image's `outframe`, which its header records.
 ///
 /// It follows CASA's `MSUtil::getFreqRangeInSpw` (`fromEdge`), which
 /// `SynthesisUtilMethods::buildCoordinateSystem` uses for the MFS spectral
@@ -130,8 +131,8 @@ pub(super) fn continuum_envelope(
     (catalogue, engine): (&Catalogue, &MsCalEngine),
     survey: &Survey,
     selected: &WindowChannels,
+    output: FrequencyRef,
 ) -> Result<SpectralEnvelope, PrepareError> {
-    let output = FrequencyRef::LSRK;
     let mut edges_hz = [f64::INFINITY, f64::NEG_INFINITY];
     // Each field's direction, once: only the conversion epoch varies.
     let mut directions = BTreeMap::<i32, MDirection>::new();

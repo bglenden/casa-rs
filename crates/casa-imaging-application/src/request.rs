@@ -17,8 +17,8 @@
 use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 use casa_imaging_model::{
-    HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
-    UvTaper,
+    FixedRestoringBeam, HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization,
+    RestoringBeamPolicy, UvTaper,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::{Diagnostics, ResourcePolicy};
@@ -133,12 +133,20 @@ pub struct ImagingRequest {
     /// How a cube resamples source channels onto its output channels.
     #[serde(deserialize_with = "interpolation")]
     pub interpolation: CubeInterpolation,
-    /// Rest frequency of a cube's velocity axis, in Hz.
-    #[serde(deserialize_with = "rest_frequency_hz")]
-    pub restfreq: Option<f64>,
-    /// One restoring beam per plane or one common beam.
+    /// Rest frequencies in Hz, CASA's `restfreq` list. The first is a
+    /// cube's velocity axis's and the image header's; CASA lists the others
+    /// after it in the header's spectral coordinate. Empty takes the
+    /// source's line (`SynthesisParamsImage::buildCoordinateSystemCore`).
+    #[serde(deserialize_with = "rest_frequencies_hz")]
+    pub restfreq: Vec<f64>,
+    /// One restoring beam per plane, one common beam, or a beam given by
+    /// its axes and angle.
     #[serde(deserialize_with = "restoring_beam")]
     pub restoringbeam: RestoringBeamPolicy,
+    /// Restore the model with the restoring beam and write `.image` and,
+    /// with `pbcor`, `.image.pbcor` (and the spectral index of `mtmfs`);
+    /// CASA's `restoration=False` writes none of them (`task_tclean.py`).
+    pub restoration: bool,
     /// Whether a cube's density weighting is per output channel.
     pub perchanweightdensity: bool,
     /// Total minor-cycle iterations; zero writes the dirty products only.
@@ -1058,23 +1066,83 @@ fn interpolation<'de, D: Deserializer<'de>>(
     }
 }
 
-fn rest_frequency_hz<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<f64>, D::Error> {
-    match choice(deserializer)?.as_str() {
-        text if unset(text) => Ok(None),
-        text => casa_ms::parse_rest_frequency_hz(text)
-            .map(Some)
-            .map_err(D::Error::custom),
+/// Rest frequencies: one text, a list of texts, or unset.
+fn rest_frequencies_hz<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error> {
+    let items = match Value::deserialize(deserializer)? {
+        Value::Array(items) => items,
+        value => vec![value],
+    };
+    let mut frequencies = Vec::with_capacity(items.len());
+    for item in &items {
+        match item.as_str() {
+            Some(text) if unset(text) => {}
+            Some(text) => {
+                frequencies.push(casa_ms::parse_rest_frequency_hz(text).map_err(D::Error::custom)?)
+            }
+            None => return Err(unexpected(item, "rest frequencies")),
+        }
     }
+    Ok(frequencies)
 }
 
+/// `none` (each plane's fitted beam), `common`, or a beam's
+/// `[major, minor, angle]`, read as `SynthesisParamsDeconv::fromRecord`
+/// reads `restoringbeam`'s quantities: each with casacore's quantity
+/// reader, as casacore's `GaussianBeam::setMajorMinor` and `setPA` accept
+/// them (angular units, axes neither negative nor inverted). A zero axis is
+/// casacore's null beam, which restores each plane with its fitted beam.
 fn restoring_beam<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<RestoringBeamPolicy, D::Error> {
-    match choice(deserializer)?.as_str() {
-        text if unset(text) => Ok(RestoringBeamPolicy::PerPlane),
-        "common" => Ok(RestoringBeamPolicy::Common),
-        other => Err(D::Error::custom(format!("restoringbeam {other:?}"))),
+    match Value::deserialize(deserializer)? {
+        Value::String(text) if unset(&text) => Ok(RestoringBeamPolicy::PerPlane),
+        Value::String(text) if text == "common" => Ok(RestoringBeamPolicy::Common),
+        Value::Array(items) => {
+            let texts = items
+                .iter()
+                .map(|item| item.as_str().ok_or_else(|| unexpected(item, "text")))
+                .collect::<Result<Vec<_>, D::Error>>()?;
+            let [major, minor, angle] = texts.as_slice() else {
+                return Err(D::Error::custom(format!(
+                    "restoringbeam {texts:?}: expected its major and minor axes and angle"
+                )));
+            };
+            given_restoring_beam([major, minor, angle]).map_err(|_| {
+                D::Error::custom(format!(
+                    "Cannot construct a restoringbeam from supplied parameters {texts:?}: give \
+                     angular axes, the major axis at least the minor, and an angular position \
+                     angle, as CASA's tclean requires"
+                ))
+            })
+        }
+        value => Err(unexpected(
+            &value,
+            "none, common or a beam's axes and angle",
+        )),
     }
+}
+
+/// A beam's `[major, minor, angle]` quantities, or the fitted beams for
+/// casacore's null beam.
+fn given_restoring_beam(texts: [&str; 3]) -> Result<RestoringBeamPolicy, ()> {
+    let radians = Unit::from_str("rad").expect("a casacore unit");
+    let [major, minor, angle] = texts.map(|text| {
+        Quantity::read(text)
+            .ok()
+            .and_then(|quantity| quantity.get_value_in(&radians).ok())
+            .filter(|value| value.is_finite())
+            .ok_or(())
+    });
+    let [major, minor, angle] = [major?, minor?, angle?];
+    if major < 0.0 || minor < 0.0 || major < minor {
+        return Err(());
+    }
+    if major == 0.0 || minor == 0.0 {
+        return Ok(RestoringBeamPolicy::PerPlane);
+    }
+    FixedRestoringBeam::new(major, minor, angle)
+        .map(RestoringBeamPolicy::Fixed)
+        .map_err(|_| ())
 }
 
 fn major_cycle_limit<'de, D: Deserializer<'de>>(

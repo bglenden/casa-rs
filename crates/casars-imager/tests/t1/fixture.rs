@@ -400,6 +400,29 @@ impl Observation {
         name: &str,
         controls: Value,
     ) -> Result<(ImagerRunReport, Products), String> {
+        self.try_image_edited(store, name, controls, |_| {})
+    }
+
+    /// [`Observation::image`] of the request `edit` changes once the
+    /// catalog has resolved it: a value the catalog still holds at its
+    /// default, which the request already reads (`restoration`).
+    pub fn image_edited(
+        &self,
+        name: &str,
+        controls: Value,
+        edit: impl FnOnce(&mut ImagingRequest),
+    ) -> (ImagerRunReport, Products) {
+        self.try_image_edited(&self.measurement_set, name, controls, edit)
+            .expect("production imaging route")
+    }
+
+    fn try_image_edited(
+        &self,
+        store: &Path,
+        name: &str,
+        controls: Value,
+        edit: impl FnOnce(&mut ImagingRequest),
+    ) -> Result<(ImagerRunReport, Products), String> {
         let image_name = self.root.path().join(name);
         // The CPU unless `controls` name a backend: the catalog's `auto`
         // would move a law onto the GPU wherever the host has one.
@@ -419,7 +442,8 @@ impl Observation {
         let Value::Object(parameters) = parameters else {
             unreachable!("parameters are an object");
         };
-        let (parameters, request) = resolve_request(&ImagingParameters(parameters))?;
+        let (parameters, mut request) = resolve_request(&ImagingParameters(parameters))?;
+        edit(&mut request);
         let result = run(parameters, &request)?;
         let products = Products::read(&image_name, &result.artifacts);
         Ok((result.run, products))

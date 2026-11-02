@@ -108,8 +108,10 @@ pub(super) struct Survey {
     pub(super) w: WRange,
     /// Each selected window's epochs, ascending in time, each once.
     pub(super) epochs: BTreeMap<usize, Vec<Epoch>>,
-    /// A continuum run's selected channels per window and their envelope.
-    pub(super) continuum: Option<(WindowChannels, SpectralEnvelope)>,
+    /// A continuum run's selected channels per window and their envelopes:
+    /// LSRK, where CASA grids the samples, and in the image's `outframe`,
+    /// which its header records.
+    pub(super) continuum: Option<(WindowChannels, SpectralEnvelope, SpectralEnvelope)>,
 }
 
 impl Survey {

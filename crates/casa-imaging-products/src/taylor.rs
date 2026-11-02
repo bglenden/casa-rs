@@ -12,12 +12,12 @@ use casa_imaging_model::{
 use casa_numerics::{EvlaBand, EvlaPowerPattern, VlaBand, solve_symmetric_ldlt_casacore_dynamic};
 
 use crate::AnalyticPrimaryBeamModel;
-use crate::beam::{RestoringBeam, fit_restoring_beam};
+use crate::beam::{RestoringBeam, fit_restoring_beam, fixed_restoring_beam};
 use crate::error::ProductsError;
 use crate::normalization::{
     MosaicSensitivity, ResidualFamily, normalize_plane, normalized_psf_value, psf_peak,
 };
-use crate::restore::{fft_convolve, gaussian_beam_image};
+use crate::restore::{fft_convolve, gaussian_beam_image, rescale_residual_to_beam};
 use crate::source::ContinuumProductInputs;
 use casa_numerics::AnnularApertureVoltageTable;
 
@@ -279,25 +279,36 @@ fn principal_residuals(
 }
 
 /// Each term's model convolved with the restoring beam, plus its principal
-/// residual.
+/// residual. CASA restores every Taylor term with `SIImageStore::restore`,
+/// whose `rescaleResolution` first brings a residual from the PSF's fitted
+/// beam to a restoring beam the request gives; with the fitted beam itself
+/// the residual is added as it is.
 fn restored_terms(
     model: &[Vec<f32>],
     principal_residual: &[Vec<f32>],
-    beam: &RestoringBeam,
+    (fitted, beam): (RestoringBeam, RestoringBeam),
     shape: [usize; 2],
     cell_size_rad: [f64; 2],
-) -> Vec<Vec<f32>> {
-    let kernel = gaussian_beam_image(shape, beam, cell_size_rad);
+) -> Result<Vec<Vec<f32>>, ProductsError> {
+    let kernel = gaussian_beam_image(shape, &beam, cell_size_rad);
     model
         .iter()
         .zip(principal_residual)
         .map(|(model, residual)| {
+            let rescaled;
+            let residual = if beam == fitted {
+                residual.as_slice()
+            } else {
+                rescaled = rescale_residual_to_beam(residual, shape, cell_size_rad, fitted, beam)?
+                    .into_values();
+                rescaled.as_slice()
+            };
             let mut image = fft_convolve(model, kernel.as_slice().expect("contiguous"), shape);
             image
                 .iter_mut()
                 .zip(residual)
                 .for_each(|(image, residual)| *image += residual);
-            image
+            Ok(image)
         })
         .collect()
 }
@@ -496,11 +507,14 @@ impl TaylorProducts {
         let restoring_beam = match inputs.problem().products().restoring_beam() {
             RestoringBeamPolicy::None => None,
             RestoringBeamPolicy::PerPlane | RestoringBeamPolicy::Common => fitted_beam,
+            RestoringBeamPolicy::Fixed(beam) => Some(fixed_restoring_beam(beam)?),
         };
-        let restored = restoring_beam.map_or_else(
-            || vec![vec![0.0; cells]; terms],
-            |beam| restored_terms(&family.model, &principal_residual, &beam, shape, cell_size),
-        );
+        let restored = match fitted_beam.zip(restoring_beam) {
+            Some(beams) => {
+                restored_terms(&family.model, &principal_residual, beams, shape, cell_size)?
+            }
+            None => vec![vec![0.0; cells]; terms],
+        };
 
         let pb0 = principal_primary_beam(
             inputs,

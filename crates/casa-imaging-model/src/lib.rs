@@ -14,6 +14,7 @@ mod native_aw;
 mod observation;
 mod pointing_law;
 mod product_list;
+mod restoring_beam;
 mod sample_antennas;
 mod transaction;
 mod uvw_projection;
@@ -47,6 +48,7 @@ pub use geometry::{
     UvwCoordinateLaw, UvwUnit, VisibilityPhaseConvention,
 };
 pub use image_size::optimum_image_size;
+pub use restoring_beam::{FixedRestoringBeam, InvalidRestoringBeam};
 
 pub use measurement_equation::{
     DeclaredInnerProducts, MeasurementOperatorContract, ModelCoefficientSpace, ModelInnerProduct,

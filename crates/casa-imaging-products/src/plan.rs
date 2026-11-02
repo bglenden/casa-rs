@@ -10,7 +10,7 @@ use casa_imaging_model::{
     ReconstructionBasis, RestoringBeamPolicy,
 };
 
-use crate::beam::RestoringBeam;
+use crate::beam::{RestoringBeam, fixed_restoring_beam};
 use crate::error::ProductsError;
 use crate::source::ContinuumProductInputs;
 use crate::taylor::primary_beam_frequency_supported;
@@ -308,6 +308,12 @@ impl PlannedContinuumGeneration {
             ProductBeamRule::Restoring(RestoringBeamPolicy::Common)
             | ProductBeamRule::Metadata(RestoringBeamPolicy::Common) => {
                 vec![restoring.iter().flatten().next().copied()].into_boxed_slice()
+            }
+            // CASA records the given beam as the image's one beam
+            // (`SIImageStore::restore`), whatever its planes hold.
+            ProductBeamRule::Restoring(RestoringBeamPolicy::Fixed(beam))
+            | ProductBeamRule::Metadata(RestoringBeamPolicy::Fixed(beam)) => {
+                vec![fixed_restoring_beam(beam).ok()].into_boxed_slice()
             }
         }
     }

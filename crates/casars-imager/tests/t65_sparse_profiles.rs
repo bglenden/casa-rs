@@ -160,7 +160,7 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
                 assert_eq!(request.outframe, FrequencyRef::BARY);
                 assert_eq!(request.veltype, DopplerRef::Z);
                 assert_eq!(request.interpolation, CubeInterpolation::Nearest);
-                assert_eq!(request.restfreq, Some(1.42e9));
+                assert_eq!(request.restfreq, [1.42e9]);
                 assert_eq!(request.start.as_deref(), Some("1.1GHz"));
                 assert_eq!(request.width.as_deref(), Some("1"));
                 assert_eq!(request.weighting, Weighting::Uniform);

@@ -112,12 +112,11 @@ pub(super) fn specification(
         PolarizationContract::new(request.stokes.clone()),
     );
     let equation = measurement_equation(&inputs);
-    let common_beam = request.deconvolver == Deconvolver::Mtmfs
-        || request.restoringbeam == RestoringBeamPolicy::Common;
+    let restoring_beam = restoring_beam(request);
     let mut science = ScientificContract::new(
         SpectralContract::new(
             spectral.sampling,
-            if common_beam {
+            if restoring_beam == RestoringBeamPolicy::Common {
                 SpectralCoupling::CommonRestoringBeam
             } else {
                 SpectralCoupling::Independent
@@ -140,11 +139,7 @@ pub(super) fn specification(
         ProductRequirements::new(
             requested_products(request, minor_cycle, direction_dependent),
             normalization(request),
-            if common_beam {
-                RestoringBeamPolicy::Common
-            } else {
-                RestoringBeamPolicy::PerPlane
-            },
+            restoring_beam,
             ProductValidityPolicies::new(
                 primary_beam_validity(request)?,
                 TaylorValidityPolicy::new(
@@ -178,6 +173,19 @@ pub(super) fn specification(
         Some(transform) => specification.with_visibility_transform(transform),
         None => specification,
     })
+}
+
+/// The beam the products restore with: none without restoration, else the
+/// request's, `mtmfs`'s one plane restoring with its fitted beam as one
+/// common beam.
+fn restoring_beam(request: &ImagingRequest) -> RestoringBeamPolicy {
+    match request.restoringbeam {
+        _ if !request.restoration => RestoringBeamPolicy::None,
+        RestoringBeamPolicy::PerPlane if request.deconvolver == Deconvolver::Mtmfs => {
+            RestoringBeamPolicy::Common
+        }
+        policy => policy,
+    }
 }
 
 /// The measurement equation: the primary beam with an instrument model,
@@ -307,23 +315,24 @@ fn requested_products(
     weight_image: bool,
 ) -> Vec<ProductKind> {
     let mtmfs = request.deconvolver == Deconvolver::Mtmfs;
-    let mut products = vec![
-        ProductKind::Psf,
-        ProductKind::Residual,
-        ProductKind::Model,
-        ProductKind::RestoredImage,
-        ProductKind::SumWeights,
-    ];
+    // CASA's `restoration=False` neither restores nor PB-corrects, so it
+    // writes no `.image`, `.image.pbcor` or spectral index
+    // (`task_tclean.py`, `SIImageStoreMultiTerm::restore`).
+    let restored = request.restoration;
+    let mut products = vec![ProductKind::Psf, ProductKind::Residual, ProductKind::Model];
+    if restored {
+        products.push(ProductKind::RestoredImage);
+    }
+    products.push(ProductKind::SumWeights);
     if minor_cycle {
         products.push(ProductKind::Mask);
     }
     products.push(ProductKind::Beam);
     if mtmfs {
-        products.extend([
-            ProductKind::TaylorTerms,
-            ProductKind::SpectralIndex,
-            ProductKind::SpectralIndexError,
-        ]);
+        products.push(ProductKind::TaylorTerms);
+        if restored {
+            products.extend([ProductKind::SpectralIndex, ProductKind::SpectralIndexError]);
+        }
     }
     if weight_image {
         products.push(ProductKind::Weight);
@@ -331,7 +340,7 @@ fn requested_products(
     if request.write_pb || request.pbcor {
         products.push(ProductKind::PrimaryBeam);
     }
-    if request.pbcor {
+    if request.pbcor && restored {
         products.push(ProductKind::PbCorrectedImage);
         if mtmfs && matches!(request.gridder, Gridder::Mosaic { .. }) {
             products.push(ProductKind::PbCorrectedSpectralIndex);
@@ -617,16 +626,77 @@ mod tests {
     }
 
     fn products(overrides: serde_json::Value) -> BTreeSet<ProductKind> {
-        let request = crate::request::tests::request(overrides);
-        let minor_cycle = reconstruction_algorithm(&request) != ReconstructionAlgorithm::Dirty
+        products_of(&crate::request::tests::request(overrides))
+    }
+
+    fn products_of(request: &ImagingRequest) -> BTreeSet<ProductKind> {
+        let minor_cycle = reconstruction_algorithm(request) != ReconstructionAlgorithm::Dirty
             && request.iterations() > 0;
         let weight_image = !matches!(
             request.gridder,
             Gridder::Standard { .. } | Gridder::Wproject { .. }
         );
-        requested_products(&request, minor_cycle, weight_image)
+        requested_products(request, minor_cycle, weight_image)
             .into_iter()
             .collect()
+    }
+
+    /// CASA's `restoration=False` neither restores nor PB-corrects: no
+    /// `.image`, `.image.pbcor` or spectral index, and no restoring beam;
+    /// the PB `pbcor` asks for is still made (`task_tclean.py`).
+    #[test]
+    fn without_restoration_nothing_is_restored() {
+        for overrides in [
+            serde_json::json!({ "niter": 10, "pbcor": true }),
+            serde_json::json!({ "deconvolver": "mtmfs", "nterms": 2, "gridder": "mosaic",
+                                "pbcor": true }),
+            serde_json::json!({ "restoringbeam": "common", "specmode": "cube", "nchan": 2 }),
+        ] {
+            let mut request = crate::request::tests::request(overrides.clone());
+            let restored = products_of(&request);
+            request.restoration = false;
+            let unrestored = products_of(&request);
+            for product in [
+                ProductKind::RestoredImage,
+                ProductKind::PbCorrectedImage,
+                ProductKind::SpectralIndex,
+                ProductKind::SpectralIndexError,
+                ProductKind::PbCorrectedSpectralIndex,
+            ] {
+                assert!(!unrestored.contains(&product), "{overrides}: {product:?}");
+            }
+            assert!(
+                restored.contains(&ProductKind::RestoredImage),
+                "{overrides}"
+            );
+            assert_eq!(
+                unrestored.contains(&ProductKind::PrimaryBeam),
+                restored.contains(&ProductKind::PrimaryBeam),
+                "{overrides}"
+            );
+            assert_eq!(restoring_beam(&request), RestoringBeamPolicy::None);
+        }
+    }
+
+    /// `mtmfs` restores its one plane with its fitted beam as one common
+    /// beam, unless the request gives a beam; a given beam couples no planes.
+    #[test]
+    fn the_restoring_beam_follows_the_request() {
+        let policy = |overrides| restoring_beam(&crate::request::tests::request(overrides));
+        assert_eq!(policy(serde_json::json!({})), RestoringBeamPolicy::PerPlane);
+        assert_eq!(
+            policy(serde_json::json!({ "deconvolver": "mtmfs", "nterms": 2 })),
+            RestoringBeamPolicy::Common
+        );
+        for overrides in [
+            serde_json::json!({ "restoringbeam": ["2arcsec", "1arcsec", "10deg"] }),
+            serde_json::json!({ "deconvolver": "mtmfs", "nterms": 2, "restoringbeam": "2arcsec" }),
+        ] {
+            assert!(
+                matches!(policy(overrides.clone()), RestoringBeamPolicy::Fixed(_)),
+                "{overrides}"
+            );
+        }
     }
 
     #[test]
