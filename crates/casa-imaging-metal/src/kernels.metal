@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// The kernel contract of plan section 5.3 on the device. The host has
+// The operator's kernel contract on the device. The host has
 // already located every sample (GridGeometry::locate), checked its support
 // against the tile, and computed each visibility polarization's inverse
 // kernel norm and sumwt; the kernels spread, gather and form residuals.

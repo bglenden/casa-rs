@@ -361,7 +361,7 @@ fn a_mosaic_cube_keeps_each_channels_weight_image() {
     );
 }
 
-/// Plan section 5.7's flat-noise and flat-sky rows: a dirty flat-noise
+/// CASA's flat-noise and flat-sky normalizations: a dirty flat-noise
 /// residual divides by `pbmax·√weight`, a flat-sky one by the weight, so
 /// flat noise is flat sky times the PB inside the PB's support, and both
 /// are zero outside it. A negative pblimit keeps that support and leaves

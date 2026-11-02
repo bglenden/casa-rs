@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The process allocator of the imaging apps, which returns freed working
 //! buffers to the system at once so that a run's footprint follows the memory
-//! its phases admit (plan section 7).
+//! its phases admit.
 //!
 //! Admission ([`crate::admit`]) charges the memory each phase holds live. The
 //! system allocators also keep large blocks after they are freed:

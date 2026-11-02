@@ -7,7 +7,7 @@
 //! [`MetalBackend`] implements the `casa-imaging-operator` backend trait for
 //! both tap layouts and every [`Work`](casa_imaging_operator::Work) variant
 //! with support-generic kernels: one SIMD group per sample, its lanes over
-//! the taps, `f32` grids updated with atomic adds (D2). The host locates
+//! the taps, `f32` grids updated with atomic adds (ADR-0016 decision 6). The host locates
 //! every sample with the operator's rounding rule and accumulates `sumwt`
 //! in `f64`, so tap selection and `sumwt` equal the CPU backend's; only the
 //! order of the `f32` grid additions differs.
@@ -21,8 +21,7 @@
 //! unified-memory Metal 3 device, constructors return
 //! [`DeviceFailure::Unavailable`](casa_imaging_operator::DeviceFailure).
 //!
-//! The design is `docs/imaging-architecture/imaging-foundation-plan-20261007.md`
-//! sections 5.3 and 5.9, ADR-0016, and the IF-4 deviations on #653.
+//! The design is ADR-0016, with the IF-4 deviations on #653.
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 mod backend;

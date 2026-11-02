@@ -46,7 +46,7 @@ const THREAD_TAPS: usize = 81;
 /// device grids the previous ones. Accumulators must come from
 /// [`MetalBackend::accumulator`] (their cells live in memory the device
 /// addresses); model grids are copied to the device once and the copy is
-/// kept in the grids. Grids are `f32` (D2): an `f64` accumulator or model
+/// kept in the grids. Grids are `f32` (ADR-0016 decision 6): an `f64` accumulator or model
 /// is a programmer error and panics.
 ///
 /// The backend uploads each kernel cell it meets once and serves only the

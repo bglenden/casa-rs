@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The paged state of a channel-local run: model and normal planes in one
-//! bounded block cache over files in the run's paged-state directory (plan
-//! decision D10).
+//! bounded block cache over files in the run's paged-state directory.
 
 use std::{io, path::Path, sync::Arc};
 

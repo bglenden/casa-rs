@@ -270,11 +270,9 @@ isolated, strengthen its demonstration test instead of adding a review.
 
 ## Imaging
 
-ADR-0016 and its dependency checker are binding.
-`docs/imaging-architecture/imaging-foundation-plan-20261007.md` records the
-landed design (section 5), the review checklist every imaging change is held
-to (section 10) and the deviations taken (section 12). An imaging change
-runs its T0 and T1 tests, the T1.5 rows its code touches (`TESTING.md`),
-clippy `-D warnings` and the tests of the crates it touches, and the
-dependency checker; an owner that changes what it keeps adds a counting
-law. Evidence runs follow `TESTING.md` "Imaging tiers and evidence".
+ADR-0016 and its dependency checker are binding, and every imaging change is
+held to the imaging code rules in `ARCHITECTURE.md`. An imaging change runs
+its T0 and T1 tests, the T1.5 rows its code touches (`TESTING.md`), clippy
+`-D warnings` and the tests of the crates it touches, and the dependency
+checker; an owner that changes what it keeps adds a counting law. Evidence
+runs follow `TESTING.md` "Imaging tiers and evidence".

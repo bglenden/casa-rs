@@ -75,7 +75,7 @@ pub(crate) struct ImagingInputs<'a> {
     /// The AW catalog of an A-projection run.
     pub(crate) aw_catalog: Option<AwCatalogDeployment>,
     pub(crate) backend: BackendChoice,
-    /// The requested grid precision; `None` is plan decision D2's rule.
+    /// The requested grid precision; `None` is `f64` on the CPU, `f32` on Metal.
     pub(crate) grid_precision: Option<GridPrecision>,
     pub(crate) diagnostics: Diagnostics,
 }

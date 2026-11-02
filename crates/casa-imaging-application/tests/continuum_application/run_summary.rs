@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The run summary for each way a run ends (plan section 8.3, the R3
-//! replan of #658): a completed run records every phase with its memory; a
+//! The run summary for each way a run ends (#658): a completed run
+//! records every phase with its memory; a
 //! run that fails records the phase that failed last, between its cycles,
 //! while publishing or before, with what it did and published until then;
 //! and a cancelled run is recorded as cancelled.

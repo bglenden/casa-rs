@@ -40,8 +40,12 @@ measured and recorded most of the optimizations worth trying:
 - the catalogue of the pre-refactor build `f38033668a`'s mechanisms, with
   its do-not-retry list (#659, comment 6134710065); that build is the
   baseline for diagnosing a regression;
-- the cube, Metal and MFS checkpoint and audit documents IF-11 retired,
-  still in git at `ebb0c66a7b:docs/imaging-architecture/`;
+- retired design and research documents, in git: the cube, Metal and MFS
+  checkpoints and audits at `ebb0c66a7b:docs/imaging-architecture/`; the
+  foundation plan (section 5.9 lists the Obit and LibRA techniques adopted
+  and those never tried), the Obit, LibRA and FFT source notes, the AW
+  prior-art study and the imaging-mode taxonomy (benchmark rows B1–B11) at
+  `0b470017:docs/imaging-architecture/`;
 - the older pre-cutover revision `fff9c2d553eace4b6a57b1df9ded4773f2263ceb`
   and its deleted performance ledgers.
 Then measure with per-stage counters (`--stage-timing`,
@@ -97,8 +101,8 @@ required behavior from its current number and placement of checks. Do not
 silently bypass a promised guarantee; explicitly revise it and its tests when
 authorized. Do not add a second production mode merely to preserve old machinery.
 
-Keep one candidate at a time. Follow the existing hypothesis retry/escalation
-limits; setup errors are not failed scientific hypotheses. Retain a known-good
+Keep one candidate at a time; a setup error is not a failed scientific
+hypothesis. Retain a known-good
 parent and rejected results. A failed correctness check vetoes promotion, not
 routine in-scope fixture repair or a new discriminating local check.
 
@@ -126,22 +130,20 @@ inputs and parameters have not changed.
 `TESTING.md` ("Imaging tiers and evidence") is the rule; this is how it
 fails in practice. Name every run's build (commit, any evidence-only patch),
 linked FFTW, input and host, backend and grid precision as the run summary
-records them, worker and memory policy, comparator, and cache state. Since
-`backend = auto` and the f64 CPU default, a run that names neither may grid
-somewhere else than its label says: read `<imagename>.summary.json` before
-attributing a change. Build evidence binaries from the committed state and
+records them, worker and memory policy, comparator, and cache state. A run
+that names neither backend nor precision may grid elsewhere than its label
+says: read `<imagename>.summary.json` before attributing a change. Build evidence binaries from the committed state and
 rerun the affected T1.5 rows before recording numbers.
 
 Memory evidence compares each phase's peak footprint (over the footprint
 before the first phase) with its `peak_reserved_bytes`. On macOS the
 footprint drops 50 ms to about 1 s after memory is freed, host or Metal
-alike (IF-11 measured a 1.6 GB Metal model copy and a plain 262 MB `Vec`).
-A phase that starts right after a large free can therefore read above its
+alike. A phase that starts right after a large free can therefore read above its
 reservation. Judge a phase boundary after the process idles about a second,
 or count the lag within the allowance for allocator overhead, before calling
 it an under-charge, and check that the allocation is still live. A real live
-allocation above its reservation gets a counting or mechanism law. An explicit evidence budget needs an
-evidence-only patch, because production reads no environment and clips an
+allocation above its reservation gets a counting or mechanism law. An
+explicit evidence budget needs an evidence-only patch, because production reads no environment and clips an
 explicit budget to `vm_stat`'s free memory.
 
 Judge a finished row against CASA's own time and products, not against
@@ -150,30 +152,17 @@ accept a row.
 
 ## Acceptance and reporting
 
-ADR-0014 removes production product attestation. Trusted in-process product
-generation must transfer bounded windows to the CASA writer without content
-hashing or verification-only full-array rereads for publication permission.
-Do not optimize or recreate the retired mechanism, including initial hashes,
-backing stores or phases used only by it. Preserve science, inventory, shape,
-run/lifecycle and I/O checks plus atomic individual-image replacement. Failed
-publication means an incomplete run requiring rerun; do not retain resumable
-per-member recovery or whole-set rollback. Genuine persistence/external-input
-checksums and diagnostic test/benchmark fingerprints remain distinct. Any
-reintroduction needs an explicit ADR and user approval with a concrete failure
-model and measured cost.
-
-The rule also covers reconstruction-model ownership across execution attempts:
-validate scientific values/support when introduced or modified, not by repeated
-model hashes or verification-only lifecycle scans. Routine operational progress
-must not serialize or hash full receipts/plans, or scan historical receipt
-stores; current admission is authoritative. Exceptions need a concrete failure
-model and demonstrated benefit.
-
-ADR-0015 extends ownership-only association to trusted within-run input,
-weighting/replay, sparse model updates and reprojection. Do not content-hash
-scientific arrays or private same-run spill bytes for bookkeeping or improbable
-corruption insurance. Retain structural/source/lifecycle and I/O checks;
-independently justified external-input checksums and opt-in diagnostics differ.
+Do not recreate, or optimise, what ADR-0014 and ADR-0015 retired: content
+hashes of scientific arrays, plans, models or same-run spill, product
+attestation, verification-only full-array rereads, resumable per-member
+recovery and whole-set rollback. Validate scientific values where they are
+introduced or modified; current admission is authoritative, and progress
+never serialises, hashes or scans whole plans or history (`ARCHITECTURE.md`,
+imaging code rules 4 and 6). Keep the science, inventory, shape, lifecycle
+and I/O checks and atomic individual-image replacement. External-format
+checksums and opt-in diagnostics are distinct. Bringing any of it back needs
+an ADR and the owner's approval, with a concrete failure model and a
+measured cost.
 
 Use the smallest existing check that exercises the change, then the applicable
 issue-named acceptance. Reuse unaffected green evidence; do not mechanically

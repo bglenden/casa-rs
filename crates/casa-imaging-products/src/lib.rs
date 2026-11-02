@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
 
-//! The products of an imaging run (plan section 5.7).
+//! The products of an imaging run.
 //!
 //! This crate turns a major cycle's final normal state and model into the
 //! members of the problem's product list: normalization, restoring-beam

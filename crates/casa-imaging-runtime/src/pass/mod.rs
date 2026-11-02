@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The major-cycle pass (plan section 5.4): one traversal of the selected
+//! The major-cycle pass: one traversal of the selected
 //! visibilities that accumulates the dirty or residual image terms, and the
 //! PSF on the initial pass, of every image domain, for every capability.
 //!
@@ -170,7 +170,8 @@ pub enum SampleContent {
 /// Each wave of a pass begins one traversal. Rows are delivered in a fixed
 /// order, so repeated traversals see the same samples.
 ///
-/// The trait is a dependency boundary (plan §10 rule 7): the pass, here,
+/// The trait is a dependency boundary (imaging code rule 7 in
+/// `ARCHITECTURE.md`): the pass, here,
 /// traverses the MeasurementSet source of `casa-imaging-application`, its
 /// one production implementation, which this crate cannot name.
 pub trait BoundedSource: Send {
@@ -211,7 +212,7 @@ pub struct PassDomain<'a> {
 /// The gridding backend every owner of a pass dispatches to.
 ///
 /// With [`BackendChoice::Metal`] each owner grids on the shared Metal
-/// device into an `f32` accumulator in device memory (D2), so every
+/// device into an `f32` accumulator in device memory (ADR-0016 decision 6), so every
 /// operator of the pass must be `f32`. The model is degridded on the device
 /// too: fused into the residual, or, for the native-channel residual of a
 /// multi-domain or linearly interpolated pass, in each row chunk's
