@@ -315,7 +315,7 @@ pub enum SaveModel {
     ModelColumn,
     /// CASA's virtual model, the gridded model and the record of the
     /// machine that predicts from it, in the MeasurementSet's keywords or
-    /// SOURCE (`'virtual'`, [`casa_ms::virtual_model`]).
+    /// SOURCE (`'virtual'`, [`mod@casa_ms::virtual_model`]).
     Virtual,
 }
 
