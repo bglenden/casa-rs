@@ -3045,12 +3045,12 @@ impl ParallacticAngleState {
             .lookup_receptor0_angle(antenna_id, feed_id, data_spw_id, time_seconds)
             .unwrap_or(0.0);
         self.engine
-            .parallactic_angle(
+            .feed_parallactic_angle(
                 time_seconds,
                 usize::try_from(field_id).unwrap_or(usize::MAX),
                 usize::try_from(antenna_id).unwrap_or(usize::MAX),
             )
-            .map(|parallactic_angle| parallactic_angle + receptor0_angle)
+            .map(|feed_angle| feed_angle + receptor0_angle)
             .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                 path: "<measurement-set derived parallactic angle>".to_string(),
                 source,
@@ -5008,7 +5008,10 @@ mod tests {
             )]),
         };
 
-        let base = state.engine.parallactic_angle(time_seconds, 0, 0).unwrap();
+        let base = state
+            .engine
+            .feed_parallactic_angle(time_seconds, 0, 0)
+            .unwrap();
         let feed = state
             .feed_parallactic_angle(time_seconds, 0, 0, 0, 1)
             .unwrap();
