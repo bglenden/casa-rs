@@ -88,7 +88,7 @@ fn assert_holds_the_sources(mask: &Array2<f32>, label: &str) {
 }
 
 /// A cube's channels are masked each of its own: a leading channel with no
-/// data (the image starts a channel below the band) keeps an empty mask,
+/// data (the image starts 128 MHz below the band) keeps an empty mask,
 /// where the one-plane mask took the first channel's PSF beam and failed on
 /// its empty PSF, and every channel with data masks both sources.
 #[test]
@@ -99,10 +99,9 @@ fn a_cube_is_automasked_channel_by_channel() {
         "cube-automask",
         json!({
             "specmode": "cube",
-            "nchan": CHANNELS + 1,
+            "nchan": CHANNELS,
             "start": "43.872GHz",
-            "width": "128MHz",
-            "outframe": "TOPO",
+            "width": "130MHz",
             "weighting": "natural",
             "deconvolver": "hogbom",
             "niter": 2000,
@@ -111,7 +110,7 @@ fn a_cube_is_automasked_channel_by_channel() {
         }),
     );
     let sumwt = products.get(".sumwt").channel_values();
-    assert_eq!(sumwt.len(), CHANNELS + 1);
+    assert_eq!(sumwt.len(), CHANNELS);
     assert_eq!(sumwt[0], 0.0, "the leading channel holds no data");
     let mask = products.get(".mask").values();
     assert!(
