@@ -483,7 +483,11 @@ impl<'a> Tclean<'a> {
         start: &str,
         width: &str,
     ) -> Result<(), TcleanRefusal> {
-        let channels_selected = self.text("spw")?.contains(':');
+        // A channel selection in any MeasurementSet's spw.
+        let channels_selected = self
+            .per_measurement_set("spw", None)?
+            .iter()
+            .any(|spw| spw.as_str().is_some_and(|text| text.contains(':')));
         let first_given = !start.is_empty()
             || self
                 .value("channel_start")?
