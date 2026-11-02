@@ -15,6 +15,8 @@ mod cube;
 mod diagnostics;
 #[path = "t1/ephemeris.rs"]
 mod ephemeris;
+#[path = "t1/first_visibility.rs"]
+mod first_visibility;
 #[path = "t1/fixture.rs"]
 mod fixture;
 #[path = "t1/interrupt.rs"]

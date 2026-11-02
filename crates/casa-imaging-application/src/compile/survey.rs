@@ -141,13 +141,15 @@ pub(super) struct SurveyPlan<'a> {
     pub(super) first_cross: bool,
 }
 
-/// The key CASA's visibility iterator orders its first buffer by, less
-/// `ARRAY_ID`: (`DATA_DESC_ID`, `FIELD_ID`). CASA sorts by `ARRAY_ID`
-/// first; neither store's partitions carry it (the MSv2 adapter partitions
-/// as XRADIO's converter does), so a selection spanning several arrays may
-/// name another first field than CASA's.
+/// The key CASA's imaging iterator orders its buffers by, whose least the
+/// first buffer holds: (`ARRAY_ID`, `DATA_DESC_ID`, `FIELD_ID`)
+/// (`SynthesisImagerVi2` sorts by them, then `TIME`). An MSv2 partition
+/// states the array its rows share, and a partition whose rows hold several
+/// reads its selected rows' arrays ([`Msv2Observation::array_ids`]). An
+/// MSv4 has no arrays, and its window stands for the data description.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct FirstVisibility {
+    array: i32,
     description: u32,
     field_id: i32,
 }
@@ -190,6 +192,13 @@ impl SurveyPlan<'_> {
         scan_holds(self.row_selection.scans(), batch, time)
     }
 
+    /// The `ARRAY_ID` `candidate`'s samples share, or `None` for an MSv2
+    /// partition whose rows hold several ([`Msv2Observation::array_id`]);
+    /// an MSv4 has no arrays.
+    fn partition_array(&self, candidate: &Candidate) -> Option<i32> {
+        self.msv2.map_or(Some(0), |ms| ms.array_id(candidate.id))
+    }
+
     /// The data description standing for `candidate`'s in the first
     /// visibility key: an MSv2's `DATA_DESC_ID`, else its window.
     fn description(&self, candidate: &Candidate) -> u32 {
@@ -226,7 +235,9 @@ impl SurveyPlan<'_> {
                 values: false,
                 flags,
                 weights: !flags && self.stored_padding(),
-                uvw: self.reads_uvw(),
+                // A partition of several arrays tells its rows apart
+                // sample by sample, padding by its NaN UVW.
+                uvw: self.reads_uvw() || self.partition_array(candidate).is_none(),
                 time_centroid: false,
                 interval: false,
                 exposure: false,
@@ -297,6 +308,19 @@ pub(super) fn survey(
             .map_or(0, |partition| partition.times);
     }
     let epoch_bytes = epoch_bound.values().sum::<usize>() * size_of::<Epoch>();
+    // A partition of several arrays holds a selected time's MAIN rows and
+    // their arrays: a row and an array a baseline at most.
+    let several_arrays_bytes = plan
+        .candidates
+        .partitions
+        .iter()
+        .filter(|candidate| plan.partition_array(candidate).is_none())
+        .map(|candidate| {
+            catalogue.partition(candidate.id).baselines.len()
+                * (size_of::<usize>() + size_of::<i32>())
+        })
+        .max()
+        .unwrap_or(0);
     // The survey's buffers grow to its largest batch, the cursor's scratch
     // with them.
     let reservation = admit(
@@ -304,7 +328,7 @@ pub(super) fn survey(
         policy,
         &Demand {
             phase: "observation survey",
-            memory: (2 * batch_bytes + epoch_bytes) as u64,
+            memory: (2 * batch_bytes + epoch_bytes + several_arrays_bytes) as u64,
         },
     )?;
     let mut facts = Facts {
@@ -421,8 +445,12 @@ fn survey_partition(
 ) -> Result<u64, PrepareError> {
     let uv = plan.row_selection.uv_distances();
     let tested = !matches!(uv, UvSelection::All) || plan.scans_tested();
-    let counted = tested || plan.stored_padding();
+    // A partition of several arrays reads each selected time's rows.
+    let array = plan.partition_array(candidate);
+    let per_sample = plan.reads_uvw() || plan.stored_padding() || array.is_none();
+    let counted = tested || plan.stored_padding() || array.is_none();
     let description = plan.description(candidate);
+    let (mut rows, mut arrays) = (Vec::new(), Vec::new());
     let mut traversal = plan.observation.bind_read(request)?;
     let estimate = traversal_samples(&traversal.estimate);
     let mut samples = if counted { 0 } else { estimate };
@@ -439,8 +467,22 @@ fn survey_partition(
             if !plan.scan_holds(&batch, time)? {
                 continue;
             }
-            let selected = if plan.reads_uvw() || plan.stored_padding() {
-                let held = observe_time(plan, candidate, &batch, time, &mut facts.w)?;
+            let selected = if per_sample {
+                // UVW read only to tell rows apart leaves the W range alone.
+                let mut unused = WRange::EMPTY;
+                let w = if plan.reads_uvw() {
+                    &mut facts.w
+                } else {
+                    &mut unused
+                };
+                rows.clear();
+                let held = observe_time(
+                    plan,
+                    candidate,
+                    (&batch, time),
+                    w,
+                    array.is_none().then_some(&mut rows),
+                )?;
                 samples += if counted { held } else { 0 };
                 held > 0
             } else {
@@ -452,9 +494,19 @@ fn survey_partition(
             let time_mjd_seconds = batch.time.seconds_since(time, origin);
             let field_id = i32::try_from(batch.field[time].0).expect("a FIELD row is an i32 id");
             facts.fields.insert(field_id);
+            let array = match array {
+                Some(array) => array,
+                None => {
+                    plan.msv2
+                        .expect("only an MSv2 partition holds several arrays")
+                        .array_ids(&rows, &mut arrays)?;
+                    *arrays.iter().min().expect("a selected time holds a row")
+                }
+            };
             FirstVisibility::observe(
                 &mut facts.first_visibility,
                 FirstVisibility {
+                    array,
                     description,
                     field_id,
                 },
@@ -481,13 +533,13 @@ fn survey_partition(
 /// the batch holds UVW: those that are not the store's own padding when
 /// `stored` ([`stored_padding`]) and, with UVW, those whose UVW is finite
 /// and that `uv`, when tested, holds for its candidate's wavelength.
-/// Returns how many.
+/// Returns how many, with their MSv2 MAIN rows into `rows` when given.
 fn observe_time(
     plan: &SurveyPlan<'_>,
     candidate: &Candidate,
-    batch: &VisibilityBatch<'_>,
-    time: usize,
+    (batch, time): (&VisibilityBatch<'_>, usize),
     w: &mut WRange,
+    mut rows: Option<&mut Vec<usize>>,
 ) -> Result<u64, PrepareError> {
     let uv = plan.row_selection.uv_distances();
     let per_time = batch.samples_per_time();
@@ -517,6 +569,12 @@ fn observe_time(
                 continue;
             }
             w.observe(uvw_m[2]);
+        }
+        if let (Some(rows), Some(ms)) = (rows.as_deref_mut(), plan.msv2) {
+            let baseline = batch.baselines[sample % per_time];
+            if let Some(row) = ms.main_row(candidate.id, batch.time.offsets_s()[time], baseline) {
+                rows.push(row as usize);
+            }
         }
         held += 1;
     }
@@ -648,13 +706,13 @@ fn first_cross_sample(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn the_first_visibility_follows_description_then_field_order() {
+    fn the_first_visibility_follows_array_description_then_field_order() {
         use super::FirstVisibility;
-        let keys = [(4, 1), (2, 9), (2, 7), (3, 0)];
+        let keys = [(2, 0, 0), (1, 4, 1), (1, 2, 9), (1, 2, 7), (1, 3, 0)];
         for reversed in [false, true] {
             let mut first = None;
             for index in 0..keys.len() {
-                let (description, field_id) = keys[if reversed {
+                let (array, description, field_id) = keys[if reversed {
                     keys.len() - 1 - index
                 } else {
                     index
@@ -662,6 +720,7 @@ mod tests {
                 FirstVisibility::observe(
                     &mut first,
                     FirstVisibility {
+                        array,
                         description,
                         field_id,
                     },
@@ -670,6 +729,7 @@ mod tests {
             assert_eq!(
                 first,
                 Some(FirstVisibility {
+                    array: 1,
                     description: 2,
                     field_id: 7
                 })

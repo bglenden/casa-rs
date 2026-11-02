@@ -138,10 +138,12 @@ impl DensityGridShape {
 
     /// The cell a lookup reads: `BriggsCubeWeightor::getWeightUniform`
     /// rounds `uscale·u + uorigin` in `Float` with `u = −uvw_u·f` and
-    /// `v = −uvw_v·f`, as its grid was built. Evaluating that expression in
-    /// CASA's orientation matters only at an exact `Float` tie (`k + ½`),
-    /// where rounding half away from zero is not mirror-symmetric: a
-    /// mirrored lookup reads the neighbouring cell there.
+    /// `v = −uvw_v·f`, as its grid was built. Evaluated in a mirrored
+    /// orientation, an interior cell differs only at an exact `Float` tie
+    /// (`k + ½`), where rounding half away from zero is not mirror-symmetric;
+    /// and on an odd width the accepted cells `0 < x < width` are not
+    /// mirror-symmetric about the origin `width / 2`, so the outermost
+    /// column would be read where CASA reads none, or the reverse.
     fn lookup_cell(&self, plane: usize, uv: DensityUv) -> Option<usize> {
         match self.rule {
             DensityCellRule::Standard => self.standard_cell(plane, uv.u, uv.v),

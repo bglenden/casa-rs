@@ -4,6 +4,9 @@
 //! from the MSv2, read through both adapters into the same batches.
 
 #[cfg(unix)]
+#[path = "observation_io/arrays.rs"]
+mod arrays;
+#[cfg(unix)]
 #[path = "observation_io/convert.rs"]
 mod convert;
 #[cfg(unix)]

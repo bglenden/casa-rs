@@ -444,6 +444,39 @@ impl Msv2Observation {
         self.partitions[id.0 as usize].data_description_id
     }
 
+    /// The `ARRAY_ID` the rows of partition `id` share, or `None` when they
+    /// hold several: the partition key, XRADIO's, has no array. CASA's
+    /// imaging iterator orders its buffers by `ARRAY_ID` first.
+    ///
+    /// # Panics
+    ///
+    /// If `id` is not a partition of the observation.
+    #[must_use]
+    pub fn array_id(&self, id: PartitionId) -> Option<i32> {
+        self.partitions[id.0 as usize].grid.array
+    }
+
+    /// The `ARRAY_ID` of each MAIN row of `rows`, into `arrays` (cleared
+    /// first, then one value a row): what a consumer reads for a partition
+    /// whose rows hold several arrays ([`Self::array_id`]).
+    ///
+    /// # Errors
+    ///
+    /// When MAIN's `ARRAY_ID` cannot be read.
+    pub fn array_ids(&self, rows: &[usize], arrays: &mut Vec<i32>) -> Result<(), ObservationError> {
+        arrays.clear();
+        self.ms
+            .main_table()
+            .required_scalar_columns_for_rows_into(
+                rows,
+                &mut [RequiredScalarColumnDestination::new(
+                    "ARRAY_ID",
+                    RequiredScalarColumnValuesMut::Int32(arrays),
+                )],
+            )
+            .map_err(table_error)
+    }
+
     /// The `STATE::OBS_MODE` the rows of partition `id` share: partitions
     /// are keyed by the whole string, so two modes listing the same intents
     /// in another order are two partitions. Empty for the rows without a

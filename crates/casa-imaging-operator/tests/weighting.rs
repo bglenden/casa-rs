@@ -226,6 +226,26 @@ fn a_float_tie_rounds_in_casas_orientation() {
     assert_eq!(grid.lookup(0, tie), Some(1.0), "CASA reads cell 52");
 }
 
+/// On an odd width CASA accepts cells `0 < x < 7` about origin 3, which is
+/// not mirror-symmetric: a sample at `u = 430` lands at `x = round(3 +
+/// 7e-3·430) = 6` in CASA's orientation, an accepted cell, where the mirrored
+/// orientation computes `x = 0` and drops it (Astra's review of #1043).
+#[test]
+fn an_odd_width_keeps_casas_outermost_column() {
+    let odd = DensityGridShape {
+        width: 7,
+        height: 7,
+        planes: 1,
+        padding: 0,
+        increment_rad: [-1.0e-3, 1.0e-3],
+        rule: DensityCellRule::Cube,
+    };
+    let buffer = density_buffer(&[(430.0, 0.0, 1.0)]);
+    let grid = build_density_grid(std::iter::once(buffer.block()), odd);
+    assert_eq!(grid.plane(0)[3 * 7 + 6], 1.0, "the sample's own cell");
+    assert_eq!(grid.lookup(0, uv(430.0, 0.0)), Some(1.0));
+}
+
 #[test]
 fn per_channel_grids_select_the_placement_plane() {
     let mut buffer = SampleBuffer::new(1);
