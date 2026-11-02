@@ -327,8 +327,10 @@ pub enum InstrumentModel {
     /// version 1: the mosaic gridder's `HetArrayConvFunc` of
     /// `PBMathInterface::COMMONPB`.
     CasaEvlaCommonInterferometricResponseV1,
-    /// CASA-compatible EVLA wideband aperture, pointing, and conjugate-beam
-    /// response consumed through validated paired AW convolution functions.
+    /// CASA-compatible EVLA aperture, pointing, and beam response with the
+    /// terms its [`AwProjectionContract`] states (wideband and conjugate
+    /// beams among them), consumed through validated paired AW convolution
+    /// functions.
     CasaEvlaWidebandAwV1,
 }
 

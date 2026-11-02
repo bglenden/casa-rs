@@ -918,7 +918,7 @@ fn aw_plan(
         root,
         native,
         indexing: AwIndexing {
-            conjugate_beams: true,
+            conjugate_beams: aw.conjbeams,
             image_reference_hz: surveyed.spectral.reference_frequency_hz,
         },
         resident_bytes: match aw.cf_resident_mb {

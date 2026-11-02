@@ -375,8 +375,11 @@ pub enum PrepareError {
         /// Its dish diameter.
         diameter_m: f64,
     },
-    /// Native aperture generation models the EVLA only.
-    #[error("native aperture generation requires an EVLA observation")]
+    /// Native aperture generation models the EVLA only; without the
+    /// aperture a VLA observation serves too.
+    #[error(
+        "native aperture generation requires an EVLA observation (or a VLA one with aterm=False)"
+    )]
     NativeAwTelescope,
     /// Native EVLA generation models 25 m dishes only.
     #[error("native EVLA generation requires the explicit homogeneous 25 m dish model")]

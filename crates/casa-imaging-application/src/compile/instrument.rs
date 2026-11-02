@@ -217,6 +217,10 @@ mod tests {
     fn aw(usepointing: bool) -> Gridder {
         Gridder::Awproject(AwProjection {
             wprojplanes: NonZeroUsize::new(32),
+            aterm: true,
+            psterm: false,
+            wbawp: true,
+            conjbeams: true,
             usepointing,
             normtype: ProductNormalization::FlatNoise,
             cf_resident_mb: Some(256),

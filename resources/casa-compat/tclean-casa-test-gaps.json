@@ -3,18 +3,18 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "a3bbbacbc43b3eedb2ae84fa729aa745d4f847d4",
-  "parameter_surfaces_sha256": "5f2e11b3293393dcc1b077960895c91b0abaa75ef12d94b10efdfe0eafd790ce",
+  "casa_rs_revision": "eae7938e0a60918964a3c14270e76247be9f52e5",
+  "parameter_surfaces_sha256": "b189c2cef9ff5195aec7bbaad31ad77cc9947a96234a57965bf737cf90e95b66",
   "parameter_catalog_sha256": "cd8b35948c5298d59bb42e45ec9a3170a7d4062847e5be0076b16c8fa2d007ea",
-  "tclean_rs_sha256": "6171d7303ba7de11260668050440d2eaa7a2a643592f10f7344439d3676f7e1c",
+  "tclean_rs_sha256": "59053205d5ba9dca26c2c6e527aa73f7174770e2d5ac9be5655211e5438daa7b",
   "tclean_contract_version": 38
  },
  "totals": {
   "resolved_cases": 354,
   "cases_where_casa_expects_an_error": 4,
   "cases_counted": 350,
-  "cases_with_no_refusal": 235,
-  "cases_with_a_gap": 115,
+  "cases_with_no_refusal": 239,
+  "cases_with_a_gap": 111,
   "cases_with_only_refusals_casa_shares": 0,
   "single_call_cases_with_no_refusal": 196
  },
@@ -31,20 +31,6 @@
     "test_stokes.test_stokes_awp2_mfs_QU.1",
     "test_stokes.test_stokes_awp2_mfs_Q.1",
     "test_stokes.test_stokes_awp2_mfs_U.1"
-   ]
-  },
-  {
-   "reason": "conjbeams=False with gridder='awproject'",
-   "source": "tclean.rs not_yet",
-   "issue": 980,
-   "cases": 19,
-   "sole_blocker": 4,
-   "examples": [
-    "test_wproject.test_wterm_awproject.1",
-    "test_widefield.test_widefield_aproj_cube.1",
-    "test_widefield.test_widefield_aproj_mtmfs.1",
-    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.1",
-    "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.2"
    ]
   },
   {
@@ -66,7 +52,7 @@
    "source": "availability.rs gate",
    "issue": 719,
    "cases": 13,
-   "sole_blocker": 0,
+   "sole_blocker": 6,
    "examples": [
     "test_widefield.test_widefield_aproj_cube.1",
     "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.1",
@@ -94,7 +80,7 @@
    "source": "tclean.rs refusal (casa-rs only)",
    "issue": null,
    "cases": 9,
-   "sole_blocker": 2,
+   "sole_blocker": 3,
    "examples": [
     "test_widefield.test_widefield_aproj_mfs.1",
     "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.1",
@@ -122,7 +108,7 @@
    "source": "surface note: cfcache",
    "issue": null,
    "cases": 5,
-   "sole_blocker": 2,
+   "sole_blocker": 4,
    "examples": [
     "test_wproject.test_wterm_awproject.1",
     "test_widefield.test_widefield_aproj_cube.1",
@@ -268,17 +254,6 @@
    ]
   },
   {
-   "reason": "wbawp=False with gridder='awproject'",
-   "source": "tclean.rs not_yet",
-   "issue": 980,
-   "cases": 2,
-   "sole_blocker": 0,
-   "examples": [
-    "test_wproject.test_wterm_awproject.1",
-    "test_widefield.test_widefield_aproj_mfs.1"
-   ]
-  },
-  {
    "reason": "weighting='briggsabs'",
    "source": "tclean.rs not_yet",
    "issue": 980,
@@ -309,16 +284,6 @@
    "examples": [
     "test_onefield.test_onefield_weighting.7",
     "test_stokes.test_stokes_weighting.7"
-   ]
-  },
-  {
-   "reason": "aterm=False with gridder='awproject'",
-   "source": "tclean.rs not_yet",
-   "issue": 980,
-   "cases": 1,
-   "sole_blocker": 0,
-   "examples": [
-    "test_wproject.test_wterm_awproject.1"
    ]
   },
   {
@@ -379,16 +344,6 @@
    "sole_blocker": 0,
    "examples": [
     "test_stokes.test_stokes_mtmfs_IQUV.1+2"
-   ]
-  },
-  {
-   "reason": "psterm=True with gridder='awproject'",
-   "source": "tclean.rs not_yet",
-   "issue": 980,
-   "cases": 1,
-   "sole_blocker": 0,
-   "examples": [
-    "test_wproject.test_wterm_awproject.1"
    ]
   },
   {
@@ -1642,30 +1597,6 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "aterm=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
-     "reason": "psterm=True with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
-     "reason": "wbawp=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
      "reason": "cfcache: no existing CASA CF cache staged (the test lets CASA make it; casa-rs reads one and never writes it)",
      "source": "surface note: cfcache",
      "issue": null,
@@ -1715,12 +1646,6 @@
   "test_widefield.test_widefield_aproj_mfs.1": {
    "runs_without_refusal": false,
    "refusals": [
-    {
-     "reason": "wbawp=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
     {
      "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
      "source": "tclean.rs refusal (casa-rs only)",
@@ -1778,12 +1703,6 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
      "reason": "cfcache: no existing CASA CF cache staged (the test lets CASA make it; casa-rs reads one and never writes it)",
      "source": "surface note: cfcache",
      "issue": null,
@@ -1833,12 +1752,6 @@
   "test_widefield.test_widefield_aproj_mtmfs.1": {
    "runs_without_refusal": false,
    "refusals": [
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
     {
      "reason": "cfcache: no existing CASA CF cache staged (the test lets CASA make it; casa-rs reads one and never writes it)",
      "source": "surface note: cfcache",
@@ -2270,12 +2183,6 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
      "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
      "source": "tclean.rs refusal (casa-rs only)",
      "issue": null,
@@ -2292,12 +2199,6 @@
   "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.2": {
    "runs_without_refusal": false,
    "refusals": [
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    },
     {
      "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
      "source": "tclean.rs refusal (casa-rs only)",
@@ -2316,12 +2217,6 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 3
-    },
-    {
      "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
      "source": "tclean.rs refusal (casa-rs only)",
      "issue": null,
@@ -2339,12 +2234,6 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 4
-    },
-    {
      "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
      "source": "tclean.rs refusal (casa-rs only)",
      "issue": null,
@@ -2361,12 +2250,6 @@
   "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.5": {
    "runs_without_refusal": false,
    "refusals": [
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 5
-    },
     {
      "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
      "source": "tclean.rs refusal (casa-rs only)",
@@ -2539,12 +2422,6 @@
      "call": 1
     },
     {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
      "reason": "cfcache='' with gridder='awproject' (casa-rs reads an existing CASA CF cache by default)",
      "source": "tclean.rs refusal (casa-rs only)",
      "issue": null,
@@ -2646,38 +2523,12 @@
    "refusals": []
   },
   "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_onefield.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_mosaic_mtmfs.test_mtmfs_awproject_cbTrue_onefield.1+2": {
    "runs_without_refusal": true,
@@ -2712,38 +2563,12 @@
    "refusals": []
   },
   "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_onefield_upTrue.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_mosaic_mtmfs.test_mtmfs_awproject_cbFalse_twofield_upTrue.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_mosaic_mtmfs.test_mtmfs_mosaic_mwFalse_briggs_twofield.1": {
    "runs_without_refusal": true,
@@ -2799,22 +2624,10 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
      "reason": "AW projection of a cube (#719)",
      "source": "availability.rs gate",
      "issue": 719,
      "call": 1
-    },
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
     },
     {
      "reason": "AW projection of a cube (#719)",
@@ -2828,22 +2641,10 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
      "reason": "AW projection of a cube (#719)",
      "source": "availability.rs gate",
      "issue": 719,
      "call": 1
-    },
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
     },
     {
      "reason": "AW projection of a cube (#719)",
@@ -2857,22 +2658,10 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
      "reason": "AW projection of a cube (#719)",
      "source": "availability.rs gate",
      "issue": 719,
      "call": 1
-    },
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
     },
     {
      "reason": "AW projection of a cube (#719)",
@@ -2886,22 +2675,10 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
      "reason": "AW projection of a cube (#719)",
      "source": "availability.rs gate",
      "issue": 719,
      "call": 1
-    },
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
     },
     {
      "reason": "AW projection of a cube (#719)",
@@ -2923,22 +2700,10 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
      "reason": "AW projection of a cube (#719)",
      "source": "availability.rs gate",
      "issue": 719,
      "call": 1
-    },
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
     },
     {
      "reason": "AW projection of a cube (#719)",
@@ -2952,22 +2717,10 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
      "reason": "AW projection of a cube (#719)",
      "source": "availability.rs gate",
      "issue": 719,
      "call": 1
-    },
-    {
-     "reason": "conjbeams=False with gridder='awproject'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
     },
     {
      "reason": "AW projection of a cube (#719)",
