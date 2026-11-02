@@ -76,6 +76,13 @@ def key(node):
     )
 
 
+def reversed_frequency(ds, expected):
+    """Whether `ds` holds `expected`'s channels in the opposite order: its
+    frequencies are `expected`'s reversed and not the same."""
+    a, b = ds.frequency.values, expected.frequency.values
+    return a.size > 1 and a.shape == b.shape and np.array_equal(a[::-1], b) and not np.array_equal(a, b)
+
+
 def names(node):
     """The names a dataset carries: its antennas, and its base group's fields
     and sources."""
@@ -103,13 +110,6 @@ def compare_names(name, node, expected_name, expected, mismatches):
         if a.shape != b.shape or not np.array_equal(a, b):
             mismatches.append({"dataset": name, "names": label, "ours": list(a)[:8], "theirs": list(b)[:8]})
     return unknown
-
-
-def reversed_frequency(ds, expected):
-    """Whether `ds` holds `expected`'s channels in the opposite order: its
-    frequencies are `expected`'s reversed and not the same."""
-    a, b = ds.frequency.values, expected.frequency.values
-    return a.size > 1 and a.shape == b.shape and np.array_equal(a[::-1], b) and not np.array_equal(a, b)
 
 
 def compare(ours, theirs):
