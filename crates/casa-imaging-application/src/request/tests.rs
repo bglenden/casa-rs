@@ -173,35 +173,61 @@ fn contradictory_parameters_are_refused_before_any_data_is_read() {
     }
 }
 
+/// AW projection takes any positive W-plane count, its cache's or the
+/// planes a native cache generates; CASA's `AWConvFunc` refuses both the
+/// aperture and the spheroidal off, and a native cache must hold every
+/// plane.
 #[test]
-fn aw_projection_uses_the_32_plane_evla_cache() {
-    let aw = |planes: Value| {
+fn aw_projection_reads_its_planes_and_terms() {
+    let aw = |extra: Value| {
+        let mut values = json!({ "gridder": "awproject", "cfcache": "cf", "wprojplanes": 32 });
+        values
+            .as_object_mut()
+            .expect("object")
+            .extend(extra.as_object().expect("object").clone());
+        values
+    };
+    for planes in [1, 16, 32] {
+        request(aw(json!({ "wprojplanes": planes })))
+            .validate()
+            .unwrap_or_else(|error| panic!("{planes} planes: {error}"));
+    }
+    assert_eq!(refusal(aw(json!({ "wprojplanes": -1 }))), "wprojplanes");
+    assert_eq!(
+        refusal(aw(json!({ "aterm": false, "psterm": false }))),
+        "aterm, psterm"
+    );
+    let Gridder::Awproject(terms) = request(aw(json!({
+        "aterm": false,
+        "psterm": true,
+        "wbawp": true,
+        "conjbeams": true,
+    })))
+    .gridder
+    else {
+        panic!("an AW request");
+    };
+    assert!(!terms.aterm && terms.psterm && terms.wbawp && terms.conjbeams);
+    // `AWConvFunc` drops the wideband cells without the aperture.
+    assert!(!terms.wideband());
+    let native = |planes: usize, cells: usize| {
         json!({
             "gridder": "awproject",
-            "conjbeams": true,
-            "cfcache": "cf",
+            "aw_cf_source": "native-evla",
             "wprojplanes": planes,
+            "native_cf_cache": "cache",
+            "evla_surface": "surface",
+            "native_cf_working_size": 64,
+            "native_cf_oversampling": 4,
+            "native_cf_cache_bytes": 1_048_576,
+            "native_cf_maximum_cells": cells,
         })
     };
-    assert_eq!(refusal(aw(json!(16))), "wprojplanes");
-    assert_eq!(refusal(aw(json!(-1))), "wprojplanes");
-    request(aw(json!(32))).validate().expect("32 planes");
-    let native = json!({
-        "gridder": "awproject",
-        "conjbeams": true,
-        "aw_cf_source": "native-evla",
-        "wprojplanes": 32,
-        "native_cf_cache": "cache",
-        "evla_surface": "surface",
-        "native_cf_working_size": 64,
-        "native_cf_oversampling": 4,
-        "native_cf_cache_bytes": 1_048_576,
-        "native_cf_maximum_cells": 16,
-    });
     assert_eq!(
-        refusal(native),
+        refusal(native(32, 16)),
         "native_cf_cache_bytes, native_cf_maximum_cells"
     );
+    request(native(16, 16)).validate().expect("16 planes");
 }
 
 /// A blank optional parameter is unset, as CASA's empty text is.

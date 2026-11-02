@@ -410,13 +410,13 @@ class Refusals:
                 NOT_YET,
                 818,
             )
-        fixed = {
-            "awproject": {"aterm": True, "psterm": False, "wbawp": True, "conjbeams": True},
-        }.get(gridder, {})
-        for name, required in fixed.items():
-            value = self.flag(name)
-            if value is not None and value != required:
-                self.add(f"{name}={value} with gridder={gridder!r}", NOT_YET, 980)
+        if gridder == "awproject":
+            # `AwProjection::validate`: CASA's `AWConvFunc` refuses both
+            # terms off; deriving the planes waits for #980.
+            if self.flag("aterm") is False and self.flag("psterm") is False:
+                self.add("aterm=False with psterm=False", PARITY)
+            if planes == -1:
+                self.add("wprojplanes=-1 with gridder='awproject'", NOT_YET, 980)
         cfcache = self.text("cfcache")
         if (
             gridder == "awproject"

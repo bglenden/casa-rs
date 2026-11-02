@@ -35,27 +35,32 @@ pub(super) fn resolve(
         unreachable!("native AW resolves only a native cache");
     };
     let surface = evla_dish(surveyed.catalogue, first_cross, evla_surface)?;
+    let reference_frequency_hz = surveyed.spectral.reference_frequency_hz;
     let frequencies = frequency_groups(surveyed.survey, surveyed.spectral);
+    let feed_angle = receptor_zero_angle(
+        surveyed.catalogue,
+        surveyed.msv2,
+        frequencies[0].spectral_window,
+    )? as f32;
+    let frequencies = if aw.wideband() {
+        frequencies
+    } else {
+        reference_group(frequencies, reference_frequency_hz)
+    };
     // AW projection images square grids of square cells (the availability
     // gate refuses others), so x stands for both axes.
     let sky_cell = request.cell[0].to_radians() / 3600.0;
-    let (w_values, w_increment) = w_grid(
-        aw.wprojplanes
-            .expect("a validated AW request names its W planes")
-            .get(),
-        sky_cell,
-    );
+    let planes = aw
+        .wprojplanes
+        .expect("a validated AW request names its W planes")
+        .get();
+    let (w_values, w_increment) = w_grid(planes, sky_cell);
     let working_cell = sky_cell * *native_cf_oversampling as f64 * request.imsize[0] as f64
         / *native_cf_working_size as f64;
     let pa = surveyed.engine.parallactic_angle(
         first_cross.time_mjd_seconds,
         usize::try_from(first_cross.field_id).expect("a surveyed field is a FIELD row"),
         0,
-    )? as f32;
-    let feed_angle = receptor_zero_angle(
-        surveyed.catalogue,
-        surveyed.msv2,
-        frequencies[0].spectral_window,
     )? as f32;
     Ok(NativeAwRequestInput {
         surface,
@@ -65,19 +70,20 @@ pub(super) fn resolve(
         w_increment,
         pa_values: vec![f64::from(pa + feed_angle)],
         mueller_elements: mueller_elements(&request.stokes)?,
-        reference_frequency_hz: surveyed.spectral.reference_frequency_hz,
+        reference_frequency_hz,
         grid: NativeAwGrid {
             size: *native_cf_working_size,
             sky_increment_rad: [-working_cell, working_cell],
             oversampling: *native_cf_oversampling,
         },
-        // The installed A-projection (see `specification::aw_projection`).
+        // `AWProjectFT::makeCFObject`: the W term only over more than one
+        // plane, wideband cells only with the aperture.
         terms: NativeAwTerms {
-            aperture: true,
-            w_term: true,
-            prolate_spheroidal: false,
-            wideband: true,
-            conjugate_beams: true,
+            aperture: aw.aterm,
+            w_term: planes > 1,
+            prolate_spheroidal: aw.psterm,
+            wideband: aw.wideband(),
+            conjugate_beams: aw.conjbeams,
         },
         maximum_cells: *native_cf_maximum_cells,
     })
@@ -158,10 +164,40 @@ fn frequency_groups(
     frequencies
 }
 
+/// The one frequency group of a run without wideband cells:
+/// `AWConvFunc::makeFreqValList` samples the aperture at the image
+/// reference frequency alone, whatever the windows. The group names the
+/// first window and holds every selected channel, which the cache's
+/// manifest records.
+fn reference_group(
+    groups: Vec<NativeAwFrequencyGroup>,
+    reference_frequency_hz: f64,
+) -> Vec<NativeAwFrequencyGroup> {
+    let spectral_window = groups
+        .iter()
+        .map(|group| group.spectral_window)
+        .min()
+        .expect("the spectral axis selects a window");
+    let mut channel_frequencies_hz = groups
+        .into_iter()
+        .flat_map(|group| group.channel_frequencies_hz)
+        .collect::<Vec<_>>();
+    channel_frequencies_hz.sort_by(f64::total_cmp);
+    vec![NativeAwFrequencyGroup {
+        spectral_window,
+        channel_frequencies_hz,
+        cf_frequency_hz: reference_frequency_hz,
+    }]
+}
+
 /// The W values of `planes` planes and their increment. CASA AWConvFunc
 /// derives its W grid from the requested field of view, not the observed W
-/// envelope: maxUVW=1/(4*sky_increment), w=i²/wScale.
+/// envelope: maxUVW=1/(4*sky_increment), w=i²/wScale. One plane is the
+/// co-planar w = 0 with no scale (`wScale` stays zero, `makeWValList`).
 fn w_grid(planes: usize, sky_cell: f64) -> (Vec<f64>, f64) {
+    if planes <= 1 {
+        return (vec![0.0], 0.0);
+    }
     let max_w = 1.0 / (sky_cell * 4.0);
     let w_increment = ((planes - 1) * (planes - 1)) as f32 as f64 / max_w;
     let w_values = (0..planes)
@@ -240,6 +276,35 @@ mod tests {
     use casa_types::{ArrayValue, ScalarValue, Value};
 
     use super::*;
+
+    /// `AWConvFunc::makeConvFunction`: `wScale = (n−1)²/maxUVW` over more
+    /// than one plane, `w = i²/wScale`; one plane is w = 0 with no scale.
+    #[test]
+    fn the_w_grid_is_casas_and_one_plane_is_co_planar() {
+        assert_eq!(w_grid(1, 1.0e-4), (vec![0.0], 0.0));
+        let (values, increment) = w_grid(3, 1.0e-4);
+        let max_w = 1.0 / (4.0e-4);
+        assert_eq!(increment, 4.0 / max_w);
+        assert_eq!(values, [0.0, 1.0 / increment, 4.0 / increment]);
+    }
+
+    /// Without wideband cells, one group at the image reference frequency
+    /// holds every selected channel and names the lowest window.
+    #[test]
+    fn a_narrowband_request_samples_the_reference_frequency_alone() {
+        let group = |spectral_window, channels: &[f64]| NativeAwFrequencyGroup {
+            spectral_window,
+            channel_frequencies_hz: channels.to_vec(),
+            cf_frequency_hz: channels[channels.len() - 1],
+        };
+        let groups = vec![group(3, &[1.1e9, 1.2e9]), group(1, &[1.6e9, 1.7e9])];
+        let [only] = reference_group(groups, 1.4e9)
+            .try_into()
+            .expect("one group");
+        assert_eq!(only.spectral_window, 1);
+        assert_eq!(only.cf_frequency_hz, 1.4e9);
+        assert_eq!(only.channel_frequencies_hz, [1.1e9, 1.2e9, 1.6e9, 1.7e9]);
+    }
 
     /// `ms_trial.ms`, unpacked into `root`, with antenna 0's feed 0 at
     /// `angle` on both receptors.

@@ -362,7 +362,7 @@
     },
     "wprojplanes": {
       "status": "Implemented",
-      "scope": "W/AW: -1 becomes derive/None and positive counts pass; non-positive other than -1 refused. W aliases with one plane normalize to standard. Ignored by other gridders.",
+      "scope": "W: -1 becomes derive/None and positive counts pass; non-positive other than -1 refused. W aliases with one plane normalize to standard. AW: any positive count, one plane co-planar without the W term (createAWPFTMachine); a native EVLA cache generates that many planes, an imported CASA cache holds its own; -1 refused (issue 980). Ignored by other gridders.",
       "evidence": [
         "signature",
         "reader"
@@ -392,7 +392,7 @@
     },
     "aterm": {
       "status": "Partial",
-      "scope": "Read; AW requires true, otherwise ignored; incompatible AW value refused (issue 980).",
+      "scope": "AW: read as AWProjectFT::makeCFObject reads it; a native EVLA cache generates its cells without the aperture when false, and then without wideband cells; an imported CASA cache holds the cells its run made. aterm=False with psterm=False is refused, as CASA refuses it. Ignored by other gridders.",
       "evidence": [
         "signature",
         "reader"
@@ -403,7 +403,7 @@
     },
     "psterm": {
       "status": "Partial",
-      "scope": "Read; AW requires false, otherwise ignored; incompatible AW value refused (issue 980).",
+      "scope": "AW: read as AWProjectFT::makeCFObject reads it; a native EVLA cache generates its cells with the prolate spheroidal when true, and an imported CASA cache holds the cells its run made. Ignored by other gridders.",
       "evidence": [
         "signature",
         "reader"
@@ -414,7 +414,7 @@
     },
     "wbawp": {
       "status": "Partial",
-      "scope": "Read; AW requires true, otherwise ignored; incompatible AW value refused (issue 980).",
+      "scope": "AW: a native EVLA cache generates cells at each selected window's frequency when true (with the aperture), else at the image reference frequency alone (AWConvFunc::makeFreqValList); an imported CASA cache holds the cells its run made. Ignored by other gridders.",
       "evidence": [
         "signature",
         "reader"
@@ -425,7 +425,7 @@
     },
     "conjbeams": {
       "status": "Partial",
-      "scope": "Read; AW requires true; the mosaic grids with conjugate beams on an image of one plane and ignores it on a cube, as CASA; other gridders ignore it (issue 980).",
+      "scope": "AW: each sample grids with the cell nearest its conjugate frequency when true, its own otherwise (CFBuffer::nearestFreqNdx), and a native EVLA cache weighs with the beam there (AWConvFunc::fillConvFuncBuffer2); the mosaic grids with conjugate beams on an image of one plane and ignores it on a cube, as CASA; other gridders ignore it.",
       "evidence": [
         "signature",
         "reader"
