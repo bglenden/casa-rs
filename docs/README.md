@@ -42,7 +42,7 @@ built from `main`.
   and storage locations, and release recipes
 - `adr/`: accepted architecture decisions
 - [MeasurementSet boundary](measurement-set/contracts.md): its rules and
-  the remaining migration
+  the obligations for capabilities not yet offered
 - [Simulation plan](simulation/simulation-plan-20261020.md): requirements,
   decisions and the deferred phases
 - [Tutorial parity](tutorial-parity/README.md): the First Look runner

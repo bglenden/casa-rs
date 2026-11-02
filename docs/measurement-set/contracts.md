@@ -1,4 +1,4 @@
-# MeasurementSet boundary: rules and remaining work
+# MeasurementSet boundary: rules
 
 Truth class: normative
 Last reality check: 2026-11-02
@@ -12,7 +12,8 @@ behind it: opening, the MSv2 and MSv4 stores, the converter and the MSv2
 creation plan. Their rustdoc is the contract: what each type holds, what
 each store delivers, and what it refuses. This file keeps only what the
 code does not state: the rules that bind changes to the boundary, the owner
-decisions behind it, and the work still to do.
+decisions behind it, and what each capability not yet offered must meet.
+Moving the remaining consumers onto the boundary is tracked in #1055.
 
 ## Rules
 
@@ -107,55 +108,3 @@ batches and workers. Acceptance for each family: consumers use it directly;
 scalar, bulk and CASA agree to that family's tolerances; and timings, with
 binding and preparation reported apart from apply, are compared against
 both the scalar path and any already-prepared production path.
-
-## Remaining migration
-
-Imaging reads only through the boundary on both stores (#932). These
-consumers still use `casa-ms`'s own access paths:
-
-| Consumer | Code | What moving it must keep |
-| --- | --- | --- |
-| Calibration: solve, apply, `gencal` | `casa-calibration` (`session`, `solve`, `plan`, `execute`, `gencal`); the batch solve in `solve::batch_trial` is the starting point | Fragment accumulation where the solver allows, not whole-group materialization; CASA caltables unchanged; CASA science. |
-| Flagging and transforms | `casa-ms` `flagging`, `transform`, `selection`, `spectral_selection`; `visibility_buffer` | Bit, category and row flag semantics; averaging and output provenance; optional columns; selected updates and new outputs; the flagging memory gate below. |
-| Metadata and plots | `casa-ms` `derived`, `ephemeris`, `selected_pointing`, `subtables`, `listobs`, `msexplore`, `plot*` | Catalogue and window access; moving fields and pointing; no MAIN or `DATA_DESC_ID` assumptions at the domain boundary. |
-| Simulation writes | `casa-simulation` `write` | Common creation batches, multi-window and mosaic metadata, bounded prediction and writes, CASA-paired outputs. |
-| Import | `casa-vla` | Variable cell shapes, column metadata and `FLAG_CATEGORY`; common creation when an output format is chosen. |
-| Task and Python surfaces | the task executables, `casars-python` | Format detection and native dispatch; generic table tools stay explicit table tools. |
-
-Each move runs the contract laws, the affected T0, T1 and T1.5 tests and
-interoperability tests, and a blocking comparison of the new route against
-the old one at one and several workers (wall time, peak RSS and products,
-as `tools/perf/imager/run_alternating_comparison.py --gate blocking` does
-for imaging); a failing comparison blocks the move even when the science
-passes. Persistence and the executing hot loop get an independent review.
-An MSv4 feature a consumer lacks returns a typed unavailable error; no MSv2
-capability is lost.
-
-**Flagging memory gate.** The moved route holds no full-selection sample
-list, copied groups or growing touched-sample set. Its plan declares each
-algorithm's fitting and statistics windows, halos, passes, extension state
-and mutation order; I/O fragments never become new fit boundaries. A group
-`tfcrop` or `rflag` needs whole is admitted resident, realized in admitted
-passes, or refused; a changed scientific window needs owner approval.
-Statistics and reads of the original flags finish before overlapping flag
-patches are published. Peak live bytes (payload and fit windows, masks and
-halos, aggregate state, queued updates) are measured as the group count
-grows at fixed group shape, and as the group shape grows, and `tfcrop` and
-`rflag` are compared with the old route's time, memory and CASA science at
-different fragment boundaries.
-
-**MSv4 aggregation gate.** On the same MSv4 store, with chunk geometry,
-roles, precision, workers, memory budget, cache state and scientific work
-held fixed, a larger aggregation must show a measured benefit over a
-smaller one and no significant task slowdown, for: MFS continuum; a
-restricted-wave cube with narrow and wider channel selections; a bandpass
-solve with interleaved windows; and flags-only and partial-unit updates.
-Each row uses XRADIO's default full-frequency chunks and a
-frequency-chunked equivalent, and reports calls, encoded and decoded bytes,
-copies, wall and CPU time. Fewer calls alone cannot pass a slower task, and
-v4 need not beat v2.
-
-**Programme acceptance.** Every consumer and producer above has moved; the
-support matrix states what each format can do; user-facing documentation
-gives the formats, the conversion limits and creation examples; and the
-integrated system has an independent review.
