@@ -352,327 +352,328 @@
 <a href=#352 id=352 data-nosnippet>352</a>
 <a href=#353 id=353 data-nosnippet>353</a><span class="doccomment">/// The `FEED` rows (antenna, window, receptors) of `antennas` antennas that
 <a href=#354 id=354 data-nosnippet>354</a>/// read back as each partition's receptors (`partitions`: its window, the
-<a href=#355 id=355 data-nosnippet>355</a>/// antennas its baselines name and the receptors it states) under
-<a href=#356 id=356 data-nosnippet>356</a>/// casacore's rule (`MSIter::setFeedInfo`, as XRADIO's converter reads it
-<a href=#357 id=357 data-nosnippet>357</a>/// too): once any row names a window, a window takes its own rows only and
-<a href=#358 id=358 data-nosnippet>358</a>/// rows for every window (-1) are ignored. So when every antenna states the
-<a href=#359 id=359 data-nosnippet>359</a>/// same receptors in every window it appears in, each has one row for every
-<a href=#360 id=360 data-nosnippet>360</a>/// window (-1); otherwise each has a row per window it states receptors in,
-<a href=#361 id=361 data-nosnippet>361</a>/// and a window where it states none (ALMA's WVR window) has no row, as
-<a href=#362 id=362 data-nosnippet>362</a>/// ALMA writes `FEED`. An antenna stating none has no row, unless no antenna
-<a href=#363 id=363 data-nosnippet>363</a>/// states any, when each has a row of none. Partitions of one window that
-<a href=#364 id=364 data-nosnippet>364</a>/// state an antenna's receptors differently are refused: one `FEED` row
-<a href=#365 id=365 data-nosnippet>365</a>/// holds them.
-<a href=#366 id=366 data-nosnippet>366</a></span><span class="kw">fn </span>feed_plan&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#367 id=367 data-nosnippet>367</a>    antennas: usize,
-<a href=#368 id=368 data-nosnippet>368</a>    partitions: <span class="kw">impl </span>Iterator&lt;Item = (i32, <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[AntennaId], <span class="kw-2">&amp;</span><span class="lifetime">'a </span>BTreeMap&lt;AntennaId, Receptors&gt;)&gt;,
-<a href=#369 id=369 data-nosnippet>369</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;(usize, i32, <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Receptors)&gt;, ObservationError&gt; {
-<a href=#370 id=370 data-nosnippet>370</a>    <span class="kw">static </span>NONE: Receptors = Receptors {
-<a href=#371 id=371 data-nosnippet>371</a>        types: Vec::new(),
-<a href=#372 id=372 data-nosnippet>372</a>        angles: Vec::new(),
-<a href=#373 id=373 data-nosnippet>373</a>    };
-<a href=#374 id=374 data-nosnippet>374</a>    <span class="comment">// Each antenna's receptors in each window it appears in.
-<a href=#375 id=375 data-nosnippet>375</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>seen: Vec&lt;Vec&lt;(i32, <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Receptors&gt;)&gt;&gt; = <span class="macro">vec!</span>[Vec::new(); antennas];
-<a href=#376 id=376 data-nosnippet>376</a>    <span class="kw">for </span>(window, named, receptors) <span class="kw">in </span>partitions {
-<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">for </span>antenna <span class="kw">in </span>named.iter().chain(receptors.keys()) {
-<a href=#378 id=378 data-nosnippet>378</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(own) = seen.get_mut(antenna.<span class="number">0 </span><span class="kw">as </span>usize) <span class="kw">else </span>{
-<a href=#379 id=379 data-nosnippet>379</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(request_error(<span class="string">"receptors of an antenna the catalogue lacks"</span>));
-<a href=#380 id=380 data-nosnippet>380</a>            };
-<a href=#381 id=381 data-nosnippet>381</a>            <span class="kw">let </span>stated = receptors.get(antenna);
-<a href=#382 id=382 data-nosnippet>382</a>            <span class="kw">match </span>own.iter().find(|(known, <span class="kw">_</span>)| <span class="kw-2">*</span>known == window) {
-<a href=#383 id=383 data-nosnippet>383</a>                <span class="prelude-val">Some</span>((<span class="kw">_</span>, known)) <span class="kw">if </span><span class="kw-2">*</span>known != stated =&gt; {
-<a href=#384 id=384 data-nosnippet>384</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
-<a href=#385 id=385 data-nosnippet>385</a>                        what: <span class="string">"partitions of one window with different receptors for an antenna"</span>,
-<a href=#386 id=386 data-nosnippet>386</a>                    });
-<a href=#387 id=387 data-nosnippet>387</a>                }
-<a href=#388 id=388 data-nosnippet>388</a>                <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; {}
-<a href=#389 id=389 data-nosnippet>389</a>                <span class="prelude-val">None </span>=&gt; own.push((window, stated)),
-<a href=#390 id=390 data-nosnippet>390</a>            }
-<a href=#391 id=391 data-nosnippet>391</a>        }
-<a href=#392 id=392 data-nosnippet>392</a>    }
-<a href=#393 id=393 data-nosnippet>393</a>    <span class="kw">if </span>!seen.iter().flatten().any(|(<span class="kw">_</span>, stated)| stated.is_some()) {
-<a href=#394 id=394 data-nosnippet>394</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((<span class="number">0</span>..antennas).map(|antenna| (antenna, -<span class="number">1</span>, <span class="kw-2">&amp;</span>NONE)).collect());
-<a href=#395 id=395 data-nosnippet>395</a>    }
-<a href=#396 id=396 data-nosnippet>396</a>    <span class="kw">let </span>per_window = seen
-<a href=#397 id=397 data-nosnippet>397</a>        .iter()
-<a href=#398 id=398 data-nosnippet>398</a>        .any(|own| own.iter().any(|(<span class="kw">_</span>, stated)| <span class="kw-2">*</span>stated != own[<span class="number">0</span>].<span class="number">1</span>));
-<a href=#399 id=399 data-nosnippet>399</a>    <span class="prelude-val">Ok</span>(seen
-<a href=#400 id=400 data-nosnippet>400</a>        .into_iter()
-<a href=#401 id=401 data-nosnippet>401</a>        .enumerate()
-<a href=#402 id=402 data-nosnippet>402</a>        .flat_map(|(antenna, own)| {
-<a href=#403 id=403 data-nosnippet>403</a>            <span class="kw">let </span>rows: Vec&lt;(i32, <span class="kw-2">&amp;</span>Receptors)&gt; = <span class="kw">if </span>per_window {
-<a href=#404 id=404 data-nosnippet>404</a>                own.into_iter()
-<a href=#405 id=405 data-nosnippet>405</a>                    .filter_map(|(window, stated)| <span class="prelude-val">Some</span>((window, stated<span class="question-mark">?</span>)))
-<a href=#406 id=406 data-nosnippet>406</a>                    .collect()
-<a href=#407 id=407 data-nosnippet>407</a>            } <span class="kw">else </span>{
-<a href=#408 id=408 data-nosnippet>408</a>                own.first()
-<a href=#409 id=409 data-nosnippet>409</a>                    .and_then(|(<span class="kw">_</span>, stated)| <span class="kw-2">*</span>stated)
-<a href=#410 id=410 data-nosnippet>410</a>                    .map(|receptors| (-<span class="number">1</span>, receptors))
-<a href=#411 id=411 data-nosnippet>411</a>                    .into_iter()
-<a href=#412 id=412 data-nosnippet>412</a>                    .collect()
-<a href=#413 id=413 data-nosnippet>413</a>            };
-<a href=#414 id=414 data-nosnippet>414</a>            rows.into_iter()
-<a href=#415 id=415 data-nosnippet>415</a>                .map(<span class="kw">move </span>|(window, receptors)| (antenna, window, receptors))
-<a href=#416 id=416 data-nosnippet>416</a>        })
-<a href=#417 id=417 data-nosnippet>417</a>        .collect())
-<a href=#418 id=418 data-nosnippet>418</a>}
-<a href=#419 id=419 data-nosnippet>419</a>
-<a href=#420 id=420 data-nosnippet>420</a><span class="doccomment">/// One `FEED` row: antenna `index`'s feed 0 in spectral window `window`.
-<a href=#421 id=421 data-nosnippet>421</a></span><span class="kw">fn </span>feed_row(
-<a href=#422 id=422 data-nosnippet>422</a>    ms: <span class="kw-2">&amp;mut </span>MeasurementSet,
-<a href=#423 id=423 data-nosnippet>423</a>    index: usize,
-<a href=#424 id=424 data-nosnippet>424</a>    window: i32,
-<a href=#425 id=425 data-nosnippet>425</a>    own: <span class="kw-2">&amp;</span>Receptors,
-<a href=#426 id=426 data-nosnippet>426</a>    time_range: [f64; <span class="number">2</span>],
-<a href=#427 id=427 data-nosnippet>427</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
-<a href=#428 id=428 data-nosnippet>428</a>    <span class="kw">let </span>radians = Unit::new(<span class="string">"rad"</span>).expect(<span class="string">"radians"</span>);
-<a href=#429 id=429 data-nosnippet>429</a>    <span class="kw">let </span>receptors = own.types.len();
-<a href=#430 id=430 data-nosnippet>430</a>    <span class="kw">let </span>angles = own
-<a href=#431 id=431 data-nosnippet>431</a>        .angles
-<a href=#432 id=432 data-nosnippet>432</a>        .iter()
-<a href=#433 id=433 data-nosnippet>433</a>        .map(|angle| {
-<a href=#434 id=434 data-nosnippet>434</a>            angle
-<a href=#435 id=435 data-nosnippet>435</a>                .get_value_in(<span class="kw-2">&amp;</span>radians)
-<a href=#436 id=436 data-nosnippet>436</a>                .map_err(|<span class="kw">_</span>| request_error(<span class="string">"a receptor angle is not an angle"</span>))
-<a href=#437 id=437 data-nosnippet>437</a>        })
-<a href=#438 id=438 data-nosnippet>438</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#439 id=439 data-nosnippet>439</a>    <span class="kw">let </span>types: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = own.types.iter().map(String::as_str).collect();
-<a href=#440 id=440 data-nosnippet>440</a>    <span class="kw">let </span>identity: Vec&lt;Complex32&gt; = (<span class="number">0</span>..receptors * receptors)
-<a href=#441 id=441 data-nosnippet>441</a>        .map(|k| {
-<a href=#442 id=442 data-nosnippet>442</a>            <span class="kw">if </span>k % (receptors + <span class="number">1</span>) == <span class="number">0 </span>{
-<a href=#443 id=443 data-nosnippet>443</a>                Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>)
-<a href=#444 id=444 data-nosnippet>444</a>            } <span class="kw">else </span>{
-<a href=#445 id=445 data-nosnippet>445</a>                Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>)
-<a href=#446 id=446 data-nosnippet>446</a>            }
-<a href=#447 id=447 data-nosnippet>447</a>        })
-<a href=#448 id=448 data-nosnippet>448</a>        .collect();
-<a href=#449 id=449 data-nosnippet>449</a>    <span class="kw">let </span>row = row_from_defs(
-<a href=#450 id=450 data-nosnippet>450</a>        schema::feed::REQUIRED_COLUMNS,
-<a href=#451 id=451 data-nosnippet>451</a>        <span class="kw-2">&amp;</span>[
-<a href=#452 id=452 data-nosnippet>452</a>            (<span class="string">"ANTENNA_ID"</span>, i(index <span class="kw">as </span>i32)),
-<a href=#453 id=453 data-nosnippet>453</a>            (<span class="string">"BEAM_ID"</span>, i(-<span class="number">1</span>)),
-<a href=#454 id=454 data-nosnippet>454</a>            (
-<a href=#455 id=455 data-nosnippet>455</a>                <span class="string">"BEAM_OFFSET"</span>,
-<a href=#456 id=456 data-nosnippet>456</a>                f64_array(<span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">2 </span>* receptors], <span class="macro">vec!</span>[<span class="number">2</span>, receptors]),
-<a href=#457 id=457 data-nosnippet>457</a>            ),
-<a href=#458 id=458 data-nosnippet>458</a>            (<span class="string">"FEED_ID"</span>, i(<span class="number">0</span>)),
-<a href=#459 id=459 data-nosnippet>459</a>            (<span class="string">"INTERVAL"</span>, f(time_range[<span class="number">1</span>] - time_range[<span class="number">0</span>])),
-<a href=#460 id=460 data-nosnippet>460</a>            (<span class="string">"NUM_RECEPTORS"</span>, i(receptors <span class="kw">as </span>i32)),
-<a href=#461 id=461 data-nosnippet>461</a>            (
-<a href=#462 id=462 data-nosnippet>462</a>                <span class="string">"POL_RESPONSE"</span>,
-<a href=#463 id=463 data-nosnippet>463</a>                complex_array(<span class="kw-2">&amp;</span>identity, <span class="macro">vec!</span>[receptors, receptors]),
-<a href=#464 id=464 data-nosnippet>464</a>            ),
-<a href=#465 id=465 data-nosnippet>465</a>            (<span class="string">"POLARIZATION_TYPE"</span>, string_array(<span class="kw-2">&amp;</span>types, <span class="macro">vec!</span>[receptors])),
-<a href=#466 id=466 data-nosnippet>466</a>            (<span class="string">"POSITION"</span>, f64_array(<span class="kw-2">&amp;</span>[<span class="number">0.0</span>; <span class="number">3</span>], <span class="macro">vec!</span>[<span class="number">3</span>])),
-<a href=#467 id=467 data-nosnippet>467</a>            (<span class="string">"RECEPTOR_ANGLE"</span>, f64_array(<span class="kw-2">&amp;</span>angles, <span class="macro">vec!</span>[receptors])),
-<a href=#468 id=468 data-nosnippet>468</a>            (<span class="string">"SPECTRAL_WINDOW_ID"</span>, i(window)),
-<a href=#469 id=469 data-nosnippet>469</a>            (<span class="string">"TIME"</span>, f(<span class="number">0.5 </span>* (time_range[<span class="number">0</span>] + time_range[<span class="number">1</span>]))),
-<a href=#470 id=470 data-nosnippet>470</a>        ],
-<a href=#471 id=471 data-nosnippet>471</a>    );
-<a href=#472 id=472 data-nosnippet>472</a>    subtable_mut(ms, SubtableId::Feed)
-<a href=#473 id=473 data-nosnippet>473</a>        .and_then(|table| table.add_row(row).map_err(Into::into))
-<a href=#474 id=474 data-nosnippet>474</a>        .map_err(storage)
-<a href=#475 id=475 data-nosnippet>475</a>}
-<a href=#476 id=476 data-nosnippet>476</a>
-<a href=#477 id=477 data-nosnippet>477</a><span class="doccomment">/// The receptors a correlation product correlates, by their positions in
-<a href=#478 id=478 data-nosnippet>478</a>/// the feed's `receptors` (`R`, `L`, `X`, `Y`), as `CORR_PRODUCT` holds
-<a href=#479 id=479 data-nosnippet>479</a>/// them.
-<a href=#480 id=480 data-nosnippet>480</a></span><span class="kw">fn </span>receptor_pair(
-<a href=#481 id=481 data-nosnippet>481</a>    correlation: Correlation,
-<a href=#482 id=482 data-nosnippet>482</a>    receptors: <span class="kw-2">&amp;</span>[String],
-<a href=#483 id=483 data-nosnippet>483</a>) -&gt; <span class="prelude-ty">Result</span>&lt;[i32; <span class="number">2</span>], ObservationError&gt; {
-<a href=#484 id=484 data-nosnippet>484</a>    <span class="kw">use </span>Correlation::{LL, LR, RL, RR, XX, XY, YX, YY};
-<a href=#485 id=485 data-nosnippet>485</a>    <span class="kw">let </span>[first, second] = <span class="kw">match </span>correlation {
-<a href=#486 id=486 data-nosnippet>486</a>        RR =&gt; [<span class="string">"R"</span>, <span class="string">"R"</span>],
-<a href=#487 id=487 data-nosnippet>487</a>        RL =&gt; [<span class="string">"R"</span>, <span class="string">"L"</span>],
-<a href=#488 id=488 data-nosnippet>488</a>        LR =&gt; [<span class="string">"L"</span>, <span class="string">"R"</span>],
-<a href=#489 id=489 data-nosnippet>489</a>        LL =&gt; [<span class="string">"L"</span>, <span class="string">"L"</span>],
-<a href=#490 id=490 data-nosnippet>490</a>        XX =&gt; [<span class="string">"X"</span>, <span class="string">"X"</span>],
-<a href=#491 id=491 data-nosnippet>491</a>        XY =&gt; [<span class="string">"X"</span>, <span class="string">"Y"</span>],
-<a href=#492 id=492 data-nosnippet>492</a>        YX =&gt; [<span class="string">"Y"</span>, <span class="string">"X"</span>],
-<a href=#493 id=493 data-nosnippet>493</a>        YY =&gt; [<span class="string">"Y"</span>, <span class="string">"Y"</span>],
-<a href=#494 id=494 data-nosnippet>494</a>        <span class="kw">_ </span>=&gt; {
-<a href=#495 id=495 data-nosnippet>495</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
-<a href=#496 id=496 data-nosnippet>496</a>                what: <span class="string">"writing MSv2 correlation products other than a feed pair's"</span>,
-<a href=#497 id=497 data-nosnippet>497</a>            });
-<a href=#498 id=498 data-nosnippet>498</a>        }
-<a href=#499 id=499 data-nosnippet>499</a>    };
-<a href=#500 id=500 data-nosnippet>500</a>    <span class="kw">let </span>position = |label: <span class="kw-2">&amp;</span>str| {
-<a href=#501 id=501 data-nosnippet>501</a>        receptors
-<a href=#502 id=502 data-nosnippet>502</a>            .iter()
-<a href=#503 id=503 data-nosnippet>503</a>            .position(|receptor| receptor.eq_ignore_ascii_case(label))
-<a href=#504 id=504 data-nosnippet>504</a>            .map(|index| index <span class="kw">as </span>i32)
-<a href=#505 id=505 data-nosnippet>505</a>            .ok_or(ObservationError::Unsupported {
-<a href=#506 id=506 data-nosnippet>506</a>                what: <span class="string">"writing an MSv2 correlation product of a receptor the feeds lack"</span>,
-<a href=#507 id=507 data-nosnippet>507</a>            })
-<a href=#508 id=508 data-nosnippet>508</a>    };
-<a href=#509 id=509 data-nosnippet>509</a>    <span class="prelude-val">Ok</span>([position(first)<span class="question-mark">?</span>, position(second)<span class="question-mark">?</span>])
-<a href=#510 id=510 data-nosnippet>510</a>}
-<a href=#511 id=511 data-nosnippet>511</a>
-<a href=#512 id=512 data-nosnippet>512</a><span class="kw">fn </span>polarization(
-<a href=#513 id=513 data-nosnippet>513</a>    ms: <span class="kw-2">&amp;mut </span>MeasurementSet,
-<a href=#514 id=514 data-nosnippet>514</a>    correlations: <span class="kw-2">&amp;</span>[Correlation],
-<a href=#515 id=515 data-nosnippet>515</a>    receptors: <span class="kw-2">&amp;</span>[String],
-<a href=#516 id=516 data-nosnippet>516</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
-<a href=#517 id=517 data-nosnippet>517</a>    <span class="kw">let </span>count = correlations.len();
-<a href=#518 id=518 data-nosnippet>518</a>    <span class="kw">let </span>types: Vec&lt;i32&gt; = correlations
-<a href=#519 id=519 data-nosnippet>519</a>        .iter()
-<a href=#520 id=520 data-nosnippet>520</a>        .map(|correlation| correlation.casacore_code())
-<a href=#521 id=521 data-nosnippet>521</a>        .collect();
-<a href=#522 id=522 data-nosnippet>522</a>    <span class="kw">let </span><span class="kw-2">mut </span>products = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="number">2 </span>* count];
-<a href=#523 id=523 data-nosnippet>523</a>    <span class="kw">for </span>(index, correlation) <span class="kw">in </span>correlations.iter().enumerate() {
-<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw">let </span>[first, second] = receptor_pair(<span class="kw-2">*</span>correlation, receptors)<span class="question-mark">?</span>;
-<a href=#525 id=525 data-nosnippet>525</a>        products[index] = first;
-<a href=#526 id=526 data-nosnippet>526</a>        products[count + index] = second;
-<a href=#527 id=527 data-nosnippet>527</a>    }
-<a href=#528 id=528 data-nosnippet>528</a>    <span class="kw">let </span>row = row_from_defs(
-<a href=#529 id=529 data-nosnippet>529</a>        schema::polarization::REQUIRED_COLUMNS,
-<a href=#530 id=530 data-nosnippet>530</a>        <span class="kw-2">&amp;</span>[
-<a href=#531 id=531 data-nosnippet>531</a>            (<span class="string">"NUM_CORR"</span>, i(count <span class="kw">as </span>i32)),
-<a href=#532 id=532 data-nosnippet>532</a>            (<span class="string">"CORR_TYPE"</span>, i32_array(<span class="kw-2">&amp;</span>types, <span class="macro">vec!</span>[count])),
-<a href=#533 id=533 data-nosnippet>533</a>            (<span class="string">"CORR_PRODUCT"</span>, i32_array(<span class="kw-2">&amp;</span>products, <span class="macro">vec!</span>[<span class="number">2</span>, count])),
-<a href=#534 id=534 data-nosnippet>534</a>            (<span class="string">"FLAG_ROW"</span>, b(<span class="bool-val">false</span>)),
-<a href=#535 id=535 data-nosnippet>535</a>        ],
-<a href=#536 id=536 data-nosnippet>536</a>    );
-<a href=#537 id=537 data-nosnippet>537</a>    subtable_mut(ms, SubtableId::Polarization)
-<a href=#538 id=538 data-nosnippet>538</a>        .and_then(|table| table.add_row(row).map_err(Into::into))
-<a href=#539 id=539 data-nosnippet>539</a>        .map_err(storage)
-<a href=#540 id=540 data-nosnippet>540</a>}
-<a href=#541 id=541 data-nosnippet>541</a>
-<a href=#542 id=542 data-nosnippet>542</a><span class="attr">#[cfg(test)]
-<a href=#543 id=543 data-nosnippet>543</a></span><span class="kw">mod </span>tests {
-<a href=#544 id=544 data-nosnippet>544</a>    <span class="kw">use </span>casa_observation::Correlation;
-<a href=#545 id=545 data-nosnippet>545</a>
-<a href=#546 id=546 data-nosnippet>546</a>    <span class="kw">use </span>std::collections::BTreeMap;
-<a href=#547 id=547 data-nosnippet>547</a>
-<a href=#548 id=548 data-nosnippet>548</a>    <span class="kw">use </span>casa_observation::{AntennaId, Receptors};
-<a href=#549 id=549 data-nosnippet>549</a>    <span class="kw">use </span>casa_types::quanta::Quantity;
-<a href=#550 id=550 data-nosnippet>550</a>
-<a href=#551 id=551 data-nosnippet>551</a>    <span class="kw">use super</span>::{feed_plan, position_or_push, receptor_pair};
-<a href=#552 id=552 data-nosnippet>552</a>
-<a href=#553 id=553 data-nosnippet>553</a>    <span class="attr">#[test]
-<a href=#554 id=554 data-nosnippet>554</a>    </span><span class="kw">fn </span>products_name_receptors_by_their_place_in_the_feed() {
-<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">let </span>feed = |labels: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]| labels.iter().map(ToString::to_string).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#556 id=556 data-nosnippet>556</a>        <span class="macro">assert_eq!</span>(
-<a href=#557 id=557 data-nosnippet>557</a>            receptor_pair(Correlation::RL, <span class="kw-2">&amp;</span>feed(<span class="kw-2">&amp;</span>[<span class="string">"R"</span>, <span class="string">"L"</span>])).unwrap(),
-<a href=#558 id=558 data-nosnippet>558</a>            [<span class="number">0</span>, <span class="number">1</span>]
-<a href=#559 id=559 data-nosnippet>559</a>        );
-<a href=#560 id=560 data-nosnippet>560</a>        <span class="macro">assert_eq!</span>(
-<a href=#561 id=561 data-nosnippet>561</a>            receptor_pair(Correlation::XY, <span class="kw-2">&amp;</span>feed(<span class="kw-2">&amp;</span>[<span class="string">"Y"</span>, <span class="string">"X"</span>])).unwrap(),
-<a href=#562 id=562 data-nosnippet>562</a>            [<span class="number">1</span>, <span class="number">0</span>]
-<a href=#563 id=563 data-nosnippet>563</a>        );
-<a href=#564 id=564 data-nosnippet>564</a>        <span class="macro">assert_eq!</span>(
-<a href=#565 id=565 data-nosnippet>565</a>            receptor_pair(Correlation::LL, <span class="kw-2">&amp;</span>feed(<span class="kw-2">&amp;</span>[<span class="string">"L"</span>])).unwrap(),
-<a href=#566 id=566 data-nosnippet>566</a>            [<span class="number">0</span>, <span class="number">0</span>]
-<a href=#567 id=567 data-nosnippet>567</a>        );
-<a href=#568 id=568 data-nosnippet>568</a>        <span class="macro">assert!</span>(receptor_pair(Correlation::RR, <span class="kw-2">&amp;</span>feed(<span class="kw-2">&amp;</span>[<span class="string">"X"</span>, <span class="string">"Y"</span>])).is_err());
-<a href=#569 id=569 data-nosnippet>569</a>    }
-<a href=#570 id=570 data-nosnippet>570</a>
-<a href=#571 id=571 data-nosnippet>571</a>    <span class="attr">#[test]
-<a href=#572 id=572 data-nosnippet>572</a>    </span><span class="kw">fn </span>equal_content_shares_one_row() {
-<a href=#573 id=573 data-nosnippet>573</a>        <span class="kw">let </span><span class="kw-2">mut </span>known = Vec::new();
-<a href=#574 id=574 data-nosnippet>574</a>        <span class="macro">assert_eq!</span>(position_or_push(<span class="kw-2">&amp;mut </span>known, <span class="number">3</span>, |k| <span class="kw-2">*</span>k == <span class="number">3</span>), <span class="number">0</span>);
-<a href=#575 id=575 data-nosnippet>575</a>        <span class="macro">assert_eq!</span>(position_or_push(<span class="kw-2">&amp;mut </span>known, <span class="number">5</span>, |k| <span class="kw-2">*</span>k == <span class="number">5</span>), <span class="number">1</span>);
-<a href=#576 id=576 data-nosnippet>576</a>        <span class="macro">assert_eq!</span>(position_or_push(<span class="kw-2">&amp;mut </span>known, <span class="number">3</span>, |k| <span class="kw-2">*</span>k == <span class="number">3</span>), <span class="number">0</span>);
-<a href=#577 id=577 data-nosnippet>577</a>        <span class="macro">assert_eq!</span>(known, [<span class="number">3</span>, <span class="number">5</span>]);
-<a href=#578 id=578 data-nosnippet>578</a>    }
-<a href=#579 id=579 data-nosnippet>579</a>
-<a href=#580 id=580 data-nosnippet>580</a>    <span class="doccomment">/// Receptors of angle `angle` for each antenna `antennas` names.
-<a href=#581 id=581 data-nosnippet>581</a>    </span><span class="kw">fn </span>receptors(antennas: <span class="kw-2">&amp;</span>[u32], angle: f64) -&gt; BTreeMap&lt;AntennaId, Receptors&gt; {
-<a href=#582 id=582 data-nosnippet>582</a>        antennas
-<a href=#583 id=583 data-nosnippet>583</a>            .iter()
-<a href=#584 id=584 data-nosnippet>584</a>            .map(|antenna| {
-<a href=#585 id=585 data-nosnippet>585</a>                (
-<a href=#586 id=586 data-nosnippet>586</a>                    AntennaId(<span class="kw-2">*</span>antenna),
-<a href=#587 id=587 data-nosnippet>587</a>                    Receptors {
-<a href=#588 id=588 data-nosnippet>588</a>                        types: <span class="macro">vec!</span>[<span class="string">"R"</span>.to_string(), <span class="string">"L"</span>.to_string()],
-<a href=#589 id=589 data-nosnippet>589</a>                        angles: <span class="macro">vec!</span>[Quantity::new(angle, <span class="string">"rad"</span>).expect(<span class="string">"rad"</span>); <span class="number">2</span>],
-<a href=#590 id=590 data-nosnippet>590</a>                    },
-<a href=#591 id=591 data-nosnippet>591</a>                )
-<a href=#592 id=592 data-nosnippet>592</a>            })
-<a href=#593 id=593 data-nosnippet>593</a>            .collect()
-<a href=#594 id=594 data-nosnippet>594</a>    }
-<a href=#595 id=595 data-nosnippet>595</a>
-<a href=#596 id=596 data-nosnippet>596</a>    <span class="doccomment">/// The plan for three antennas whose partitions (window, antennas
-<a href=#597 id=597 data-nosnippet>597</a>    /// named, receptors) are `partitions`, as (antenna, window, first angle,
-<a href=#598 id=598 data-nosnippet>598</a>    /// receptors).
-<a href=#599 id=599 data-nosnippet>599</a>    </span><span class="kw">fn </span>plan(
-<a href=#600 id=600 data-nosnippet>600</a>        partitions: <span class="kw-2">&amp;</span>[(i32, Vec&lt;AntennaId&gt;, BTreeMap&lt;AntennaId, Receptors&gt;)],
-<a href=#601 id=601 data-nosnippet>601</a>    ) -&gt; Vec&lt;(usize, i32, f64, usize)&gt; {
-<a href=#602 id=602 data-nosnippet>602</a>        feed_plan(
-<a href=#603 id=603 data-nosnippet>603</a>            <span class="number">3</span>,
-<a href=#604 id=604 data-nosnippet>604</a>            partitions
-<a href=#605 id=605 data-nosnippet>605</a>                .iter()
-<a href=#606 id=606 data-nosnippet>606</a>                .map(|(window, named, own)| (<span class="kw-2">*</span>window, named.as_slice(), own)),
-<a href=#607 id=607 data-nosnippet>607</a>        )
-<a href=#608 id=608 data-nosnippet>608</a>        .unwrap()
-<a href=#609 id=609 data-nosnippet>609</a>        .into_iter()
-<a href=#610 id=610 data-nosnippet>610</a>        .map(|(antenna, window, own)| {
-<a href=#611 id=611 data-nosnippet>611</a>            <span class="kw">let </span>angle = own.angles.first().map_or(f64::NAN, Quantity::value);
-<a href=#612 id=612 data-nosnippet>612</a>            (antenna, window, angle, own.types.len())
-<a href=#613 id=613 data-nosnippet>613</a>        })
-<a href=#614 id=614 data-nosnippet>614</a>        .collect()
-<a href=#615 id=615 data-nosnippet>615</a>    }
-<a href=#616 id=616 data-nosnippet>616</a>
-<a href=#617 id=617 data-nosnippet>617</a>    <span class="doccomment">/// Partitions naming antennas 0 and 1 in `window`, stating `receptors`.
-<a href=#618 id=618 data-nosnippet>618</a>    </span><span class="kw">fn </span>named(
-<a href=#619 id=619 data-nosnippet>619</a>        window: i32,
-<a href=#620 id=620 data-nosnippet>620</a>        receptors: BTreeMap&lt;AntennaId, Receptors&gt;,
-<a href=#621 id=621 data-nosnippet>621</a>    ) -&gt; (i32, Vec&lt;AntennaId&gt;, BTreeMap&lt;AntennaId, Receptors&gt;) {
-<a href=#622 id=622 data-nosnippet>622</a>        (window, <span class="macro">vec!</span>[AntennaId(<span class="number">0</span>), AntennaId(<span class="number">1</span>)], receptors)
-<a href=#623 id=623 data-nosnippet>623</a>    }
-<a href=#624 id=624 data-nosnippet>624</a>
-<a href=#625 id=625 data-nosnippet>625</a>    <span class="doccomment">/// Windows that agree give each antenna stating receptors one row for
-<a href=#626 id=626 data-nosnippet>626</a>    /// every window; once one antenna differs by window, or a window states
-<a href=#627 id=627 data-nosnippet>627</a>    /// none for an antenna it names (ALMA's WVR window), each has a row per
-<a href=#628 id=628 data-nosnippet>628</a>    /// window it states receptors in. Rows of none are written only when no
-<a href=#629 id=629 data-nosnippet>629</a>    /// antenna states any.
-<a href=#630 id=630 data-nosnippet>630</a>    </span><span class="attr">#[test]
-<a href=#631 id=631 data-nosnippet>631</a>    </span><span class="kw">fn </span>feed_rows_are_per_window_once_any_antenna_differs() {
-<a href=#632 id=632 data-nosnippet>632</a>        <span class="kw">let </span>agree = plan(<span class="kw-2">&amp;</span>[
-<a href=#633 id=633 data-nosnippet>633</a>            named(<span class="number">0</span>, receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>], <span class="number">0.0</span>)),
-<a href=#634 id=634 data-nosnippet>634</a>            named(<span class="number">1</span>, receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>], <span class="number">0.0</span>)),
-<a href=#635 id=635 data-nosnippet>635</a>        ]);
-<a href=#636 id=636 data-nosnippet>636</a>        <span class="macro">assert_eq!</span>(agree, [(<span class="number">0</span>, -<span class="number">1</span>, <span class="number">0.0</span>, <span class="number">2</span>), (<span class="number">1</span>, -<span class="number">1</span>, <span class="number">0.0</span>, <span class="number">2</span>)]);
-<a href=#637 id=637 data-nosnippet>637</a>
-<a href=#638 id=638 data-nosnippet>638</a>        <span class="kw">let </span><span class="kw-2">mut </span>differ = receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>], <span class="number">0.0</span>);
-<a href=#639 id=639 data-nosnippet>639</a>        differ.extend(receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>], <span class="number">0.25</span>));
-<a href=#640 id=640 data-nosnippet>640</a>        <span class="kw">let </span>mixed = plan(<span class="kw-2">&amp;</span>[named(<span class="number">0</span>, receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>], <span class="number">0.0</span>)), named(<span class="number">1</span>, differ)]);
-<a href=#641 id=641 data-nosnippet>641</a>        <span class="macro">assert_eq!</span>(
-<a href=#642 id=642 data-nosnippet>642</a>            mixed,
-<a href=#643 id=643 data-nosnippet>643</a>            [
-<a href=#644 id=644 data-nosnippet>644</a>                (<span class="number">0</span>, <span class="number">0</span>, <span class="number">0.0</span>, <span class="number">2</span>),
-<a href=#645 id=645 data-nosnippet>645</a>                (<span class="number">0</span>, <span class="number">1</span>, <span class="number">0.25</span>, <span class="number">2</span>),
-<a href=#646 id=646 data-nosnippet>646</a>                (<span class="number">1</span>, <span class="number">0</span>, <span class="number">0.0</span>, <span class="number">2</span>),
-<a href=#647 id=647 data-nosnippet>647</a>                (<span class="number">1</span>, <span class="number">1</span>, <span class="number">0.0</span>, <span class="number">2</span>)
-<a href=#648 id=648 data-nosnippet>648</a>            ]
-<a href=#649 id=649 data-nosnippet>649</a>        );
-<a href=#650 id=650 data-nosnippet>650</a>
-<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">let </span>wvr = plan(<span class="kw-2">&amp;</span>[named(<span class="number">0</span>, receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>], <span class="number">0.0</span>)), named(<span class="number">1</span>, BTreeMap::new())]);
-<a href=#652 id=652 data-nosnippet>652</a>        <span class="macro">assert_eq!</span>(wvr, [(<span class="number">0</span>, <span class="number">0</span>, <span class="number">0.0</span>, <span class="number">2</span>), (<span class="number">1</span>, <span class="number">0</span>, <span class="number">0.0</span>, <span class="number">2</span>)], <span class="string">"no rows in window 1"</span>);
-<a href=#653 id=653 data-nosnippet>653</a>
-<a href=#654 id=654 data-nosnippet>654</a>        <span class="kw">let </span>none = plan(<span class="kw-2">&amp;</span>[named(<span class="number">0</span>, BTreeMap::new())]);
-<a href=#655 id=655 data-nosnippet>655</a>        <span class="macro">assert_eq!</span>(
-<a href=#656 id=656 data-nosnippet>656</a>            none.iter()
-<a href=#657 id=657 data-nosnippet>657</a>                .map(|row| (row.<span class="number">0</span>, row.<span class="number">1</span>, row.<span class="number">3</span>))
-<a href=#658 id=658 data-nosnippet>658</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#659 id=659 data-nosnippet>659</a>            [(<span class="number">0</span>, -<span class="number">1</span>, <span class="number">0</span>), (<span class="number">1</span>, -<span class="number">1</span>, <span class="number">0</span>), (<span class="number">2</span>, -<span class="number">1</span>, <span class="number">0</span>)]
-<a href=#660 id=660 data-nosnippet>660</a>        );
-<a href=#661 id=661 data-nosnippet>661</a>
-<a href=#662 id=662 data-nosnippet>662</a>        <span class="kw">let </span>clash = [
-<a href=#663 id=663 data-nosnippet>663</a>            named(<span class="number">0</span>, receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>], <span class="number">0.0</span>)),
-<a href=#664 id=664 data-nosnippet>664</a>            named(<span class="number">0</span>, receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>], <span class="number">0.5</span>)),
-<a href=#665 id=665 data-nosnippet>665</a>        ];
-<a href=#666 id=666 data-nosnippet>666</a>        <span class="macro">assert!</span>(
-<a href=#667 id=667 data-nosnippet>667</a>            feed_plan(
-<a href=#668 id=668 data-nosnippet>668</a>                <span class="number">3</span>,
-<a href=#669 id=669 data-nosnippet>669</a>                clash
-<a href=#670 id=670 data-nosnippet>670</a>                    .iter()
-<a href=#671 id=671 data-nosnippet>671</a>                    .map(|(window, antennas, own)| (<span class="kw-2">*</span>window, antennas.as_slice(), own))
-<a href=#672 id=672 data-nosnippet>672</a>            )
-<a href=#673 id=673 data-nosnippet>673</a>            .is_err(),
-<a href=#674 id=674 data-nosnippet>674</a>            <span class="string">"one window, two sets"
-<a href=#675 id=675 data-nosnippet>675</a>        </span>);
-<a href=#676 id=676 data-nosnippet>676</a>    }
-<a href=#677 id=677 data-nosnippet>677</a>}
+<a href=#355 id=355 data-nosnippet>355</a>/// antennas its baselines name and the receptors it states) alike under
+<a href=#356 id=356 data-nosnippet>356</a>/// the MSv2 adapter's rule (a window's own row, else the row for every
+<a href=#357 id=357 data-nosnippet>357</a>/// window, -1) and casacore's (`MSIter::setFeedInfo`) and XRADIO's, which
+<a href=#358 id=358 data-nosnippet>358</a>/// ignore rows for every window once a row names a window: rows of the two
+<a href=#359 id=359 data-nosnippet>359</a>/// kinds never stand together. So when every antenna states the same
+<a href=#360 id=360 data-nosnippet>360</a>/// receptors in every window it appears in, each has one row for every
+<a href=#361 id=361 data-nosnippet>361</a>/// window (-1); otherwise each has a row per window it states receptors in,
+<a href=#362 id=362 data-nosnippet>362</a>/// and a window where it states none (ALMA's WVR window) has no row, as
+<a href=#363 id=363 data-nosnippet>363</a>/// ALMA writes `FEED`. An antenna stating none has no row, unless no antenna
+<a href=#364 id=364 data-nosnippet>364</a>/// states any, when each has a row of none. Partitions of one window that
+<a href=#365 id=365 data-nosnippet>365</a>/// state an antenna's receptors differently are refused: one `FEED` row
+<a href=#366 id=366 data-nosnippet>366</a>/// holds them.
+<a href=#367 id=367 data-nosnippet>367</a></span><span class="kw">fn </span>feed_plan&lt;<span class="lifetime">'a</span>&gt;(
+<a href=#368 id=368 data-nosnippet>368</a>    antennas: usize,
+<a href=#369 id=369 data-nosnippet>369</a>    partitions: <span class="kw">impl </span>Iterator&lt;Item = (i32, <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[AntennaId], <span class="kw-2">&amp;</span><span class="lifetime">'a </span>BTreeMap&lt;AntennaId, Receptors&gt;)&gt;,
+<a href=#370 id=370 data-nosnippet>370</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;(usize, i32, <span class="kw-2">&amp;</span><span class="lifetime">'a </span>Receptors)&gt;, ObservationError&gt; {
+<a href=#371 id=371 data-nosnippet>371</a>    <span class="kw">static </span>NONE: Receptors = Receptors {
+<a href=#372 id=372 data-nosnippet>372</a>        types: Vec::new(),
+<a href=#373 id=373 data-nosnippet>373</a>        angles: Vec::new(),
+<a href=#374 id=374 data-nosnippet>374</a>    };
+<a href=#375 id=375 data-nosnippet>375</a>    <span class="comment">// Each antenna's receptors in each window it appears in.
+<a href=#376 id=376 data-nosnippet>376</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>seen: Vec&lt;Vec&lt;(i32, <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Receptors&gt;)&gt;&gt; = <span class="macro">vec!</span>[Vec::new(); antennas];
+<a href=#377 id=377 data-nosnippet>377</a>    <span class="kw">for </span>(window, named, receptors) <span class="kw">in </span>partitions {
+<a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">for </span>antenna <span class="kw">in </span>named.iter().chain(receptors.keys()) {
+<a href=#379 id=379 data-nosnippet>379</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(own) = seen.get_mut(antenna.<span class="number">0 </span><span class="kw">as </span>usize) <span class="kw">else </span>{
+<a href=#380 id=380 data-nosnippet>380</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(request_error(<span class="string">"receptors of an antenna the catalogue lacks"</span>));
+<a href=#381 id=381 data-nosnippet>381</a>            };
+<a href=#382 id=382 data-nosnippet>382</a>            <span class="kw">let </span>stated = receptors.get(antenna);
+<a href=#383 id=383 data-nosnippet>383</a>            <span class="kw">match </span>own.iter().find(|(known, <span class="kw">_</span>)| <span class="kw-2">*</span>known == window) {
+<a href=#384 id=384 data-nosnippet>384</a>                <span class="prelude-val">Some</span>((<span class="kw">_</span>, known)) <span class="kw">if </span><span class="kw-2">*</span>known != stated =&gt; {
+<a href=#385 id=385 data-nosnippet>385</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
+<a href=#386 id=386 data-nosnippet>386</a>                        what: <span class="string">"partitions of one window with different receptors for an antenna"</span>,
+<a href=#387 id=387 data-nosnippet>387</a>                    });
+<a href=#388 id=388 data-nosnippet>388</a>                }
+<a href=#389 id=389 data-nosnippet>389</a>                <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; {}
+<a href=#390 id=390 data-nosnippet>390</a>                <span class="prelude-val">None </span>=&gt; own.push((window, stated)),
+<a href=#391 id=391 data-nosnippet>391</a>            }
+<a href=#392 id=392 data-nosnippet>392</a>        }
+<a href=#393 id=393 data-nosnippet>393</a>    }
+<a href=#394 id=394 data-nosnippet>394</a>    <span class="kw">if </span>!seen.iter().flatten().any(|(<span class="kw">_</span>, stated)| stated.is_some()) {
+<a href=#395 id=395 data-nosnippet>395</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((<span class="number">0</span>..antennas).map(|antenna| (antenna, -<span class="number">1</span>, <span class="kw-2">&amp;</span>NONE)).collect());
+<a href=#396 id=396 data-nosnippet>396</a>    }
+<a href=#397 id=397 data-nosnippet>397</a>    <span class="kw">let </span>per_window = seen
+<a href=#398 id=398 data-nosnippet>398</a>        .iter()
+<a href=#399 id=399 data-nosnippet>399</a>        .any(|own| own.iter().any(|(<span class="kw">_</span>, stated)| <span class="kw-2">*</span>stated != own[<span class="number">0</span>].<span class="number">1</span>));
+<a href=#400 id=400 data-nosnippet>400</a>    <span class="prelude-val">Ok</span>(seen
+<a href=#401 id=401 data-nosnippet>401</a>        .into_iter()
+<a href=#402 id=402 data-nosnippet>402</a>        .enumerate()
+<a href=#403 id=403 data-nosnippet>403</a>        .flat_map(|(antenna, own)| {
+<a href=#404 id=404 data-nosnippet>404</a>            <span class="kw">let </span>rows: Vec&lt;(i32, <span class="kw-2">&amp;</span>Receptors)&gt; = <span class="kw">if </span>per_window {
+<a href=#405 id=405 data-nosnippet>405</a>                own.into_iter()
+<a href=#406 id=406 data-nosnippet>406</a>                    .filter_map(|(window, stated)| <span class="prelude-val">Some</span>((window, stated<span class="question-mark">?</span>)))
+<a href=#407 id=407 data-nosnippet>407</a>                    .collect()
+<a href=#408 id=408 data-nosnippet>408</a>            } <span class="kw">else </span>{
+<a href=#409 id=409 data-nosnippet>409</a>                own.first()
+<a href=#410 id=410 data-nosnippet>410</a>                    .and_then(|(<span class="kw">_</span>, stated)| <span class="kw-2">*</span>stated)
+<a href=#411 id=411 data-nosnippet>411</a>                    .map(|receptors| (-<span class="number">1</span>, receptors))
+<a href=#412 id=412 data-nosnippet>412</a>                    .into_iter()
+<a href=#413 id=413 data-nosnippet>413</a>                    .collect()
+<a href=#414 id=414 data-nosnippet>414</a>            };
+<a href=#415 id=415 data-nosnippet>415</a>            rows.into_iter()
+<a href=#416 id=416 data-nosnippet>416</a>                .map(<span class="kw">move </span>|(window, receptors)| (antenna, window, receptors))
+<a href=#417 id=417 data-nosnippet>417</a>        })
+<a href=#418 id=418 data-nosnippet>418</a>        .collect())
+<a href=#419 id=419 data-nosnippet>419</a>}
+<a href=#420 id=420 data-nosnippet>420</a>
+<a href=#421 id=421 data-nosnippet>421</a><span class="doccomment">/// One `FEED` row: antenna `index`'s feed 0 in spectral window `window`.
+<a href=#422 id=422 data-nosnippet>422</a></span><span class="kw">fn </span>feed_row(
+<a href=#423 id=423 data-nosnippet>423</a>    ms: <span class="kw-2">&amp;mut </span>MeasurementSet,
+<a href=#424 id=424 data-nosnippet>424</a>    index: usize,
+<a href=#425 id=425 data-nosnippet>425</a>    window: i32,
+<a href=#426 id=426 data-nosnippet>426</a>    own: <span class="kw-2">&amp;</span>Receptors,
+<a href=#427 id=427 data-nosnippet>427</a>    time_range: [f64; <span class="number">2</span>],
+<a href=#428 id=428 data-nosnippet>428</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
+<a href=#429 id=429 data-nosnippet>429</a>    <span class="kw">let </span>radians = Unit::new(<span class="string">"rad"</span>).expect(<span class="string">"radians"</span>);
+<a href=#430 id=430 data-nosnippet>430</a>    <span class="kw">let </span>receptors = own.types.len();
+<a href=#431 id=431 data-nosnippet>431</a>    <span class="kw">let </span>angles = own
+<a href=#432 id=432 data-nosnippet>432</a>        .angles
+<a href=#433 id=433 data-nosnippet>433</a>        .iter()
+<a href=#434 id=434 data-nosnippet>434</a>        .map(|angle| {
+<a href=#435 id=435 data-nosnippet>435</a>            angle
+<a href=#436 id=436 data-nosnippet>436</a>                .get_value_in(<span class="kw-2">&amp;</span>radians)
+<a href=#437 id=437 data-nosnippet>437</a>                .map_err(|<span class="kw">_</span>| request_error(<span class="string">"a receptor angle is not an angle"</span>))
+<a href=#438 id=438 data-nosnippet>438</a>        })
+<a href=#439 id=439 data-nosnippet>439</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#440 id=440 data-nosnippet>440</a>    <span class="kw">let </span>types: Vec&lt;<span class="kw-2">&amp;</span>str&gt; = own.types.iter().map(String::as_str).collect();
+<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">let </span>identity: Vec&lt;Complex32&gt; = (<span class="number">0</span>..receptors * receptors)
+<a href=#442 id=442 data-nosnippet>442</a>        .map(|k| {
+<a href=#443 id=443 data-nosnippet>443</a>            <span class="kw">if </span>k % (receptors + <span class="number">1</span>) == <span class="number">0 </span>{
+<a href=#444 id=444 data-nosnippet>444</a>                Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>)
+<a href=#445 id=445 data-nosnippet>445</a>            } <span class="kw">else </span>{
+<a href=#446 id=446 data-nosnippet>446</a>                Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>)
+<a href=#447 id=447 data-nosnippet>447</a>            }
+<a href=#448 id=448 data-nosnippet>448</a>        })
+<a href=#449 id=449 data-nosnippet>449</a>        .collect();
+<a href=#450 id=450 data-nosnippet>450</a>    <span class="kw">let </span>row = row_from_defs(
+<a href=#451 id=451 data-nosnippet>451</a>        schema::feed::REQUIRED_COLUMNS,
+<a href=#452 id=452 data-nosnippet>452</a>        <span class="kw-2">&amp;</span>[
+<a href=#453 id=453 data-nosnippet>453</a>            (<span class="string">"ANTENNA_ID"</span>, i(index <span class="kw">as </span>i32)),
+<a href=#454 id=454 data-nosnippet>454</a>            (<span class="string">"BEAM_ID"</span>, i(-<span class="number">1</span>)),
+<a href=#455 id=455 data-nosnippet>455</a>            (
+<a href=#456 id=456 data-nosnippet>456</a>                <span class="string">"BEAM_OFFSET"</span>,
+<a href=#457 id=457 data-nosnippet>457</a>                f64_array(<span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">2 </span>* receptors], <span class="macro">vec!</span>[<span class="number">2</span>, receptors]),
+<a href=#458 id=458 data-nosnippet>458</a>            ),
+<a href=#459 id=459 data-nosnippet>459</a>            (<span class="string">"FEED_ID"</span>, i(<span class="number">0</span>)),
+<a href=#460 id=460 data-nosnippet>460</a>            (<span class="string">"INTERVAL"</span>, f(time_range[<span class="number">1</span>] - time_range[<span class="number">0</span>])),
+<a href=#461 id=461 data-nosnippet>461</a>            (<span class="string">"NUM_RECEPTORS"</span>, i(receptors <span class="kw">as </span>i32)),
+<a href=#462 id=462 data-nosnippet>462</a>            (
+<a href=#463 id=463 data-nosnippet>463</a>                <span class="string">"POL_RESPONSE"</span>,
+<a href=#464 id=464 data-nosnippet>464</a>                complex_array(<span class="kw-2">&amp;</span>identity, <span class="macro">vec!</span>[receptors, receptors]),
+<a href=#465 id=465 data-nosnippet>465</a>            ),
+<a href=#466 id=466 data-nosnippet>466</a>            (<span class="string">"POLARIZATION_TYPE"</span>, string_array(<span class="kw-2">&amp;</span>types, <span class="macro">vec!</span>[receptors])),
+<a href=#467 id=467 data-nosnippet>467</a>            (<span class="string">"POSITION"</span>, f64_array(<span class="kw-2">&amp;</span>[<span class="number">0.0</span>; <span class="number">3</span>], <span class="macro">vec!</span>[<span class="number">3</span>])),
+<a href=#468 id=468 data-nosnippet>468</a>            (<span class="string">"RECEPTOR_ANGLE"</span>, f64_array(<span class="kw-2">&amp;</span>angles, <span class="macro">vec!</span>[receptors])),
+<a href=#469 id=469 data-nosnippet>469</a>            (<span class="string">"SPECTRAL_WINDOW_ID"</span>, i(window)),
+<a href=#470 id=470 data-nosnippet>470</a>            (<span class="string">"TIME"</span>, f(<span class="number">0.5 </span>* (time_range[<span class="number">0</span>] + time_range[<span class="number">1</span>]))),
+<a href=#471 id=471 data-nosnippet>471</a>        ],
+<a href=#472 id=472 data-nosnippet>472</a>    );
+<a href=#473 id=473 data-nosnippet>473</a>    subtable_mut(ms, SubtableId::Feed)
+<a href=#474 id=474 data-nosnippet>474</a>        .and_then(|table| table.add_row(row).map_err(Into::into))
+<a href=#475 id=475 data-nosnippet>475</a>        .map_err(storage)
+<a href=#476 id=476 data-nosnippet>476</a>}
+<a href=#477 id=477 data-nosnippet>477</a>
+<a href=#478 id=478 data-nosnippet>478</a><span class="doccomment">/// The receptors a correlation product correlates, by their positions in
+<a href=#479 id=479 data-nosnippet>479</a>/// the feed's `receptors` (`R`, `L`, `X`, `Y`), as `CORR_PRODUCT` holds
+<a href=#480 id=480 data-nosnippet>480</a>/// them.
+<a href=#481 id=481 data-nosnippet>481</a></span><span class="kw">fn </span>receptor_pair(
+<a href=#482 id=482 data-nosnippet>482</a>    correlation: Correlation,
+<a href=#483 id=483 data-nosnippet>483</a>    receptors: <span class="kw-2">&amp;</span>[String],
+<a href=#484 id=484 data-nosnippet>484</a>) -&gt; <span class="prelude-ty">Result</span>&lt;[i32; <span class="number">2</span>], ObservationError&gt; {
+<a href=#485 id=485 data-nosnippet>485</a>    <span class="kw">use </span>Correlation::{LL, LR, RL, RR, XX, XY, YX, YY};
+<a href=#486 id=486 data-nosnippet>486</a>    <span class="kw">let </span>[first, second] = <span class="kw">match </span>correlation {
+<a href=#487 id=487 data-nosnippet>487</a>        RR =&gt; [<span class="string">"R"</span>, <span class="string">"R"</span>],
+<a href=#488 id=488 data-nosnippet>488</a>        RL =&gt; [<span class="string">"R"</span>, <span class="string">"L"</span>],
+<a href=#489 id=489 data-nosnippet>489</a>        LR =&gt; [<span class="string">"L"</span>, <span class="string">"R"</span>],
+<a href=#490 id=490 data-nosnippet>490</a>        LL =&gt; [<span class="string">"L"</span>, <span class="string">"L"</span>],
+<a href=#491 id=491 data-nosnippet>491</a>        XX =&gt; [<span class="string">"X"</span>, <span class="string">"X"</span>],
+<a href=#492 id=492 data-nosnippet>492</a>        XY =&gt; [<span class="string">"X"</span>, <span class="string">"Y"</span>],
+<a href=#493 id=493 data-nosnippet>493</a>        YX =&gt; [<span class="string">"Y"</span>, <span class="string">"X"</span>],
+<a href=#494 id=494 data-nosnippet>494</a>        YY =&gt; [<span class="string">"Y"</span>, <span class="string">"Y"</span>],
+<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">_ </span>=&gt; {
+<a href=#496 id=496 data-nosnippet>496</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(ObservationError::Unsupported {
+<a href=#497 id=497 data-nosnippet>497</a>                what: <span class="string">"writing MSv2 correlation products other than a feed pair's"</span>,
+<a href=#498 id=498 data-nosnippet>498</a>            });
+<a href=#499 id=499 data-nosnippet>499</a>        }
+<a href=#500 id=500 data-nosnippet>500</a>    };
+<a href=#501 id=501 data-nosnippet>501</a>    <span class="kw">let </span>position = |label: <span class="kw-2">&amp;</span>str| {
+<a href=#502 id=502 data-nosnippet>502</a>        receptors
+<a href=#503 id=503 data-nosnippet>503</a>            .iter()
+<a href=#504 id=504 data-nosnippet>504</a>            .position(|receptor| receptor.eq_ignore_ascii_case(label))
+<a href=#505 id=505 data-nosnippet>505</a>            .map(|index| index <span class="kw">as </span>i32)
+<a href=#506 id=506 data-nosnippet>506</a>            .ok_or(ObservationError::Unsupported {
+<a href=#507 id=507 data-nosnippet>507</a>                what: <span class="string">"writing an MSv2 correlation product of a receptor the feeds lack"</span>,
+<a href=#508 id=508 data-nosnippet>508</a>            })
+<a href=#509 id=509 data-nosnippet>509</a>    };
+<a href=#510 id=510 data-nosnippet>510</a>    <span class="prelude-val">Ok</span>([position(first)<span class="question-mark">?</span>, position(second)<span class="question-mark">?</span>])
+<a href=#511 id=511 data-nosnippet>511</a>}
+<a href=#512 id=512 data-nosnippet>512</a>
+<a href=#513 id=513 data-nosnippet>513</a><span class="kw">fn </span>polarization(
+<a href=#514 id=514 data-nosnippet>514</a>    ms: <span class="kw-2">&amp;mut </span>MeasurementSet,
+<a href=#515 id=515 data-nosnippet>515</a>    correlations: <span class="kw-2">&amp;</span>[Correlation],
+<a href=#516 id=516 data-nosnippet>516</a>    receptors: <span class="kw-2">&amp;</span>[String],
+<a href=#517 id=517 data-nosnippet>517</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ObservationError&gt; {
+<a href=#518 id=518 data-nosnippet>518</a>    <span class="kw">let </span>count = correlations.len();
+<a href=#519 id=519 data-nosnippet>519</a>    <span class="kw">let </span>types: Vec&lt;i32&gt; = correlations
+<a href=#520 id=520 data-nosnippet>520</a>        .iter()
+<a href=#521 id=521 data-nosnippet>521</a>        .map(|correlation| correlation.casacore_code())
+<a href=#522 id=522 data-nosnippet>522</a>        .collect();
+<a href=#523 id=523 data-nosnippet>523</a>    <span class="kw">let </span><span class="kw-2">mut </span>products = <span class="macro">vec!</span>[<span class="number">0</span>; <span class="number">2 </span>* count];
+<a href=#524 id=524 data-nosnippet>524</a>    <span class="kw">for </span>(index, correlation) <span class="kw">in </span>correlations.iter().enumerate() {
+<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw">let </span>[first, second] = receptor_pair(<span class="kw-2">*</span>correlation, receptors)<span class="question-mark">?</span>;
+<a href=#526 id=526 data-nosnippet>526</a>        products[index] = first;
+<a href=#527 id=527 data-nosnippet>527</a>        products[count + index] = second;
+<a href=#528 id=528 data-nosnippet>528</a>    }
+<a href=#529 id=529 data-nosnippet>529</a>    <span class="kw">let </span>row = row_from_defs(
+<a href=#530 id=530 data-nosnippet>530</a>        schema::polarization::REQUIRED_COLUMNS,
+<a href=#531 id=531 data-nosnippet>531</a>        <span class="kw-2">&amp;</span>[
+<a href=#532 id=532 data-nosnippet>532</a>            (<span class="string">"NUM_CORR"</span>, i(count <span class="kw">as </span>i32)),
+<a href=#533 id=533 data-nosnippet>533</a>            (<span class="string">"CORR_TYPE"</span>, i32_array(<span class="kw-2">&amp;</span>types, <span class="macro">vec!</span>[count])),
+<a href=#534 id=534 data-nosnippet>534</a>            (<span class="string">"CORR_PRODUCT"</span>, i32_array(<span class="kw-2">&amp;</span>products, <span class="macro">vec!</span>[<span class="number">2</span>, count])),
+<a href=#535 id=535 data-nosnippet>535</a>            (<span class="string">"FLAG_ROW"</span>, b(<span class="bool-val">false</span>)),
+<a href=#536 id=536 data-nosnippet>536</a>        ],
+<a href=#537 id=537 data-nosnippet>537</a>    );
+<a href=#538 id=538 data-nosnippet>538</a>    subtable_mut(ms, SubtableId::Polarization)
+<a href=#539 id=539 data-nosnippet>539</a>        .and_then(|table| table.add_row(row).map_err(Into::into))
+<a href=#540 id=540 data-nosnippet>540</a>        .map_err(storage)
+<a href=#541 id=541 data-nosnippet>541</a>}
+<a href=#542 id=542 data-nosnippet>542</a>
+<a href=#543 id=543 data-nosnippet>543</a><span class="attr">#[cfg(test)]
+<a href=#544 id=544 data-nosnippet>544</a></span><span class="kw">mod </span>tests {
+<a href=#545 id=545 data-nosnippet>545</a>    <span class="kw">use </span>casa_observation::Correlation;
+<a href=#546 id=546 data-nosnippet>546</a>
+<a href=#547 id=547 data-nosnippet>547</a>    <span class="kw">use </span>std::collections::BTreeMap;
+<a href=#548 id=548 data-nosnippet>548</a>
+<a href=#549 id=549 data-nosnippet>549</a>    <span class="kw">use </span>casa_observation::{AntennaId, Receptors};
+<a href=#550 id=550 data-nosnippet>550</a>    <span class="kw">use </span>casa_types::quanta::Quantity;
+<a href=#551 id=551 data-nosnippet>551</a>
+<a href=#552 id=552 data-nosnippet>552</a>    <span class="kw">use super</span>::{feed_plan, position_or_push, receptor_pair};
+<a href=#553 id=553 data-nosnippet>553</a>
+<a href=#554 id=554 data-nosnippet>554</a>    <span class="attr">#[test]
+<a href=#555 id=555 data-nosnippet>555</a>    </span><span class="kw">fn </span>products_name_receptors_by_their_place_in_the_feed() {
+<a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">let </span>feed = |labels: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>str]| labels.iter().map(ToString::to_string).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#557 id=557 data-nosnippet>557</a>        <span class="macro">assert_eq!</span>(
+<a href=#558 id=558 data-nosnippet>558</a>            receptor_pair(Correlation::RL, <span class="kw-2">&amp;</span>feed(<span class="kw-2">&amp;</span>[<span class="string">"R"</span>, <span class="string">"L"</span>])).unwrap(),
+<a href=#559 id=559 data-nosnippet>559</a>            [<span class="number">0</span>, <span class="number">1</span>]
+<a href=#560 id=560 data-nosnippet>560</a>        );
+<a href=#561 id=561 data-nosnippet>561</a>        <span class="macro">assert_eq!</span>(
+<a href=#562 id=562 data-nosnippet>562</a>            receptor_pair(Correlation::XY, <span class="kw-2">&amp;</span>feed(<span class="kw-2">&amp;</span>[<span class="string">"Y"</span>, <span class="string">"X"</span>])).unwrap(),
+<a href=#563 id=563 data-nosnippet>563</a>            [<span class="number">1</span>, <span class="number">0</span>]
+<a href=#564 id=564 data-nosnippet>564</a>        );
+<a href=#565 id=565 data-nosnippet>565</a>        <span class="macro">assert_eq!</span>(
+<a href=#566 id=566 data-nosnippet>566</a>            receptor_pair(Correlation::LL, <span class="kw-2">&amp;</span>feed(<span class="kw-2">&amp;</span>[<span class="string">"L"</span>])).unwrap(),
+<a href=#567 id=567 data-nosnippet>567</a>            [<span class="number">0</span>, <span class="number">0</span>]
+<a href=#568 id=568 data-nosnippet>568</a>        );
+<a href=#569 id=569 data-nosnippet>569</a>        <span class="macro">assert!</span>(receptor_pair(Correlation::RR, <span class="kw-2">&amp;</span>feed(<span class="kw-2">&amp;</span>[<span class="string">"X"</span>, <span class="string">"Y"</span>])).is_err());
+<a href=#570 id=570 data-nosnippet>570</a>    }
+<a href=#571 id=571 data-nosnippet>571</a>
+<a href=#572 id=572 data-nosnippet>572</a>    <span class="attr">#[test]
+<a href=#573 id=573 data-nosnippet>573</a>    </span><span class="kw">fn </span>equal_content_shares_one_row() {
+<a href=#574 id=574 data-nosnippet>574</a>        <span class="kw">let </span><span class="kw-2">mut </span>known = Vec::new();
+<a href=#575 id=575 data-nosnippet>575</a>        <span class="macro">assert_eq!</span>(position_or_push(<span class="kw-2">&amp;mut </span>known, <span class="number">3</span>, |k| <span class="kw-2">*</span>k == <span class="number">3</span>), <span class="number">0</span>);
+<a href=#576 id=576 data-nosnippet>576</a>        <span class="macro">assert_eq!</span>(position_or_push(<span class="kw-2">&amp;mut </span>known, <span class="number">5</span>, |k| <span class="kw-2">*</span>k == <span class="number">5</span>), <span class="number">1</span>);
+<a href=#577 id=577 data-nosnippet>577</a>        <span class="macro">assert_eq!</span>(position_or_push(<span class="kw-2">&amp;mut </span>known, <span class="number">3</span>, |k| <span class="kw-2">*</span>k == <span class="number">3</span>), <span class="number">0</span>);
+<a href=#578 id=578 data-nosnippet>578</a>        <span class="macro">assert_eq!</span>(known, [<span class="number">3</span>, <span class="number">5</span>]);
+<a href=#579 id=579 data-nosnippet>579</a>    }
+<a href=#580 id=580 data-nosnippet>580</a>
+<a href=#581 id=581 data-nosnippet>581</a>    <span class="doccomment">/// Receptors of angle `angle` for each antenna `antennas` names.
+<a href=#582 id=582 data-nosnippet>582</a>    </span><span class="kw">fn </span>receptors(antennas: <span class="kw-2">&amp;</span>[u32], angle: f64) -&gt; BTreeMap&lt;AntennaId, Receptors&gt; {
+<a href=#583 id=583 data-nosnippet>583</a>        antennas
+<a href=#584 id=584 data-nosnippet>584</a>            .iter()
+<a href=#585 id=585 data-nosnippet>585</a>            .map(|antenna| {
+<a href=#586 id=586 data-nosnippet>586</a>                (
+<a href=#587 id=587 data-nosnippet>587</a>                    AntennaId(<span class="kw-2">*</span>antenna),
+<a href=#588 id=588 data-nosnippet>588</a>                    Receptors {
+<a href=#589 id=589 data-nosnippet>589</a>                        types: <span class="macro">vec!</span>[<span class="string">"R"</span>.to_string(), <span class="string">"L"</span>.to_string()],
+<a href=#590 id=590 data-nosnippet>590</a>                        angles: <span class="macro">vec!</span>[Quantity::new(angle, <span class="string">"rad"</span>).expect(<span class="string">"rad"</span>); <span class="number">2</span>],
+<a href=#591 id=591 data-nosnippet>591</a>                    },
+<a href=#592 id=592 data-nosnippet>592</a>                )
+<a href=#593 id=593 data-nosnippet>593</a>            })
+<a href=#594 id=594 data-nosnippet>594</a>            .collect()
+<a href=#595 id=595 data-nosnippet>595</a>    }
+<a href=#596 id=596 data-nosnippet>596</a>
+<a href=#597 id=597 data-nosnippet>597</a>    <span class="doccomment">/// The plan for three antennas whose partitions (window, antennas
+<a href=#598 id=598 data-nosnippet>598</a>    /// named, receptors) are `partitions`, as (antenna, window, first angle,
+<a href=#599 id=599 data-nosnippet>599</a>    /// receptors).
+<a href=#600 id=600 data-nosnippet>600</a>    </span><span class="kw">fn </span>plan(
+<a href=#601 id=601 data-nosnippet>601</a>        partitions: <span class="kw-2">&amp;</span>[(i32, Vec&lt;AntennaId&gt;, BTreeMap&lt;AntennaId, Receptors&gt;)],
+<a href=#602 id=602 data-nosnippet>602</a>    ) -&gt; Vec&lt;(usize, i32, f64, usize)&gt; {
+<a href=#603 id=603 data-nosnippet>603</a>        feed_plan(
+<a href=#604 id=604 data-nosnippet>604</a>            <span class="number">3</span>,
+<a href=#605 id=605 data-nosnippet>605</a>            partitions
+<a href=#606 id=606 data-nosnippet>606</a>                .iter()
+<a href=#607 id=607 data-nosnippet>607</a>                .map(|(window, named, own)| (<span class="kw-2">*</span>window, named.as_slice(), own)),
+<a href=#608 id=608 data-nosnippet>608</a>        )
+<a href=#609 id=609 data-nosnippet>609</a>        .unwrap()
+<a href=#610 id=610 data-nosnippet>610</a>        .into_iter()
+<a href=#611 id=611 data-nosnippet>611</a>        .map(|(antenna, window, own)| {
+<a href=#612 id=612 data-nosnippet>612</a>            <span class="kw">let </span>angle = own.angles.first().map_or(f64::NAN, Quantity::value);
+<a href=#613 id=613 data-nosnippet>613</a>            (antenna, window, angle, own.types.len())
+<a href=#614 id=614 data-nosnippet>614</a>        })
+<a href=#615 id=615 data-nosnippet>615</a>        .collect()
+<a href=#616 id=616 data-nosnippet>616</a>    }
+<a href=#617 id=617 data-nosnippet>617</a>
+<a href=#618 id=618 data-nosnippet>618</a>    <span class="doccomment">/// Partitions naming antennas 0 and 1 in `window`, stating `receptors`.
+<a href=#619 id=619 data-nosnippet>619</a>    </span><span class="kw">fn </span>named(
+<a href=#620 id=620 data-nosnippet>620</a>        window: i32,
+<a href=#621 id=621 data-nosnippet>621</a>        receptors: BTreeMap&lt;AntennaId, Receptors&gt;,
+<a href=#622 id=622 data-nosnippet>622</a>    ) -&gt; (i32, Vec&lt;AntennaId&gt;, BTreeMap&lt;AntennaId, Receptors&gt;) {
+<a href=#623 id=623 data-nosnippet>623</a>        (window, <span class="macro">vec!</span>[AntennaId(<span class="number">0</span>), AntennaId(<span class="number">1</span>)], receptors)
+<a href=#624 id=624 data-nosnippet>624</a>    }
+<a href=#625 id=625 data-nosnippet>625</a>
+<a href=#626 id=626 data-nosnippet>626</a>    <span class="doccomment">/// Windows that agree give each antenna stating receptors one row for
+<a href=#627 id=627 data-nosnippet>627</a>    /// every window; once one antenna differs by window, or a window states
+<a href=#628 id=628 data-nosnippet>628</a>    /// none for an antenna it names (ALMA's WVR window), each has a row per
+<a href=#629 id=629 data-nosnippet>629</a>    /// window it states receptors in. Rows of none are written only when no
+<a href=#630 id=630 data-nosnippet>630</a>    /// antenna states any.
+<a href=#631 id=631 data-nosnippet>631</a>    </span><span class="attr">#[test]
+<a href=#632 id=632 data-nosnippet>632</a>    </span><span class="kw">fn </span>feed_rows_are_per_window_once_any_antenna_differs() {
+<a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span>agree = plan(<span class="kw-2">&amp;</span>[
+<a href=#634 id=634 data-nosnippet>634</a>            named(<span class="number">0</span>, receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>], <span class="number">0.0</span>)),
+<a href=#635 id=635 data-nosnippet>635</a>            named(<span class="number">1</span>, receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>], <span class="number">0.0</span>)),
+<a href=#636 id=636 data-nosnippet>636</a>        ]);
+<a href=#637 id=637 data-nosnippet>637</a>        <span class="macro">assert_eq!</span>(agree, [(<span class="number">0</span>, -<span class="number">1</span>, <span class="number">0.0</span>, <span class="number">2</span>), (<span class="number">1</span>, -<span class="number">1</span>, <span class="number">0.0</span>, <span class="number">2</span>)]);
+<a href=#638 id=638 data-nosnippet>638</a>
+<a href=#639 id=639 data-nosnippet>639</a>        <span class="kw">let </span><span class="kw-2">mut </span>differ = receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>], <span class="number">0.0</span>);
+<a href=#640 id=640 data-nosnippet>640</a>        differ.extend(receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>], <span class="number">0.25</span>));
+<a href=#641 id=641 data-nosnippet>641</a>        <span class="kw">let </span>mixed = plan(<span class="kw-2">&amp;</span>[named(<span class="number">0</span>, receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>], <span class="number">0.0</span>)), named(<span class="number">1</span>, differ)]);
+<a href=#642 id=642 data-nosnippet>642</a>        <span class="macro">assert_eq!</span>(
+<a href=#643 id=643 data-nosnippet>643</a>            mixed,
+<a href=#644 id=644 data-nosnippet>644</a>            [
+<a href=#645 id=645 data-nosnippet>645</a>                (<span class="number">0</span>, <span class="number">0</span>, <span class="number">0.0</span>, <span class="number">2</span>),
+<a href=#646 id=646 data-nosnippet>646</a>                (<span class="number">0</span>, <span class="number">1</span>, <span class="number">0.25</span>, <span class="number">2</span>),
+<a href=#647 id=647 data-nosnippet>647</a>                (<span class="number">1</span>, <span class="number">0</span>, <span class="number">0.0</span>, <span class="number">2</span>),
+<a href=#648 id=648 data-nosnippet>648</a>                (<span class="number">1</span>, <span class="number">1</span>, <span class="number">0.0</span>, <span class="number">2</span>)
+<a href=#649 id=649 data-nosnippet>649</a>            ]
+<a href=#650 id=650 data-nosnippet>650</a>        );
+<a href=#651 id=651 data-nosnippet>651</a>
+<a href=#652 id=652 data-nosnippet>652</a>        <span class="kw">let </span>wvr = plan(<span class="kw-2">&amp;</span>[named(<span class="number">0</span>, receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>], <span class="number">0.0</span>)), named(<span class="number">1</span>, BTreeMap::new())]);
+<a href=#653 id=653 data-nosnippet>653</a>        <span class="macro">assert_eq!</span>(wvr, [(<span class="number">0</span>, <span class="number">0</span>, <span class="number">0.0</span>, <span class="number">2</span>), (<span class="number">1</span>, <span class="number">0</span>, <span class="number">0.0</span>, <span class="number">2</span>)], <span class="string">"no rows in window 1"</span>);
+<a href=#654 id=654 data-nosnippet>654</a>
+<a href=#655 id=655 data-nosnippet>655</a>        <span class="kw">let </span>none = plan(<span class="kw-2">&amp;</span>[named(<span class="number">0</span>, BTreeMap::new())]);
+<a href=#656 id=656 data-nosnippet>656</a>        <span class="macro">assert_eq!</span>(
+<a href=#657 id=657 data-nosnippet>657</a>            none.iter()
+<a href=#658 id=658 data-nosnippet>658</a>                .map(|row| (row.<span class="number">0</span>, row.<span class="number">1</span>, row.<span class="number">3</span>))
+<a href=#659 id=659 data-nosnippet>659</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#660 id=660 data-nosnippet>660</a>            [(<span class="number">0</span>, -<span class="number">1</span>, <span class="number">0</span>), (<span class="number">1</span>, -<span class="number">1</span>, <span class="number">0</span>), (<span class="number">2</span>, -<span class="number">1</span>, <span class="number">0</span>)]
+<a href=#661 id=661 data-nosnippet>661</a>        );
+<a href=#662 id=662 data-nosnippet>662</a>
+<a href=#663 id=663 data-nosnippet>663</a>        <span class="kw">let </span>clash = [
+<a href=#664 id=664 data-nosnippet>664</a>            named(<span class="number">0</span>, receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>], <span class="number">0.0</span>)),
+<a href=#665 id=665 data-nosnippet>665</a>            named(<span class="number">0</span>, receptors(<span class="kw-2">&amp;</span>[<span class="number">0</span>], <span class="number">0.5</span>)),
+<a href=#666 id=666 data-nosnippet>666</a>        ];
+<a href=#667 id=667 data-nosnippet>667</a>        <span class="macro">assert!</span>(
+<a href=#668 id=668 data-nosnippet>668</a>            feed_plan(
+<a href=#669 id=669 data-nosnippet>669</a>                <span class="number">3</span>,
+<a href=#670 id=670 data-nosnippet>670</a>                clash
+<a href=#671 id=671 data-nosnippet>671</a>                    .iter()
+<a href=#672 id=672 data-nosnippet>672</a>                    .map(|(window, antennas, own)| (<span class="kw-2">*</span>window, antennas.as_slice(), own))
+<a href=#673 id=673 data-nosnippet>673</a>            )
+<a href=#674 id=674 data-nosnippet>674</a>            .is_err(),
+<a href=#675 id=675 data-nosnippet>675</a>            <span class="string">"one window, two sets"
+<a href=#676 id=676 data-nosnippet>676</a>        </span>);
+<a href=#677 id=677 data-nosnippet>677</a>    }
+<a href=#678 id=678 data-nosnippet>678</a>}
 </code></pre></div></section></main></body></html>

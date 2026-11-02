@@ -1651,9 +1651,26 @@ frame), and the MSv2 binds to its conversion.</p>
   partition's window alone (never those for every window, −1), the first
   in time.</li>
 <li>Where <code>FEED</code> has no row for a window (the synthetic writer's <code>FEED</code>
-  names window 0 only), XRADIO writes that dataset's <code>antenna_xds</code> without
-  <code>ANTENNA_RECEPTOR_ANGLE</code> but with <code>polarization_type</code>. The reader then
-  gives its antennas no receptors, as the MSv2 adapter reads that <code>FEED</code>.</li>
+  names window 0 only, #943; ALMA's WVR window), XRADIO writes that
+  dataset's <code>antenna_xds</code> without <code>ANTENNA_RECEPTOR_ANGLE</code> but with
+  <code>receptor_label</code> and <code>polarization_type</code>, which its schema requires,
+  taking the types from the letters of the partition's first correlation
+  product: <code>R, R</code> for <code>RR, LL</code> (<code>create_antenna_xds</code>). casa-rs's writer
+  writes the same <code>receptor_label</code> and no angles, but names each receptor
+  of the receptor products once, in order (<code>R, L</code> for <code>RR, LL</code>, one
+  receptor for <code>RR</code> alone), as the schema describes <code>polarization_type</code>
+  (<code>['R','L']</code>); without a receptor product it takes XRADIO's letters. The
+  reader gives such antennas no receptors, as the MSv2 adapter reads that
+  <code>FEED</code>, whichever writer wrote them.</li>
+<li>XRADIO chooses a dataset's <code>FEED</code> rows from those of its antennas and
+  feeds: the rows for every window (−1) when no row names a window, else
+  the rows of the dataset's window alone (<code>extract_feed_info</code>). casacore's
+  <code>MSIter</code> decides the same over the whole table. The MSv2 adapter takes
+  an antenna and feed's rows in the window, else its rows for every
+  window, as the MeasurementSet definition gives −1; that is the same rows
+  wherever a table's rows are all for every window or all name windows,
+  and where both kinds stand together it reads the rows for every window
+  that XRADIO and <code>MSIter</code> ignore (<code>docs/CASA (C++) bugs.md</code>).</li>
 <li>XRADIO writes a window whose channels descend (negative width) in
   ascending order, so its partition does not bind to the MSv2's, whose
   channels are in stored order (#1014). The lines fixture's windows ascend.</li>
@@ -3376,9 +3393,10 @@ ways:
   them), in <code>fk5</code>, <code>icrs</code> or <code>altaz</code>. Directions stay in the store's frame;
   converting them is the geometry owner's.
 - <strong>Receptors per partition</strong> (<code>PartitionEntry::receptors</code>), no longer per
-  antenna: an MSv2's <code>FEED</code> rows as casacore's <code>MSIter</code> and XRADIO's
-  converter select them (the window's own rows once any row names a window,
-  else the rows for every window), an MSv4 dataset's <code>antenna_xds</code>. Of rows
+  antenna: an MSv2's <code>FEED</code> rows (an antenna and feed's rows in the window,
+  else its rows for every window; casacore's <code>MSIter</code> and XRADIO's
+  converter choose the same except where the two kinds stand together:
+  "Fixture findings"), an MSv4 dataset's <code>antenna_xds</code>. Of rows
   of one antenna, feed and window that differ, the last in table order is
   read, as casacore's <code>MSIter</code> reads it, and a conversion reports them as a
   <code>FEED</code> column loss (owner decision on #946, 2026-10-28). An MSv2
@@ -3387,11 +3405,14 @@ ways:
   otherwise a row per window it states receptors in, so that casacore reads
   each back; a window stating none (ALMA's WVR window) then has no row, as
   ALMA writes <code>FEED</code>, and rows of no receptors are written only when no
-  antenna states any. An MSv4 destination omits the receptor
-  variables of a dataset whose source has no <code>FEED</code> row for it, as XRADIO's
-  converter does for ALMA's WVR window, although XRADIO's schema marks
-  <code>polarization_type</code> and <code>receptor_label</code> required (the simulator writes
-  window 0's rows only: #943).</p>
+  antenna states any. An MSv4 destination writes a dataset whose source
+  has no <code>FEED</code> row for it (ALMA's WVR window; the simulator writes window
+  0's rows only, #943) as XRADIO's converter does: <code>receptor_label</code> and
+  <code>polarization_type</code>, which XRADIO's schema requires, named by the
+  correlation products, and no <code>ANTENNA_RECEPTOR_ANGLE</code>, the group's
+  <code>coordinates</code> attribute naming <code>polarization_type</code> a coordinate as
+  XRADIO's does, since no variable names it ("Fixture findings"). Writing
+  no receptor variables at all, as before, failed XRADIO's schema check.</p>
 <p>What a conversion carries of the pointing is planned before anything is
 written (<code>creation/pointing_plan.rs</code>):
 - <strong>Into an MSv4</strong>, each partition's rows within its times (as XRADIO takes
@@ -3497,7 +3518,11 @@ MSv4", below).</p>
 </tr>
 <tr>
 <td><code>receptors_are_each_partitions_own</code></td>
-<td>Window rows where one antenna's angles differ and the others agree survive MSv2 → MSv4 → MSv2, written back as a row per window for every antenna; rows for every window serve both windows, and beside a window row are ignored, as casacore ignores them; of a row and one appended that changes an antenna's angles, the appended one is read whether it is 10 s later or earlier (table order, as casacore's <code>MSIter</code>); a conversion refuses the change until columns are accepted, then carries that row and reports the loss; rows for every window that change beside window rows are never read and are no loss.</td>
+<td>Window rows where one antenna's angles differ and the others agree survive MSv2 → MSv4 → MSv2, written back as a row per window for every antenna; rows for every window serve both windows, and beside an antenna's window-1 row still serve the other antennas there and every antenna in window 0 (casacore and XRADIO ignore them), which a conversion carries both ways as a row per window; of a row and one appended that changes an antenna's angles, the appended one is read whether it is 10 s later or earlier (table order, as casacore's <code>MSIter</code>); a conversion refuses the change until columns are accepted, then carries that row and reports the loss; an antenna's rows for every window that change are never read where it has a row in every window, and are no loss; where they serve a window without rows of its own, the last is read and their change is a loss.</td>
+</tr>
+<tr>
+<td><code>a_window_without_feed_rows_has_xradios_receptor_labels_and_no_angles</code></td>
+<td><code>ms_trial_lines.ms</code>'s <code>FEED</code> has no row for window 1: its dataset's <code>antenna_xds</code> has XRADIO's <code>receptor_label</code> and no receptor angles, its <code>polarization_type</code> <code>R, L</code> where XRADIO's is <code>R, R</code>; window 0's equals XRADIO's; both MSv4 stores read back as the MSv2's receptors, and the conversion back writes its <code>FEED</code> rows.</td>
 </tr>
 </tbody>
 </table>

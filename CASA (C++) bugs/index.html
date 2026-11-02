@@ -2176,6 +2176,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MSIter keeps the previous window's receptor angles for a window without its own FEED row
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2220,7 +2231,8 @@ CASA behaviours casa-rs does not follow:
 <a href="#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell"><code>tb.putcell</code> of an int beyond 32 bits</a>,
 <a href="#tbputcell-with-several-rows-writes-those-before-a-missing-one"><code>tb.putcell</code> with several rows</a>,
 <a href="#tbaddrows-with-a-negative-count-removes-rows"><code>tb.addrows</code> with a negative count</a>,
-<a href="#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails"><code>tb.removerows</code> and <code>tb.addcols</code> that fail part way</a>.
+<a href="#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails"><code>tb.removerows</code> and <code>tb.addcols</code> that fail part way</a>,
+<a href="#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row"><code>MSIter</code>'s receptor angles for a window without its own <code>FEED</code> row</a>.
 Simulator behaviours casa-rs does not follow:
 <a href="#the-simulator-stores-tai-as-utc">TIME as TAI</a>,
 <a href="#the-simulator-charges-shadowing-to-the-antenna-in-front">shadowing the front antenna</a>,
@@ -4779,6 +4791,30 @@ does not fit the output column's type is wrapped as a C cast does (a <code>Short
 <code>putcell</code> above. casa-rs raises <code>RuntimeError: a value is out of range for a
 column of ...</code>, before the output is touched, rather than store a wrong
 number.</p>
+<h2 id="msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row"><code>MSIter</code> keeps the previous window's receptor angles for a window without its own <code>FEED</code> row<a class="headerlink" href="#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-02</li>
+<li>Status: casacore behaviour that casa-rs does not follow (MSv2 adapter,
+  <code>Feeds::receptors</code>)</li>
+<li>Affected code: casacore <code>ms/MeasurementSets/MSIter.cc</code> (<code>setFeedInfo</code>,
+  lines 779-814 on <code>master</code>)</li>
+</ul>
+<p>The MeasurementSet definition makes a <code>FEED</code> row with <code>SPECTRAL_WINDOW_ID</code>
+-1 valid for every spectral window. <code>setFeedInfo</code> instead decides once per
+table: if every row is -1 it uses them for every window, and otherwise
+(<code>spwDepFeed_p</code>) it copies into its cache only the rows whose window is the
+iterator's current one. A window with no row of its own for an antenna and
+feed (a -1 row beside rows for other windows, or no row at all, as for
+ALMA's WVR window) leaves that cache entry untouched: <code>receptorAngles_p</code>
+is resized to the same shape, which casacore's <code>Array::resize</code> does not
+reinitialise, so <code>receptorAngles()</code> gives the previous window's angles (or,
+for the first window iterated, zeros: the new array's elements are
+value-initialised). XRADIO 1.3.1's converter makes the
+same per-dataset choice and writes such a dataset with no receptor angles.
+casa-rs reads an antenna and feed's rows in the window, else its rows for
+every window, and states no receptors where it has neither. Where <code>FEED</code>'s
+rows are all -1 or all name windows, which is how CASA's simulator, ALMA
+and casa-rs's MSv2 writer write it, the receptors are the same.</p>
 
 
 
