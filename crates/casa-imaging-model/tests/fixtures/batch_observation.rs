@@ -217,7 +217,7 @@ pub fn problem_in(
     let frames = [FrequencyFrame::Topocentric; 2];
     compile(ProblemInput::new(
         specification(polarization),
-        geometry(phase, facets, psf, frames),
+        geometry(phase, facets, psf, frames, false),
         super::common::observation_snapshot(0),
         super::model_lifecycle_fixture::model_lifecycle(),
     ))
@@ -225,7 +225,8 @@ pub fn problem_in(
 }
 
 /// The Stokes I problem of `phase`, its frequencies taken from `source` to
-/// `output`.
+/// `output`; a TOPO or BARY output is gridded through LSRK, anchored at the
+/// first time.
 pub fn problem_framed(
     phase: PhaseCentreLaw,
     source: FrequencyFrame,
@@ -238,6 +239,7 @@ pub fn problem_framed(
             FacetLayout::Single,
             PsfPhaseCentreLaw::ImageDomainReference,
             [source, output],
+            source != output || output.gridded_through_lsrk(),
         ),
         super::common::observation_snapshot(0),
         super::model_lifecycle_fixture::model_lifecycle(),
@@ -250,6 +252,7 @@ fn geometry(
     facets: FacetLayout,
     psf: PsfPhaseCentreLaw,
     [source, output]: [FrequencyFrame; 2],
+    anchored: bool,
 ) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -280,11 +283,12 @@ fn geometry(
         SpectralCoordinateSpec::new(
             source,
             output,
-            if source == output {
+            if source == output && !anchored {
                 SpectralFrameAnchor::NotApplicable
             } else {
                 SpectralFrameAnchor::Conversion {
-                    epoch: Epoch::new(MJD_DAYS, TimeScale::Utc),
+                    // The first time's epoch as a row's time reads it.
+                    epoch: Epoch::new(MJD_DAYS * 86_400.0 * (1.0 / 86_400.0), TimeScale::Utc),
                     direction: SkyDirection::new(DirectionFrame::J2000, REFERENCE[0], REFERENCE[1]),
                     observatory_position: ItrfPosition::new(
                         -1_601_185.4,

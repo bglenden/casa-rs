@@ -2,9 +2,10 @@
 //! The `casa-types` measures frame of each imaging frame.
 
 use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::epoch::EpochRef;
 use casa_types::measures::frequency::FrequencyRef;
 
-use crate::geometry::{DirectionFrame, FrequencyFrame};
+use crate::geometry::{DirectionFrame, FrequencyFrame, TimeScale};
 
 impl DirectionFrame {
     /// The measures direction frame this is.
@@ -28,6 +29,19 @@ impl FrequencyFrame {
             Self::Topocentric => FrequencyRef::TOPO,
             Self::Barycentric => FrequencyRef::BARY,
             Self::Lsrk => FrequencyRef::LSRK,
+        }
+    }
+}
+
+impl TimeScale {
+    /// The measures epoch reference this is.
+    #[must_use]
+    pub const fn epoch_ref(self) -> EpochRef {
+        match self {
+            Self::Utc => EpochRef::UTC,
+            Self::Tai => EpochRef::TAI,
+            Self::Tt => EpochRef::TT,
+            Self::Tdb => EpochRef::TDB,
         }
     }
 }

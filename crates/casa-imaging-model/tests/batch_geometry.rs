@@ -283,6 +283,67 @@ fn only_rest_frequencies_stay_in_the_rest_frame() {
     }
 }
 
+/// A TOPO cube of TOPO rows is gridded through LSRK, as CASA grids it: its
+/// channels are fixed in LSRK at the image's anchor and each row is taken
+/// to LSRK at its own time. A row at the anchor, towards the image's
+/// reference direction, keeps its frequencies exactly; a later one is
+/// Doppler shifted from them. Every sample grids at the uv and phase-centre
+/// phase of its LSRK frequency, as the LSRK cube's does.
+#[test]
+fn a_topo_cube_is_gridded_through_lsrk() {
+    let catalogue = catalogue_in(j2000(REFERENCE[0], REFERENCE[1]), 1, FrequencyRef::TOPO);
+    let geometry_of = |output| {
+        let problem = problem_framed(
+            PhaseCentreLaw::Observation,
+            FrequencyFrame::Topocentric,
+            output,
+        );
+        let plan =
+            GeometryPlan::compile(&problem, &catalogue, measures(), None).expect("a geometry plan");
+        let mut buffers = BatchBuffers::default();
+        fill(&mut buffers, &catalogue, 0, 2);
+        let batch = buffers.batch().expect("a batch");
+        let mut geometry = BatchGeometry::default();
+        plan.apply(
+            &batch,
+            &[true; 6],
+            None,
+            &mut GeometryTraversal::default(),
+            &mut geometry,
+        )
+        .expect("batch geometry");
+        geometry
+    };
+    let topo = geometry_of(FrequencyFrame::Topocentric);
+    let lsrk = geometry_of(FrequencyFrame::Lsrk);
+    assert_eq!(topo.frequencies_hz(0), [1.4e9]);
+    let drift = topo.frequencies_hz(1)[0] / 1.4e9 - 1.0;
+    assert!(
+        drift != 0.0 && drift.abs() < 1.0e-8,
+        "Doppler drift over 10 s: {drift}"
+    );
+    for sample in 0..6 {
+        let time = sample / 3;
+        let [topo_hz, lsrk_hz] = [&topo, &lsrk].map(|geometry| geometry.frequencies_hz(time)[0]);
+        let (topo_uvw, lsrk_uvw) = (topo.projection(sample, 0), lsrk.projection(sample, 0));
+        for (axis, (topo_m, lsrk_m)) in topo_uvw.uvw_m.iter().zip(lsrk_uvw.uvw_m).enumerate() {
+            let [topo_wavelengths, lsrk_wavelengths] = [topo_m * topo_hz, lsrk_m * lsrk_hz];
+            assert!(
+                (topo_wavelengths - lsrk_wavelengths).abs() <= 1.0e-12 * lsrk_wavelengths.abs(),
+                "sample {sample} axis {axis}: {topo_wavelengths} against {lsrk_wavelengths}"
+            );
+        }
+        let [topo_phase, lsrk_phase] = [
+            topo_uvw.phase_shift_m * topo_hz,
+            lsrk_uvw.phase_shift_m * lsrk_hz,
+        ];
+        assert!(
+            (topo_phase - lsrk_phase).abs() <= 1.0e-12 * lsrk_phase.abs().max(1.0),
+            "sample {sample}: phase {topo_phase} against {lsrk_phase}"
+        );
+    }
+}
+
 /// A time with no row samples holds no geometry: its samples' projections
 /// and its frequencies stay NaN.
 #[test]

@@ -497,10 +497,18 @@ mod tests {
             request_mask(&automatic),
             DomainMask::AutoMultithresh(_)
         ));
-        // A new explicit empty region must not silently reuse an old mask.
+        // A new explicit empty region must not silently reuse an old mask:
+        // it stays the request's own empty mask, and a cleaning run over an
+        // old mask is refused rather than merged.
         let mut continuation = explicit;
         continuation.imagename = directory.path().join("image");
         std::fs::write(directory.path().join("image.model"), "old model").unwrap();
+        std::fs::write(directory.path().join("image.mask"), "old mask").unwrap();
+        continuation.check_tclean_output_prefixes().unwrap();
+        assert!(
+            matches!(request_mask(&continuation), DomainMask::Boxes(boxes) if boxes.is_empty())
+        );
+        continuation.niter = 5;
         assert!(continuation.check_tclean_output_prefixes().is_err());
     }
 }

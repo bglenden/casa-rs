@@ -129,7 +129,8 @@ impl FinalNormalState {
             .copied()
     }
 
-    /// Return the number of samples the pass placed.
+    /// Return the number of samples the pass placed; zero for a state read
+    /// from an earlier run's products ([`MajorCycle::finish_read`]).
     #[must_use]
     pub const fn sample_count(&self) -> u64 {
         self.sample_count
@@ -776,6 +777,30 @@ impl MajorCycle {
         Ok(MajorCycleCompletion {
             normal_state: FinalNormalState {
                 sample_count: samples,
+                primitives,
+            },
+            final_model,
+        })
+    }
+
+    /// Finish a cycle whose images were read rather than gridded: an
+    /// earlier run's PSF, sums of weights and residual, which tclean leaves
+    /// standing under `calcpsf=False` and `calcres=False`. No pass placed
+    /// samples: an initial state counts none, and a refresh keeps the count
+    /// of the state it refreshed; every image must still be complete.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::finish`], but a cycle that placed no sample is complete.
+    pub fn finish_read(self) -> Result<MajorCycleCompletion, MajorCycleError> {
+        let (primitives, sample_count) = self
+            .state
+            .finish_read()
+            .map_err(MajorCycleError::Residual)?;
+        let final_model = self.model.complete()?;
+        Ok(MajorCycleCompletion {
+            normal_state: FinalNormalState {
+                sample_count,
                 primitives,
             },
             final_model,

@@ -21,7 +21,7 @@ use casa_imaging_deconvolution::{FinalNormalState, MajorCycle, ModelGeneration};
 use casa_imaging_model::ProductNormalization;
 use casa_imaging_operator::ModeSet;
 use casa_imaging_products::{MinorCycleImageResponse, MosaicSensitivity};
-use casa_imaging_runtime::Admitted;
+use casa_imaging_runtime::{Admitted, Reservation};
 
 use super::{Major, Run};
 use crate::compile::StartModel;
@@ -42,8 +42,22 @@ pub(super) fn reseed_response(
 impl Run<'_> {
     /// The initial major cycle: data and PSF, from the start model when there
     /// is one (its residual) and from an empty model otherwise; it writes
-    /// visibilities when it is also final.
+    /// visibilities when it is also final. A run that reads its PSF or
+    /// residual forms what it does not read ([`super::continuation`]).
     pub(super) fn initial(&mut self, last: bool) -> Result<Major, ImagingError> {
+        match (self.forms.psf, self.forms.residual) {
+            (true, true) => {}
+            (true, false) => {
+                self.measure_row_work()?;
+                return self.psf_pass();
+            }
+            (false, true) => {
+                self.measure_row_work()?;
+                let read = self.read_existing()?;
+                return self.refresh(read.completion, (Vec::new(), Reservation::none()), last);
+            }
+            (false, false) => return self.read_existing(),
+        }
         self.measure_row_work()?;
         match self.reseed {
             Some(response) => {
@@ -80,7 +94,7 @@ impl Run<'_> {
         };
         let model = self.lifecycle.prepare_final_model(generation, [])?;
         let cycle = MajorCycle::initial(self.problem, model, self.normal_storage(plan.residency)?)?;
-        let major = self.reconcile(cycle, true, seeded, last, plan)?;
+        let major = self.reconcile(cycle, self.initial_modes(), seeded, last, plan)?;
         self.retain(&major, pass)?;
         Ok(major)
     }
@@ -123,7 +137,7 @@ impl Run<'_> {
             model,
             self.normal_storage(plan.residency)?,
         )?;
-        let major = self.reconcile(cycle, false, true, last, plan)?;
+        let major = self.reconcile(cycle, ModeSet::DATA, true, last, plan)?;
         self.retain(&major, pass)?;
         Ok(major)
     }
@@ -144,12 +158,29 @@ impl Run<'_> {
         let units = ImagingError::StartModelUnits;
         let mut physical = Vec::with_capacity(apparent.len());
         // Canonical order: spectral plane, polarization, y, x (x fastest);
-        // the normal state's planes are x-major (x · ny + y).
+        // the normal state's planes are x-major (x · ny + y). Every Taylor
+        // term divides by term 0's weights
+        // (`SIImageStoreMultiTerm::divideModelByWeight`).
+        let taylor = (normal.basis() == casa_imaging_deconvolution::NormalBasis::Taylor)
+            .then(|| normal.read_window(normal.slab().core_range()))
+            .transpose()?;
+        let principal = taylor
+            .as_ref()
+            .map(|window| window.normal_moment(0).expect("the zeroth normal moment"));
         for (plane, samples) in apparent.chunks(nx * ny).enumerate() {
-            let weights = normal.read_plane(0, plane / polarizations, plane % polarizations)?;
-            let sensitivity = weights.read_sensitivity()?;
+            let (sensitivity, sum_weight) = match principal {
+                Some(moment) => (
+                    std::borrow::Cow::Borrowed(moment.sensitivity()),
+                    moment.sum_weight(),
+                ),
+                None => {
+                    let weights =
+                        normal.read_plane(0, plane / polarizations, plane % polarizations)?;
+                    (weights.read_sensitivity()?, weights.sum_weight())
+                }
+            };
             let bound = MosaicSensitivity::new(&sensitivity)
-                .and_then(|bound| bound.with_normal_sum_weight(weights.sum_weight()))
+                .and_then(|bound| bound.with_normal_sum_weight(sum_weight))
                 .map_err(units)?;
             for y in 0..ny {
                 for x in 0..nx {

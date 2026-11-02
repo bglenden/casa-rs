@@ -326,6 +326,11 @@ impl Observation {
         STOKES_I_CORRELATIONS * self.unflagged_rows
     }
 
+    /// Integrations of the track, each of the same baselines.
+    pub fn integrations(&self) -> usize {
+        (DURATION_SECONDS / INTEGRATION_SECONDS).round() as usize
+    }
+
     /// Natural-weighting Stokes I image noise for unit-weight visibilities:
     /// `sigma / sqrt(N)` over the Stokes I samples.
     pub fn image_noise_jy(&self) -> f64 {
@@ -599,7 +604,8 @@ pub struct Product {
 }
 
 impl Product {
-    fn open(path: &Path) -> Self {
+    /// The product at `path`.
+    pub fn open(path: &Path) -> Self {
         let image = PagedImage::<f32>::open(path)
             .unwrap_or_else(|error| panic!("open {}: {error}", path.display()));
         let mut pixels = image

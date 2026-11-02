@@ -152,6 +152,9 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
             ms.save().expect("save unit spectrum");
         }
         let image_name = case.join("image");
+        // In the rows' own frequencies (`cubedata`): a TOPO `cube` is
+        // gridded through LSRK, so each row samples the spectrum where its
+        // Doppler drift from the first time puts it.
         let imaging = request(
             &measurement_set,
             &image_name,
@@ -160,8 +163,7 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra() {
                 "imsize": 64,
                 "spw": "0:0~1",
                 "channel_count": 2,
-                "specmode": "cube",
-                "outframe": "TOPO",
+                "specmode": "cubedata",
                 "interpolation": "linear",
                 "start": "44000250000Hz",
                 "width": "500000Hz",

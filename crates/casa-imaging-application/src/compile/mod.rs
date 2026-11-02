@@ -11,6 +11,7 @@
 
 #[cfg(test)]
 mod aw_plan_tests;
+mod continuation;
 mod direction;
 mod domains;
 mod envelope;
@@ -81,6 +82,9 @@ pub(crate) struct Prepared {
     pub(crate) mask_resident: casa_imaging_runtime::Reservation,
     /// The main domain's start model ([`StartModel`]).
     pub(crate) start_model: Option<StartModel>,
+    /// The PSF, sums of weights and residual an earlier run left, which the
+    /// run reads in place of forming them (`calcpsf`, `calcres`).
+    pub(crate) existing: Option<crate::restart::ExistingProducts>,
     /// A direction-dependent gridder's residual units, which bind every
     /// solver.
     pub(crate) minor_cycle_image_response: Option<MinorCycleImageResponse>,
@@ -209,8 +213,17 @@ pub(crate) fn prepare(
         _ => spectral.output_channels,
     };
     let model_samples = domains::model_samples(&domains, reconstruction_planes, &request.stokes)?;
-    let (start_model, mask_resident) =
-        start_model(request, context, &mut domains, reconstruction_planes)?;
+    let continuation =
+        continuation::prepare(request, &mut domains[0], spectral.output_channels, context)?;
+    let start_model = match request.startmodel.as_deref() {
+        Some(path) => Some(StartModel::prepare(
+            path,
+            &domains[0],
+            request.stokes.len(),
+            reconstruction_planes,
+        )?),
+        None => continuation.start_model,
+    };
     let geometry = geometry(request, &domains, &centre, &spectral);
     // A moving phase centre names a body and a table alike; the table, when
     // it is one, was read here.
@@ -228,8 +241,9 @@ pub(crate) fn prepare(
             NumericPrecision::F64,
         ),
         masks: domains::mask_plans(&domains)?,
-        mask_resident,
+        mask_resident: continuation.mask_resident,
         start_model,
+        existing: continuation.existing,
         minor_cycle_image_response: match &request.gridder {
             Gridder::Mosaic { .. } | Gridder::Awproject(_) => Some(MinorCycleImageResponse::new(
                 specification::normalization(request),
@@ -248,60 +262,6 @@ pub(crate) fn prepare(
         deployment,
         survey: survey_charge,
     })
-}
-
-/// The main domain's start model: the request's `startmodel`, or a
-/// restarted run's model, and the charge of a restarted run's mask, which
-/// replaces the main domain's in `domains`.
-fn start_model(
-    request: &ImagingRequest,
-    context: &RunContext,
-    domains: &mut [PreparedImageDomain],
-    reconstruction_planes: usize,
-) -> Result<(Option<StartModel>, casa_imaging_runtime::Reservation), PrepareError> {
-    let mut start_model = request
-        .startmodel
-        .as_deref()
-        .map(|path| {
-            StartModel::prepare(
-                path,
-                &domains[0],
-                request.stokes.len(),
-                reconstruction_planes,
-            )
-        })
-        .transpose()?;
-    let mut mask_resident = casa_imaging_runtime::Reservation::none();
-    if !request.tclean_restart {
-        return Ok((start_model, mask_resident));
-    }
-    let template = casa_images::RegridTemplate {
-        coordinates: domains[0].coordinates.clone(),
-        shape: vec![domains[0].image_size[0], domains[0].image_size[1], 1, 1],
-    };
-    for path in crate::restart::products(&request.imagename)? {
-        if path.extension().is_some_and(|suffix| suffix == "model") {
-            start_model = Some(StartModel::restart(&path, &domains[0])?);
-        } else {
-            crate::restart::check_grid(&path, &template)?;
-            if path.extension().is_some_and(|suffix| suffix == "mask") {
-                let input = crate::restart::MaskInput::open(&path)?;
-                let mut charge = casa_imaging_runtime::admit(
-                    &context.host,
-                    &context.policy,
-                    &casa_imaging_runtime::Demand {
-                        phase: "restart CLEAN mask",
-                        memory: input.reading_bytes(),
-                    },
-                )?;
-                let retained = input.retained_bytes();
-                domains[0].mask = domains::DomainMask::PixelSupport(input.read()?);
-                charge.retain(retained);
-                mask_resident.join(charge);
-            }
-        }
-    }
-    Ok((start_model, mask_resident))
 }
 
 /// Survey the partitions of `store` that `selection`, one MeasurementSet of

@@ -19,6 +19,8 @@ mod restart;
 #[doc(hidden)]
 pub mod restart_mask_law;
 #[doc(hidden)]
+pub mod restart_products_law;
+#[doc(hidden)]
 pub mod source_law;
 #[doc(hidden)]
 pub mod start_model_law;
@@ -139,7 +141,9 @@ pub struct ImagingOutcome {
     /// Why cleaning stopped (CASA's `stopcode`); `None` for a dirty run or
     /// when a minor cycle cleaned nothing.
     pub stop: Option<CleanStop>,
-    /// Number of executed major passes, including the initial pass.
+    /// Number of executed major cycles: the initial pass when it formed the
+    /// residual (none when the run read it, `calcres=False`), and each pass
+    /// after it that formed a residual.
     pub major_cycle_count: usize,
     /// Total component count charged to the reported task/controller budget.
     pub total_minor_iterations: usize,
@@ -457,6 +461,11 @@ fn compile_run(
         write_corrected_data: prepared.write_corrected_data,
         masks: prepared.masks,
         start_model: prepared.start_model,
+        existing: prepared.existing,
+        forms: imaging::Forms {
+            psf: request.calcpsf,
+            residual: request.calcres,
+        },
         minor_cycle_image_response: prepared.minor_cycle_image_response,
     };
     Ok((problem, input, native, resident))

@@ -11,7 +11,13 @@
 //! the other store is matched through its partition's content, its
 //! antennas by name and its time to the millisecond, a key two of the
 //! MeasurementSet's rows may share; such rows, and rows two samples claim,
-//! are counted as duplicates and fail the law.
+//! are counted as duplicates and fail the law. A partition may hold its
+//! window's channels in the reverse order (XRADIO writes every window in
+//! ascending frequency, #1014): each MeasurementSet channel is compared
+//! with the same channel of the other store, wherever its order puts it.
+
+#[cfg(test)]
+mod tests;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -23,9 +29,9 @@ use casa_imaging_model::{
 };
 use casa_ms::observation_io::{Msv2Observation, OpenOptions};
 use casa_observation::{
-    AccessRequest, AntennaEntry, AntennaId, BatchBuffers, Catalogue, CorrelationRequest,
-    FieldEphemeris, FieldSelection, Grouping, Observation, PartitionId, PointingRequest, ReadEvent,
-    Roles, TimeSelection, VisibilityBatch, WeightRequest,
+    AccessRequest, AntennaEntry, AntennaId, BatchBuffers, Catalogue, ChannelOrder,
+    CorrelationRequest, FieldEphemeris, FieldSelection, Grouping, Observation, PartitionId,
+    PointingRequest, ReadEvent, Roles, TimeSelection, VisibilityBatch, WeightRequest,
 };
 use casa_types::measures::{MeasuresProvider, MjdHighPrec};
 
@@ -130,8 +136,8 @@ struct Row {
 /// MeasurementSet with its batch geometry in `converted`, the same
 /// observation in another store (an MSv4 conversion). A converted partition
 /// is matched to the data description of the MeasurementSet's partitions of
-/// the same content
-/// ([`PartitionEntry::same_content`](casa_observation::PartitionEntry::same_content)),
+/// the same content, its channels in the same order or reversed
+/// ([`PartitionEntry::channel_order`](casa_observation::PartitionEntry::channel_order)),
 /// and a converted antenna to the MeasurementSet's of its name.
 ///
 /// # Errors
@@ -183,6 +189,7 @@ pub fn compare_stores(
             }
             Some(row)
         },
+        |_| ChannelOrder::Same,
         inputs.clone(),
         None,
     )?;
@@ -193,6 +200,7 @@ pub fn compare_stores(
         other.as_ref(),
         (&bridge.partitions(), &FieldSelection::All),
         |batch, sample| bridge.row(batch, sample, &keys),
+        |partition| bridge.order(partition),
         inputs,
         Some(&reference.rows),
     )?;
@@ -243,6 +251,7 @@ pub fn row_pointing(
             }
             main_row(observation, batch, sample)
         },
+        |_| ChannelOrder::Same,
         PlanInputs {
             measures,
             phase_table,
@@ -315,12 +324,14 @@ fn compare(expected: &Rows, actual: &Found) -> GeometryComparison {
 
 /// The batch geometry of the rows of `partitions` of `observation` of
 /// `fields`; `row_of` gives a sample's row, `None` for padding or a sample
-/// no row matches. With `expected`, only its rows, on its channels.
+/// no row matches. With `expected`, only its rows, on its channels, which
+/// lie along each partition's channel axis as `order_of` says.
 fn batch_rows(
     problem: &CompiledProblem,
     observation: &dyn Observation,
     (partitions, fields): (&[PartitionId], &FieldSelection),
     mut row_of: impl FnMut(&VisibilityBatch<'_>, usize) -> Option<u64>,
+    order_of: impl Fn(PartitionId) -> ChannelOrder,
     inputs: PlanInputs,
     expected: Option<&Rows>,
 ) -> Result<Found, ApplicationError> {
@@ -339,6 +350,7 @@ fn batch_rows(
     );
     for &partition in partitions {
         let entry = catalogue.partition(partition);
+        let channels = (order_of(partition), entry.frequencies_hz.len());
         let data_group = entry
             .data_groups
             .first()
@@ -399,7 +411,7 @@ fn batch_rows(
                     &geometry,
                     (sample, *row),
                     plan.charts(),
-                    expected.map(|rows| &rows[row]),
+                    expected.map(|rows| (&rows[row], channels)),
                 );
                 if found.rows.insert(*row, got).is_some() {
                     found.duplicates += 1;
@@ -412,8 +424,9 @@ fn batch_rows(
 
 /// How another store's samples find the MeasurementSet's rows.
 struct Bridge {
-    /// Each matched converted partition's data description.
-    data_descriptions: BTreeMap<PartitionId, u32>,
+    /// Each matched converted partition's data description, and how the
+    /// MeasurementSet's channels lie along its channel axis.
+    data_descriptions: BTreeMap<PartitionId, (u32, ChannelOrder)>,
     /// Each converted antenna's MeasurementSet antenna.
     antennas: Vec<Option<u32>>,
 }
@@ -429,8 +442,10 @@ impl Bridge {
                 let mut matching = reference
                     .partition_ids()
                     .into_iter()
-                    .filter(|candidate| reference.partition(*candidate).same_content(entry))
-                    .map(|candidate| observation.data_description_id(candidate));
+                    .filter_map(|candidate| {
+                        let order = reference.partition(candidate).channel_order(entry)?;
+                        Some((observation.data_description_id(candidate), order))
+                    });
                 let first = matching.next()?;
                 matching
                     .all(|other| other == first)
@@ -462,6 +477,14 @@ impl Bridge {
         self.data_descriptions.keys().copied().collect()
     }
 
+    /// How the MeasurementSet's channels lie along converted partition
+    /// `partition`'s channel axis.
+    fn order(&self, partition: PartitionId) -> ChannelOrder {
+        self.data_descriptions
+            .get(&partition)
+            .map_or(ChannelOrder::Same, |(_, order)| *order)
+    }
+
     /// The MeasurementSet row `keys` gives `sample` of `batch`.
     fn row(
         &self,
@@ -469,7 +492,7 @@ impl Bridge {
         sample: usize,
         keys: &HashMap<Key, u64>,
     ) -> Option<u64> {
-        let data_description = *self.data_descriptions.get(&batch.partition)?;
+        let (data_description, _) = *self.data_descriptions.get(&batch.partition)?;
         let per_time = batch.samples_per_time();
         let baseline = batch.baselines[sample % per_time];
         let antenna = |id: AntennaId| self.antennas.get(id.0 as usize).copied().flatten();
@@ -521,13 +544,15 @@ fn pointing_request(
 }
 
 /// Sample `sample`'s geometry as MAIN row `row`, on every channel the
-/// batch holds or, with `expected`, on its channels.
+/// batch holds or, with `expected`, on its channels: MeasurementSet channel
+/// `c` is this store's channel `order.channel(c, count)` of the partition's
+/// `count`.
 fn batch_row(
     batch: &VisibilityBatch<'_>,
     geometry: &BatchGeometry,
     (sample, row): (usize, u64),
     charts: usize,
-    expected: Option<&Row>,
+    expected: Option<(&Row, (ChannelOrder, usize))>,
 ) -> Row {
     let time = sample / batch.samples_per_time();
     let frequencies = geometry.frequencies_hz(time);
@@ -552,15 +577,16 @@ fn batch_row(
         parallactic: geometry.parallactic_angles(sample),
         responses: geometry.antenna_responses(sample),
         frequencies: match expected {
-            Some(expected) => expected
+            Some((expected, (order, count))) => expected
                 .frequencies
                 .iter()
                 .map(|(channel, _)| {
-                    let index = *channel as usize - batch.first_channel;
-                    (
-                        *channel,
-                        frequencies.get(index).copied().unwrap_or(f64::NAN),
-                    )
+                    let native = *channel as usize;
+                    let frequency = (native < count)
+                        .then(|| order.channel(native, count))
+                        .and_then(|channel| channel.checked_sub(batch.first_channel))
+                        .and_then(|index| frequencies.get(index).copied());
+                    (*channel, frequency.unwrap_or(f64::NAN))
                 })
                 .collect(),
             None => frequencies

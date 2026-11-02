@@ -41,7 +41,7 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
 {
     let bundle = builtin_surface_bundle("tclean")?;
     // The imager's contract-28 profiles migrate; none older is read.
-    assert_eq!(bundle.surface.migrations().len(), 8);
+    assert_eq!(bundle.surface.migrations().len(), 9);
     assert_eq!(bundle.surface.migrations()[0].from_contract, 28);
     assert_eq!(bundle.surface.migrations()[1].from_contract, 29);
     assert_eq!(bundle.surface.migrations()[2].from_contract, 30);
@@ -50,6 +50,7 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
     assert_eq!(bundle.surface.migrations()[5].from_contract, 33);
     assert_eq!(bundle.surface.migrations()[6].from_contract, 34);
     assert_eq!(bundle.surface.migrations()[7].from_contract, 35);
+    assert_eq!(bundle.surface.migrations()[8].from_contract, 36);
     assert!(
         bundle
             .surface

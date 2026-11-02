@@ -4716,7 +4716,12 @@
     {
       "id": "tclean",
       "contract_version": 36,
-      "fingerprint": "e08390516529eb3cee829c6131d30bee7b2bbf966aa1de665b0ff28ae2c7c550"
+      "fingerprint": "929f1115694db129085cc4dfa8bf39f8af25ea0272461eece90aa7b714d48233"
+    },
+    {
+      "id": "tclean",
+      "contract_version": 37,
+      "fingerprint": "35e52f7591a1e3df10028d9b6a40ce930644bbb98ee6e370174dbe65cb6daa92"
     },
     {
       "id": "uvcontsub",

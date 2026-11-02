@@ -186,7 +186,9 @@ pub(super) fn specification(
 /// common beam.
 fn restoring_beam(request: &ImagingRequest) -> RestoringBeamPolicy {
     match request.restoringbeam {
-        _ if !request.restoration => RestoringBeamPolicy::None,
+        _ if !request.restoration || !crate::restart::has_residual(request) => {
+            RestoringBeamPolicy::None
+        }
         RestoringBeamPolicy::PerPlane if request.deconvolver == Deconvolver::Mtmfs => {
             RestoringBeamPolicy::Common
         }
@@ -340,13 +342,20 @@ fn requested_products(
     let mtmfs = request.deconvolver == Deconvolver::Mtmfs;
     // CASA's `restoration=False` neither restores nor PB-corrects, so it
     // writes no `.image`, `.image.pbcor` or spectral index
-    // (`task_tclean.py`, `SIImageStoreMultiTerm::restore`).
-    let restored = request.restoration;
-    let mut products = vec![ProductKind::Psf, ProductKind::Residual];
+    // (`task_tclean.py`, `SIImageStoreMultiTerm::restore`). A
+    // `calcres=False` run with no residual to read makes the PSF alone: no
+    // residual, model or restored image (`SDAlgorithmBase::restore` needs
+    // a residual).
+    let residual = crate::restart::has_residual(request);
+    let restored = request.restoration && residual;
+    let mut products = vec![ProductKind::Psf];
+    if residual {
+        products.push(ProductKind::Residual);
+    }
     // CASA makes the model when the minor cycle, the restoration or a
     // start model needs it: tclean sets up no deconvolver for `niter=0`
     // with `restoration=False`, and nothing else writes one.
-    if minor_cycle || restored || request.startmodel.is_some() {
+    if residual && (minor_cycle || restored || request.startmodel.is_some()) {
         products.push(ProductKind::Model);
     }
     if restored {

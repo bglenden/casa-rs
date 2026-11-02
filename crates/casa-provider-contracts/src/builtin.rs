@@ -360,7 +360,7 @@ mod tests {
         // still finds the surface, so an old profile can migrate.
         assert_eq!(catalog.surface("imager").unwrap().id(), "tclean");
         assert_eq!(surface.casa_task(), Some("tclean"));
-        assert_eq!(surface.contract_version(), 36);
+        assert_eq!(surface.contract_version(), 37);
         assert_eq!(surface.bindings().len(), 114);
         for name in ["scan", "observation", "antenna", "timerange"] {
             let binding = surface
@@ -507,7 +507,8 @@ mod tests {
                 (32, 33),
                 (33, 34),
                 (34, 35),
-                (35, 36)
+                (35, 36),
+                (36, 37)
             ]
         );
     }

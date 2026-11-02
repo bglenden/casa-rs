@@ -443,6 +443,32 @@ fn frame_transform_requires_a_valid_spectral_anchor() {
             .with_anchor(conversion_anchor(59_000.25)),
     );
     compile(request(transform)).expect("compile transform");
+
+    // One frame takes an anchor only to be gridded through LSRK.
+    let tracked = geometry().with_spectral(
+        geometry()
+            .spectral()
+            .clone()
+            .with_anchor(conversion_anchor(59_000.25)),
+    );
+    compile(request(tracked)).expect("a TOPO cube gridded through LSRK");
+    let lsrk = |anchor| {
+        geometry().with_spectral(SpectralCoordinateSpec::new(
+            FrequencyFrame::Lsrk,
+            FrequencyFrame::Lsrk,
+            anchor,
+            geometry().spectral().wcs().clone(),
+            RestFrequency::NotApplicable,
+            DopplerConvention::NotApplicable,
+        ))
+    };
+    compile(request(lsrk(SpectralFrameAnchor::NotApplicable))).expect("an LSRK cube");
+    assert!(matches!(
+        compile(request(lsrk(conversion_anchor(59_000.25)))),
+        Err(CompileProblemError::Geometry(
+            CompileGeometryError::InconsistentSpectralAnchor
+        ))
+    ));
 }
 
 #[test]

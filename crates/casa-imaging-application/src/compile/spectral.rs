@@ -150,7 +150,7 @@ pub(super) fn prepare_axis(
         source_frame,
         output_frequency_reference: law.output_frequency_reference,
         output_frame,
-        anchor: spectral_frame_anchor(source_frame, output_frame, frame)?,
+        anchor: spectral_frame_anchor(source_frame, output_frame, request.specmode, frame)?,
         wcs: SpectralWcs::Linear {
             channels: law.output_channels,
             reference_pixel: 0.0,
@@ -622,18 +622,28 @@ const fn sampling_law(interpolation: CubeInterpolation) -> SpectralSamplingLaw {
     }
 }
 
+/// The image's epoch, reference direction and observatory, where the
+/// rows' frame and the output frame differ, or where a `cube` is gridded
+/// through LSRK ([`FrequencyFrame::gridded_through_lsrk`]): CASA grids a
+/// `cube` (not `cubedata`, whose rows keep their frequencies) in LSRK
+/// whatever its `outframe`, so a TOPO cube of TOPO rows is fixed in LSRK at
+/// the first time and each row is Doppler tracked from it.
 fn spectral_frame_anchor(
     source_frame: FrequencyFrame,
     output_frame: FrequencyFrame,
+    specmode: SpecMode,
     frame: &FrameContext<'_>,
 ) -> Result<SpectralFrameAnchor, PrepareError> {
-    if source_frame == output_frame {
+    let tracked = specmode == SpecMode::Cube && output_frame.gridded_through_lsrk();
+    if source_frame == output_frame && !tracked {
         return Ok(SpectralFrameAnchor::NotApplicable);
     }
     let [x_metres, y_metres, z_metres] = frame.engine.observatory_position().as_itrf();
     Ok(SpectralFrameAnchor::Conversion {
+        // As `MEpoch::from_mjd_seconds` reads a row's time, so a row at the
+        // first time is at the anchor's epoch exactly.
         epoch: Epoch::new(
-            frame.anchor_time_mjd_seconds / 86_400.0,
+            frame.anchor_time_mjd_seconds * (1.0 / 86_400.0),
             imaging_time_scale(frame.engine.time_reference())?,
         ),
         direction: frame.direction.reference_direction(),
