@@ -256,5 +256,8 @@ fn a_plane_at_casas_empty_sum_weight_bound_is_empty() {
     }
     let (peak_jy, peak_pixel, _) = peak(&products.get(".image").plane(3));
     assert_eq!(peak_pixel, component_pixel(POINT));
-    assert!(peak_jy > 0.5, "an ordinary channel images: peak {peak_jy} Jy");
+    assert!(
+        peak_jy > 0.5,
+        "an ordinary channel images: peak {peak_jy} Jy"
+    );
 }
