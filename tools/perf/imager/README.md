@@ -1,582 +1,64 @@
-# `casars-imager` Performance Profiling
+# `casars-imager` Performance Tools
 
-This directory documents the performance harness for the MeasurementSet-backed
-imager.
+These tools time casa-rs imaging against CASA `tclean` on MeasurementSets and
+keep the evidence. What a performance claim needs is set by `TESTING.md`
+("Imaging tiers and evidence") and `.agents/skills/casa-rs-imaging-performance`.
+Their tests run with `scripts/test-perf-tools.sh`.
 
 ## Entry points
 
-- `tools/perf/imager/run_workload.py`
-  - runs one JSON workload manifest, preflights each target independently,
-    delegates ordinary paired workloads to `scripts/bench-imager-vs-casa.sh`,
-    executes checked-in recipe-backed CASA oracles directly, and writes a
-    normalized machine-readable result JSON
-- `tools/perf/imager/run_alternating_comparison.py`
-  - runs a baseline and a candidate workload in counterbalanced A B B A
-    order, optionally from two casa-rs checkouts, and writes one comparison
-    receipt with wall-time, peak-RSS and product verdicts (see
-    [Two-build comparison](#two-build-comparison))
-- `tools/perf/imager/stage_vlass_fragment.py`
-  - verifies the frozen VLASS archive SHA-256 and gzip stream, extracts only the
-    expected MS and recipe, hashes the extracted tree, and atomically promotes
-    it inside the issue-owned GLENDENNING evidence root
-- `tools/perf/imager/stage_wave1_datasets.py`
-  - validates the ImPerformance Wave 1 simulated-dataset registry, enforces the
-    explicit data-root policy, and can materialize deterministic source models,
-    spectral profiles, simulation request plans, and generated workload
-    manifests
-- `tools/perf/imager/bench_simobserve.py`
-  - compares native `simobserve` with CASA on selected datasets, records native
-    timing reports, and can enforce native throughput floors for internal-disk
-    storage-manager regression checks
-- `tools/perf/imager/wave1_dataset_registry.json`
-  - records the VLA/ALMA, single-field/mosaic, small/medium, and one large
-    ALMA mosaic/cube simulated-dataset plan for #248
-- `tools/perf/imager/wave3_single_plane_matrix.json`
-  - records the all-single-plane mode matrix for #274, including smoke,
-    medium, and stress rows plus the review evidence contract used by #273
-- `tools/perf/imager/wave3_matrix.py`
-  - validates and enumerates the Wave 3 matrix without requiring local datasets
-- `tools/perf/imager/imaging_performance_ledger.json`
-  - records accepted, guarded, neutral, and rejected imaging-performance runs,
-    including exact workload/artifact handles, correctness gates, stage metrics,
-    and speedup or slowdown fractions
-- `tools/perf/imager/imaging_performance_ledger.py`
-  - validates formulas, role semantics, checked-in evidence identities and
-    SHA-256 digests, then summarizes the performance ledger
-- `tools/perf/imager/evidence/`
-  - retains compact final run/comparison JSON used by the ledger so CI can
-    verify evidence without workstation-local benchmark paths
-- `scripts/bench-imager-vs-casa.sh`
-  - compares Rust CLI wall-clock timings against CASA `tclean` stage medians
-    on the same MeasurementSet selection, and can preserve final-run products
-    for harness-level comparison; each Rust run's phase timings are in its
-    `<imagename>.summary.json`
+- `run_workload.py`: runs one JSON workload manifest (from `workloads/`, by id
+  or path). It preflights each target, delegates ordinary paired workloads to
+  `scripts/bench-imager-vs-casa.sh`, runs checked-in recipe-backed CASA oracles
+  directly, and writes a result JSON.
+- `run_alternating_comparison.py`: runs a baseline and a candidate workload,
+  optionally from two casa-rs checkouts, in counterbalanced order and writes
+  one comparison receipt (see [Two-build comparison](#two-build-comparison)).
+- `scripts/bench-imager-vs-casa.sh`: compares Rust CLI wall times and stage
+  medians with CASA `tclean` on the same MeasurementSet selection, and can keep
+  the final run's products for comparison.
+- `stage_wave1_datasets.py` with `wave1_dataset_registry.json`: validates the
+  simulated benchmark datasets, enforces the data-root policy, and writes
+  source models, simulation requests and generated workload manifests.
+- `stage_vlass_fragment.py`: verifies the frozen VLASS archive's SHA-256 and
+  gzip stream, extracts only the expected MS and recipe, hashes the tree, and
+  promotes it atomically into the evidence root.
+- `bench_simobserve.py`: compares the native synthetic-MS generator with CASA
+  `simobserve` on selected datasets and can enforce throughput floors.
+- `wave3_matrix.py` with `wave3_single_plane_matrix.json`: validates and lists
+  the single-plane mode matrix without local datasets.
+- `imaging_performance_ledger.py` with `imaging_performance_ledger.json`:
+  validates the ledger of accepted, guarded, neutral and rejected runs (formulas,
+  roles, checked-in evidence identities and SHA-256 digests) and summarizes
+  it. `evidence/` holds the compact run and comparison JSON the ledger cites,
+  so CI can check it without workstation paths.
 
-## Harness architecture
-
-All checked-in imaging evidence tools consume the importable
-`tools/perf/imager/perf_harness` package. The command-line scripts own only
-workflow orchestration and presentation; they do not define private result
-schemas, subprocess runners, artifact readers/writers, provenance collectors,
-or scientific comparators.
-
-The package has these canonical owners:
-
-- `schema.py`: strict workload schema version 1 and run/result schema version 3
-- `artifacts.py`: JSON-object loading, atomic JSON replacement, and same-parent
-  atomic directory-bundle publication
-- `subprocesses.py`: command execution, stdin, timeout, return-code, and
-  stdout/stderr policy
-- `provenance.py`: repository, machine, executable, dataset, and storage
-  provenance
-- `stages.py`: Rust/CASA stage, backend, and timing normalization
-- `casa_protocol.py`: the checked-script JSON input/output boundary
-- `ms_compare.py` plus `casa_ms_compare.py`: the single MeasurementSet
-  comparator, with explicit `full`, `sampled`, and `aca_pairs` modes
-- `image_compare.py` plus `casa_image_compare.py`: the single imaging-product
-  comparator protocol schema version 4, including exact product/metadata
-  topology, bounded full-array reduction, Taylor-family semantics, and exact
-  bounded out-of-core native-plane structured differences
-- `casa_tclean.py`: the typed archived-recipe-to-`tclean` protocol, including
-  exact effective-call plans, per-call runtime/mask revalidation, protocol
-  result schema 3, and producer/product-bound cold/warm CF-cache receipt schema 2
-- `casa_tclean_workflow.py`: recipe-backed CASA planning/execution, required
-  repeatability comparisons, and whole-bundle partial/retained lifecycle
-- `casa_runtime_identity.py`: path-independent installed CASA code/native-library
-  and measures/model identities with host paths retained only as provenance
-- `tolerances.py`: frozen full-array numerical, beam, topology, source-region,
-  and structured-difference acceptance contracts
-- `casa_ms_geometry.py`: bounded MeasurementSet geometry and selection receipts
-- `dataset_selection_identity.py`: strict binding of a manifest to one named,
-  row/channel/correlation-verified frozen selection
-
-CASA-side programs are checked-in Python files. They are syntax-checked
-independently and invoked with request/result JSON files; no command generates
-or writes a Python program at runtime.
-
-Backend diagnostic summaries are computed from the full benchmark stream.
-Result JSON retains at most 128 representative raw records per diagnostic
-category, split between the beginning and end of the stream, and records full
-observed/retained counts plus a truncation flag. The benchmark log remains the
-complete raw record; repeated progress diagnostics cannot inflate the
-machine-readable result without bound.
+All of them use the `perf_harness` package for result schemas, subprocesses,
+artifact writing, provenance, stage normalization and the MeasurementSet and
+image comparators; the scripts only orchestrate. CASA-side programs are
+checked-in Python files run with request and result JSON files; no command
+generates a Python program at runtime.
 
 ## Artifact policy
 
-Generated benchmark data does not default to the repository `target/`
-directory. When `/Volumes/GLENDENNING` is mounted, perf-imager tools write
-large artifacts under:
+Generated benchmark data does not default to the repository `target/`. When
+`/Volumes/GLENDENNING` is mounted, large artifacts go under
+`/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/`,
+which is disposable scratch and never the only copy of anything needed later.
+Override it with `CASA_RS_IMPERF_ARTIFACT_ROOT` or `--artifact-root`; small
+JSON and log results can go elsewhere with `--output-dir`. Retained evidence
+goes where `docs/agent-reference.md` puts it.
 
-```text
-/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/
-```
+## Usage
 
-That root contains `README_SAFE_TO_DELETE.txt` and is disposable scratch only.
-It must not hold the sole copy of anything needed in a future session or review.
-For retained work, use an explicit durable root outside `/private` and all
-temporary directories, following `docs/agent-reference.md` checkpoint policy.
-Override the root with
-`CASA_RS_IMPERF_ARTIFACT_ROOT` or `run_workload.py --artifact-root` when a run
-needs a different external scratch area. Small JSON/log result files may still
-be directed with `--output-dir`, but image products, comparison panels, and
-benchmark temp copies default to the safe-to-delete external root.
-
-Durable recipe-backed fiducials are different: pass explicit `--output-dir`,
-`--artifact-root`, and `--cf-cache-root` paths. The VLASS manifests enforce that
-all three are under `/Volumes/GLENDENNING/casa-rs-vlass/issue-446`, share the
-dataset device, retain at least 1 TiB free, and never use a
-`_tmp_safe_to_delete` directory for evidence or CF caches.
-
-The storage check covers both the supplied and fully resolved MeasurementSet
-path, so symlinks cannot escape the issue root. Outputs, receipts, the artifact
-bundle and its derived scratch/protocol/log/panel paths, deterministic masks,
-and CF-cache state likewise remain under the exact issue root and on the same
-mounted device as the dataset.
-
-Recipe-backed durable runs write products, CASA protocol files/logs, comparison
-inputs/results/panels, the benchmark summary, and an embedded receipt beneath a
-single `<run-id>.partial` directory. A required comparison must complete and
-pass its frozen tolerances before that whole directory is atomically renamed to
-`<run-id>`. Failed, interrupted, unavailable, and out-of-tolerance evidence
-retains the typed partial tree; receipts preserve raw execution paths and add
-the retained-path mapping instead of rewriting request provenance.
-
-## Typical usage
-
-```sh
-scripts/bench-imager-vs-casa.sh
-```
-
-To run the Wave 1 manifest harness in validation mode:
+Validate a manifest without CASA or a MeasurementSet (the plan is written under
+the artifact root):
 
 ```sh
 tools/perf/imager/run_workload.py --dry-run wave1-standard-mfs-dirty-smoke
 ```
 
-The command writes a JSON plan under the external artifact root without
-requiring CASA Python or a local MeasurementSet.
-
-To inspect the frozen VLASS plans after staging the archive:
-
-```sh
-export CASA_RS_VLASS_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-vlass/issue-446/data/\
-b80d5e87487ab8ab01faa064c4cd48db6d93446fd0add208c051dd574e0d353a
-export CASA_RS_CASA_PYTHON=/path/to/casa-6.7.5.9/bin/python
-
-tools/perf/imager/run_workload.py --dry-run vlass-fragment-single-field \
-  --artifact-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts \
-  --cf-cache-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache
-```
-
-The full workloads have explicit cold and warm evidence manifests. Run
-`vlass-fragment-single-field-cold` or `vlass-fragment-all-fields-cold` once to
-measure CF construction and publish a schema-v2 cache receipt, then run the
-corresponding unsuffixed warm manifest to measure reuse. Each cold/warm pair
-derives the same plan-keyed CF identity; the only intentional run differences
-are cache role, repeat count, label, and evidence role.
-
-Recipe-backed manifests are immutable evidence. `--set-imaging` is rejected,
-as is a nonempty `run.env`; create a separately reviewed non-fiducial manifest
-for a parameter experiment. The manifests name one frozen dataset selection:
-`single_field` binds 10,400 field-1525 rows over SPWs 2--17, `all_fields` binds
-655,200 rows over the 63-field raster and SPWs 2--17, and
-`single_field_spw9` binds the verified 650-row field-1525/SPW-9 smoke. Field,
-SPW IDs, channel window, correlations, UV range, intent, and selected row count
-must all match the named selection.
-
-The corresponding Rust target is deliberately `unavailable` until the shared
-production imager has true EVLA A+W CF application, bounded multi-SPW/DDID
-selection, selection-windowed POINTING, joint MT-MFS, CASA normalization and
-restoration, and the complete Taylor/PB/weight/alpha product topology. The
-runner never substitutes W-projection or drops a requested control.
-
-Recipe-backed VLASS cache keys are bound to the verified staged-MS tree, named
-selection and SPW/DDID frequency facts, archived recipe, stable CASA/runtime/
-measures identity, and this exact CF-affecting effective-call projection:
-`field`, `spw`, `imsize`, `cell`, `phasecenter`, `stokes`, `projection`,
-`specmode`, `reffreq`, `nchan`, `start`, `width`, `outframe`, `veltype`,
-`restfreq`, `interpolation`, `gridder`, `facets`, `psfphasecenter`,
-`wprojplanes`, `vptable`, `aterm`, `psterm`, `wbawp`, `conjbeams`,
-`usepointing`, `computepastep`, `rotatepastep`, `pointingoffsetsigdev`, and
-`pblimit`. Mask, deconvolution/minor-cycle/restoration controls, output paths,
-and Rust memory/worker/backend policy are excluded. A deterministic mask is
-instead content-addressed in the individual request, including its resolved
-location and file or CASA-image-tree identity, and revalidated immediately
-before CASA starts. Relocating identical content therefore does not fragment
-the CF key, while changed content fails closed.
-
-A warm plan requires a separately completed matching cold cache and receipt.
-Missing cold evidence fails before CASA is called; warm never bootstraps cold.
-Exact replay of a cold request can finish protocol-reachable publication only
-when a schema-v2 commit-intent receipt binds the exact request ID, effective-call
-digest, and stable inventory of every run product proving `tclean` completed.
-It never reinvokes `tclean`, returns `recovered_publication`, and is explicitly
-non-benchmark evidence with no acceptable timing sample. The workload stops at
-that call, writes a typed schema-v3 `recovered_publication` receipt, and retains
-the run bundle as `.partial`; only the independently validated cache and its
-receipt are published. A recovery during either warmup or measured execution
-cannot run later calls, comparisons, or bundle promotion.
-
-One-call cold evidence still runs the exact product-inventory and metadata
-contract by comparing the retained prefix with itself. Multi-call evidence
-compares measured call 1 with every later call, including the final retained
-prefix. Final parity manifests may additionally declare bounded source boxes
-and a strict numerical tolerance contract. Those gates require full-array
-streaming and fail closed when beam, centroid, source-region peak/integrated
-flux, topology, or structured-difference measurements are missing or outside
-their frozen ceilings; sampled panels cannot satisfy them. Full mode visits
-every array pixel and writes the complete native central spatial plane into
-request-owned Float64 operand/difference stores plus a coverage map. The
-schema-v4 request hash binds an absolute `structure_workspace_dir` under the
-partial comparison bundle. Structure metrics consume that exact native plane;
-successful comparison removes every owned store and the workspace, while a
-failure retains it for diagnosis.
-
-The comparator's schema-v4 canonical request hash covers every normalized
-request field, including its structure workspace. Result validation checks the
-echoed binding, operands, labels, product set and paths, inventory/metadata
-policy, source regions, tolerances, and exact native-plane coverage evidence.
-Request, result, and log SHA-256 values are retained. The run-result schema and
-every required comparison must validate before same-parent bundle promotion;
-a completed workspace must be absent, and missing, leftover, mismatched,
-unavailable, or out-of-tolerance evidence remains a typed partial.
-
-If CASA and the comparator completed but outer receipt publication failed, the
-generic recovery command is:
-
-```sh
-tools/perf/imager/run_workload.py --recover-receipt /absolute/path/to/run.json
-```
-
-It accepts only a typed post-processing or promotion failure, rebinds every
-expected protocol/comparison file to the exact frozen plan, and runs normal
-full bundle-integrity validation before promotion. It never invokes CASA or the
-comparator and records both non-reinvocation facts in the benchmark summary.
-
-Protocol result `wall_seconds` remains the exact opaque `tclean()` task time.
-Schema 3 additionally records measured preflight, task, product-inventory,
-cache-postcondition, and end-to-end protocol stages. Peak RSS, CPU, page faults,
-context switches, block-I/O operations, and process disk read/write bytes are
-captured fail-closed for each CASA call and summarized over measured calls only.
-These are protocol-boundary timings: they do not claim to disaggregate CASA's
-internal MS selection, CF/AW construction, gridding, FFT, deconvolution,
-restoration, or product-write phases.
-
-### VLASS Wave #446 evidence status
-
-Current schema-v4 exact full-array smokes with CASA protocol result schema 3
-and CF-cache receipt schema 2 completed on 2026-07-21. The cold receipt is
-`20260721T035625Z-vlass-fragment-smoke-cold-cad8add1.json`: `tclean` took
-70.564 s, the complete protocol took 81.229 s, peak RSS was 1,959,198,720
-bytes, and process I/O was 98,660,352 bytes read plus 369,967,104 bytes
-written. The warm receipt is
-`20260721T035810Z-vlass-fragment-smoke-warm-a3dd3526.json`; its warmup was
-1.778 s and its three measured calls were 1.819, 1.835, and 1.904 s (median
-1.835 s). Both bundles passed exact 18-product inventory, native-plane
-structure, frozen tolerances, request/result/log/cache binding, measured-call
-summary recomputation, and pre-promotion integrity. Their complete paths and
-SHA-256 values are the canonical v3 receipts
-`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T035625Z-vlass-fragment-smoke-cold-cad8add1.json`
-(`a6d81a86649ac9f64c33bb967d5205f861ba8bbf21a0cf80caa3f9507dca304c`)
-and
-`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T035810Z-vlass-fragment-smoke-warm-a3dd3526.json`
-(`c8deeef01d44c5365c91264590fee15b81c467606a9c5128ab5c011c945beace`).
-Both receipts pass the shared strict run-result loader; no VLASS-only index
-schema is part of the evidence contract.
-
-All earlier smoke generations remain historical engineering evidence only. In
-particular, the 00:19/00:21 UTC receipts bind the superseded pre-generalization
-geometry identity.
-
-The exact 12,150 by 12,150 single-field cold dirty fiducial completed on
-2026-07-21 without the authorized 8,192-pixel fallback. `tclean` took 1,276.157
-s and the checked protocol took 1,316.767 s. It recorded 13,542,998,016 bytes
-peak RSS, 83,842,760,704 bytes read, 63,605,723,136 bytes written, 8,988,500,714
-logical product bytes, and a 23,187,184,256-byte CF cache. External monitoring
-observed 52,594,638,848 bytes swap-out and 29,456,121,856 bytes swap-in; CASA
-continued through visible phases and the host stayed responsive, so this was
-substantial but bounded swapping. The strict complete receipt is
-`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/receipts/runs/20260721T051546Z-vlass-fragment-single-field-cold-164bd8e1.json`
-(`e91ee5af3a5a28b90c2bd6a77c43fd870ab8d590534e4e67dc351f4e54e7b0b1`).
-Its integrity receipt binds one call, all 18 products, one full-array
-self-contract comparison, 20 panels, and the external CF cache; structured
-difference is `good` and panel review is `ready`.
-
-Wave #446 stays open and its implementation PR stays draft until the
-single-field warm repeatability and all-fields cold/warm fiducials also satisfy
-acceptance.
-
-### Production parameter contract
-
-Evidence-manifest fields are not production parameters. Under #450, every new
-science or final execution-control capability must be defined once in the
-canonical `ParameterCatalog` and exposed with identical semantics through the
-CLI, Python, sparse profiles, and task schemas. Suitable AW/CF/resource
-controls belong in an advanced wide-field parameter group. Any resolved-
-plan-only field must instead be explicitly classified internal and
-non-persistable with a recorded rationale; no capability may remain CLI-only,
-schema-only, environment-only, or silently simplified in Python.
-
-To validate the Wave 1 simulated-dataset plan:
-
-```sh
-tools/perf/imager/stage_wave1_datasets.py \
-  --dry-run \
-  --data-root /Volumes/GLENDENNING/casa-rs-imperformance
-```
-
-Medium and large datasets are expected to live on the external drive on this
-system. The staging tool requires those tiers under `/Volumes/GLENDENNING`
-unless `--allow-non-external-large-root` is passed explicitly. The large tier
-is intentionally one `wave1-alma-mosaic-large` dataset; standard, cube, mosaic,
-and sentinel large workloads are generated as logical selections from that one
-staged MeasurementSet.
-
-For Wave 1, native `simobserve` is the primary benchmark dataset generator.
-CASA C++ generation remains the small-case oracle for selected parity and
-performance checks.
-
-To enumerate the Wave 3 all-single-plane matrix:
-
-```sh
-python3 tools/perf/imager/wave3_matrix.py --format text
-```
-
-The Wave 3 matrix intentionally includes modes that are not yet executable by
-`scripts/bench-imager-vs-casa.sh`. `run_workload.py --dry-run` accepts those
-manifests and marks them `dry_run_only` in `run_support`; real execution remains
-limited to rows the delegated benchmark script supports. Every result carries a
-`human_review` gate, and completed comparison runs write per-product review
-panels with identical color limits for the casa-rs and CASA images plus a
-separate difference panel.
-
-The #276 standard-MFS smoke row is available as:
-
-```sh
-tools/perf/imager/run_workload.py --dry-run wave3-standard-mfs-single-term-smoke
-```
-
-The bounded large mosaic MT-MFS sentinel is available as:
-
-```sh
-tools/perf/imager/run_workload.py --dry-run \
-  tools/perf/imager/workloads/wave3-mosaic-mtmfs-alma-large-bounded.json
-```
-
-## Imaging runtime controls and telemetry
-
-`casars-imager` task protocol v12 takes the imager's catalog parameters (by
-name on `--json-run`, or as command-line flags). The execution controls are:
-
-- `parallel`: `true` runs the passes on the host's balanced worker team;
-  `false`, the default, runs one worker.
-- `backend`: `auto` (the default), `cpu` or `gpu`. `gpu` is Metal on macOS:
-  it grids the standard kernel set in `f32`, and W projection, mosaics and
-  AW projection run on the CPU. `auto` takes the GPU where it runs the
-  request and the CPU otherwise; the run summary records which. Imager
-  contract 23 and earlier spelled `gpu` as `metal` and defaulted to `cpu`, so
-  a timing must name its backend to be repeatable; `bench-imager-vs-casa.sh`
-  always passes one.
-- `gridprecision`: `auto` (`f64` on the CPU for every basis, cubes included;
-  `f32` on Metal), `f32` or `f64`. Metal refuses `f64`. CPU cube timings
-  recorded before 2026-10-15 ran at `f32`; set `gridprecision` explicitly
-  to repeat one.
-
-Memory is not a parameter: each phase is admitted against the host's free
-memory, and a cube whose planes do not fit runs in waves. Each run writes
-`<imagename>.summary.json` however it ends: its status (`completed`,
-`failed` with the error, or `cancelled`), the policy's memory capacity, the
-worker count, the backend and resolved grid precision, the CASA stop reason,
-the minor-cycle totals and the product images published (on a failure while
-publishing, those published before it). Each phase records whether it
-completed, its wall time, the process's resident high-water mark sampled at
-its end, the most memory the process's reservations held during it
-(`peak_reserved_bytes`) and what they still held at its end. Every step that
-can fail is inside a phase, each minor cycle's preparation included. FFTs
-run on one thread inside each worker.
-
-Three diagnostic parameters add structured log events (`name=value` fields
-after the message), logged at INFO, so they reach stderr with
-`--log-stderr-priority INFO`:
-
-- `stage_timing`: one `casa_imaging::stage_timing` event per phase, the
-  summary's phase record. `scripts/bench-imager-vs-casa.sh` turns it on and
-  reports the medians of each phase kind's total (`preparation`, `setup`,
-  `major_cycles`, `minor_cycle_preparations`, `minor_cycles`,
-  `model_prediction`, `products`, `total`) as the Rust stage medians;
-- `metal_stage_timing`: one `casa_imaging::metal_stage_timing` event per
-  Metal backend (gridding owner or row-chunk prediction batch) and wave,
-  with whether its work completed, how many samples it predicted, the host's
-  preparation and wait times and the device's time on its commands; and one
-  `source stream` event per wave with the producer's fill time and the
-  pass's waits for blocks (`consumer_wait_seconds`), which says whether
-  reading the MeasurementSet is on the critical path;
-- `science_trace`: `casa_imaging::science_trace` events for the residual
-  statistics, controls and record of each cycle.
-
-## Apple GPU product finishing
-
-On Apple platforms, eligible f32 standard and single-term mosaic dirty-product
-batches can keep PSF/residual/weight grids resident through MPSGraph FFT, grid
-correction, normalization, and peak reduction. Large mosaic MFS and MT-MFS also
-accumulate directly into a Metal-shared FFT input; MT-MFS returns transformed
-Taylor planes to the CPU for image correction and PB normalization. Output-owned
-tiles are disjoint, so CPU workers can convolve exact-plan records in parallel without
-atomics or full-grid worker replicas. MFS groups identical convolution plans;
-MT-MFS additionally stores f64 PSF moments and Complex64 dirty moments per plan,
-then forms the `2*nterms-1` PSF and `nterms` residual values before one projector
-traversal. Only the bounded tile accumulator narrows to f32. No full host grid,
-pack, or host-to-device grid copy is retained.
-
-MT-MFS compaction and tile routing retain only one metadata group and bounded
-raw-sample chunk at a time. The frontend scratch request is computed from image
-cells, Taylor plane count, and planned workers, and is capped by the run-level
-memory target after fixed products, caches, and one source row block. The core
-derives the tile edge and route-copy bound from grid geometry and kernel support,
-reduces worker count when required, and converts the remaining bytes into a raw
-sample limit using the actual record layouts. Reusable standard-MFS tap plans
-also use an exact record-byte reservation instead of a sample cutoff. These
-formulas do not identify or tune for a dataset.
-
-An explicit `metal-mpsgraph` request uses the resident path when supported.
-`auto` selects it when the exact f32 recipe is Metal-shared and therefore avoids
-an input-boundary materialization; host-resident and f64 products use the CPU
-finisher independent of shape or batch. Unsupported shapes, unavailable devices,
-and resident command failures also use the CPU finisher under `auto`. Standard
-and mosaic MFS recover retained shared grids without rereading the source. If
-`auto` must recover an MT-MFS Metal attempt, it replays the bounded stream to
-rebuild equivalent host grids; the normal MT-MFS route remains direct
-Metal-shared accumulation. Explicit Metal requests fail closed. Fallback
-preserves the same product set and is emitted in detailed backend telemetry.
-
-The performance ledger is authoritative for acceptance. In the current wave,
-the explicit Metal standard dirty-product stage improved from `45.552 ms` to
-`30.544 ms` (`1.49x`, `33.0%` lower), but the paired medium end-to-end run was
-still `8.4%` slower than CPU. Auto therefore keeps host-resident grids on CPU
-for every shape and batch; only Metal-shared recipes avoid the input boundary copy
-and remain on Metal. This decision is derived from exact recipe bytes rather
-than a workload-tuned image-size crossover.
-A separate proposed large-mosaic command fusion was `8.7%` slower in the
-product FFT stage and was rejected.
-
-The retained path wins at the large tier. On the `107 GiB` GLENDENNING ALMA
-mosaic dataset, the seven-field row selected `6,060,670` rows and `96,970,720`
-channel samples into a `1280x1280` dirty product. Exact-plan grouping plus the
-disjoint direct grid reduced single-term MFS wall from the prior `57.179 s` CPU
-result to `23.241 s` (`2.46x`, `59.4%` lower). A matched current CPU run was
-also `23.241 s`, so the retained Metal path removed the earlier slowdown rather
-than trading total time for a faster FFT.
-
-The final counterbalanced MFS run passes the zero-tolerance no-slowdown gate,
-but it does not support a release speedup claim. Its median paired block was
-`17.4%` lower, while the three block deltas ranged from `38.3%` lower to `48.9%`
-higher with a `43.6` percentage-point IQR. The retained adjacent semantic pair
-still shows the Metal PSF-product stage falling from `75.685 ms` to `26.616 ms`.
-The comparison remains `investigate` for `.image`, `.image.pbcor`, and
-`.residual` because the small f32 accumulation-order differences are spatially
-coherent; `.pb`, `.psf`, `.sumwt`, and `.weight` are `good`.
-
-For mosaic MT-MFS with `nterms=2`, the final counterbalanced estimate is a
-`3.71x` speedup, or `73.1%` lower wall. Its three paired-block reductions were
-`69.7%`, `73.1%`, and `78.8%`, with a `4.58` percentage-point IQR. An earlier
-matched diagnostic showed the initial-dirty replay falling from `119.777 s` to
-`22.935 s`.
-Exact-plan compaction retained about `7.4%` to `7.8%` of accepted records and
-tile routing duplicated those records only about `1.06x` to `1.12x`. Four
-workers used at most `10 MiB` aggregate host tile scratch and the five-plane
-Metal input occupied `75 MiB`. The same-run CASA wall was `508.642 s`.
-
-Replacing the fixed scratch clamp, four-tile assumption, route-copy count, and
-sample cutoffs with grid/support/term/worker/memory formulas produced a further
-single-run reduction on the same large Metal workload: `30.708 s` to `19.154 s`
-(`1.60x`, `37.6%` lower). In that historical run, the shape-derived planner
-selected a 453-pixel tile edge, nine disjoint tiles, four workers, and a
-`262,144,000`-byte scratch budget; those values describe the selected example,
-not fixed MT-MFS policy. All seven products in the previous-versus-current
-comparison are `good`, with maximum normalized RMS `9.13e-7`. This additional
-pair is not counterbalanced; the earlier `3.71x` CPU-to-Metal result remains the
-formal release claim.
-
-The retained CPU-versus-Metal products are all `good`, correlate at effectively
-`1.0`, and have maximum normalized RMS `8.53e-7`. The current `1280x1280` CASA
-oracle is also green on primary products: normalized RMS is at most `3.78e-7`,
-and Rust wall is `12.116 s` versus CASA `14.981 s`. Full-product review remains
-`investigate` only for cancellation-scale PSF/residual TT1 and sumwt TT1; model
-TT0/TT1 and sumwt TT0/TT2 are exact, and PB TT1 is zero in both implementations.
-Kernel/stage wins are promoted only when a retained-path comparison also clears
-end-to-end and product-equivalence gates.
-
-Read-ahead is also mode- and workload-sensitive. The standard MFS medium
-workload improved from `129.408 s` to `108.572 s` (`1.19x`, `16.1%` lower)
-with `39.041 s` of measured producer/consumer overlap. The bounded large
-mosaic MT-MFS sentinel improved from `119.203 s` to `111.821 s` (`1.066x`,
-`6.19%` lower) with `4.384 s` of overlap. Both final pairs enforce an exact
-two-live-block ceiling and compare read-ahead-disabled versus enabled products
-as `good`; standard-MFS products are bit-identical.
-
-Cube shared-source concurrency is not a `chanchunks=4` or dataset-specific fast
-path. Every selected multi-slab shape is eligible when its geometry-derived
-source ranges and exact cache/per-plane memory model fit the target. As
-historical evidence, the medium seven-field mosaic cube workload's original
-exact `chanchunks=4` worker cap regressed to `42.34 s` versus `27.29 s` for one
-slab. The formula-derived planner allowed all eight planes at a modeled
-`3.529 GiB` active set under the `16 GiB` target and bypassed the unnecessary
-cache variant. Three counterbalanced blocks then measured that configuration at
-`8.92%` lower paired wall (`1.098x`) with zero slowdown tolerance; all seven
-products were bit-identical. Other geometries and memory targets may select a
-different one-slab or bounded multi-slab shape, with guarded shared-source reuse
-instead of repeated full-MS reads whenever the formula admits it.
-
-To compare native `simobserve` with CASA on a selected dataset:
-
-```sh
-python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/plan/wave1-dataset-plan.json \
-  --dataset wave1-vla-single-small \
-  --disable-noise \
-  --strict-values
-```
-
-The strict comparison samples matching rows by time, field, data description,
-and baseline, then checks UVW, flags, weights, sigmas, and DATA. Its default
-DATA tolerance is absolute `0.05 Jy` plus relative `1e-2`, which is tight
-enough to catch model scaling/channel-order mistakes while avoiding false
-failures from small CASA/native numerical differences in low-amplitude cells.
-When CASA Python is unavailable, the run records
-`casa_oracle.status: "skipped"` and leaves the MeasurementSet oracle comparison
-marked skipped instead of aborting before writing the benchmark JSON. Add
-`--fixed-channel-workers N` when a single artifact should compare serial,
-auto-worker, and fixed-worker native CPU runs.
-When matched CASA and casa-rs image products have already been generated, add
-`--casa-image-prefix PREFIX --native-image-prefix PREFIX` to compare products
-such as `.image`, `.residual`, `.psf`, `.model`, `.sumwt`, and `.pb` in the same
-oracle artifact.
-
-To check that the streamed MeasurementSet writer has not regressed, run a
-native-only write-path benchmark on a fast local disk, not on
-`/Volumes/GLENDENNING`:
-
-```sh
-cargo build --release -p casa-ms --bin synthetic-ms
-
-python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/plan/wave1-dataset-plan.json \
-  --dataset wave1-vla-single-medium \
-  --output-dir /path/to/fast-local-disk/internal-io-check \
-  --skip-casa \
-  --skip-serial-check \
-  --disable-prediction \
-  --require-native-throughput-mb-s 700 \
-  --require-data-io-throughput-mb-s 900
-```
-
-`--disable-prediction` removes model prediction and corruption so the run is
-dominated by MeasurementSet creation and streamed tiled-column writes. On this
-machine, the internal-disk medium write-only run measured about `955 MB/s`
-end-to-end and the full medium run showed only `67 ms` of producer blocking on
-the writer. The same external-drive write pattern measured far lower, so
-internal-disk checks are the meaningful guard for storage-manager regressions;
-external-drive runs remain useful for capacity and end-to-end staging checks.
-
-To run the same workload for real:
+Run it:
 
 ```sh
 CASA_RS_TESTDATA_ROOT=/path/to/casatestdata \
@@ -584,79 +66,159 @@ CASA_RS_CASA_PYTHON=/path/to/casa-python \
 tools/perf/imager/run_workload.py wave1-standard-mfs-dirty-smoke
 ```
 
-To force a different dataset:
+The runner resolves data only from an explicit manifest path or from the
+manifest's `dataset.root_env` plus `dataset.relative_path`; it has no
+workstation fallbacks. `CASA_RS_BENCH_MS_STAGING=direct` reads the
+MeasurementSet in place rather than copying it; medium and large datasets
+need it. Matrix rows the bench script cannot run yet are accepted by
+`--dry-run`, marked `dry_run_only`, and refused as real runs.
+
+Validate the simulated-dataset plan (medium and large tiers must be under
+`/Volumes/GLENDENNING` unless `--allow-non-external-large-root` is given):
+
+```sh
+tools/perf/imager/stage_wave1_datasets.py --dry-run \
+  --data-root /Volumes/GLENDENNING/casa-rs-imperformance
+```
+
+List the single-plane mode matrix:
+
+```sh
+python3 tools/perf/imager/wave3_matrix.py --format text
+```
+
+Run the paired benchmark directly on another MeasurementSet:
 
 ```sh
 scripts/bench-imager-vs-casa.sh /path/to.ms
 ```
 
-The manifest runner intentionally resolves data only from an explicit manifest
-path or from the manifest's `dataset.root_env` plus `dataset.relative_path`.
-It does not add personal workstation data fallbacks.
+The script's `IMAGER_BENCH_*` variables, read at its top, select the data,
+mode and controls. Two need care:
+
+- `IMAGER_BENCH_MS_STAGING`: `direct` (the default) benchmarks the
+  MeasurementSet in place and is required for about-memory or larger data;
+  `copy` gives Rust its own copy, for small correctness workloads whose
+  model-column writes must not touch the source.
+- `IMAGER_BENCH_HOGBOM_ITERATION_MODE`: `strict` (the default) uses casa-rs's
+  Högbom component accounting; `casa` reproduces
+  [CASA's off-by-one](../../../docs/CASA%20(C%2B%2B)%20bugs.md#casa-hogbom-niter-off-by-one-bug)
+  and is the mode for Rust-versus-CASA Högbom product comparisons.
+
+## Recipe-backed VLASS manifests
+
+The `vlass-fragment-*` manifests run CASA from the archived VLASS recipe on the
+staged fragment. Point them at the staged data; a real run also needs
+explicit `--output-dir`, `--artifact-root` and `--cf-cache-root`:
+
+```sh
+export CASA_RS_VLASS_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-vlass/issue-446/data/<archive-sha256>
+export CASA_RS_CASA_PYTHON=/path/to/casa/bin/python
+tools/perf/imager/run_workload.py --dry-run vlass-fragment-single-field \
+  --artifact-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/artifacts \
+  --cf-cache-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache
+```
+
+- Outputs, artifacts, CF caches and the MeasurementSet (after resolving
+  symlinks) must all be under `/Volumes/GLENDENNING/casa-rs-vlass/issue-446`,
+  on the dataset's device, outside any `_tmp_safe_to_delete` directory.
+- The manifests are immutable evidence: `--set-imaging` and a nonempty
+  `run.env` are refused. A parameter experiment gets its own manifest.
+- Each names one frozen dataset selection, and the run checks fields, SPWs,
+  channels, correlations, UV range, intent and row count against it.
+- Run a `-cold` manifest once to build the CF cache and its receipt, then the
+  unsuffixed warm manifest to measure reuse. A warm run without its cold
+  cache fails before CASA starts.
+- A run writes everything under `<run-id>.partial` and renames it to
+  `<run-id>` only after every required comparison passes its frozen
+  tolerances; a failed or out-of-tolerance run keeps the partial tree.
+- If CASA and the comparator finished but publishing the receipt failed,
+  `run_workload.py --recover-receipt /absolute/path/to/run.json` revalidates
+  and promotes the bundle without rerunning either.
+
+The protocol's `wall_seconds` is the opaque `tclean()` call; these runs do not
+split CASA's internal phases.
+
+## Imaging runtime controls and telemetry
+
+`casars-imager` takes the `tclean` catalog parameters, by name with
+`--json-run` or as command-line flags (`docs/reference/task-parameters.md`).
+The execution controls are `parallel`, `backend` (`auto`, `cpu` or `gpu`,
+which is Metal on macOS) and `gridprecision` (`auto`, `f32` or `f64`); a timing
+must name the backend and precision it ran with to be repeatable, and
+`bench-imager-vs-casa.sh` always passes them.
+
+Each run writes `<imagename>.summary.json` however it ends: its status, the
+memory capacity, workers, backend and resolved precision, the stop reason, the
+minor-cycle totals and the products published, and for each phase its wall
+time, resident high-water mark and `peak_reserved_bytes`.
+
+Three diagnostic parameters log structured events at INFO (add
+`--log-stderr-priority INFO` to see them on stderr):
+
+- `stage_timing`: one `casa_imaging::stage_timing` event per phase. The bench
+  script turns it on and reports the medians of each phase kind
+  (`preparation`, `setup`, `major_cycles`, `minor_cycle_preparations`,
+  `minor_cycles`, `model_prediction`, `products`, `total`) as the Rust stage
+  medians.
+- `metal_stage_timing`: per Metal gridding owner or prediction batch and wave,
+  the host's preparation and wait times and the device's time; plus a
+  `source stream` event per wave whose `consumer_wait_seconds` says whether
+  reading the MeasurementSet is on the critical path.
+- `science_trace`: the residual statistics, controls and record of each cycle.
+
+On the CASA side, `CASA_RS_TRACE_MAJOR_CYCLE_ENVELOPES=1` makes the checked-in
+`tclean` protocol log the duration of each `runMajorCycle` and its nested
+`runMajorCycleCore` (`perf_harness/casa_major_timing.py`). Neither is a
+gridding or kernel timer.
 
 ## Two-build comparison
 
-`run_alternating_comparison.py` runs two workloads, or one workload twice,
-in counterbalanced order: alternating A B / B A warmup blocks, then A B B A /
-B A A B measured blocks (`--warmup-pairs 2`, `--measured-pairs 3` by
-default), each run a one-repeat `run_workload.py` call. It writes one receipt
-per invocation, `<output-root>/<comparison-id>.json`, beside the per-run
-results under `<output-root>/<comparison-id>/runs/`.
+`run_alternating_comparison.py` runs two workloads, or one twice, in
+counterbalanced order: A B / B A warmup blocks, then A B B A / B A A B measured
+blocks (`--warmup-pairs 2`, `--measured-pairs 3` by default), each a one-repeat
+`run_workload.py` call. It writes one receipt, `<output-root>/<comparison-id>.json`,
+beside the runs under `<output-root>/<comparison-id>/runs/`.
 
-**Two builds.** `--baseline-repo` and `--candidate-repo` name the casa-rs
-checkouts the roles run; both default to this one. A role's runs execute that
-checkout's own `run_workload.py` from that checkout, whose bench script builds
-and runs that checkout's `target/release/casars-imager`. Two checkouts
-therefore need their own `target/`: the harness refuses to start when
-`CARGO_TARGET_DIR` is set or both `target` paths resolve to one directory.
-A release build tree is tens of GB; remove the baseline worktree's `target/`
-afterwards. Build both with the same FFTW (`PKG_CONFIG_PATH`,
-`docs/agent-reference.md`).
+**Two builds.** `--baseline-repo` and `--candidate-repo` name the checkouts
+each role runs; both default to this one. Each role runs its own checkout's
+`run_workload.py` and `target/release/casars-imager`, so two checkouts need
+their own `target/`: the harness refuses to start when `CARGO_TARGET_DIR` is
+set or both resolve to one directory. Build both with the same FFTW
+(`docs/agent-reference.md`) before alternating, and set
+`IMAGER_BENCH_PREBUILT=1` so no Cargo check runs just before a timed run (it
+perturbs the cache state). Remove the baseline worktree's `target/`
+afterwards; a release build tree is tens of GB.
 
-**Gates.** `--gate slowdown` (the default) is the original check: the median
-paired relative wall delta must be at most `--slowdown-tolerance` (default 0).
-`--gate blocking` applies decision 4 of
-[the imaging port](../../../docs/measurement-set/imaging-port.md):
+**Gates.** `--gate slowdown` (the default) passes when the median paired
+relative wall delta is at most `--slowdown-tolerance` (default 0).
+`--gate blocking` judges three things:
 
 - *wall time*: the median paired relative delta must be at most
   `max(--wall-tolerance, --noise-sigmas × σ)`, defaults 0.02 and 2, where σ is
-  the baseline's own spread, the standard deviation of its measured walls over
-  their median (the slowdown gate is this check with no σ term);
+  the standard deviation of the baseline's measured walls over their median;
 - *peak RSS*: the candidate's median must be at most `1 + --rss-tolerance`
-  (default 0.05) times the baseline's. A run's peak is the `wait4` high-water
-  mark of its `casars-imager` process, which `run_workload.py` records as
-  `results.backend_plan_logs.summary.peak_rss_bytes`;
-- *products*: the first measured run of each role keeps its products; every
-  other completed run's are deleted once its evidence is read. The
-  candidate's products are compared with the baseline's by
-  `perf_harness.image_compare` in full mode, over every product the
-  baseline's `<imagename>.summary.json` lists and with an exact product
-  inventory. Each product's NRMS, RMS(candidate − baseline) / RMS(baseline),
-  must be at most `--product-nrms` (default 1e-6).
+  (default 0.05) times the baseline's, from the `wait4` high-water mark of each
+  `casars-imager` process;
+- *products*: the first measured run of each role keeps its products (later
+  runs' are deleted once read), and `perf_harness.image_compare` compares every
+  product in the baseline's `<imagename>.summary.json` in full mode; each NRMS,
+  RMS(candidate − baseline) / RMS(baseline), must be at most `--product-nrms`
+  (default 1e-6).
 
 The comparison passes only when every verdict passes. A verdict without its
-evidence (a failed run, a run without a peak RSS, a comparator that did not
-run) is inconclusive, and the command exits non-zero.
+evidence (a failed run, a missing peak RSS, a comparator that did not run) is
+inconclusive, and the command exits non-zero. The receipt records the
+configuration and thresholds, each role's commit and dirty flag, the verdicts,
+and for each run its summary, binary SHA-256 and FFTW codelet count.
 
-**Receipt.** Beside the schedule, runs, paired deltas and overall `verdict`,
-the receipt records `configuration.gate`, `.thresholds`, the repo paths and
-`run_environment` (the `CASA_RS_BENCH_*`, `CASA_RS_IMPERF_*`, FFTW and Cargo
-variables); `roles` (each checkout's path, commit, branch and dirty flag);
-`verdicts.{wall_time,peak_rss,products}`, with σ and the allowance; and
-`product_comparison`. Each run records its `peak_rss_bytes`; its
-`run_summary` (backend, precision, workers, and each phase's seconds,
-`process_peak_rss_bytes` and `peak_reserved_bytes`); its `casars_imager`
-SHA-256 and FFTW `n1fv_` codelet count; and whether its products were kept.
-`measured_summaries` summarizes these per role.
-
-**CASA and workers.** `run_workload.py` still compares every run with CASA.
-To keep CASA from running every time, run the workload once with
-`run_workload.py`, then set `CASA_RS_BENCH_REUSE_CASA_PREFIX` to that run's
-CASA prefix (`products/<run-id>/casa/casa`). `CASA_RS_CASA_PYTHON` is needed
-either way: the product comparator runs under CASA's Python. Options after
-`--` go to every `run_workload.py` call; `--set-imaging parallel=false` runs
-one worker and `parallel=true` the balanced policy (the performance cores,
-four on the Mac mini). Check `measured_summaries.<role>.workers`.
+**CASA and workers.** `run_workload.py` compares every run with CASA. Run the
+workload once, then set `CASA_RS_BENCH_REUSE_CASA_PREFIX` to that run's CASA
+prefix (`products/<run-id>/casa/casa`) so CASA does not rerun.
+`CASA_RS_CASA_PYTHON` is still needed: the product comparator runs under CASA's
+Python. Options after `--` go to every `run_workload.py` call;
+`--set-imaging parallel=false` runs one worker and `parallel=true` the balanced
+policy. Check `measured_summaries.<role>.workers`.
 
 An A/A run of one build against itself records the baseline's noise band:
 
@@ -674,225 +236,73 @@ for parallel in false true; do
 done
 ```
 
-A baseline-versus-candidate run takes the baseline from a worktree at the
-commit the cutover branches from and the candidate from this checkout:
+A baseline-versus-candidate run takes the baseline from a worktree:
 
 ```sh
-git worktree add ../casa-rs-port-baseline <baseline-commit>
+git worktree add ../casa-rs-baseline <baseline-commit>
 unset CARGO_TARGET_DIR
 tools/perf/imager/run_alternating_comparison.py \
   issue607-standard-mfs-dirty-representative \
   issue607-standard-mfs-dirty-representative \
   --gate blocking \
-  --baseline-repo ../casa-rs-port-baseline --candidate-repo . \
+  --baseline-repo ../casa-rs-baseline --candidate-repo . \
   --output-root ~/SoftwareProjects/casa-rs-evidence/imaging-port \
   -- --set-imaging parallel=true
 ```
 
-## Environment variables
+## Manifests and results
 
-- `CASA_RS_TESTDATA_ROOT`
-  - defaults to `/Volumes/home/casatestdata` when available
-- `CASA_RS_CASA_PYTHON`
-  - CASA-capable Python used for the `tclean` side of the comparison
-- `BENCH_REPEATS`
-  - number of repeated Rust/CASA wall-clock runs
-- `IMAGER_BENCH_MODE`
-  - `dirty` or `clean`
-- `IMAGER_BENCH_SPECMODE`
-  - `mfs` or `cube`
-- `IMAGER_BENCH_GRIDDER`
-  - `standard` or `mosaic`
-- `IMAGER_BENCH_INTERPOLATION`
-  - cube spectral interpolation mode: `nearest` or `linear`
-- `IMAGER_BENCH_FIELD`
-- `IMAGER_BENCH_SPW`
-- `IMAGER_BENCH_CHANNEL_START`
-- `IMAGER_BENCH_CHANNEL_COUNT`
-- `IMAGER_BENCH_IMSIZE`
-- `IMAGER_BENCH_CELL_ARCSEC`
-- `IMAGER_BENCH_WEIGHTING`
-  - `natural`, `uniform`, or `briggs`
-- `IMAGER_BENCH_ROBUST`
-  - Briggs robustness parameter passed to both Rust and CASA when weighting is `briggs`
-- `IMAGER_BENCH_NITER`
-- `IMAGER_BENCH_NMAJOR` (`-1` preserves CASA's unlimited default)
-- `IMAGER_BENCH_HOGBOM_ITERATION_MODE`
-  - `strict` uses casa-rs' corrected Hogbom component accounting
-  - `casa` reproduces CASA's documented inclusive Hogbom off-by-one behavior;
-    use this for Rust-vs-CASA Hogbom product comparisons; see the canonical
-    [CASA bug record](../../../docs/CASA%20(C%2B%2B)%20bugs.md#casa-hogbom-niter-off-by-one-bug)
-- `IMAGER_BENCH_GAIN`
-- `IMAGER_BENCH_THRESHOLD_JY`
-- `IMAGER_BENCH_NSIGMA`
-- `IMAGER_BENCH_PSFCUTOFF`
-- `IMAGER_BENCH_MINOR_CYCLE_LENGTH`
-- `IMAGER_BENCH_WTERM`
-  - currently only `none` is supported in the Rust-vs-CASA benchmark script because the Rust-only `direct` mode has no matching `tclean` configuration in this harness
-- `IMAGER_BENCH_MS_STAGING`
-  - `copy` gives Rust its own MeasurementSet copy in the script temp directory
-    while CASA reads the unchanged source; this suits small, disposable
-    correctness workloads, where a model-column write must not touch the source
-  - `direct` benchmarks the MeasurementSet path in place and is the required
-    mode for about-memory or larger-than-memory datasets
-- `IMAGER_BENCH_TMP_ROOT`
-  - parent directory for script scratch space; defaults to `${TMPDIR:-/tmp}`
+Workload manifests (`schema_version: 1`) and the result envelope
+(`schema_version: 3`) are defined and validated by `perf_harness/schema.py`;
+unknown fields, wrong types and older result schemas are refused. A result's
+`status` is one of `dry_run`, `completed`, `recovered_publication`,
+`failed_execution`, `failed_comparison`, `out_of_tolerance` or `unavailable`,
+and failed states carry a typed `results.failure` record. Preflight failures
+(an unsupported mode, a missing dataset or CASA Python, an invalid repeat
+count) exit before the benchmark runs and write no timing claims.
+`migrate_evidence_v1_to_v2.py` and `migrate_evidence_v2_to_v3.py` are one-time
+migrations of checked-in evidence, not runtime fallbacks.
 
-The manifest runner also honors `CASA_RS_BENCH_MS_STAGING=direct` and records
-the resulting `run.ms_staging` value in the result JSON. Use this for medium
-and large Wave 1 manifests so the benchmark does not first copy a 32 GiB or
-100 GiB MeasurementSet into local `/var/folders` scratch.
+## Synthetic-MS benchmarks
 
-## Manifest fields
+The benchmark datasets are generated by casa-ms's `synthetic-ms` developer
+binary (`cargo build --release -p casa-ms --bin synthetic-ms`; it runs
+`synthetic-ms --json-run request.json`, whose requests are documented in
+`casa_ms::simulation_task`). `models/14pt-3gauss-v1.json` is the analytic
+component model the datasets use.
 
-Workload manifests live in `tools/perf/imager/workloads/`. The first Wave 1
-manifest is `wave1-standard-mfs-dirty-smoke.json`.
-
-Required top-level fields:
-
-- `id`: stable workload id used in result filenames
-- `mode_id`: selected Wave 1 mode id, such as `standard-mfs-dirty-control`
-- `dataset`: `key`, plus either `path` or `root_env` and `relative_path`
-- `imaging`: CASA-like mode parameters
-
-Supported `imaging` values for executable #252-era benchmark rows:
-
-- `mode`: `dirty` or `clean`
-- `specmode`: `mfs` or `cube`
-- `gridder`: `standard` or `mosaic`
-- `interpolation`: `nearest` or `linear`
-- `hogbom_iteration_mode`: `strict` or `casa`; Wave 3 Hogbom CASA-comparison
-  rows use `casa`, while the imager application default remains `strict`
-- `wterm`: `none`
-
-Wave 3 dry runs additionally accept `specmode=cubedata`, `gridder=wproject`,
-and the known AW/widefield aliases (`widefield`, `awproject`, `awp2`,
-`awphpg`) so the full matrix can be reviewed before each mode ticket adds real
-execution support. Those rows are marked `run_support.status=dry_run_only` and
-fail before timing claims if requested as real runs.
-
-## Result JSON
-
-Every evidence entry point writes the same strict version-3 envelope. Its
-top-level fields are `schema_version`, `kind`, `status`, `run_id`,
-`created_at`, `environment`, `artifacts`, and `results`. Tool-specific content
-lives below `results`; `run_workload.py` records its workload result there with:
-
-- `run_id`, manifest path, git branch/commit, CASA Python path, benchmark script
-  hash, and the exact delegated command/env
-- dataset key/path, selected mode, image shape, channel count, weighting,
-  deconvolver, Hogbom iteration mode, `niter`, run label, storage label, and
-  repeat count
-- Rust CLI per-run wallclock and median wallclock
-- CASA `tclean` per-run wallclock and median wallclock when CASA ran
-- parsed Rust and CASA stage medians when present
-- normalized `stage_breakdown` categories that distinguish frontend/MS
-  preparation, visibility adaptation, weighting, gridding/degridding, FFT,
-  normalization/PB correction, deconvolution, model refresh, and product
-  writeback
-- preserved product prefixes when a real run is executed
-- CASA-backed product-comparison metrics for configured product suffixes
-- review panels for compared products when CASA Python has matplotlib
-- `human_review`, which remains `pending` until Brian accepts the numeric
-  table and panels for the mode ticket
-- a typed `dry_run`, `completed`, `recovered_publication`,
-  `failed_execution`, `failed_comparison`, `out_of_tolerance`, or `unavailable`
-  status
-
-The workload manifest's `schema_version: 1` and result envelope's
-`schema_version: 3` are independent of `casars-imager` task protocol v3 and the
-progress/observability schema versions emitted by the application. Unknown
-fields, wrong types, and older runtime result schemas are rejected by normal
-readers.
-
-Checked-in evidence artifacts use explicit one-time migrations:
-`migrate_evidence_v1_to_v2.py` freezes the historical v2 envelope, and
-`migrate_evidence_v2_to_v3.py` adds the v3 publication-recovery contract. Each
-migration updates evidence-manifest SHA-256 values and is idempotent at its own
-target version. Neither converter is a runtime fallback; normal tools do not
-best-effort parse historical shapes.
-
-### Failure semantics
-
-Unsupported modes, missing dataset roots or paths, missing CASA Python, invalid
-CASA Python paths, and invalid repeat counts fail during preflight before the
-benchmark script is invoked. Those failures exit without writing partial timing
-claims.
-
-If the delegated benchmark command exits non-zero, the result JSON is written
-with top-level `status: failed_execution`, the benchmark log path, the command exit code,
-Rust timing status `not_run`, CASA timing status `blocked`, and the shared block
-reason. Product comparison is skipped.
-
-An invocation failure, comparator execution failure, scientific tolerance
-failure, and intentionally unavailable oracle are distinct machine-readable
-states. Failed states include a typed `results.failure` record; retained logs,
-artifact paths, and provenance remain available for diagnosis.
-
-If a completed benchmark log omits one timing section, the corresponding side is
-reported as `status: missing` with an explanatory reason instead of `ran`; only a
-side with a median wallclock is reported as `ran`.
-
-The historical Wave 8 clean cube gate can be reproduced directly through the
-same harness by setting, for example:
+Compare it with CASA on a dataset of the staged plan:
 
 ```sh
-BENCH_REPEATS=1 \
-IMAGER_BENCH_MODE=clean \
-IMAGER_BENCH_SPECMODE=cube \
-IMAGER_BENCH_FIELD=0 \
-IMAGER_BENCH_SPW=0 \
-IMAGER_BENCH_CHANNEL_START=0 \
-IMAGER_BENCH_CHANNEL_COUNT=20 \
-IMAGER_BENCH_INTERPOLATION=linear \
-IMAGER_BENCH_IMSIZE=100 \
-IMAGER_BENCH_CELL_ARCSEC=8.0 \
-IMAGER_BENCH_WEIGHTING=natural \
-IMAGER_BENCH_DECONVOLVER=hogbom \
-IMAGER_BENCH_NITER=1000000 \
-IMAGER_BENCH_GAIN=0.5 \
-IMAGER_BENCH_THRESHOLD_JY=0.000001 \
-IMAGER_BENCH_NSIGMA=10 \
-IMAGER_BENCH_PSFCUTOFF=0.35 \
-IMAGER_BENCH_MINOR_CYCLE_LENGTH=10 \
-IMAGER_BENCH_CYCLEFACTOR=1.0 \
-IMAGER_BENCH_MIN_PSFFRACTION=0.1 \
-IMAGER_BENCH_MAX_PSFFRACTION=0.8 \
-scripts/bench-imager-vs-casa.sh /Volumes/home/casatestdata/measurementset/vla/refim_point_withline.ms
+python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/plan/wave1-dataset-plan.json \
+  --dataset wave1-vla-single-small \
+  --disable-noise \
+  --strict-values
 ```
 
-## Stage timing fields
+The strict comparison matches rows by time, field, data description and
+baseline, then checks UVW, flags, weights, sigmas and DATA (absolute
+`0.05 Jy` plus relative `1e-2` by default). Without CASA Python the run
+records `casa_oracle.status: "skipped"` rather than failing.
+`--fixed-channel-workers N` adds a fixed-worker run beside the serial and
+automatic ones; `--casa-image-prefix` and `--native-image-prefix` also compare
+already generated image products.
 
-The Rust profiler reports medians for:
+The MeasurementSet write path is guarded on a fast internal disk, not on
+`/Volumes/GLENDENNING`, whose write speed is far lower:
 
-- `open_measurement_set`
-- `prepare_plane_input`
-- `get_ms_values_into_processing_buffer`
-- `prepare_processing_buffer`
-- `extract_phase_center`
-- `run_imaging`
-- `build_coordinate_system`
-- `write_products`
-- `frontend_total`
-- `controller_overhead`
-- `weighting`
-- `psf_grid`
-- `psf_fft`
-- `psf_normalize`
-- `model_fft`
-- `residual_degrid_grid`
-- `residual_fft`
-- `residual_normalize`
-- `major_cycle_refresh`
-- `minor_cycle`
-- `minor_cycle_solve`
-- `beam_fit`
-- `restore`
-- `total`
+```sh
+cargo build --release -p casa-ms --bin synthetic-ms
 
-Detailed runs additionally emit `imaging_source_read_ahead_summary`,
-`dirty_product_fft_timing`, `dirty_product_gpu_resident`,
-`mosaic_dirty_product_gpu_resident`, and
-`dirty_product_gpu_resident_fallback` records. Keep source overlap/bandwidth and
-GPU fallback metrics with the wall-clock result when adding a ledger entry; do
-not infer a speedup from stage timing alone.
+python3 tools/perf/imager/bench_simobserve.py target/imperformance-wave1/plan/wave1-dataset-plan.json \
+  --dataset wave1-vla-single-medium \
+  --output-dir /path/to/fast-local-disk/internal-io-check \
+  --skip-casa \
+  --skip-serial-check \
+  --disable-prediction \
+  --require-native-throughput-mb-s 700 \
+  --require-data-io-throughput-mb-s 900
+```
+
+`--disable-prediction` removes model prediction and corruption, so the run
+measures MeasurementSet creation and the streamed tiled-column writes.
