@@ -364,5 +364,11 @@ mod tests {
                 cube.tile_shape
             );
         }
+        // The typed reads' shape checks refuse a tile shorter than the
+        // cell before slicing it.
+        let short = cube(vec![4, 10], vec![4]);
+        assert!(super::super::typed_1d_cube_shape(&short).is_err());
+        let short = cube(vec![4, 6, 10], vec![4]);
+        assert!(super::super::typed_2d_cube_shape(&short, 0, 1).is_err());
     }
 }

@@ -31,15 +31,13 @@ impl ChannelOrder {
     ///
     /// # Panics
     ///
-    /// When reversed and `channel` is not below `count`.
+    /// When `channel` is not below `count`.
     #[must_use]
     pub fn channel(self, channel: usize, count: usize) -> usize {
+        assert!(channel < count, "channel {channel} of {count}");
         match self {
             Self::Same => channel,
-            Self::Reversed => {
-                assert!(channel < count, "channel {channel} of {count}");
-                count - 1 - channel
-            }
+            Self::Reversed => count - 1 - channel,
         }
     }
 
@@ -49,52 +47,82 @@ impl ChannelOrder {
     ///
     /// # Panics
     ///
-    /// When reversed and `channels` does not lie within `count`.
+    /// When `channels` does not lie within `count`.
     #[must_use]
     pub fn channels(self, channels: Range<usize>, count: usize) -> Range<usize> {
+        assert!(
+            channels.start <= channels.end && channels.end <= count,
+            "channels {channels:?} of {count}"
+        );
         match self {
             Self::Same => channels,
-            Self::Reversed => {
-                assert!(
-                    channels.start <= channels.end && channels.end <= count,
-                    "channels {channels:?} of {count}"
-                );
-                count - channels.end..count - channels.start
-            }
+            Self::Reversed => count - channels.end..count - channels.start,
         }
     }
 }
 
 impl PartitionEntry {
     /// Whether `other` holds this partition's spectral and product content
-    /// ([`Self::same_content`]) and in which channel order: the same, or
-    /// reversed, when `other`'s channel frequencies are this partition's in
-    /// the reverse order and its widths have the same magnitudes in that
-    /// order (bit for bit; XRADIO makes a descending window's widths
-    /// positive). The same order is preferred, so a partition of one
-    /// channel, or of equal frequencies, is never reversed. `None` when
-    /// the content differs.
+    /// and in which channel order. Its frequency frame, correlation
+    /// products (in order) and intents must be this partition's. Its
+    /// channels are then in the same order when their frequencies and
+    /// signed widths are this partition's, bit for bit
+    /// ([`Self::same_content`]); reversed when its frequencies are this
+    /// partition's in the reverse order and its widths have the same
+    /// magnitudes in that order, bit for bit. XRADIO makes a descending
+    /// window's widths positive as it reverses it, so a reversed window's
+    /// widths may differ in sign; a window kept in its order must keep
+    /// their sign too, as every producer does. The same order is
+    /// preferred, so a partition of one channel, or of equal frequencies,
+    /// is never reversed. `None` when the content differs.
     #[must_use]
     pub fn channel_order(&self, other: &Self) -> Option<ChannelOrder> {
-        if self.same_content(other) {
-            return Some(ChannelOrder::Same);
+        if self.frequency_frame != other.frequency_frame
+            || self.correlations != other.correlations
+            || self.intents != other.intents
+        {
+            return None;
         }
-        let reversed = |ours: &[f64], theirs: &[f64], bits: fn(f64) -> u64| {
+        // Whether `theirs` is `ours` (or `ours` reversed) by `bits`.
+        let matches = |ours: &[f64], theirs: &[f64], reversed: bool, bits: fn(f64) -> u64| {
             ours.len() == theirs.len()
-                && ours
-                    .iter()
-                    .rev()
-                    .zip(theirs)
-                    .all(|(a, b)| bits(*a) == bits(*b))
+                && if reversed {
+                    ours.iter()
+                        .rev()
+                        .zip(theirs)
+                        .all(|(a, b)| bits(*a) == bits(*b))
+                } else {
+                    ours.iter().zip(theirs).all(|(a, b)| bits(*a) == bits(*b))
+                }
         };
-        (self.frequency_frame == other.frequency_frame
-            && reversed(&self.frequencies_hz, &other.frequencies_hz, f64::to_bits)
-            && reversed(&self.channel_widths_hz, &other.channel_widths_hz, |width| {
-                width.abs().to_bits()
-            })
-            && self.correlations == other.correlations
-            && self.intents == other.intents)
-            .then_some(ChannelOrder::Reversed)
+        let magnitude = |width: f64| width.abs().to_bits();
+        if matches(
+            &self.frequencies_hz,
+            &other.frequencies_hz,
+            false,
+            f64::to_bits,
+        ) && matches(
+            &self.channel_widths_hz,
+            &other.channel_widths_hz,
+            false,
+            f64::to_bits,
+        ) {
+            Some(ChannelOrder::Same)
+        } else if matches(
+            &self.frequencies_hz,
+            &other.frequencies_hz,
+            true,
+            f64::to_bits,
+        ) && matches(
+            &self.channel_widths_hz,
+            &other.channel_widths_hz,
+            true,
+            magnitude,
+        ) {
+            Some(ChannelOrder::Reversed)
+        } else {
+            None
+        }
     }
 }
 

@@ -395,24 +395,18 @@ impl PartitionEntry {
         self.correlations.iter().position(|c| *c == correlation)
     }
 
-    /// Whether `other` has the same spectral and product content: the same
-    /// channel frequencies and widths (bit for bit) in the same frame, the
-    /// same correlation products in the same order and the same intents.
-    /// Names, which converters rewrite, take no part; the keys that name
-    /// other entities (observation, fields, scans) and the feed pair are
-    /// compared by [`Catalogue::bind_to`] through the binding.
-    /// [`Self::channel_order`] also accepts the same channels in the
-    /// reverse order, as another store may keep them.
+    /// Whether `other` has the same spectral and product content in the
+    /// same channel order: the same channel frequencies and widths (bit for
+    /// bit) in the same frame, the same correlation products in the same
+    /// order and the same intents ([`Self::channel_order`] is
+    /// [`ChannelOrder::Same`]). Names, which converters rewrite, take no
+    /// part; the keys that name other entities (observation, fields, scans)
+    /// and the feed pair are compared by [`Catalogue::bind_to`] through the
+    /// binding, which also accepts the channels in the reverse order, as
+    /// another store may keep them.
     #[must_use]
     pub fn same_content(&self, other: &Self) -> bool {
-        let bitwise = |a: &[f64], b: &[f64]| {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits())
-        };
-        self.frequency_frame == other.frequency_frame
-            && bitwise(&self.frequencies_hz, &other.frequencies_hz)
-            && bitwise(&self.channel_widths_hz, &other.channel_widths_hz)
-            && self.correlations == other.correlations
-            && self.intents == other.intents
+        self.channel_order(other) == Some(ChannelOrder::Same)
     }
 }
 
@@ -624,7 +618,7 @@ impl Catalogue {
             .zip(&partitions)
             .map(|(ours, theirs)| {
                 ours.channel_order(&other.partitions[*theirs as usize])
-                    .unwrap_or(ChannelOrder::Same)
+                    .expect("bind_to binds partitions whose channel order is defined")
             })
             .collect();
         Ok(Binding {

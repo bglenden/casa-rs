@@ -73,12 +73,34 @@ fn reverse_channels<T: Clone>(values: &mut Vec<T>, channels: usize) {
         .collect();
 }
 
+/// Whether reversing the `channels` channels of the values `bits` gives
+/// (bit patterns, so a NaN equals itself) changes them in some sample of
+/// `samples`: whether those values can show the channel order.
+fn shows_order(
+    samples: &BTreeMap<Key, Sample>,
+    channels: usize,
+    bits: fn(&Sample) -> Vec<u64>,
+) -> bool {
+    samples.values().any(|sample| {
+        let values = bits(sample);
+        let mut mirrored = values.clone();
+        reverse_channels(&mut mirrored, channels);
+        mirrored != values
+    })
+}
+
 /// The MSv2 and XRADIO's conversion bind both ways, window 1's three
 /// partitions (one a scan intent) reversed and window 2's (one channel)
 /// in the same order. Every partition delivers the same samples from
 /// either store, over the whole band and over channel windows mapped
 /// through the binding's order, once a reversed batch's channels are put
 /// back in the MSv2's order: values, flags, weights, UVW, times, scan.
+///
+/// The law tells the orders apart only where the data are not symmetric
+/// under reversal, so it asserts that they are not: every reversed
+/// partition's visibilities, and some reversed partition's flags (window
+/// 1's datasets 0 and 2 are flagged throughout). This fixture's weights
+/// are constant along frequency, so they cannot show the order.
 #[test]
 fn a_descending_window_binds_to_xradios_ascending_conversion() {
     let root = tempfile::tempdir().expect("root");
@@ -103,6 +125,7 @@ fn a_descending_window_binds_to_xradios_ascending_conversion() {
         .expect("binds back");
     assert_eq!(ours.partitions.len(), 6);
     let mut reversed = 0;
+    let mut flags_show_the_order = false;
     for (index, entry) in ours.partitions.iter().enumerate() {
         let partition = PartitionId(u32::try_from(index).expect("partition"));
         let (other, order) = (binding.partitions[index], binding.channel_orders[index]);
@@ -127,6 +150,21 @@ fn a_descending_window_binds_to_xradios_ascending_conversion() {
         for channels in windows {
             let expected = read(&v2, partition, channels.clone());
             assert!(!expected.is_empty(), "partition {index} has samples");
+            if order == ChannelOrder::Reversed && channels == (0..count) {
+                assert!(
+                    shows_order(&expected, count, |sample| {
+                        sample
+                            .values
+                            .iter()
+                            .map(|v| u64::from(v.re.to_bits()) << 32 | u64::from(v.im.to_bits()))
+                            .collect()
+                    }),
+                    "partition {index}'s visibilities show the order"
+                );
+                flags_show_the_order |= shows_order(&expected, count, |sample| {
+                    sample.flags.iter().map(|flag| u64::from(*flag)).collect()
+                });
+            }
             let mut delivered = read(&v4, other, order.channels(channels.clone(), count));
             if order == ChannelOrder::Reversed {
                 for sample in delivered.values_mut() {
@@ -142,4 +180,5 @@ fn a_descending_window_binds_to_xradios_ascending_conversion() {
         }
     }
     assert_eq!(reversed, 3, "window 1's partitions");
+    assert!(flags_show_the_order, "some reversed partition's flags vary");
 }

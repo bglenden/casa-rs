@@ -3363,9 +3363,22 @@ impl TypedSelected1DFillPlan<'_> {
     }
 }
 
+/// Refuse a cube whose tile shape is not of its rank, which the typed
+/// shape checks below would otherwise slice past.
+fn check_tile_rank(cube: &TsmCubeInfo) -> Result<(), StorageError> {
+    if cube.tile_shape.len() == cube.cube_shape.len() {
+        return Ok(());
+    }
+    Err(StorageError::FormatMismatch(format!(
+        "typed selected read found tile shape {:?} for cube shape {:?}",
+        cube.tile_shape, cube.cube_shape
+    )))
+}
+
 /// The rank-1 cell shape of `cube`. Its axis may lie in several tiles
 /// ([`SelectedTiles`]).
 fn typed_1d_cube_shape(cube: &TsmCubeInfo) -> Result<Typed1DCubeShape, StorageError> {
+    check_tile_rank(cube)?;
     let cell_ndim = cube.cube_shape.len().saturating_sub(1);
     let cell_shape = &cube.cube_shape[..cell_ndim];
     let cell_tile_shape = &cube.tile_shape[..cell_ndim];
@@ -3819,6 +3832,7 @@ fn typed_2d_cube_shape(
     channel_start: usize,
     channel_count: usize,
 ) -> Result<Typed2DCubeShape, StorageError> {
+    check_tile_rank(cube)?;
     let cell_ndim = cube.cube_shape.len().saturating_sub(1);
     let cell_shape = &cube.cube_shape[..cell_ndim];
     let cell_tile_shape = &cube.tile_shape[..cell_ndim];
