@@ -116,6 +116,10 @@ pub(super) struct Survey {
     /// ([`super::selection::SpwChoice::channels`]), set after the survey as
     /// [`continuum`](Self::continuum) is.
     pub(super) spw_channels: WindowChannels,
+    /// The selection `savemodel='virtual'` writes its model for, resolved
+    /// beside the survey from the same selection
+    /// ([`super::virtual_selection`]).
+    pub(super) virtual_model: Option<crate::virtual_model::CompiledSelection>,
 }
 
 impl Survey {
@@ -458,6 +462,7 @@ pub(super) fn survey(
             epochs: facts.epochs,
             continuum: None,
             spw_channels: WindowChannels::new(),
+            virtual_model: None,
         },
         reservation,
     })

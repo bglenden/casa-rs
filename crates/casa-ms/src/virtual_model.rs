@@ -378,27 +378,115 @@ pub fn virtual_model_clear_ids(
     Ok((fields, spws))
 }
 
-/// What [`virtual_model_index_combination`] finds in a selection.
+/// What [`VirtualModelCombinations`] finds in a selection.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VirtualModelSelection {
     /// The `(FIELD_ID, spectral window, SCAN_NUMBER, STATE_ID)`
     /// combinations, in CASA's order.
     pub index_combination: Vec<[i32; 4]>,
     /// `(FIELD_ID, DATA_DESC_ID, TIME)` of the selected row first in the
-    /// imaging iterator's order (field, data description, time): the row
-    /// whose buffer CASA's machine last saw when it saved itself.
+    /// imaging iterator's order (`ARRAY_ID`, `DATA_DESC_ID`, `FIELD_ID`,
+    /// `TIME`, as `SynthesisImagerVi2` sorts it): the row whose buffer
+    /// CASA's machine last saw when it saved itself.
     pub first_row: Option<(i32, i32, f64)>,
 }
 
+/// The keys of one selected MAIN row a virtual model is written for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VirtualModelRow {
+    /// `FIELD_ID`.
+    pub field: i32,
+    /// `DATA_DESC_ID`.
+    pub data_description: i32,
+    /// `SCAN_NUMBER`.
+    pub scan: i32,
+    /// `STATE_ID`.
+    pub state: i32,
+    /// `ARRAY_ID`.
+    pub array: i32,
+    /// `TIME`, in seconds as stored.
+    pub time_s: f64,
+}
+
 /// The `(FIELD_ID, spectral window, SCAN_NUMBER, STATE_ID)` combinations of
-/// the rows `selection` selects, as CASA's `MSUtil::getIndexCombination`
-/// orders them: by their first row in ascending `TIME × (DATA_DESC_ID + 1)`,
-/// each once. `tclean` writes those of its selection
-/// (`VisibilityIteratorImpl2::writeModel`).
-///
-/// The selected rows' scalar columns are read a bounded chunk at a time;
-/// the selection's row list (one index per selected row) is held while
-/// they are.
+/// the rows a selection selects, gathered a row at a time
+/// ([`Self::add`]), as CASA's `MSUtil::getIndexCombination` orders them: by
+/// their first row in ascending `TIME × (DATA_DESC_ID + 1)`, each once;
+/// `tclean` writes those of its selection
+/// (`VisibilityIteratorImpl2::writeModel`). With them, the row first in the
+/// imaging iterator's order. It holds one entry per combination, whatever
+/// the rows.
+#[derive(Clone, Debug)]
+pub struct VirtualModelCombinations {
+    windows: Vec<i32>,
+    first: BTreeMap<[i32; 4], f64>,
+    first_row: Option<VirtualModelRow>,
+}
+
+impl VirtualModelCombinations {
+    /// No rows yet, over `ms`'s data descriptions.
+    ///
+    /// # Errors
+    ///
+    /// When DATA_DESCRIPTION cannot be read.
+    pub fn new(ms: &MeasurementSet) -> MsResult<Self> {
+        let description = ms.data_description()?;
+        let windows = (0..description.row_count())
+            .map(|row| description.spectral_window_id(row))
+            .collect::<MsResult<Vec<_>>>()?;
+        Ok(Self {
+            windows,
+            first: BTreeMap::new(),
+            first_row: None,
+        })
+    }
+
+    /// Count selected row `row`.
+    ///
+    /// # Errors
+    ///
+    /// When the row names a data description that does not exist.
+    pub fn add(&mut self, row: VirtualModelRow) -> MsResult<()> {
+        let window = usize::try_from(row.data_description)
+            .ok()
+            .and_then(|ddid| self.windows.get(ddid).copied())
+            .ok_or_else(|| invalid("a row names a data description that does not exist"))?;
+        let combination = [row.field, window, row.scan, row.state];
+        let key = row.time_s * (f64::from(row.data_description) + 1.0);
+        self.first
+            .entry(combination)
+            .and_modify(|earliest| *earliest = earliest.min(key))
+            .or_insert(key);
+        let order = |row: &VirtualModelRow| (row.array, row.data_description, row.field);
+        if self.first_row.is_none_or(|least| {
+            order(&row)
+                .cmp(&order(&least))
+                .then(row.time_s.total_cmp(&least.time_s))
+                == std::cmp::Ordering::Less
+        }) {
+            self.first_row = Some(row);
+        }
+        Ok(())
+    }
+
+    /// The combinations in CASA's order, and the first row.
+    #[must_use]
+    pub fn finish(self) -> VirtualModelSelection {
+        let mut combinations: Vec<([i32; 4], f64)> = self.first.into_iter().collect();
+        combinations.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        VirtualModelSelection {
+            index_combination: combinations.into_iter().map(|(row, _)| row).collect(),
+            first_row: self
+                .first_row
+                .map(|row| (row.field, row.data_description, row.time_s)),
+        }
+    }
+}
+
+/// [`VirtualModelCombinations`] of the rows `selection` selects. The
+/// selected rows' scalar columns are read a bounded chunk at a time; the
+/// selection's row list (one index per selected row) is held while they
+/// are.
 ///
 /// # Errors
 ///
@@ -410,13 +498,8 @@ pub fn virtual_model_index_combination(
 ) -> MsResult<VirtualModelSelection> {
     const CHUNK_ROWS: usize = 65_536;
     let rows = selection.compile(ms)?.apply(ms)?;
-    let mut first_row: Option<(i32, i32, f64)> = None;
-    let description = ms.data_description()?;
-    let windows = (0..description.row_count())
-        .map(|row| description.spectral_window_id(row))
-        .collect::<MsResult<Vec<_>>>()?;
     let main = ms.main_table();
-    let mut first: BTreeMap<[i32; 4], f64> = BTreeMap::new();
+    let mut combinations = VirtualModelCombinations::new(ms)?;
     for chunk in rows.chunks(CHUNK_ROWS) {
         let ints = |name: &str| -> MsResult<Vec<i32>> {
             main.column_accessor(name)?
@@ -438,35 +521,19 @@ pub fn virtual_model_index_combination(
             })
             .collect::<MsResult<Vec<f64>>>()?;
         let (fields, descriptions) = (ints("FIELD_ID")?, ints("DATA_DESC_ID")?);
-        let (scans, states) = (ints("SCAN_NUMBER")?, ints("STATE_ID")?);
+        let (scans, states, arrays) = (ints("SCAN_NUMBER")?, ints("STATE_ID")?, ints("ARRAY_ID")?);
         for slot in 0..chunk.len() {
-            let window = usize::try_from(descriptions[slot])
-                .ok()
-                .and_then(|ddid| windows.get(ddid).copied())
-                .ok_or_else(|| invalid("a row names a data description that does not exist"))?;
-            let combination = [fields[slot], window, scans[slot], states[slot]];
-            let key = times[slot] * (f64::from(descriptions[slot]) + 1.0);
-            first
-                .entry(combination)
-                .and_modify(|earliest| *earliest = earliest.min(key))
-                .or_insert(key);
-            let row = (fields[slot], descriptions[slot], times[slot]);
-            if first_row.is_none_or(|least| {
-                (row.0, row.1)
-                    .cmp(&(least.0, least.1))
-                    .then(row.2.total_cmp(&least.2))
-                    == std::cmp::Ordering::Less
-            }) {
-                first_row = Some(row);
-            }
+            combinations.add(VirtualModelRow {
+                field: fields[slot],
+                data_description: descriptions[slot],
+                scan: scans[slot],
+                state: states[slot],
+                array: arrays[slot],
+                time_s: times[slot],
+            })?;
         }
     }
-    let mut combinations: Vec<([i32; 4], f64)> = first.into_iter().collect();
-    combinations.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-    Ok(VirtualModelSelection {
-        index_combination: combinations.into_iter().map(|(row, _)| row).collect(),
-        first_row,
-    })
+    Ok(combinations.finish())
 }
 
 /// A new model image's path, where `tclean` writes it: a name CASA's

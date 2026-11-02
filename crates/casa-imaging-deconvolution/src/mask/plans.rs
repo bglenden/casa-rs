@@ -9,7 +9,7 @@
 use casa_imaging_model::{DirectionCoordinateSpec, ModelSample};
 
 use super::auto_multithresh::{
-    AUTO_MULTITHRESH_BYTES_PER_CELL, AutoMultithreshControls, AutoMultithreshEvidence,
+    AutoMultithreshControls, AutoMultithreshEvidence, auto_multithresh_bytes,
 };
 use super::auto_planes::{
     AutoMaskEvidence, AutoMaskSource, AutoMaskState, auto_mask_domain, channel_blocks,
@@ -407,8 +407,8 @@ impl ImageDomainReconstructionMaskPlans {
     /// planes: what a run plans before its first major cycle forms the
     /// Normal State (#737). Each domain's new masks
     /// ([`Self::mask_bytes_for`]) and, for an automatic mask, on each of
-    /// the `workers` channels masked at once, a plane's working planes
-    /// ([`AUTO_MULTITHRESH_BYTES_PER_CELL`]), its read (as `Complex64`) and
+    /// the `workers` channels masked at once, what one plane's mask holds
+    /// ([`auto_multithresh_bytes`]), the plane's read (as `Complex64`) and
     /// the model support it reads, and the channel's new supports.
     #[must_use]
     pub fn materialize_bytes_for(
@@ -423,14 +423,15 @@ impl ImageDomainReconstructionMaskPlans {
             .enumerate()
             .filter(|(_, plan)| matches!(plan, ReconstructionMaskPlan::AutoMultithresh { .. }))
             .map(|(ordinal, _)| {
-                let cells =
-                    domain_shape(ordinal).map_or(0, |[width, height]| (width * height) as u64);
-                let plane = AUTO_MULTITHRESH_BYTES_PER_CELL
-                    + size_of::<num_complex::Complex64>() as u64
-                    + size_of::<ModelSample>() as u64;
+                let Some(shape) = domain_shape(ordinal) else {
+                    return 0;
+                };
+                let cells = (shape[0] * shape[1]) as u64;
+                let read = size_of::<num_complex::Complex64>() as u64
+                    + size_of::<ModelSample>() as u64
+                    + polarizations as u64 * size_of::<bool>() as u64;
                 workers.min(channels).max(1) as u64
-                    * cells
-                    * (plane + polarizations as u64 * size_of::<bool>() as u64)
+                    * (auto_multithresh_bytes(shape) + cells * read)
             })
             .max()
             .unwrap_or(0);

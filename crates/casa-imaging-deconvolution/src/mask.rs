@@ -20,8 +20,8 @@ use casa_imaging_model::DirectionCoordinateSpec;
 use thiserror::Error;
 
 pub use auto_multithresh::{
-    AUTO_MULTITHRESH_BYTES_PER_CELL, AutoMaskThreshold, AutoMultithreshControls,
-    AutoMultithreshEvidence,
+    AUTO_MULTITHRESH_BYTES_PER_CELL, AutoMaskBeam, AutoMaskCycle, AutoMaskThreshold,
+    AutoMultithreshControls, AutoMultithreshEvidence, auto_multithresh, auto_multithresh_bytes,
 };
 pub use auto_planes::{
     AutoMaskEvidence, AutoMaskPlane, AutoMaskPsf, AutoMaskRead, AutoMaskSource, MaskPlaneKey,

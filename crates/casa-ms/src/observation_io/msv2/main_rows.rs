@@ -5,6 +5,8 @@
 //! first row the other expressions select (`MSTimeParse::getDefaults`), which
 //! a partition traversal cannot name.
 
+use std::ops::ControlFlow;
+
 use casa_observation::ObservationError;
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
 use casa_types::ArrayValue;
@@ -15,7 +17,7 @@ use super::{Msv2Observation, table_error};
 const ROWS_PER_BLOCK: usize = 4096;
 
 /// The key columns of one MAIN row a row-level selection tests.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MainRowKeys {
     /// The physical row.
     pub row: usize,
@@ -33,6 +35,10 @@ pub struct MainRowKeys {
     pub observation: i32,
     /// `STATE_ID`.
     pub state: i32,
+    /// `ARRAY_ID`.
+    pub array: i32,
+    /// `TIME`, in seconds as stored.
+    pub time_s: f64,
 }
 
 impl Msv2Observation {
@@ -48,13 +54,54 @@ impl Msv2Observation {
         &self,
         mut accept: impl FnMut(&MainRowKeys) -> Result<bool, ObservationError>,
     ) -> Result<Option<usize>, ObservationError> {
+        let mut first = None;
+        self.scan_main_rows(|keys| {
+            if accept(keys)? {
+                first = Some(keys.row);
+                return Ok(ControlFlow::Break(()));
+            }
+            Ok(ControlFlow::Continue(()))
+        })?;
+        Ok(first)
+    }
+
+    /// Visit every MAIN row's keys in physical order, a block of rows at a
+    /// time.
+    ///
+    /// # Errors
+    ///
+    /// A key column that cannot be read, or `visit`'s own error.
+    pub fn for_each_main_row(
+        &self,
+        mut visit: impl FnMut(&MainRowKeys) -> Result<(), ObservationError>,
+    ) -> Result<(), ObservationError> {
+        self.scan_main_rows(|keys| visit(keys).map(|()| ControlFlow::Continue(())))
+    }
+
+    /// Read MAIN's key columns a block at a time and hand each row's keys
+    /// to `visit` until it breaks.
+    fn scan_main_rows(
+        &self,
+        mut visit: impl FnMut(&MainRowKeys) -> Result<ControlFlow<()>, ObservationError>,
+    ) -> Result<(), ObservationError> {
         let rows = self.ms.row_count();
-        let mut columns: [Vec<i32>; 7] = Default::default();
+        let mut columns: [Vec<i32>; 8] = Default::default();
+        let mut times = Vec::new();
         let mut block = Vec::with_capacity(ROWS_PER_BLOCK.min(rows));
         for start in (0..rows).step_by(ROWS_PER_BLOCK) {
             block.clear();
             block.extend(start..(start + ROWS_PER_BLOCK).min(rows));
-            let [field, ddid, antenna1, antenna2, scan, observation, state] = &mut columns;
+            times.clear();
+            let [
+                field,
+                ddid,
+                antenna1,
+                antenna2,
+                scan,
+                observation,
+                state,
+                array,
+            ] = &mut columns;
             let mut destinations = [
                 ("FIELD_ID", field),
                 ("DATA_DESC_ID", ddid),
@@ -63,6 +110,7 @@ impl Msv2Observation {
                 ("SCAN_NUMBER", scan),
                 ("OBSERVATION_ID", observation),
                 ("STATE_ID", state),
+                ("ARRAY_ID", array),
             ]
             .map(|(name, values)| {
                 values.clear();
@@ -70,11 +118,18 @@ impl Msv2Observation {
                     name,
                     RequiredScalarColumnValuesMut::Int32(values),
                 )
-            });
+            })
+            .into_iter()
+            .chain(std::iter::once(RequiredScalarColumnDestination::new(
+                "TIME",
+                RequiredScalarColumnValuesMut::Float64(&mut times),
+            )))
+            .collect::<Vec<_>>();
             self.ms
                 .main_table()
                 .required_scalar_columns_for_rows_into(&block, &mut destinations)
                 .map_err(table_error)?;
+            drop(destinations);
             for (offset, &row) in block.iter().enumerate() {
                 let keys = MainRowKeys {
                     row,
@@ -85,13 +140,15 @@ impl Msv2Observation {
                     scan: columns[4][offset],
                     observation: columns[5][offset],
                     state: columns[6][offset],
+                    array: columns[7][offset],
+                    time_s: times[offset],
                 };
-                if accept(&keys)? {
-                    return Ok(Some(row));
+                if visit(&keys)?.is_break() {
+                    return Ok(());
                 }
             }
         }
-        Ok(None)
+        Ok(())
     }
 
     /// MAIN row `row`'s `TIME` and `EXPOSURE`, in seconds as stored.

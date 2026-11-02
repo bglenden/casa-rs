@@ -109,7 +109,7 @@ fn condition(condition: casa_ms::TimeCondition) -> TimeCondition {
 
 /// The selections other than time, as tests of one MAIN row: CASA's
 /// `otherTens`.
-struct OtherSelections<'a> {
+pub(super) struct OtherSelections<'a> {
     observation: &'a Msv2Observation,
     rows: &'a RowSelection,
     states: &'a BTreeSet<StateId>,
@@ -119,7 +119,13 @@ struct OtherSelections<'a> {
 }
 
 impl<'a> OtherSelections<'a> {
-    fn new(
+    /// The tests of `rows`, `states` and `windows` on `observation`'s
+    /// MAIN rows.
+    ///
+    /// # Errors
+    ///
+    /// When DATA_DESCRIPTION cannot be read.
+    pub(super) fn new(
         observation: &'a Msv2Observation,
         store: &OpenedStore,
         windows: &WindowChoice,
@@ -155,7 +161,7 @@ impl<'a> OtherSelections<'a> {
     }
 
     /// Whether the other selections together select MAIN row `keys`.
-    fn hold(&self, keys: &MainRowKeys) -> Result<bool, ObservationError> {
+    pub(super) fn hold(&self, keys: &MainRowKeys) -> Result<bool, ObservationError> {
         let Some(&(window_selected, wavelength)) = usize::try_from(keys.data_description)
             .ok()
             .and_then(|row| self.descriptions.get(row))
