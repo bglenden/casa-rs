@@ -1,6 +1,13 @@
 # Proposal: retain the native run-summary sidecar
 
-Status: proposed; owner decision pending. Work issue: #980.
+Status: **declined by the owner on 2026-11-02.** Work issue: #980.
+
+Implemented as the alternative below: a tclean run (CLI, `--json-run` or the
+Python package) writes only its image products, as CASA's does.
+`casars-imager` writes `<imagename>.summary.json` only when the environment
+sets `CASA_RS_IMAGER_RUN_SUMMARY=1`; the benchmark scripts set it. T1 asserts
+that ordinary runs write none, and the six-case CASA replay now requires an
+exact product inventory. The text below is the proposal as it was put.
 
 Recommend retaining `<imagename>.summary.json` as an explicitly documented
 additional casa-rs output. CASA 6.7.6.14 does not create this file. This

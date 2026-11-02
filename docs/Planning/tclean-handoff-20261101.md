@@ -47,9 +47,16 @@ SHA256 `d48d50e13357e7053d2105f89dd5f4af9acf7e8b6eaef0aaf457ada70b0d2055`.
   `3bdf6fa` with its non-blocking odd-width note; a re-review of that fix
   is due. The T41 moving-MFS and TRACKFIELD CASA oracles pass on the
   merged path.
-- **Pending owner decisions:** the provider 32→33 scan/observation activation
-  (its candidate patch no longer applies and its 39-pair engine evidence
-  predates the merge) and the summary sidecar.
+- **Owner decisions of 2026-11-02.** Scan/observation selection is
+  activated: tclean contract 33, with the candidate's contract resources
+  unchanged (fingerprint `20b8efdf…b9f9`) and its code re-expressed on the
+  cleaned tree. The request reads both selectors as exact text, so only an
+  exactly empty string is unset. The native `.summary.json` sidecar is
+  declined: a tclean run writes only image products, and `casars-imager`
+  writes the summary only under `CASA_RS_IMAGER_RUN_SUMMARY=1` (set by the
+  benchmark scripts). `tools/casa-compat/tclean_scan_observation_replay.py`
+  replays the archived scan/observation science and grammar oracle through
+  the public Python `casars.tasks.tclean`.
 
 ## Resume here
 
@@ -137,8 +144,8 @@ If the checkout is dirty, preserve and identify its exact source diff alongside
 the revision and binary hash. Repeat `--case` to choose other cases; omit it to
 run all six. The driver uses the archived request and the existing T1.5
 comparator, records finite-pixel, mask, selected metadata and return checks, and
-reports the extra summary sidecar separately. It does **not** establish full
-file-inventory equivalence or check beam position angle. A nonzero exit is a
+requires the image-product inventory to match exactly (casa-rs, as CASA, writes
+no other file). It does **not** check beam position angle. A nonzero exit is a
 failure, not a passing receipt. The portability probe was executed locally;
 it has not yet been run in the owner's cloud environment.
 
@@ -180,7 +187,9 @@ available.
    touched clippy pass. The last full workspace run, before this repair, was
    **4,732 passed, 4 failed, 45 skipped**; it has not been rerun after the
    repair. The repair still needs full relevant gates and independent review.
-3. **Scan/observation activation.** Provider 32 still refuses nondefault values.
+3. **Scan/observation activation.** *Approved and applied on 2026-11-02
+   (tclean contract 33; see the section above). The rest of this item is the
+   state before that decision.* Provider 32 still refuses nondefault values.
    The compact native selection engine has scoped CASA evidence, but the public
    provider 32→33 candidate is **proposed, not applied**. The owner has not
    answered the pending activation question. `AGENTS.md` requires asking before
@@ -200,8 +209,8 @@ available.
    values, persistence, representative acceptance and interoperability remain
    incomplete. A source-level edge around CASA zeroing planes with very small
    positive `sumwt` needs a paired probe; it is not an approved deviation. The
-   extra native `.summary.json` sidecar proposal is also awaiting an owner
-   decision. Update the structured compatibility reference and work records as
+   extra native `.summary.json` sidecar was declined on 2026-11-02 and
+   removed from ordinary runs. Update the structured compatibility reference and work records as
    each behavior is verified.
 
 The original dense-cell f32 accumulation defect has an owner-approved native

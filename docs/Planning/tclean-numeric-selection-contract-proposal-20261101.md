@@ -1,6 +1,17 @@
 # Proposal: enable numeric scan and observation selection
 
-Status: proposed, not applied. Work issues: #980 and #54. Provider32 remains active.
+Status: **approved by the owner on 2026-11-02 and applied** (tclean contract
+33). Work issues: #980 and #54.
+
+The candidate's contract resources were applied unchanged: the tclean 33
+fingerprint is the proposal's `20b8efdf…b9f9`. Its code hunks targeted the raw
+experiment preserved in `50d565e372`, so they were re-expressed on the cleaned
+tree: the request reads scan and observation as exact text (only an exactly
+empty string is unset), the tests drop their catalog bypasses, and the
+transport law `crates/casars-imager/tests/numeric_selector_provenance.rs`
+replaces the raw restoration tests. Final-source paired CASA rows are recorded
+in the tclean semantics evidence. The text below is the proposal as it was
+put.
 
 Apply the prepared casa-rs provider32→33 candidate to enable nonnegative
 numeric scan and observation IDs, comma lists and strictly ascending inclusive

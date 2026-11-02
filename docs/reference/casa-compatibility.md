@@ -37,7 +37,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 | plotms | plotms | pending | 102 | pending | | | | |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
-| tclean | tclean | yes | 92 | 92 | 0 | 23 | 22 | 0 |
+| tclean | tclean | yes | 92 | 92 | 0 | 21 | 22 | 0 |
 
 ## Tasks
 
@@ -355,7 +355,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: all elements of the vis vector parameter must be a path that exists (at least one element of "['']" does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #980: `timerange`, `antenna`, `scan`, `observation`, `projection`, `reffreq`, `psfphasecenter`, `vptable`, `computepastep`, `rotatepastep`, `restoration`, `noise`, `npixels`, `interactive`, `pbmask`, `smoothfactor`, `cutthreshold`, `dogrowprune`, `minpercentchange`, `verbose`, `fastnoise`, `calcres`, `calcpsf`
+- Accepted only at CASA's default until #980: `timerange`, `antenna`, `projection`, `reffreq`, `psfphasecenter`, `vptable`, `computepastep`, `rotatepastep`, `restoration`, `noise`, `npixels`, `interactive`, `pbmask`, `smoothfactor`, `cutthreshold`, `dogrowprune`, `minpercentchange`, `verbose`, `fastnoise`, `calcres`, `calcpsf`
 - casa-rs parameters CASA lacks: `ddid`, `channel_start`, `channel_count`, `hogbom_iteration_mode`, `write_pb`, `fitspw`, `fitorder`, `save_continuum_residual`, `backend`, `gridprecision`, `aw_cf_source`, `cf_resident_mb`, `native_cf_cache`, `evla_surface`, `native_cf_policy`, `native_cf_working_size`, `native_cf_oversampling`, `native_cf_cache_bytes`, `native_cf_maximum_cells`, `stage_timing`, `metal_stage_timing`, `science_trace`
 - Shared parameters: 92, in CASA's order: yes
 - Defaults that differ: none
@@ -364,7 +364,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `c64f13cb09054b080fe8b228a5f2c02c99bfd486`. Status counts: Default only: 23, Implemented: 30, Not implemented: 0, Partial: 39, Unassessed: 0.
+Audit baseline: `c64f13cb09054b080fe8b228a5f2c02c99bfd486`. Status counts: Default only: 21, Implemented: 30, Not implemented: 0, Partial: 41, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -377,8 +377,8 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `timerange` | `''` | `''`; `timerange` → `timerange` | Default only | Read and ignored at default; non-default is catalog-refused (issue 980). [selection](#tclean-behavior-selection)<br>Catalog domain: `string`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `uvrange` | `''` | `''`; `uvrange` → `uvrange` | Implemented | Copied as CASA selector text to request. [selection](#tclean-behavior-selection)<br>Catalog domain: `string` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `antenna` | `''` | `''`; `antenna` → `antenna` | Default only | Read and ignored at default; non-default is catalog-refused (issue 980). [selection](#tclean-behavior-selection)<br>Catalog domain: `string`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
-| `scan` | `''` | `''`; `scan` → `scan` | Default only | Read and ignored at default; non-default is catalog-refused (issue 980). [selection](#tclean-behavior-selection)<br>Catalog domain: `string`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
-| `observation` | `''` | `''`; `observation` → `observation` | Default only | Read and ignored at default; non-default is catalog-refused (issue 980). [selection](#tclean-behavior-selection)<br>Catalog domain: `string`; Non-default refused when always (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
+| `scan` | `''` | `''`; `scan` → `scan` | Partial | Contract 33 (owner decision 2026-11-02): nonnegative scan numbers, comma lists and strictly ascending inclusive a~b ranges select MAIN rows with either selectdata value; the exact text reaches the native parser, so only an exactly empty string is unset and blanks, none, signs, empty terms and equal or reversed ranges are refused, as CASA's tclean refuses them, while padded IDs are accepted. Contract 28-32 profiles migrate an exact stored "none" to empty with a warning. Richer CASA grammar (scan comparisons such as >1) remains unfinished (#980). [selection](#tclean-behavior-selection)<br>Catalog domain: `string`; Unsupported form: selector grammar beyond nonnegative numeric IDs, comma-separated lists and strictly ascending inclusive a~b ranges (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [field-selection](#tclean-evidence-field-selection), [scan-observation-activation](#tclean-evidence-scan-observation-activation) |
+| `observation` | `''` | `''`; `observation` → `observation` | Partial | Contract 33 (owner decision 2026-11-02): nonnegative OBSERVATION_IDs, comma lists and strictly ascending inclusive a~b ranges select MAIN rows with either selectdata value; the exact text reaches the native parser, so only an exactly empty string is unset and blanks, none, signs, empty terms and equal or reversed ranges are refused, as CASA's tclean refuses them, while padded IDs are accepted. Contract 28-32 profiles migrate an exact stored "none" to empty with a warning. Richer CASA grammar (scan comparisons such as >1) remains unfinished (#980). [selection](#tclean-behavior-selection)<br>Catalog domain: `string`; Unsupported form: selector grammar beyond nonnegative numeric IDs, comma-separated lists and strictly ascending inclusive a~b ranges (#980) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [field-selection](#tclean-evidence-field-selection), [scan-observation-activation](#tclean-evidence-scan-observation-activation) |
 | `intent` | `''` | `''`; `intent` → `intent` | Implemented | Copied as CASA selector text to request. [selection](#tclean-behavior-selection)<br>Catalog domain: `string` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `datacolumn` | `'corrected'` | `'corrected'`; `datacolumn` → `DATA or automatic corrected/data` | Implemented | data/observed maps to DATA; corrected maps to automatic CORRECTED_DATA else DATA; other strings refused. [selection](#tclean-behavior-selection)<br>Catalog domain: `string` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `imagename` | `''` | `''`; `imagename` → `imagename` | Partial | Fresh namespaces for supported imaging; default continuation reuses same-grid raw model and binary CLEAN mask for standard unfaceted single-term Stokes-I MFS with no new explicit mask. Owner-approved contract32 enables fresh single-main restart=False numbering, including relative/absolute paths. All20 small public CLI/Python product/preservation rows pass; one scalar output has identity-bound owner acceptance. Outlier/orphan namespaces and broader persistence remain unfinished (#944). [restart](#tclean-behavior-restart)<br>Catalog domain: `path` (image) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [lifecycle](#tclean-evidence-lifecycle), [restart-native-current](#tclean-evidence-restart-native-current), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [numbering-activation](#tclean-evidence-numbering-activation) |
@@ -470,9 +470,9 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 
 **Partial** — vis, field, spw, timerange, uvrange, antenna, scan, observation, intent, datacolumn and selectdata (#54).
 
-IDs/ranges, names/simple patterns, mixed field lists, SPW/channel text, intent and UV limits are routed natively. Sixteen field cases compare exact physical MAIN row order or refusal with CASA, including flagged and padded FIELD metadata. Since the main imaging cutover was integrated (3016f1b), FIELD selection resolves over the observation catalogue's FIELD rows on MSv2 and MSv4 alike; on the production traversal the field cases of the CASA row oracle (IDs, names, glob, mixed, range) and both refusals read exactly CASA's physical MAIN rows. Production T1 compares ID/name selections with selectdata=False on the single native route. The unactivated scan/observation preview is re-expressed on that path (scan 1, scan 3 and observation 0 match CASA's rows) but remains catalog-refused. CODE/numeric-name fallback, advanced field forms, multi-MS and four row selectors remain unfinished/refused. Image-science comparisons for selected real datasets, flags, channel membership and data-column fallback remain separate required evidence.
+IDs/ranges, names/simple patterns, mixed field lists, SPW/channel text, intent and UV limits are routed natively. Sixteen field cases compare exact physical MAIN row order or refusal with CASA, including flagged and padded FIELD metadata. Since the main imaging cutover was integrated (3016f1b), FIELD selection resolves over the observation catalogue's FIELD rows on MSv2 and MSv4 alike; on the production traversal the field cases of the CASA row oracle (IDs, names, glob, mixed, range) and both refusals read exactly CASA's physical MAIN rows. Production T1 compares ID/name selections with selectdata=False on the single native route. Scan and observation selection is active from tclean contract 33 (owner decision 2026-11-02): on that path scan 1, scan 3 and observation 0 read exactly CASA's rows, and T1 images each numeric selection as its equivalent FIELD selection with either selectdata value and refuses CASA's refused forms without writing images. CODE/numeric-name fallback, advanced field forms, richer scan/observation grammar, multi-MS and the timerange and antenna selectors remain unfinished/refused. Image-science comparisons for selected real datasets, flags, channel membership and data-column fallback remain separate required evidence.
 
-Evidence: [reader](#tclean-evidence-reader), [representative](#tclean-evidence-representative), [field-selection](#tclean-evidence-field-selection), [cloud-continuation](#tclean-evidence-cloud-continuation).
+Evidence: [reader](#tclean-evidence-reader), [representative](#tclean-evidence-representative), [field-selection](#tclean-evidence-field-selection), [cloud-continuation](#tclean-evidence-cloud-continuation), [scan-observation-activation](#tclean-evidence-scan-observation-activation).
 
 <a id="tclean-behavior-restart"></a>
 ##### Restart, product persistence and recalculation
@@ -515,7 +515,7 @@ Evidence: [reader](#tclean-evidence-reader), [representative](#tclean-evidence-r
 
 **Partial** — Python and CLI CASA return record, output topology, coordinates, beams, mask validity, model-column effects and reopen.
 
-The recorded 22-key structure exists. Final maxpsfsidelobe and raw automatic cyclethreshold now report already-measured controller statistics with CASA Float rounding; 18 small pinned cases pass these two scalar checks, exact iteration/major/stop integers and recorded scientific products on CPU64/CPU32/Metal32. This does not verify every return key. Dirty peaks, unmasked residual peaks, seeded/restarted model flux and multi-plane rows remain unavailable or inaccurate. The fd7b8e7b2d full normal gate passes 4,698 workspace tests/45 skips and relevant checks. Full metadata, broader exceptions/mode combinations and representative persistence remain open. Earlier moving-MFS increment and ordinary SOURCE rest-frequency defects are repaired at their recorded revisions. Contract32 numbering adds20 small product rows, with19 raw selected-scalar passes and one identity-bound owner-accepted Metal cyclethreshold result (1.5132ppm difference). The original failed verdict remains; no future-output waiver. The owner agreed to native preservation of prior histories during fresh numbering; correct new-image history remains required. Nmajor-zero adds20 scoped product/count pairs; two public Python pairs also gate the two selected numeric scalars. Full return parity remains unfinished. Native writes an additional .summary.json sidecar; image-product inventory comparisons do not make that extra file CASA-identical. Owner disposition is pending. The handoff's point-cube-briggs maxpsfsidelobe raw failure (relative 8.2e-6 at 2851c6dc, 9768bb1 and 3016f1b) is attributed to those 7 boundary weights and passes at 2628d8b (relative 7.7e-8), with all six handoff cases passing both selected scalars.
+The recorded 22-key structure exists. Final maxpsfsidelobe and raw automatic cyclethreshold now report already-measured controller statistics with CASA Float rounding; 18 small pinned cases pass these two scalar checks, exact iteration/major/stop integers and recorded scientific products on CPU64/CPU32/Metal32. This does not verify every return key. Dirty peaks, unmasked residual peaks, seeded/restarted model flux and multi-plane rows remain unavailable or inaccurate. The fd7b8e7b2d full normal gate passes 4,698 workspace tests/45 skips and relevant checks. Full metadata, broader exceptions/mode combinations and representative persistence remain open. Earlier moving-MFS increment and ordinary SOURCE rest-frequency defects are repaired at their recorded revisions. Contract32 numbering adds20 small product rows, with19 raw selected-scalar passes and one identity-bound owner-accepted Metal cyclethreshold result (1.5132ppm difference). The original failed verdict remains; no future-output waiver. The owner agreed to native preservation of prior histories during fresh numbering; correct new-image history remains required. Nmajor-zero adds20 scoped product/count pairs; two public Python pairs also gate the two selected numeric scalars. Full return parity remains unfinished. The owner declined the native .summary.json sidecar (2026-11-02): a tclean run writes only its image products, as CASA's does, and the six-case replay now requires an exact product inventory; casars-imager writes the run summary only when CASA_RS_IMAGER_RUN_SUMMARY=1, for performance tooling. The handoff's point-cube-briggs maxpsfsidelobe raw failure (relative 8.2e-6 at 2851c6dc, 9768bb1 and 3016f1b) is attributed to those 7 boundary weights and passes at 2628d8b (relative 7.7e-8), with all six handoff cases passing both selected scalars.
 
 Evidence: [returns](#tclean-evidence-returns), [reader](#tclean-evidence-reader), [representative](#tclean-evidence-representative), [default-products](#tclean-evidence-default-products), [adopted-defaults](#tclean-evidence-adopted-defaults), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [scalars-empty-mask](#tclean-evidence-scalars-empty-mask), [numbering-activation](#tclean-evidence-numbering-activation), [nmajor-zero](#tclean-evidence-nmajor-zero), [native-summary-sidecar](#tclean-evidence-native-summary-sidecar), [cloud-continuation](#tclean-evidence-cloud-continuation).
 
@@ -649,16 +649,6 @@ Evidence: [reader](#tclean-evidence-reader), [accuracy-issue](#tclean-evidence-a
 - User impact: Old histories omit later calls creating other images. Correct history on each new image remains required and unassessed.
 - Owner decision: Owner2026-11-01, this chat: Preserve prior histories. Correct new-image history is not waived.
 - Evidence: [numbering-activation](#tclean-evidence-numbering-activation).
-
-##### native-summary-sidecar: Proposed
-
-- Inputs: tclean calls reaching native execution after output preflight, through CLI or Python.
-- CASA: Does not emit imagename.summary.json beside image products.
-- casa-rs: Always targets a native summary file with status/request/products/resource diagnostics; no public task opt-out.
-- Rationale: Recommend preserving useful diagnostics as an explicit additional output; existing foundation documents it, but owner parity disposition is pending.
-- User impact: Globs/scripts see one extra JSON file; no scientific value or CASA parameter/default change. Correct histories and all other outputs remain required.
-- Owner decision: Pending; not an accepted deviation.
-- Evidence: [native-summary-sidecar](#tclean-evidence-native-summary-sidecar).
 
 #### tclean evidence
 
@@ -935,12 +925,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="tclean-evidence-native-summary-sidecar"></a>
 ##### native-summary-sidecar
 
-**Observed output inventory and executing report configuration — observed; precise output-file deviation proposed, owner decision pending.** Nmajor initial-only paired fixture: seven image directories in both, plus native image.summary.json. Task host always sets SummaryTarget after output preflight; no public tclean opt-out. Existing foundation documents report contents but no explicit CASA output-file exception.
+**Owner decision and executing output inventory — decided: owner declined the sidecar on 2026-11-02; implemented, a tclean run writes only image products.** CASA's tclean writes no imagename.summary.json. casars-imager (CLI, --json-run and the Python package, which launches it) now writes none; the CASA_RS_IMAGER_RUN_SUMMARY=1 environment variable asks for it, which the benchmark scripts set. T1 asserts a default json-run and an in-process numbered run write none, and the restart law asks for it to keep its rejected-continuation check.
 
-- [docs/Planning/tclean-native-summary-sidecar-proposal-20261101.md](https://github.com/bglenden/casa-rs/blob/9e84b2561735e7c912f60b6e28782d54598202ff/docs/Planning/tclean-native-summary-sidecar-proposal-20261101.md)
-- [crates/casars-imager/src/lib.rs](https://github.com/bglenden/casa-rs/blob/9e84b2561735e7c912f60b6e28782d54598202ff/crates/casars-imager/src/lib.rs)
-- Revision: `c64f13cb09054b080fe8b228a5f2c02c99bfd486`; CASA: `casatasks6.7.6.14;casatools6.7.6-14`.
-- Command: `Read productionrun_with_statistics and paired fixture inventories`.
+- [docs/Planning/tclean-native-summary-sidecar-proposal-20261101.md](https://github.com/bglenden/casa-rs/blob/64aed474310ce48d6f900ebfb2f1d6f3b4146b54/docs/Planning/tclean-native-summary-sidecar-proposal-20261101.md)
+- [crates/casars-imager/src/lib.rs](https://github.com/bglenden/casa-rs/blob/64aed474310ce48d6f900ebfb2f1d6f3b4146b54/crates/casars-imager/src/lib.rs)
+- [crates/casars-imager/tests/t1/casa_return.rs](https://github.com/bglenden/casa-rs/blob/64aed474310ce48d6f900ebfb2f1d6f3b4146b54/crates/casars-imager/tests/t1/casa_return.rs)
+- [crates/casars-imager/tests/t1/restart.rs](https://github.com/bglenden/casa-rs/blob/64aed474310ce48d6f900ebfb2f1d6f3b4146b54/crates/casars-imager/tests/t1/restart.rs)
+- [tools/casa-compat/tclean_cloud_replay.py](https://github.com/bglenden/casa-rs/blob/64aed474310ce48d6f900ebfb2f1d6f3b4146b54/tools/casa-compat/tclean_cloud_replay.py)
+- Revision: `64aed474310ce48d6f900ebfb2f1d6f3b4146b54`; CASA: `casatasks6.7.6.14;casatools6.7.6-14`.
+- Command: `cargo test -p casars-imager --test t1 -- casa_return restart routes diagnostics interrupt`.
 - Receipt: `docs/Planning/tclean-native-summary-sidecar-proposal-20261101.md`.
 
 <a id="tclean-evidence-cloud-continuation"></a>
@@ -959,3 +952,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `8fcee924e29080d620247177116b4cfd1fc07562`; CASA: `casatasks 6.7.6.14; casatools 6.7.6-14`.
 - Command: `Pinned CASA Python -I tools/casa-compat/tclean_cloud_replay.py (six cases); cargo nextest run -p casa-imaging-application --test selection_casa_oracle; -p casa-imaging-operator --test weighting`.
 - Receipt: `resources/casa-compat/evidence/tclean-cloud-continuation-20261102.json`.
+
+<a id="tclean-evidence-scan-observation-activation"></a>
+##### scan-observation-activation
+
+**Owner-approved contract change, executing transport laws and T1 imaging — implemented; final-source paired CASA rows pending.** tclean contract 33 (fingerprint 20b8efdf4cbfc9f19fd3c0191a6a6dcba7111e91461603b67b2c826b0baeb9f9, as the reviewed candidate) with ms.selection.scan and ms.selection.observation revision 2 (identity normalization). Laws: current and contract 28-32 profiles, kwargs-shaped plain values, provider projection, re-resolution and sparse save preserve exact selector text; only exact typed none migrates. T1: five numeric selections equal their FIELD selections with both selectdata values; 21 refused forms write no images.
+
+- [docs/Planning/tclean-numeric-selection-contract-proposal-20261101.md](https://github.com/bglenden/casa-rs/blob/64aed474310ce48d6f900ebfb2f1d6f3b4146b54/docs/Planning/tclean-numeric-selection-contract-proposal-20261101.md)
+- [crates/casa-provider-contracts/resources/parameter-surfaces.json](https://github.com/bglenden/casa-rs/blob/64aed474310ce48d6f900ebfb2f1d6f3b4146b54/crates/casa-provider-contracts/resources/parameter-surfaces.json)
+- [crates/casars-imager/tests/numeric_selector_provenance.rs](https://github.com/bglenden/casa-rs/blob/64aed474310ce48d6f900ebfb2f1d6f3b4146b54/crates/casars-imager/tests/numeric_selector_provenance.rs)
+- [crates/casars-imager/tests/t1/selection_numeric.rs](https://github.com/bglenden/casa-rs/blob/64aed474310ce48d6f900ebfb2f1d6f3b4146b54/crates/casars-imager/tests/t1/selection_numeric.rs)
+- [crates/casa-imaging-application/tests/selection_casa_oracle.rs](https://github.com/bglenden/casa-rs/blob/64aed474310ce48d6f900ebfb2f1d6f3b4146b54/crates/casa-imaging-application/tests/selection_casa_oracle.rs)
+- [resources/casa-compat/evidence/tclean-scan-observation-engine-20261101.json](https://github.com/bglenden/casa-rs/blob/64aed474310ce48d6f900ebfb2f1d6f3b4146b54/resources/casa-compat/evidence/tclean-scan-observation-engine-20261101.json)
+- Revision: `64aed474310ce48d6f900ebfb2f1d6f3b4146b54`; CASA: `casatasks6.7.6.14;casatools6.7.6-14`.
+- Command: `cargo test -p casars-imager --test numeric_selector_provenance --test t1 selection_numeric; cargo test -p casa-provider-contracts -p casa-task-runtime`.
+- Receipt: `resources/casa-compat/evidence/tclean-scan-observation-engine-20261101.json`.
