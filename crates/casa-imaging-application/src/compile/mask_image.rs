@@ -309,3 +309,107 @@ fn spectral_near(mask: &SpectralCoordinate, image: &SpectralCoordinate) -> bool 
         && pairs(mask_model.increment(), image_model.increment())
         && pairs(mask_model.reference_pixel(), image_model.reference_pixel())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_coordinates::{
+        DirectionCoordinate, Projection, ProjectionType, StokesCoordinate, StokesType,
+    };
+    use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+
+    fn spectral(increment_hz: f64) -> SpectralCoordinate {
+        SpectralCoordinate::new(FrequencyRef::LSRK, 1.0e9, increment_hz, 0.0, 1.0e9)
+    }
+
+    /// A mask of `stokes` Stokes planes and `channels` channels on the
+    /// spectral coordinate of `increment_hz` channels.
+    fn mask(stokes: usize, channels: usize, increment_hz: f64) -> (CoordinateSystem, MaskAxes) {
+        let mut coordinates = CoordinateSystem::new();
+        coordinates.add_coordinate(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.5],
+            [-1e-5, 1e-5],
+            [4.0, 4.0],
+        ));
+        let types = [StokesType::I, StokesType::Q, StokesType::U, StokesType::V];
+        coordinates.add_coordinate(StokesCoordinate::new(types[..stokes].to_vec()));
+        coordinates.add_coordinate(spectral(increment_hz));
+        let axes = mask_axes(&[8, 8, stokes, channels], &coordinates).unwrap();
+        (coordinates, axes)
+    }
+
+    /// tclean's planes for a mask of (Stokes, channels) on an image of
+    /// (polarizations, channels), whose channels are 1 MHz wide.
+    fn expand(
+        (stokes, channels): (usize, usize),
+        (polarizations, image_channels): (usize, usize),
+        increment_hz: f64,
+    ) -> Result<MaskPlanes, PrepareError> {
+        let (coordinates, axes) = mask(stokes, channels, increment_hz);
+        let image = spectral(1.0e6);
+        expansion(
+            Path::new("in.mask"),
+            &coordinates,
+            &axes,
+            TargetPlanes {
+                channels: image_channels,
+                polarizations,
+                spectral: Some(&image),
+            },
+        )
+    }
+
+    fn refused(result: Result<MaskPlanes, PrepareError>) -> String {
+        match result {
+            Err(PrepareError::MaskImageExpansion { reason, .. }) => reason,
+            other => panic!("expected CASA's refusal, not {other:?}"),
+        }
+    }
+
+    /// `SDMaskHandler::fillMask` and `expandMask`: what each mask becomes on
+    /// each image, and what CASA refuses.
+    #[test]
+    fn masks_expand_to_the_image_planes_as_casa_expands_them() {
+        let planes = |channels, stokes| MaskPlanes::new(channels, stokes).unwrap();
+        let near = 1.0e6;
+        // A continuum Stokes I mask to every plane.
+        for image in [(1, 4), (4, 1), (4, 4), (1, 1)] {
+            assert_eq!(expand((1, 1), image, near).unwrap(), MaskPlanes::SHARED);
+        }
+        // A continuum mask of the image's Stokes planes to every channel.
+        assert_eq!(expand((4, 1), (4, 4), near).unwrap(), planes(1, 4));
+        assert_eq!(expand((4, 1), (4, 1), near).unwrap(), planes(1, 4));
+        // A cube Stokes I mask to every Stokes plane, on the image's
+        // channels; a cube of the image's planes as it is.
+        assert_eq!(expand((1, 3), (4, 3), near).unwrap(), planes(3, 1));
+        assert_eq!(expand((1, 3), (1, 3), near).unwrap(), planes(3, 1));
+        assert_eq!(expand((4, 3), (4, 3), near).unwrap(), planes(3, 4));
+        // CASA refuses a continuum mask of another number of Stokes planes
+        // on a cube, and a cube Stokes I mask of other channels.
+        assert!(
+            refused(expand((2, 1), (4, 4), near))
+                .starts_with("Cannot extend the input mask of 2 Stokes planes")
+        );
+        assert!(refused(expand((1, 3), (4, 4), near)).contains("number of the channels"));
+        assert!(refused(expand((1, 3), (4, 3), 2.0e6)).contains("Spectral coordiante of Input"));
+        assert!(refused(expand((1, 3), (4, 4), 2.0e6)).contains("and the number of channels"));
+        // tclean regrids any other mask along frequency or Stokes, which
+        // casa-rs does not yet.
+        for (mask, image, increment) in [
+            ((2, 1), (4, 1), near),
+            ((1, 3), (1, 3), 2.0e6),
+            ((1, 3), (1, 1), near),
+            ((2, 3), (4, 3), near),
+        ] {
+            assert!(
+                matches!(
+                    expand(mask, image, increment),
+                    Err(PrepareError::MaskImageRegrid { .. })
+                ),
+                "{mask:?} on {image:?}"
+            );
+        }
+    }
+}
