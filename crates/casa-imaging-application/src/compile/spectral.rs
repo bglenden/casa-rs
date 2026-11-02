@@ -26,7 +26,7 @@ use super::PrepareError;
 use super::direction::ImageSpectralCoordinate;
 use super::selection::{SourceSpectralWindow, WindowChannels, one_window};
 use super::survey::Survey;
-use crate::{ImagingRequest, SpecMode};
+use crate::{ImagingRequest, SaveModel, SpecMode};
 
 /// The compiled spectral axis and the source channels it reads.
 pub(super) struct PreparedSpectralAxis {
@@ -336,7 +336,7 @@ fn continuum_source_line(
 fn tunes_selection(request: &ImagingRequest, window: &SourceSpectralWindow) -> bool {
     request.specmode == SpecMode::Cube
         && request.fitspw.is_none()
-        && (window.frequencies_hz.len() >= 30 || request.savemodel)
+        && (window.frequencies_hz.len() >= 30 || request.savemodel == SaveModel::ModelColumn)
 }
 
 /// A cube in its output frame (`cube`) or the data's (`cubedata`).
