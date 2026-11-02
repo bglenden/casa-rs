@@ -35,6 +35,15 @@ SHA256 `d48d50e13357e7053d2105f89dd5f4af9acf7e8b6eaef0aaf457ada70b0d2055`.
   against a native dump found 7 of 3,056,967 sample weights at exact `Float`
   cell ties, where native's mirrored-`u` lookup read the neighbouring cell.
   All six handoff cases now pass products, counts and both selected scalars.
+- **Empty sum-of-weights planes (item 4's `sumwt` edge).** CASA zeroes a
+  plane whose `.sumwt` is positive but at most 1e-07. A paired probe found
+  native imaged such planes; `8fcee92` makes them empty and matches CASA.
+  Supplementary archive `tclean-cloud-continuation-20261102b.tar`, SHA256
+  `8894d5754832688da6cea7acf8c9dcdc42f91e4c9875e716502b103dddc4d90a`.
+- **Review.** A fresh-context Claude review found nothing blocking; its
+  follow-ups are in `8b0fe44`. The repository's required Astra review is
+  unavailable in this environment and remains pending. The T41 moving-MFS
+  and TRACKFIELD CASA oracles pass on the merged path.
 - **Pending owner decisions:** the provider 32→33 scan/observation activation
   (its candidate patch no longer applies and its 39-pair engine evidence
   predates the merge) and the summary sidecar.
