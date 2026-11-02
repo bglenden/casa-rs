@@ -414,6 +414,179 @@ fn a_topo_cube_of_topo_rows_is_doppler_tracked_as_casa_grids_it() {
     );
 }
 
+/// CASA images a cube over several windows on one axis laid over their
+/// channels merged into one (`MSTransformRegridder::combineSpwsCore`) and
+/// grids every window's rows onto it (#980). Two adjacent ten-channel
+/// windows make a twenty-channel cube, and away from the windows' edges
+/// each plane is the plane of the cube of the window holding its channel:
+/// a row interpolates only between its own window's channels, and a
+/// per-channel Briggs density sees only the samples on its plane. At an
+/// edge whether the plane lies a rounding inside the window's span decides
+/// whether its rows reach it, as in CASA's gridder.
+#[test]
+fn a_cube_over_two_windows_is_the_cubes_of_its_windows_side_by_side() {
+    const WINDOW_CHANNELS: usize = 10;
+    let (observation, low) = adjacent_windows(WINDOW_CHANNELS);
+    let [both, windows @ ..] = window_cubes(&observation, "lsrk");
+    let image = both.get(".image");
+    let sumwt = both.get(".sumwt").channel_values();
+    assert_eq!(sumwt.len(), 2 * WINDOW_CHANNELS);
+    for (channel, sumwt) in sumwt.iter().enumerate() {
+        let native_hz = low.start_frequency_hz + channel as f64 * low.channel_width_hz;
+        let frequency_hz = image.channel_frequency_hz(channel);
+        assert!(
+            (frequency_hz - native_hz).abs() <= 1.0e-9 * native_hz,
+            "channel {channel} at {frequency_hz} Hz, native {native_hz} Hz"
+        );
+        assert!(*sumwt > 0.0, "channel {channel} holds no samples");
+    }
+    assert_interior_planes_match(&observation, &both, &windows, WINDOW_CHANNELS);
+}
+
+/// The same law for TOPO windows, Doppler tracked onto an LSRK axis: the
+/// per-channel Briggs density is then padded by CASA's swing of the
+/// windows' channels (`BriggsCubeWeightor::estimateSwingChanPad`), which
+/// differs between the cubes but not for an interior plane.
+#[test]
+fn a_cube_over_two_topo_windows_is_the_cubes_of_its_windows_side_by_side() {
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+    const WINDOW_CHANNELS: usize = 10;
+    let (observation, _) = adjacent_windows(WINDOW_CHANNELS);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    for window in 0..2 {
+        ms.spectral_window_mut()
+            .unwrap()
+            .set_i32(window, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+            .unwrap();
+    }
+    ms.save().unwrap();
+    drop(ms);
+    let [both, windows @ ..] = window_cubes(&observation, "topo");
+    assert_interior_planes_match(&observation, &both, &windows, WINDOW_CHANNELS);
+}
+
+/// Per-channel Briggs cubes of every window (`spw='*'`) and of each of the
+/// two windows alone.
+fn window_cubes(observation: &Observation, label: &str) -> [Products; 3] {
+    ["*", "0", "1"].map(|spw| {
+        observation
+            .image(
+                &format!("{label}-window-{}", spw.replace('*', "all")),
+                json!({
+                    "specmode": "cube", "spw": spw, "niter": 0,
+                    "weighting": "briggs", "robust": 0.5, "perchanweightdensity": true,
+                }),
+            )
+            .1
+    })
+}
+
+/// Each plane of the cube over `windows.len()` windows of `window_channels`
+/// channels, but for the first and last of each window, is the plane of
+/// its window's own cube: its sum of weights, PSF and residual.
+fn assert_interior_planes_match(
+    observation: &Observation,
+    both: &Products,
+    windows: &[Products],
+    window_channels: usize,
+) {
+    assert_eq!(
+        both.get(".image").channels(),
+        windows.len() * window_channels
+    );
+    let sumwt = both.get(".sumwt").channel_values();
+    let samples = observation.stokes_i_samples_per_channel() as f32;
+    for (window, alone) in windows.iter().enumerate() {
+        let alone_sumwt = alone.get(".sumwt").channel_values();
+        let interior = alone_sumwt
+            .iter()
+            .enumerate()
+            .take(window_channels - 1)
+            .skip(1);
+        for (plane, alone_sumwt) in interior {
+            let channel = window * window_channels + plane;
+            assert!(
+                (sumwt[channel] - alone_sumwt).abs() <= 1.0e-6 * samples,
+                "sumwt of channel {channel}: {} against window {window}'s {alone_sumwt}",
+                sumwt[channel],
+            );
+            for suffix in [".psf", ".residual"] {
+                let ours = both.get(suffix).plane(channel);
+                let theirs = alone.get(suffix).plane(plane);
+                let scale = theirs
+                    .iter()
+                    .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+                let difference = (&ours - &theirs)
+                    .iter()
+                    .fold(0.0_f32, |largest, value| largest.max(value.abs()));
+                assert!(
+                    difference <= 1.0e-5 * scale,
+                    "{suffix} channel {channel} differs from window {window}'s plane {plane} \
+                     by {difference} of {scale}"
+                );
+            }
+        }
+    }
+}
+
+/// A cube whose first window has 30 or more channels reads the data by its
+/// band (`SynthesisImager::tuneSelectData`), so a window its axis does not
+/// reach is not read at all (#980): over two adjacent 30-channel windows, a
+/// ten-channel cube on the first reads and images what the cube of the
+/// first window alone does. Its uniform weights come from one density over
+/// every channel read (`VisImagingWeight`), which the second window's
+/// channels would change were they read.
+#[test]
+fn a_tuned_cube_does_not_read_a_window_its_axis_misses() {
+    let (observation, _) = adjacent_windows(30);
+    let cube = |name: &str, spw: &str| {
+        observation.image(
+            name,
+            json!({
+                "specmode": "cube", "spw": spw, "nchan": 10, "niter": 0,
+                "weighting": "uniform", "perchanweightdensity": false,
+            }),
+        )
+    };
+    let (both_report, both) = cube("tuned-both", "*");
+    let (alone_report, alone) = cube("tuned-alone", "0");
+    assert!(alone_report.gridded_samples > 0);
+    assert_eq!(both_report.gridded_samples, alone_report.gridded_samples);
+    for suffix in [".psf", ".residual", ".sumwt"] {
+        let [ours, theirs] = [&both, &alone].map(|products| products.get(suffix).values());
+        assert_eq!(ours.shape(), theirs.shape(), "{suffix}");
+        let scale = theirs
+            .iter()
+            .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+        let difference = (&ours - &theirs)
+            .iter()
+            .fold(0.0_f32, |largest, value| largest.max(value.abs()));
+        assert!(
+            difference <= 1.0e-5 * scale,
+            "{suffix} differs by {difference} of {scale}"
+        );
+    }
+}
+
+/// Two adjacent Q-band windows of `channels` 128 MHz channels each, the
+/// second starting where the first ends, and the first window's setup.
+fn adjacent_windows(channels: usize) -> (Observation, casa_ms::SyntheticSpectralSetup) {
+    let mut setup = super::fixture::Setup::vla_q_band(channels);
+    let low = setup.spectral_windows[0].clone();
+    setup
+        .spectral_windows
+        .push(casa_ms::SyntheticSpectralSetup {
+            name: "t1-qband-next".to_string(),
+            start_frequency_hz: low.start_frequency_hz + channels as f64 * low.channel_width_hz,
+            ..low.clone()
+        });
+    (
+        Observation::synthesise_setup(setup, &[("point", POINT)]),
+        low,
+    )
+}
+
 /// The `maxpsfsidelobe` of a tclean return.
 fn sidelobe(value: &CasaValue) -> f64 {
     let CasaValue::Dict { entries } = value else {

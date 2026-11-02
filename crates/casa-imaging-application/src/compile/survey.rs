@@ -88,6 +88,8 @@ pub(super) struct Survey {
     pub(super) partitions: Vec<PartitionSelection>,
     /// The selected samples, padding excluded.
     pub(super) samples: u64,
+    /// The selected samples of each window, by window number.
+    window_samples: BTreeMap<usize, u64>,
     /// The selected partitions' spectral windows, in one source frame.
     pub(super) spectral_windows: Vec<SourceSpectralWindow>,
     pub(super) source_frequency_reference: casa_types::measures::frequency::FrequencyRef,
@@ -96,6 +98,8 @@ pub(super) struct Survey {
     /// (`DATA_DESC_ID`, `FIELD_ID`) of the selected samples, an MSv4's
     /// window standing for its data description ([`FirstVisibility`]).
     pub(super) first_visibility_field_id: usize,
+    /// The spectral window of that first buffer.
+    pub(super) first_visibility_spw_id: usize,
     pub(super) observation_ids: BTreeSet<i32>,
     /// The earliest selected time: the anchor of the spectral frame and of
     /// the image's observation date.
@@ -122,6 +126,22 @@ impl Survey {
     /// The epochs of window `spw_id`'s selected samples.
     pub(super) fn window_epochs(&self, spw_id: usize) -> &[Epoch] {
         self.epochs.get(&spw_id).map_or(&[], Vec::as_slice)
+    }
+
+    /// Keep only the windows `read` names, with their partitions, epochs
+    /// and samples: what a cube reads once CASA's tuned selection drops the
+    /// windows its axis does not reach (`SynthesisImager::tuneSelectData`).
+    /// The facts CASA fixes the image by before it tunes, the fields, first
+    /// visibility, times and W range, stay those of the whole selection.
+    pub(super) fn retain_windows(&mut self, read: &WindowChannels) {
+        self.partitions
+            .retain(|partition| read.contains_key(&(partition.spectral_window_id() as usize)));
+        self.spectral_windows
+            .retain(|window| read.contains_key(&window.spw_id));
+        self.epochs.retain(|spw_id, _| read.contains_key(spw_id));
+        self.window_samples
+            .retain(|spw_id, _| read.contains_key(spw_id));
+        self.samples = self.window_samples.values().sum();
     }
 
     /// The earliest selected time of field `field_id`, if it has one.
@@ -154,11 +174,13 @@ pub(super) struct SurveyPlan<'a> {
 /// states the array its rows share, and a partition whose rows hold several
 /// reads its selected rows' arrays ([`Msv2Observation::array_ids`]). An
 /// MSv4 has no arrays, and its window stands for the data description.
+/// The window follows from the data description, so it orders nothing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct FirstVisibility {
     array: i32,
     description: u32,
     field_id: i32,
+    spw_id: usize,
 }
 
 impl FirstVisibility {
@@ -383,6 +405,7 @@ pub(super) fn survey(
     let mut buffers = BatchBuffers::default();
     let mut partitions = Vec::new();
     let mut samples = 0;
+    let mut window_samples = BTreeMap::<usize, u64>::new();
     let mut first_cross: Option<FirstCrossSample> = None;
     for candidate in &plan.candidates.partitions {
         let entry = catalogue.partition(candidate.id);
@@ -392,6 +415,7 @@ pub(super) fn survey(
             continue;
         }
         samples += selected;
+        *window_samples.entry(candidate.spectral_window).or_default() += selected;
         if plan.first_cross
             && let Some(sample) = first_cross_sample(
                 &plan,
@@ -435,21 +459,21 @@ pub(super) fn survey(
     let mut spectral_windows = spectral_windows;
     spectral_windows.retain(|window| facts.epochs.contains_key(&window.spw_id));
     let source_frequency_reference = super::selection::one_source_frame(&spectral_windows)?;
+    let first_visibility = facts
+        .first_visibility
+        .expect("a survey holding samples observed a first visibility");
     Ok(Admitted {
         value: Survey {
             row_selection: plan.row_selection,
             partitions,
             samples,
+            window_samples,
             spectral_windows,
             source_frequency_reference,
             fields: facts.fields,
-            first_visibility_field_id: usize::try_from(
-                facts
-                    .first_visibility
-                    .expect("a survey holding samples observed a first visibility")
-                    .field_id,
-            )
-            .expect("a FIELD row is nonnegative"),
+            first_visibility_field_id: usize::try_from(first_visibility.field_id)
+                .expect("a FIELD row is nonnegative"),
+            first_visibility_spw_id: first_visibility.spw_id,
             observation_ids: facts.observation_ids,
             first_time_mjd_seconds: facts.time_bounds_mjd_seconds[0],
             time_bounds_mjd_seconds: facts.time_bounds_mjd_seconds,
@@ -551,6 +575,7 @@ fn survey_partition(
                     array,
                     description,
                     field_id,
+                    spw_id: candidate.spectral_window,
                 },
             );
             let bounds = &mut facts.time_bounds_mjd_seconds;
@@ -769,6 +794,7 @@ mod tests {
                         array,
                         description,
                         field_id,
+                        spw_id: description as usize,
                     },
                 );
             }
@@ -777,7 +803,8 @@ mod tests {
                 Some(FirstVisibility {
                     array: 1,
                     description: 2,
-                    field_id: 7
+                    field_id: 7,
+                    spw_id: 2,
                 })
             );
         }

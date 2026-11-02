@@ -204,6 +204,7 @@ pub(crate) fn prepare(
         &frame,
         moving_rest_frame.as_ref(),
     )?;
+    survey.retain_windows(&spectral.selected_source_channels);
     let surveyed_observation = Surveyed {
         catalogue,
         msv2: store.msv2(),
@@ -566,11 +567,9 @@ fn cube_density_padding(
     if !specification::cube_density_padded(request, spectral) {
         return Ok(None);
     }
-    let window = selection::one_window(&survey.spectral_windows, "cube density")?;
     Ok(Some(envelope::cube_density_padding(
         (surveyed.catalogue, surveyed.engine),
         survey,
-        window,
         &envelope::OutputAxis {
             frequency_reference: spectral.output_frequency_reference,
             centres_hz: [

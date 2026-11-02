@@ -422,9 +422,10 @@ impl<'a> Tclean<'a> {
     /// which casa-rs does not yet (#980). CASA's `getImFreq` passes
     /// `nchan=-1` and its `start` and `width` to
     /// `MSTransformRegridder::calcChanFreqs`, which counts the selected
-    /// channels from `start` in steps of `width`; casa-rs's axis takes as
-    /// many channels as the window has, wherever it starts. (Where an
-    /// unset `start` begins, the first selected channel, casa-rs follows.)
+    /// channels from `start` in steps of `width`; casa-rs counts them only
+    /// for a channel grid from the selected windows' first channel in steps
+    /// of one. (Where an unset `start` begins, the first selected channel,
+    /// casa-rs follows.)
     fn refuse_derived_extent(
         &mut self,
         nchan: i64,

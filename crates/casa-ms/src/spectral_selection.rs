@@ -21,8 +21,12 @@ use crate::derived::engine::MsCalEngine;
 use crate::error::{MsError, MsResult};
 use crate::selection::syntax::ChannelSelection;
 
+mod combine;
 mod default_start;
 mod regrid;
+
+pub use combine::combine_spectral_windows;
+pub use default_start::casa_selected_band_hz;
 
 /// Spectral interpolation policy for cube imaging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -185,11 +189,13 @@ pub struct CubeAxisConfig {
     pub start: Option<CubeAxisValue>,
     /// Optional cube-axis width value.
     pub width: Option<CubeAxisValue>,
-    /// The window's channels tclean's `spw` selects, when it names
-    /// channels. With `start` unset, CASA lays the grid over the selected
-    /// band rather than the whole window, so that the cube starts at the
-    /// first selected channel (`buildCoordinateSystemCore`).
-    pub selected_channels: Option<Vec<usize>>,
+    /// The band tclean's `spw` selection spans in the data's frame
+    /// ([`casa_selected_band_hz`]; CASA's `datafstart` and `datafend`).
+    /// With `start` unset, CASA lays the grid over the data channels within
+    /// it when it begins above their lowest channel centre, so that the
+    /// cube starts at the first selected channel
+    /// (`buildCoordinateSystemCore`); `None` keeps every data channel.
+    pub selected_band_hz: Option<[f64; 2]>,
 }
 
 impl Default for CubeAxisConfig {
@@ -202,7 +208,7 @@ impl Default for CubeAxisConfig {
             rest_frequency_hz: None,
             start: None,
             width: None,
-            selected_channels: None,
+            selected_band_hz: None,
         }
     }
 }
@@ -409,12 +415,15 @@ fn casa_regridding_input_widths(
 /// and the `(lo + hi)/2` centres of `MSTransformRegridder::calcChanFreqs`.
 /// These are not the frequencies CASA grids on:
 /// [`casa_image_spectral_axis_hz`] turns them into the image spectral axis.
+/// An unset `nchan` (`-1`) counts the output channels as `regridChanBounds`
+/// does when only the start is set: the span from the start channel's edge
+/// to the band's far edge in whole output widths, with a 1% tolerance.
 fn casa_transformed_channel_mode_output_centers(
     transformed_source_frequencies_hz: &[f64],
     transformed_source_channel_widths_hz: &[f64],
     start_channel: i32,
     width_channels: i32,
-    nchan: usize,
+    nchan: Option<usize>,
 ) -> MsResult<Vec<f64>> {
     if width_channels == 0 {
         return Err(MsError::VersionError(
@@ -461,8 +470,32 @@ fn casa_transformed_channel_mode_output_centers(
 
     let output_channel_width_hz =
         transformed_widths_hz[0] * f64::from(width_channels.unsigned_abs());
-    let output_bandwidth_hz = output_channel_width_hz * nchan as f64;
     let first_channel = usize::try_from(first_channel).expect("validated channel index");
+    let nchan = match nchan {
+        Some(nchan) => nchan,
+        None => {
+            let last = transformed_frequencies_hz.len() - 1;
+            let span_hz = if start_is_end {
+                transformed_frequencies_hz[first_channel]
+                    + transformed_widths_hz[first_channel] / 2.0
+                    - (transformed_frequencies_hz[0] - transformed_widths_hz[0] / 2.0)
+            } else {
+                transformed_frequencies_hz[last] + transformed_widths_hz[last] / 2.0
+                    - (transformed_frequencies_hz[first_channel]
+                        - transformed_widths_hz[first_channel] / 2.0)
+            };
+            let count =
+                ((span_hz + output_channel_width_hz * 0.01) / output_channel_width_hz).floor();
+            if !(count >= 1.0 && count < u32::MAX as f64) {
+                return Err(MsError::VersionError(format!(
+                    "no output channel of {output_channel_width_hz} Hz fits from cube channel \
+                     start {start_channel}"
+                )));
+            }
+            count as usize
+        }
+    };
+    let output_bandwidth_hz = output_channel_width_hz * nchan as f64;
     // CASA `MSTransformRegridder::regridChanBounds` ("freq" regridding)
     // moves the start edge to the band centre, steps the channel bounds out
     // from the centre channel by repeated subtraction and addition of the
@@ -714,7 +747,11 @@ pub fn resolve_channel_selector_selection(
 }
 
 impl CubeSpectralSetup {
-    /// Build a CASA-style output cube axis.
+    /// Build a CASA-style output cube axis over the data channels
+    /// `data_frequencies_hz` and `data_channel_widths_hz` in
+    /// `source_freq_ref`: one window's `CHAN_FREQ` and `CHAN_WIDTH`, or
+    /// several windows' merged by [`combine_spectral_windows`], as
+    /// `SynthesisParamsImage::buildCoordinateSystemCore` takes them.
     ///
     /// A `start` and `width` that are channel numbers (or unset) take
     /// [`Self::for_casa_cube_channel_axis`]. A frequency or velocity `start`
@@ -728,77 +765,67 @@ impl CubeSpectralSetup {
     /// is not snapped to a data channel; it moves only when that band
     /// centre falls outside the data.
     ///
-    /// With `start` unset, CASA lays either grid over the band
-    /// `axis_config.selected_channels` selects when that band begins above
-    /// the window's lowest channel, so the cube starts at the first
-    /// selected channel.
+    /// With `start` unset, CASA lays either grid over the data channels
+    /// within `axis_config.selected_band_hz` when that band begins above
+    /// their lowest channel centre, so the cube starts at the first
+    /// selected channel. `nchan` counts the output channels; `None`
+    /// (tclean's `nchan=-1`) leaves the count to a channel-mode grid and is
+    /// refused for a frequency or velocity grid. Which channels of each
+    /// window the axis reads is [`Self::source_channel_support`].
     #[allow(clippy::too_many_arguments)]
     pub fn for_casa_cube_axis(
         source_freq_ref: FrequencyRef,
-        all_source_frequencies_hz: &[f64],
-        all_source_channel_widths_hz: &[f64],
-        nchan: usize,
+        data_frequencies_hz: &[f64],
+        data_channel_widths_hz: &[f64],
+        nchan: Option<usize>,
         axis_config: &CubeAxisConfig,
         reference_row_time_mjd_sec: f64,
         field_id: usize,
         phase_center_direction: Option<MDirection>,
-        time_bounds_mjd_sec: [f64; 2],
         derived_engine: &MsCalEngine,
-    ) -> MsResult<(Self, ResolvedChannelSelection)> {
-        let channel_mode = axis_config.start.is_none() && axis_config.width.is_none()
-            || matches!(axis_config.start, Some(CubeAxisValue::Channel(_)))
-                && axis_config.width.is_none()
-            || matches!(
-                (&axis_config.start, &axis_config.width),
-                (
-                    Some(CubeAxisValue::Channel(_)) | None,
-                    Some(CubeAxisValue::Channel(_)) | None
-                )
-            );
+    ) -> MsResult<Self> {
+        let channel_mode = matches!(
+            (&axis_config.start, &axis_config.width),
+            (
+                Some(CubeAxisValue::Channel(_)) | None,
+                Some(CubeAxisValue::Channel(_)) | None
+            )
+        );
         // For an unset start CASA lays the grid over the selected band.
-        let cut = match (&axis_config.start, &axis_config.selected_channels) {
-            (None, Some(selected)) => default_start::casa_default_start_channels(
-                all_source_frequencies_hz,
-                all_source_channel_widths_hz,
-                selected,
+        let cut = match (&axis_config.start, axis_config.selected_band_hz) {
+            (None, Some(band_hz)) => default_start::casa_default_start_channels(
+                data_frequencies_hz,
+                data_channel_widths_hz,
+                band_hz,
             ),
             _ => None,
         };
+        let (band_frequencies_hz, band_widths_hz) = match cut {
+            Some(cut) => (
+                &data_frequencies_hz[cut.clone()],
+                &data_channel_widths_hz[cut],
+            ),
+            None => (data_frequencies_hz, data_channel_widths_hz),
+        };
         if channel_mode {
-            // Channel mode starts at the cut's first channel.
-            let started;
-            let axis_config = match &cut {
-                Some(cut) => {
-                    let channel = i32::try_from(*cut.start()).map_err(|_| {
-                        MsError::VersionError("spectral window channel exceeds i32".to_string())
-                    })?;
-                    started = CubeAxisConfig {
-                        start: Some(CubeAxisValue::Channel(channel)),
-                        ..axis_config.clone()
-                    };
-                    &started
-                }
-                None => axis_config,
-            };
             return Self::for_casa_cube_channel_axis(
                 source_freq_ref,
-                all_source_frequencies_hz,
-                all_source_channel_widths_hz,
+                band_frequencies_hz,
+                band_widths_hz,
                 nchan,
                 axis_config,
                 reference_row_time_mjd_sec,
                 field_id,
                 phase_center_direction,
-                time_bounds_mjd_sec,
                 derived_engine,
             );
         }
-
-        if nchan == 0 {
-            return Err(MsError::VersionError(
-                "cube output channel count must be positive".to_string(),
-            ));
-        }
+        let nchan = nchan.filter(|&nchan| nchan > 0).ok_or_else(|| {
+            MsError::VersionError(
+                "a frequency or velocity cube axis needs a positive output channel count"
+                    .to_string(),
+            )
+        })?;
 
         let output_freq_ref = effective_output_frequency_ref(source_freq_ref, axis_config)?;
         let frame = if matches!(axis_config.specmode, CubeSpecMode::Cubedata)
@@ -823,13 +850,6 @@ impl CubeSpectralSetup {
         // `calcChanFreqs` regrids the data channels converted to the output
         // frame (`transNewXin`) with widths measured there
         // (`transCHAN_WIDTH`); cubedata and an unchanged frame keep them.
-        let (band_frequencies_hz, band_widths_hz) = match cut {
-            Some(cut) => (
-                &all_source_frequencies_hz[cut.clone()],
-                &all_source_channel_widths_hz[cut],
-            ),
-            None => (all_source_frequencies_hz, all_source_channel_widths_hz),
-        };
         let regridding_widths_hz =
             casa_regridding_input_widths(band_frequencies_hz, band_widths_hz)?;
         let (source_frequencies_hz, source_widths_hz) = match frame.as_ref() {
@@ -862,7 +882,7 @@ impl CubeSpectralSetup {
         )?;
         let output_channel_frequencies_hz =
             casa_regridded_image_axis_hz(&channels, nchan, axis_config.veltype);
-        let setup = Self {
+        Ok(Self {
             source_freq_ref,
             output_freq_ref,
             interpolation: axis_config.interpolation,
@@ -877,38 +897,31 @@ impl CubeSpectralSetup {
                 channel_widths_from_centers(&output_channel_frequencies_hz)?
             },
             output_channel_frequencies_hz,
-        };
-        let support = cube_source_channel_support(
-            all_source_frequencies_hz,
-            all_source_channel_widths_hz,
-            &setup,
-            time_bounds_mjd_sec,
-            field_id,
-            derived_engine,
-        )?;
-        Ok((setup, support))
+        })
     }
 
-    /// Build a CASA-style output cube axis in channel mode.
+    /// Build a CASA-style output cube axis in channel mode over the data
+    /// channels `data_frequencies_hz` and `data_channel_widths_hz`.
     ///
     /// This models the source-backed `tclean` cube tests that specify
-    /// `start`/`width` as channel numbers. Output channels are defined on the
-    /// full SPW channel axis; any SPW channel selector affects which input data
-    /// are available, not the output channel locations themselves.
+    /// `start`/`width` as channel numbers. Output channels are defined on
+    /// the data channels; any channel selector affects which input data are
+    /// available, not the output channel locations themselves. With
+    /// `nchan` `None` the axis holds as many channels of the output width
+    /// as fit from the start channel's edge to the data's far edge.
     #[allow(clippy::too_many_arguments)]
     pub fn for_casa_cube_channel_axis(
         source_freq_ref: FrequencyRef,
-        all_source_frequencies_hz: &[f64],
-        all_source_channel_widths_hz: &[f64],
-        nchan: usize,
+        data_frequencies_hz: &[f64],
+        data_channel_widths_hz: &[f64],
+        nchan: Option<usize>,
         axis_config: &CubeAxisConfig,
         reference_row_time_mjd_sec: f64,
         field_id: usize,
         phase_center_direction: Option<MDirection>,
-        time_bounds_mjd_sec: [f64; 2],
         derived_engine: &MsCalEngine,
-    ) -> MsResult<(Self, ResolvedChannelSelection)> {
-        if nchan == 0 {
+    ) -> MsResult<Self> {
+        if nchan == Some(0) {
             return Err(MsError::VersionError(
                 "cube output channel count must be positive".to_string(),
             ));
@@ -936,40 +949,18 @@ impl CubeSpectralSetup {
                 "cube channel width must not be zero".to_string(),
             ));
         }
-        let output_freq_ref = match axis_config.specmode {
-            CubeSpecMode::Cube => axis_config.outframe,
-            CubeSpecMode::Cubedata => source_freq_ref,
-        };
-        let (output_channel_frequencies_hz, output_channel_widths_hz) =
-            if matches!(axis_config.specmode, CubeSpecMode::Cubedata) {
-                // CASA `calcChanFreqs` skips the frame transform for cubedata
-                // and builds the bounds with the same `regridChanBounds` code;
-                // `buildCoordinateSystemCore` makes the same linear axis.
-                let output_channel_frequencies_hz = casa_image_spectral_axis_hz(
-                    casa_transformed_channel_mode_output_centers(
-                        all_source_frequencies_hz,
-                        &casa_regridding_input_widths(
-                            all_source_frequencies_hz,
-                            all_source_channel_widths_hz,
-                        )?,
-                        start_channel,
-                        width_channels,
-                        nchan,
-                    )?,
-                    axis_config.veltype,
-                );
-                let output_channel_widths_hz = if nchan == 1 {
-                    vec![channel_mode_single_output_width_hz(
-                        all_source_frequencies_hz,
-                        all_source_channel_widths_hz,
-                        start_channel,
-                        width_channels,
-                    )?]
-                } else {
-                    channel_widths_from_centers(&output_channel_frequencies_hz)?
-                };
-                (output_channel_frequencies_hz, output_channel_widths_hz)
-            } else {
+        let regridding_input_widths_hz =
+            casa_regridding_input_widths(data_frequencies_hz, data_channel_widths_hz)?;
+        // CASA `calcChanFreqs` skips the frame transform for cubedata and
+        // builds the bounds with the same `regridChanBounds` code.
+        let (output_freq_ref, frequencies_hz, widths_hz) = match axis_config.specmode {
+            CubeSpecMode::Cubedata => (
+                source_freq_ref,
+                data_frequencies_hz.to_vec(),
+                regridding_input_widths_hz,
+            ),
+            CubeSpecMode::Cube => {
+                let output_freq_ref = axis_config.outframe;
                 let frame = spectral_frame_observatory(
                     derived_engine,
                     reference_row_time_mjd_sec,
@@ -981,10 +972,9 @@ impl CubeSpectralSetup {
                         "build spectral frame for field {field_id}: {error}"
                     ))
                 })?;
-                let source_frequencies_in_output_frame = all_source_frequencies_hz
+                let frequencies_hz = data_frequencies_hz
                     .iter()
-                    .copied()
-                    .map(|frequency_hz| {
+                    .map(|&frequency_hz| {
                         convert_frequency_to_frame_with_frame(
                             source_freq_ref,
                             output_freq_ref,
@@ -993,41 +983,37 @@ impl CubeSpectralSetup {
                         )
                     })
                     .collect::<MsResult<Vec<_>>>()?;
-                let regridding_input_widths_hz = casa_regridding_input_widths(
-                    all_source_frequencies_hz,
-                    all_source_channel_widths_hz,
+                let widths_hz = convert_channel_widths_to_frame_with_frame(
+                    source_freq_ref,
+                    output_freq_ref,
+                    data_frequencies_hz,
+                    &regridding_input_widths_hz,
+                    &frame,
                 )?;
-                let source_channel_widths_in_output_frame =
-                    convert_channel_widths_to_frame_with_frame(
-                        source_freq_ref,
-                        output_freq_ref,
-                        all_source_frequencies_hz,
-                        &regridding_input_widths_hz,
-                        &frame,
-                    )?;
-                let output_channel_frequencies_hz = casa_image_spectral_axis_hz(
-                    casa_transformed_channel_mode_output_centers(
-                        &source_frequencies_in_output_frame,
-                        &source_channel_widths_in_output_frame,
-                        start_channel,
-                        width_channels,
-                        nchan,
-                    )?,
-                    axis_config.veltype,
-                );
-                let output_channel_widths_hz = if nchan == 1 {
-                    vec![channel_mode_single_output_width_hz(
-                        &source_frequencies_in_output_frame,
-                        &source_channel_widths_in_output_frame,
-                        start_channel,
-                        width_channels,
-                    )?]
-                } else {
-                    channel_widths_from_centers(&output_channel_frequencies_hz)?
-                };
-                (output_channel_frequencies_hz, output_channel_widths_hz)
-            };
-        let setup = Self {
+                (output_freq_ref, frequencies_hz, widths_hz)
+            }
+        };
+        let output_channel_frequencies_hz = casa_image_spectral_axis_hz(
+            casa_transformed_channel_mode_output_centers(
+                &frequencies_hz,
+                &widths_hz,
+                start_channel,
+                width_channels,
+                nchan,
+            )?,
+            axis_config.veltype,
+        );
+        let output_channel_widths_hz = if output_channel_frequencies_hz.len() == 1 {
+            vec![channel_mode_single_output_width_hz(
+                &frequencies_hz,
+                &widths_hz,
+                start_channel,
+                width_channels,
+            )?]
+        } else {
+            channel_widths_from_centers(&output_channel_frequencies_hz)?
+        };
+        Ok(Self {
             source_freq_ref,
             output_freq_ref,
             interpolation: axis_config.interpolation,
@@ -1038,16 +1024,7 @@ impl CubeSpectralSetup {
             output_frame_field_id: field_id,
             output_channel_widths_hz,
             output_channel_frequencies_hz,
-        };
-        let support = cube_source_channel_support(
-            all_source_frequencies_hz,
-            all_source_channel_widths_hz,
-            &setup,
-            time_bounds_mjd_sec,
-            field_id,
-            derived_engine,
-        )?;
-        Ok((setup, support))
+        })
     }
 
     /// Build all per-row spectral interpolation products needed by cube
@@ -2085,60 +2062,70 @@ fn linear_channel_contributions_impl(
     contributions
 }
 
-fn cube_source_channel_support(
-    all_source_frequencies_hz: &[f64],
-    all_source_channel_widths_hz: &[f64],
-    cube_setup: &CubeSpectralSetup,
-    time_bounds_mjd_sec: [f64; 2],
-    field_id: usize,
-    derived_engine: &MsCalEngine,
-) -> MsResult<ResolvedChannelSelection> {
-    let mut first_index = None::<usize>;
-    let mut last_index = None::<usize>;
-    for row_time_mjd_sec in [time_bounds_mjd_sec[0], time_bounds_mjd_sec[1]] {
-        let contributions = cube_setup.row_spectral_contributions(
-            all_source_frequencies_hz,
-            all_source_channel_widths_hz,
-            row_time_mjd_sec,
-            field_id,
-            derived_engine,
-        )?;
-        for source_index in contributions
-            .output_channel_contributions
-            .into_iter()
-            .flatten()
-            .chain(
-                contributions
-                    .grid_channel_contributions
-                    .into_iter()
-                    .flat_map(|grid| grid.contributions),
-            )
-            .chain(
-                contributions
-                    .padded_grid_channel_contributions
-                    .into_iter()
-                    .flat_map(|grid| grid.contributions),
-            )
-            .map(|contribution| contribution.source_channel)
-        {
-            first_index =
-                Some(first_index.map_or(source_index, |current| current.min(source_index)));
-            last_index = Some(last_index.map_or(source_index, |current| current.max(source_index)));
+impl CubeSpectralSetup {
+    /// The channels of one window, `window_frequencies_hz` and
+    /// `window_channel_widths_hz` in its own order, whose samples reach a
+    /// plane of this axis (or of its padded Briggs density axis) at either
+    /// end of `time_bounds_mjd_sec` towards `field_id`, widened by one
+    /// channel below and two above: the channels CASA reads of the window
+    /// when `SynthesisImager::tuneSelectData` replaces the selection by the
+    /// image's band. Empty when none reaches the axis.
+    pub fn source_channel_support(
+        &self,
+        window_frequencies_hz: &[f64],
+        window_channel_widths_hz: &[f64],
+        time_bounds_mjd_sec: [f64; 2],
+        field_id: usize,
+        derived_engine: &MsCalEngine,
+    ) -> MsResult<ResolvedChannelSelection> {
+        let mut first_index = None::<usize>;
+        let mut last_index = None::<usize>;
+        for row_time_mjd_sec in [time_bounds_mjd_sec[0], time_bounds_mjd_sec[1]] {
+            let contributions = self.row_spectral_contributions(
+                window_frequencies_hz,
+                window_channel_widths_hz,
+                row_time_mjd_sec,
+                field_id,
+                derived_engine,
+            )?;
+            for source_index in contributions
+                .output_channel_contributions
+                .into_iter()
+                .flatten()
+                .chain(
+                    contributions
+                        .grid_channel_contributions
+                        .into_iter()
+                        .flat_map(|grid| grid.contributions),
+                )
+                .chain(
+                    contributions
+                        .padded_grid_channel_contributions
+                        .into_iter()
+                        .flat_map(|grid| grid.contributions),
+                )
+                .map(|contribution| contribution.source_channel)
+            {
+                first_index =
+                    Some(first_index.map_or(source_index, |current| current.min(source_index)));
+                last_index =
+                    Some(last_index.map_or(source_index, |current| current.max(source_index)));
+            }
         }
+        let Some(mut first_index) = first_index else {
+            return Ok(ResolvedChannelSelection {
+                indices: Vec::new(),
+                frequencies_hz: Vec::new(),
+            });
+        };
+        let mut last_index = last_index.expect("first_index implies last_index");
+        first_index = first_index.saturating_sub(1);
+        last_index = (last_index + 2).min(window_frequencies_hz.len().saturating_sub(1));
+        Ok(ResolvedChannelSelection {
+            indices: (first_index..=last_index).collect(),
+            frequencies_hz: window_frequencies_hz[first_index..=last_index].to_vec(),
+        })
     }
-    let Some(mut first_index) = first_index else {
-        return Ok(ResolvedChannelSelection {
-            indices: Vec::new(),
-            frequencies_hz: Vec::new(),
-        });
-    };
-    let mut last_index = last_index.expect("first_index implies last_index");
-    first_index = first_index.saturating_sub(1);
-    last_index = (last_index + 2).min(all_source_frequencies_hz.len().saturating_sub(1));
-    Ok(ResolvedChannelSelection {
-        indices: (first_index..=last_index).collect(),
-        frequencies_hz: all_source_frequencies_hz[first_index..=last_index].to_vec(),
-    })
 }
 
 #[cfg(test)]
@@ -2233,7 +2220,7 @@ mod tests {
                 ms: -2.0,
                 frame: Some(FrequencyRef::BARY),
             }),
-            selected_channels: None,
+            selected_band_hz: None,
         };
         let native_axis_config = CubeAxisConfig {
             start: None,
@@ -2579,7 +2566,8 @@ mod tests {
     fn casa_channel_mode_output_centers_shift_for_multi_channel_width() {
         let all: Vec<_> = (0..20).map(|index| 1.0e9 + index as f64 * 50.0e6).collect();
         let widths = vec![50.0e6; all.len()];
-        let centers = casa_transformed_channel_mode_output_centers(&all, &widths, 0, 2, 3).unwrap();
+        let centers =
+            casa_transformed_channel_mode_output_centers(&all, &widths, 0, 2, Some(3)).unwrap();
         assert_eq!(centers, vec![1.025e9, 1.125e9, 1.225e9]);
     }
 
@@ -2588,7 +2576,7 @@ mod tests {
         let all: Vec<_> = (0..20).map(|index| 1.0e9 + index as f64 * 50.0e6).collect();
         let widths = vec![50.0e6; all.len()];
         let centers =
-            casa_transformed_channel_mode_output_centers(&all, &widths, 9, -2, 2).unwrap();
+            casa_transformed_channel_mode_output_centers(&all, &widths, 9, -2, Some(2)).unwrap();
         assert_eq!(centers, vec![1.425e9, 1.325e9]);
     }
 
@@ -2603,7 +2591,7 @@ mod tests {
         all[0] = 999_999_999.999_999_9;
         let widths = vec![50.0e6; all.len()];
         let axis = casa_image_spectral_axis_hz(
-            casa_transformed_channel_mode_output_centers(&all, &widths, 0, 1, 20).unwrap(),
+            casa_transformed_channel_mode_output_centers(&all, &widths, 0, 1, Some(20)).unwrap(),
             DopplerRef::RADIO,
         );
         assert_eq!(axis[0], 1.0e9);
@@ -2636,7 +2624,7 @@ mod tests {
             &[1.0, 1.001, 1.002, 1.003],
             1,
             1,
-            3,
+            Some(3),
         )
         .unwrap();
         assert_eq!(centers, vec![10.9995, 11.9995, 12.9995]);
@@ -2662,7 +2650,7 @@ mod tests {
             &[width_hz; 20],
             0,
             1,
-            20,
+            Some(20),
         )
         .unwrap();
         assert_eq!(centers[0], 999_988_750.387_257_2);
@@ -2678,7 +2666,7 @@ mod tests {
             &[5.0e7; 5],
             3,
             -1,
-            3,
+            Some(3),
         )
         .unwrap();
         assert_eq!(centers, vec![1.15e9, 1.10e9, 1.05e9]);
@@ -2719,16 +2707,14 @@ mod tests {
                     FrequencyRef::TOPO,
                     source_hz,
                     &widths_hz,
-                    source_hz.len(),
+                    Some(source_hz.len()),
                     axis_config,
                     59_000.0 * 86_400.0,
                     0,
                     None,
-                    [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
                     &engine,
                 )
                 .unwrap()
-                .0
                 .output_channel_frequencies_hz
             };
             let chan_freqs_hz = casa_transformed_channel_mode_output_centers(
@@ -2736,7 +2722,7 @@ mod tests {
                 &widths_hz,
                 start,
                 width,
-                source_hz.len(),
+                Some(source_hz.len()),
             )
             .unwrap();
             let increment_hz = chan_freqs_hz[1] - chan_freqs_hz[0];
@@ -2793,7 +2779,7 @@ mod tests {
                 frame: Some(FrequencyRef::BARY),
             }),
             width: None,
-            selected_channels: None,
+            selected_band_hz: None,
         };
         assert_eq!(
             effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap(),
@@ -2817,7 +2803,7 @@ mod tests {
                 ms: 11_991_700.0,
                 frame: Some(FrequencyRef::TOPO),
             }),
-            selected_channels: None,
+            selected_band_hz: None,
         };
         let error = effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap_err();
         assert!(error.to_string().contains("disagree"));
@@ -2836,7 +2822,7 @@ mod tests {
                 frame: Some(FrequencyRef::BARY),
             }),
             width: None,
-            selected_channels: None,
+            selected_band_hz: None,
         };
         assert_eq!(
             effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap(),
@@ -2973,11 +2959,13 @@ mod tests {
     fn casa_channel_mode_output_centers_reject_zero_width_and_mismatched_arrays() {
         let all = vec![1.0e9, 1.05e9, 1.10e9];
         let zero_width =
-            casa_transformed_channel_mode_output_centers(&all, &[5.0e7; 3], 0, 0, 1).unwrap_err();
+            casa_transformed_channel_mode_output_centers(&all, &[5.0e7; 3], 0, 0, Some(1))
+                .unwrap_err();
         assert!(zero_width.to_string().contains("must not be zero"));
 
         let mismatched =
-            casa_transformed_channel_mode_output_centers(&all, &[5.0e7; 2], 0, 1, 1).unwrap_err();
+            casa_transformed_channel_mode_output_centers(&all, &[5.0e7; 2], 0, 1, Some(1))
+                .unwrap_err();
         assert!(
             mismatched
                 .to_string()
@@ -2992,12 +2980,11 @@ mod tests {
             FrequencyRef::TOPO,
             &[1.0e9, 1.05e9],
             &[5.0e7, 5.0e7],
-            0,
+            Some(0),
             &CubeAxisConfig::default(),
             59_000.0 * 86_400.0,
             0,
             None,
-            [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
             &engine,
         )
         .unwrap_err();
@@ -3013,16 +3000,15 @@ mod tests {
             width: Some(CubeAxisValue::Channel(1)),
             ..CubeAxisConfig::default()
         };
-        let (setup, _support) = CubeSpectralSetup::for_casa_cube_axis(
+        let setup = CubeSpectralSetup::for_casa_cube_axis(
             FrequencyRef::TOPO,
             &[1.0e9, 1.05e9, 1.10e9],
             &[5.0e7, 5.0e7, 5.0e7],
-            1,
+            Some(1),
             &axis_config,
             59_000.0 * 86_400.0,
             0,
             None,
-            [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
             &engine,
         )
         .unwrap();
@@ -3116,16 +3102,15 @@ mod tests {
                 }),
                 ..CubeAxisConfig::default()
             };
-            let (setup, _support) = CubeSpectralSetup::for_casa_cube_axis(
+            let setup = CubeSpectralSetup::for_casa_cube_axis(
                 FrequencyRef::TOPO,
                 &source_hz,
                 &[5.0e7; 20],
-                10,
+                Some(10),
                 &axis_config,
                 59_000.0 * 86_400.0,
                 0,
                 None,
-                [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
                 &engine,
             )
             .unwrap();
@@ -3143,24 +3128,22 @@ mod tests {
         let source_hz = (0..20)
             .map(|channel| 1.0e9 + f64::from(channel) * 5.0e7)
             .collect::<Vec<_>>();
-        let selected = (4..=13).collect::<Vec<_>>();
         for width in [None, Some(CubeAxisValue::Channel(1))] {
             let axis_config = CubeAxisConfig {
                 outframe: FrequencyRef::TOPO,
                 width,
-                selected_channels: Some(selected.clone()),
+                selected_band_hz: Some([1.175e9, 1.675e9]),
                 ..CubeAxisConfig::default()
             };
-            let (setup, _support) = CubeSpectralSetup::for_casa_cube_axis(
+            let setup = CubeSpectralSetup::for_casa_cube_axis(
                 FrequencyRef::TOPO,
                 &source_hz,
                 &[5.0e7; 20],
-                10,
+                Some(10),
                 &axis_config,
                 59_000.0 * 86_400.0,
                 0,
                 None,
-                [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
                 &engine,
             )
             .unwrap();
@@ -3176,19 +3159,18 @@ mod tests {
                 hz: 1.0e8,
                 frame: None,
             }),
-            selected_channels: Some(selected),
+            selected_band_hz: Some([1.175e9, 1.675e9]),
             ..CubeAxisConfig::default()
         };
-        let (setup, _support) = CubeSpectralSetup::for_casa_cube_axis(
+        let setup = CubeSpectralSetup::for_casa_cube_axis(
             FrequencyRef::TOPO,
             &source_hz,
             &[5.0e7; 20],
-            3,
+            Some(3),
             &axis_config,
             59_000.0 * 86_400.0,
             0,
             None,
-            [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
             &engine,
         )
         .unwrap();
@@ -3213,16 +3195,15 @@ mod tests {
             }),
             ..CubeAxisConfig::default()
         };
-        let (setup, _support) = CubeSpectralSetup::for_casa_cube_axis(
+        let setup = CubeSpectralSetup::for_casa_cube_axis(
             FrequencyRef::LSRK,
             &[44.0e9, 44.002e9, 44.004e9],
             &[2.0e6; 3],
-            1,
+            Some(1),
             &axis_config,
             59_000.0 * 86_400.0,
             0,
             None,
-            [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
             &engine,
         )
         .unwrap();
@@ -3244,12 +3225,11 @@ mod tests {
             FrequencyRef::TOPO,
             &[1.0e9, 1.05e9],
             &[5.0e7, 5.0e7],
-            1,
+            Some(1),
             &axis_config,
             59_000.0 * 86_400.0,
             0,
             None,
-            [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
             &engine,
         )
         .unwrap_err();
@@ -3325,15 +3305,15 @@ mod tests {
             output_channel_widths_hz: vec![1.0e6],
         };
 
-        let support = cube_source_channel_support(
-            &[1.0e9, 1.01e9, 1.02e9],
-            &[1.0e6, 1.0e6, 1.0e6],
-            &setup,
-            [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
-            0,
-            &test_engine(),
-        )
-        .unwrap();
+        let support = setup
+            .source_channel_support(
+                &[1.0e9, 1.01e9, 1.02e9],
+                &[1.0e6, 1.0e6, 1.0e6],
+                [59_000.0 * 86_400.0, 59_000.1 * 86_400.0],
+                0,
+                &test_engine(),
+            )
+            .unwrap();
 
         assert!(support.indices.is_empty());
         assert!(support.frequencies_hz.is_empty());

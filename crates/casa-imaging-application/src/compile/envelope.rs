@@ -240,39 +240,45 @@ pub(super) struct OutputAxis {
     pub(super) channels: usize,
 }
 
-/// CASA's nominal Briggs-cube density padding of `window`, per side
+/// CASA's nominal Briggs-cube density padding, per side
 /// (`BriggsCubeWeightor::estimateSwingChanPad`, half its `swingpad`).
 ///
-/// Each field's output interval is converted back to `window`'s frame at
-/// the epochs of its samples, then matched against the whole window with
-/// CASA's strict channel-edge overlap. The padding is the swing of the
-/// matched range in output channels, rounded up, plus
-/// `max(min(4, nchan/10), 1)`, so it is at least one plane even when the
-/// frames agree. The selected channels' interpolation support does not
-/// redefine this nominal density domain.
+/// CASA walks its visibility buffers in `DATA_DESC_ID`, then `FIELD_ID`
+/// order (one array; windows here in window order) and takes a window's
+/// range whenever the field changes from the buffer before, so with one
+/// field only the first window counts. For each such (window, field), the
+/// field's output interval is converted back to the window's frame at the
+/// epochs of its samples, then matched against the whole window with
+/// CASA's strict channel-edge overlap; a window it misses adds nothing.
+/// The padding is the largest swing of the matched ranges' ends plus the
+/// largest offset between the windows' lowest channels, in output channels
+/// rounded up, plus `max(min(4, nchan/10), 1)`, so it is at least one plane
+/// even when the frames agree. The selected channels' interpolation
+/// support does not redefine this nominal density domain.
 pub(super) fn cube_density_padding(
     (catalogue, engine): (&Catalogue, &MsCalEngine),
     survey: &Survey,
-    window: &SourceSpectralWindow,
     output: &OutputAxis,
 ) -> Result<usize, PrepareError> {
-    if window.frequencies_hz.is_empty()
-        || window.frequencies_hz.len() != window.channel_widths_hz.len()
-        || window
-            .frequencies_hz
-            .iter()
-            .any(|frequency| !frequency.is_finite() || *frequency <= 0.0)
-        || window
-            .channel_widths_hz
-            .iter()
-            .any(|width| !width.is_finite() || *width == 0.0)
-    {
-        return Err(PrepareError::SpectralWindowCoordinates {
-            spw_id: window.spw_id,
-        });
+    for window in &survey.spectral_windows {
+        if window.frequencies_hz.is_empty()
+            || window.frequencies_hz.len() != window.channel_widths_hz.len()
+            || window
+                .frequencies_hz
+                .iter()
+                .any(|frequency| !frequency.is_finite() || *frequency <= 0.0)
+            || window
+                .channel_widths_hz
+                .iter()
+                .any(|width| !width.is_finite() || *width == 0.0)
+        {
+            return Err(PrepareError::SpectralWindowCoordinates {
+                spw_id: window.spw_id,
+            });
+        }
     }
     let extra_padding = (output.channels / 10).clamp(1, 4);
-    if window.frequency_reference == output.frequency_reference {
+    if survey.source_frequency_reference == output.frequency_reference {
         return Ok(extra_padding);
     }
     let [first, last] = output.centres_hz;
@@ -283,6 +289,73 @@ pub(super) fn cube_density_padding(
         });
     }
     let interval = [first.min(last), first.max(last)];
+    let mut lower_centres = [f64::INFINITY, f64::NEG_INFINITY];
+    let mut upper_centres = [f64::INFINITY, f64::NEG_INFINITY];
+    let mut lowest_channels = [f64::INFINITY, f64::NEG_INFINITY];
+    let mut previous_field = None;
+    for window in &survey.spectral_windows {
+        let mut fields = survey
+            .window_epochs(window.spw_id)
+            .iter()
+            .map(|epoch| epoch.field_id)
+            .collect::<Vec<_>>();
+        fields.sort_unstable();
+        fields.dedup();
+        for field in fields {
+            if previous_field.replace(field) == Some(field) {
+                continue;
+            }
+            let Some([a, b]) = matched_range(
+                (catalogue, engine),
+                survey,
+                (window, field),
+                output.frequency_reference,
+                interval,
+                increment,
+            )?
+            else {
+                continue;
+            };
+            lower_centres[0] = lower_centres[0].min(a.min(b));
+            lower_centres[1] = lower_centres[1].max(a.min(b));
+            upper_centres[0] = upper_centres[0].min(a.max(b));
+            upper_centres[1] = upper_centres[1].max(a.max(b));
+            let lowest = window
+                .frequencies_hz
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, f64::min);
+            lowest_channels[0] = lowest_channels[0].min(lowest);
+            lowest_channels[1] = lowest_channels[1].max(lowest);
+        }
+    }
+    if !lower_centres[0].is_finite() {
+        return Ok(extra_padding);
+    }
+    let swing = (lower_centres[1] - lower_centres[0]).max(upper_centres[1] - upper_centres[0]);
+    let first_channel_shift = lowest_channels[1] - lowest_channels[0];
+    let swing_channels = ((swing + first_channel_shift) / increment).ceil();
+    if !(swing_channels.is_finite() && swing_channels < usize::MAX as f64) {
+        return Err(PrepareError::CubeIncrement {
+            increment_hz: increment,
+        });
+    }
+    Ok(swing_channels as usize + extra_padding)
+}
+
+/// The centres of the first and last channels of `window` that the output
+/// `interval` in frame `output_reference`, converted back to the window's
+/// frame at field `field`'s epochs in it and widened by half an
+/// `increment`, overlaps (`MSUtil::getSpwInFreqRange`), or `None` when it
+/// overlaps none.
+fn matched_range(
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
+    survey: &Survey,
+    (window, field): (&SourceSpectralWindow, i32),
+    output_reference: FrequencyRef,
+    interval: [f64; 2],
+    increment: f64,
+) -> Result<Option<[f64; 2]>, PrepareError> {
     let native_min = window
         .frequencies_hz
         .iter()
@@ -293,69 +366,49 @@ pub(super) fn cube_density_padding(
         .iter()
         .copied()
         .fold(f64::NEG_INFINITY, f64::max);
-    let mut lower_centres = [f64::INFINITY, f64::NEG_INFINITY];
-    let mut upper_centres = [f64::INFINITY, f64::NEG_INFINITY];
-    for &field in &survey.fields {
-        let mut native = [f64::INFINITY, f64::NEG_INFINITY];
-        for epoch in survey
-            .window_epochs(window.spw_id)
-            .iter()
-            .filter(|epoch| epoch.field_id == field)
-        {
-            let frame = epoch_frame((catalogue, engine), *epoch)?;
-            let conversion = PreparedFrequencyConversion::new(
-                output.frequency_reference,
-                window.frequency_reference,
-                Some(&frame),
-                Some(&frame),
-            )?;
-            let a = conversion.convert_hz(interval[0]);
-            let b = conversion.convert_hz(interval[1]);
-            native[0] = native[0].min(a.min(b));
-            native[1] = native[1].max(a.max(b));
-        }
-        let lower = native[0] - 0.5 * increment;
-        let upper = native[1] + 0.5 * increment;
-        let partial = (lower > native_min && lower < native_max)
-            || (upper > native_min && upper < native_max);
-        let full = lower < native_min && upper > native_max;
-        if !partial && !full {
-            continue;
-        }
-        let mut matched = window
-            .frequencies_hz
-            .iter()
-            .zip(&window.channel_widths_hz)
-            .enumerate()
-            .filter(|(_, (centre, width))| {
-                full || (**centre + 0.5 * width.abs() > lower
-                    && **centre - 0.5 * width.abs() < upper)
-            })
-            .map(|(channel, _)| channel);
-        let Some(first) = matched.next() else {
-            continue;
-        };
-        let last = matched.next_back().unwrap_or(first);
-        let a = window.frequencies_hz[first];
-        let b = window.frequencies_hz[last];
-        lower_centres[0] = lower_centres[0].min(a.min(b));
-        lower_centres[1] = lower_centres[1].max(a.min(b));
-        upper_centres[0] = upper_centres[0].min(a.max(b));
-        upper_centres[1] = upper_centres[1].max(a.max(b));
+    let mut native = [f64::INFINITY, f64::NEG_INFINITY];
+    for epoch in survey
+        .window_epochs(window.spw_id)
+        .iter()
+        .filter(|epoch| epoch.field_id == field)
+    {
+        let frame = epoch_frame((catalogue, engine), *epoch)?;
+        let conversion = PreparedFrequencyConversion::new(
+            output_reference,
+            window.frequency_reference,
+            Some(&frame),
+            Some(&frame),
+        )?;
+        let a = conversion.convert_hz(interval[0]);
+        let b = conversion.convert_hz(interval[1]);
+        native[0] = native[0].min(a.min(b));
+        native[1] = native[1].max(a.max(b));
     }
-    if !lower_centres[0].is_finite() {
-        return Ok(extra_padding);
+    let lower = native[0] - 0.5 * increment;
+    let upper = native[1] + 0.5 * increment;
+    let partial =
+        (lower > native_min && lower < native_max) || (upper > native_min && upper < native_max);
+    let full = lower < native_min && upper > native_max;
+    if !partial && !full {
+        return Ok(None);
     }
-    // One window has one full-native origin, so CASA's first-channel shift
-    // is zero.
-    let swing = (lower_centres[1] - lower_centres[0]).max(upper_centres[1] - upper_centres[0]);
-    let swing_channels = (swing / increment).ceil();
-    if !(swing_channels.is_finite() && swing_channels < usize::MAX as f64) {
-        return Err(PrepareError::CubeIncrement {
-            increment_hz: increment,
-        });
-    }
-    Ok(swing_channels as usize + extra_padding)
+    let mut matched = window
+        .frequencies_hz
+        .iter()
+        .zip(&window.channel_widths_hz)
+        .enumerate()
+        .filter(|(_, (centre, width))| {
+            full || (**centre + 0.5 * width.abs() > lower && **centre - 0.5 * width.abs() < upper)
+        })
+        .map(|(channel, _)| channel);
+    let Some(first) = matched.next() else {
+        return Ok(None);
+    };
+    let last = matched.next_back().unwrap_or(first);
+    Ok(Some([
+        window.frequencies_hz[first],
+        window.frequencies_hz[last],
+    ]))
 }
 
 #[cfg(test)]

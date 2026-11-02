@@ -177,8 +177,8 @@ pub use simulation_task::{
 };
 pub use spectral_selection::{
     CubeAxisConfig, CubeAxisValue, CubeChannelContribution, CubeInterpolation, CubeSpecMode,
-    CubeSpectralSetup, ResolvedChannelSelection, convert_frequency_to_frame,
-    convert_frequency_to_frame_with_frame, parse_rest_frequency_hz,
+    CubeSpectralSetup, ResolvedChannelSelection, casa_selected_band_hz, combine_spectral_windows,
+    convert_frequency_to_frame, convert_frequency_to_frame_with_frame, parse_rest_frequency_hz,
     resolve_channel_selector_selection, resolve_contiguous_channel_selection,
     velocity_ms_from_frequency_hz,
 };
