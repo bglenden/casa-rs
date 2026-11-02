@@ -130,8 +130,8 @@ fn the_catalog_refuses_what_casa_reads_in_every_mode() {
     for overrides in [
         // CASA projects with any projection in every mode.
         json!({ "projection": "NCP" }),
-        // CASA estimates noise from every residual when fastnoise=False.
-        json!({ "fastnoise": false }),
+        // CASA masks within the primary beam with pbmask in every mask mode.
+        json!({ "pbmask": 0.5 }),
         // CASA reads psfphasecenter for every gridder named for a mosaic.
         json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" }),
     ] {
@@ -261,6 +261,16 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "deconvolver": "mem" }), "deconvolver", "#823"),
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
         (json!({ "usemask": "pb" }), "usemask", "#823"),
+        (
+            json!({ "usemask": "auto-multithresh", "stokes": "IQUV", "niter": 10 }),
+            "usemask",
+            "#980",
+        ),
+        (
+            json!({ "usemask": "auto-multithresh", "specmode": "cube", "nchan": 4, "niter": 10 }),
+            "usemask",
+            "#980",
+        ),
         (
             json!({ "specmode": "cube", "interpolation": "cubic" }),
             "interpolation",
@@ -725,6 +735,62 @@ fn reffreq_is_read_as_a_frequency_in_every_mode() {
             refusal(json!({ "reffreq": text })).parameter,
             "reffreq",
             "{text}"
+        );
+    }
+}
+
+/// tclean's auto-multithresh controls and noise estimate, read in every
+/// mask mode: `SynthesisParamsDeconv::fromRecord` reads them whatever
+/// `usemask` is, and `fastnoise` also sets the `nsigma` noise.
+#[test]
+fn automask_controls_and_the_noise_estimate_are_read() {
+    let defaults = request(json!({}));
+    assert_eq!(
+        (
+            defaults.smoothfactor,
+            defaults.cutthreshold,
+            defaults.dogrowprune,
+            defaults.minpercentchange,
+            defaults.verbose,
+            defaults.fastnoise,
+        ),
+        (1.0, 0.01, true, -1.0, false, true)
+    );
+    let set = json!({
+        "usemask": "auto-multithresh",
+        "smoothfactor": 0.5,
+        "cutthreshold": 0.2,
+        "dogrowprune": false,
+        "minpercentchange": 0.2,
+        "verbose": true,
+        "fastnoise": false,
+    });
+    let read = request(set.clone());
+    assert_eq!(
+        (
+            read.smoothfactor,
+            read.cutthreshold,
+            read.dogrowprune,
+            read.minpercentchange,
+            read.verbose,
+            read.fastnoise,
+        ),
+        (0.5, 0.2, false, 0.2, true, false)
+    );
+    // The noise estimate applies to nsigma without an automatic mask.
+    assert!(!request(json!({ "nsigma": 3.0, "fastnoise": false })).fastnoise);
+    // CASA's automatic mask fails on a beam of no positive width; without
+    // one, or without cleaning, CASA never smooths.
+    for factor in [0.0, -1.0] {
+        let mut automatic = set.clone();
+        automatic["smoothfactor"] = json!(factor);
+        automatic["niter"] = json!(10);
+        assert_eq!(refusal(automatic.clone()).parameter, "smoothfactor");
+        automatic["niter"] = json!(0);
+        assert_eq!(request(automatic).smoothfactor, factor);
+        assert_eq!(
+            request(json!({ "niter": 10, "smoothfactor": factor })).smoothfactor,
+            factor
         );
     }
 }

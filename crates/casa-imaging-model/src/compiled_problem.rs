@@ -774,6 +774,20 @@ pub struct CycleThresholdRule {
     pub maximum_psf_fraction: f64,
 }
 
+/// How tclean estimates a residual plane's robust noise, which its
+/// `nsigma` threshold and automatic mask read (`fastnoise`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum NoiseEstimate {
+    /// `fastnoise=True`: casacore's classical median and median absolute
+    /// deviation of every valid pixel (`SDMaskHandler::calcImageStatistics`).
+    #[default]
+    Fast,
+    /// `fastnoise=False`: Chauvenet-criterion statistics without a clean
+    /// mask, else the classical statistics outside it
+    /// (`SDMaskHandler::calcRobustImageStatistics`).
+    Robust,
+}
+
 /// Scientific stopping and update controls for reconstruction.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ReconstructionControls {
@@ -783,6 +797,7 @@ pub struct ReconstructionControls {
     cycle_iteration_limit: Option<usize>,
     maximum_major_cycles: Option<usize>,
     noise_sigma: Option<f64>,
+    noise_estimate: NoiseEstimate,
     cycle_threshold: Option<CycleThresholdRule>,
     hogbom_iteration_accounting: HogbomIterationAccounting,
 }
@@ -798,6 +813,7 @@ impl ReconstructionControls {
             cycle_iteration_limit: None,
             maximum_major_cycles: None,
             noise_sigma: None,
+            noise_estimate: NoiseEstimate::Fast,
             cycle_threshold: None,
             hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
         }
@@ -819,6 +835,13 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn with_noise_sigma(mut self, noise_sigma: f64) -> Self {
         self.noise_sigma = Some(noise_sigma);
+        self
+    }
+
+    /// Bind how the robust noise of the `nsigma` threshold is estimated.
+    #[must_use]
+    pub const fn with_noise_estimate(mut self, noise_estimate: NoiseEstimate) -> Self {
+        self.noise_estimate = noise_estimate;
         self
     }
 
@@ -882,6 +905,12 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn noise_sigma(self) -> Option<f64> {
         self.noise_sigma
+    }
+
+    /// Return how the robust noise of the `nsigma` threshold is estimated.
+    #[must_use]
+    pub const fn noise_estimate(self) -> NoiseEstimate {
+        self.noise_estimate
     }
 
     /// Return CASA's per-cycle threshold rule, when it is bound.

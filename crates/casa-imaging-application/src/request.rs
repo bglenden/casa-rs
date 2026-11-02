@@ -190,6 +190,24 @@ pub struct ImagingRequest {
     pub minbeamfrac: f64,
     /// Auto-multithresh growth iterations.
     pub growiterations: usize,
+    /// Auto-multithresh smoothing of each new mask, in restoring beams.
+    pub smoothfactor: f64,
+    /// Auto-multithresh cut of each smoothed mask, as a fraction of its
+    /// peak.
+    pub cutthreshold: f64,
+    /// Whether auto-multithresh prunes the grown mask as it prunes the
+    /// threshold mask.
+    pub dogrowprune: bool,
+    /// Percent change of an auto-multithresh plane's mask below which it
+    /// stops evolving once the global threshold is reached; negative never
+    /// stops on change.
+    pub minpercentchange: f64,
+    /// Log CASA's automask summary at every auto-multithresh update.
+    pub verbose: bool,
+    /// Estimate the noise of `nsigma` and auto-multithresh from every
+    /// valid pixel (`true`), or robustly, outside the clean mask or by
+    /// Chauvenet's criterion (`false`).
+    pub fastnoise: bool,
     /// Inclusive signed pixel boxes `[x0, y0, x1, y1]`, clipped to the image.
     #[serde(deserialize_with = "mask_boxes")]
     pub mask_box: Vec<[i64; 4]>,

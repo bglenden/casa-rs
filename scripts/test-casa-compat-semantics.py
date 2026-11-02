@@ -35,10 +35,11 @@ class SemanticReferenceTests(unittest.TestCase):
         self.assertEqual(semantics.implementation(binding, {"status": "Partial"}), "Partial")
 
     def test_conditional_refusals_are_rendered_from_the_runtime_gate(self):
-        binding = next(b for b in self.surface["bindings"] if b["name"] == "smoothfactor")
-        self.assertEqual(semantics.condition(binding["unimplemented"]["applies_when"]), "usemask='auto-multithresh'")
-        binding["unimplemented"]["applies_when"]["value"]["value"] = "user"
-        self.assertEqual(semantics.condition(binding["unimplemented"]["applies_when"]), "usemask='user'")
+        binding = next(b for b in self.surface["bindings"] if b["name"] == "rotatepastep")
+        gate = binding["unimplemented"]["applies_when"]
+        self.assertEqual(semantics.condition(gate), "(gridder='awproject' or gridder='awprojectft')")
+        gate["predicates"][1]["value"]["value"] = "awphpg"
+        self.assertEqual(semantics.condition(gate), "(gridder='awproject' or gridder='awphpg')")
 
     def test_signature_recording_does_not_become_a_passing_behavior_result(self):
         self.assertNotEqual(self.data["evidence"]["signature"]["state"], "passed")

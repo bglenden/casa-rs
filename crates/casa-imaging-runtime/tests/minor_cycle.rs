@@ -75,6 +75,7 @@ fn setup(problem: &CompiledProblem, response: Option<MinorCycleImageResponse>) -
         accounting: HogbomIterationAccounting::Strict,
         response,
         nsigma: 0.0,
+        noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
         automask: false,
     }
 }

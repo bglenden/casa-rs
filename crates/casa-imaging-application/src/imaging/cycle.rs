@@ -541,6 +541,7 @@ fn minor_setup(
         accounting: controls.hogbom_iteration_accounting(),
         response,
         nsigma: controls.noise_sigma().unwrap_or(0.0),
+        noise: controls.noise_estimate(),
         automask: matches!(
             masks.primary(),
             ReconstructionMaskPlan::AutoMultithresh { .. }

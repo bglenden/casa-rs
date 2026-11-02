@@ -113,18 +113,103 @@ fn auto_multithresh_masks_both_sources_and_confines_the_model() {
         "T1 auto-multithresh: {masked} masked pixels, {} minor iterations, {} major cycles",
         summary.actual_minor_iterations, summary.major_cycles
     );
-    for component in [POINT, GAUSSIAN] {
-        let [x, y] = component_pixel(component);
-        assert_eq!(mask[[x, y]], 1.0, "{component:?} is not masked");
-    }
-    // Both sources span a few hundred pixels at most; a mask grown into the
-    // noise or the sidelobes would cover far more of the image.
-    assert!(
-        masked < IMAGE_SIZE * IMAGE_SIZE / 50,
-        "auto-multithresh masked {masked} pixels"
-    );
+    assert_mask_holds_the_sources_only(mask);
     assert_model_inside(model, mask);
     assert_point_recovered(model, &products.get(".image").pixels);
+}
+
+/// The automatic mask covers both sources and stays about them. CASA grows
+/// the inherited mask through the 1.5-sigma contour of each source and
+/// smooths it by a beam (`autoMaskByMultiThreshold`), so it reaches a few
+/// beams beyond the sources; a mask grown into the noise or the sidelobes
+/// would reach across the image.
+fn assert_mask_holds_the_sources_only(mask: &Array2<f32>) {
+    let sources = [component_pixel(POINT), component_pixel(GAUSSIAN)];
+    for [x, y] in sources {
+        assert_eq!(mask[[x, y]], 1.0, "the source at [{x}, {y}] is not masked");
+    }
+    let masked = mask.iter().filter(|value| **value != 0.0).count();
+    let farthest = mask
+        .indexed_iter()
+        .filter(|(_, value)| **value != 0.0)
+        .map(|((x, y), _)| {
+            sources
+                .iter()
+                .map(|[sx, sy]| x.abs_diff(*sx).pow(2) + y.abs_diff(*sy).pow(2))
+                .min()
+                .expect("two sources")
+        })
+        .max()
+        .unwrap_or(0);
+    eprintln!(
+        "T1 auto-multithresh mask: {masked} pixels, the farthest {:.1} pixels from a source",
+        (farthest as f64).sqrt()
+    );
+    assert!(
+        farthest <= 32 * 32,
+        "a masked pixel lies {} pixels from the nearest source",
+        (farthest as f64).sqrt()
+    );
+    assert!(
+        masked < IMAGE_SIZE * IMAGE_SIZE / 25,
+        "auto-multithresh masked {masked} pixels"
+    );
+}
+
+/// tclean's other auto-multithresh controls (contract 37): the robust noise
+/// estimate (`fastnoise=False`, Chauvenet without a mask and the
+/// statistics outside it after), wider smoothing, a higher cut, an unpruned
+/// grown mask, the change-stop rule and the summary log still mask both
+/// sources and confine the model; a negative cut keeps no pixel, so CASA's
+/// zero-mask stop.
+#[test]
+fn auto_multithresh_controls_and_robust_noise_still_mask_both_sources() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let controls = json!({
+        "weighting": "natural",
+        "deconvolver": "hogbom",
+        "niter": 500,
+        "threshold": THRESHOLD,
+        "nsigma": 3.0,
+        "usemask": "auto-multithresh",
+        "fastnoise": false,
+        "smoothfactor": 1.5,
+        "cutthreshold": 0.05,
+        "dogrowprune": false,
+        "minpercentchange": 1.0,
+        "verbose": true,
+    });
+    let (summary, products) = observation.image("auto-multithresh-controls", controls.clone());
+    let mask = &products.get(".mask").pixels;
+    let model = &products.get(".model").pixels;
+    let masked = mask.iter().filter(|value| **value != 0.0).count();
+    eprintln!(
+        "T1 auto-multithresh controls: {masked} masked pixels, {} minor iterations, {} major \
+         cycles",
+        summary.actual_minor_iterations, summary.major_cycles
+    );
+    assert_mask_holds_the_sources_only(mask);
+    assert_model_inside(model, mask);
+    assert_point_recovered(model, &products.get(".image").pixels);
+
+    let mut empty = controls;
+    empty["cutthreshold"] = json!(-0.1);
+    let (summary, products) = observation.image("auto-multithresh-negative-cut", empty);
+    assert!(
+        products
+            .get(".mask")
+            .pixels
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+    assert!(
+        products
+            .get(".model")
+            .pixels
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+    assert_eq!(summary.actual_minor_iterations, 0);
 }
 
 #[test]

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Exact-text selector values (scan, observation, antenna, timerange; one
-//! per MeasurementSet since contract 37) survive each normalized transport
+//! per MeasurementSet since contract 38) survive each normalized transport
 //! boundary.
 
 use casa_imaging_application::ImagingRequest;
@@ -103,9 +103,9 @@ fn assert_transports(session: &ParameterSession, name: &str, expected: &str) {
 #[test]
 fn current_profiles_and_provider_projection_preserve_selector_text() {
     for name in SELECTORS {
-        assert_transports(&profile_session(37, "tclean", name, None), name, "");
+        assert_transports(&profile_session(38, "tclean", name, None), name, "");
         for &text in TEXTS {
-            assert_transports(&profile_session(37, "tclean", name, Some(text)), name, text);
+            assert_transports(&profile_session(38, "tclean", name, Some(text)), name, text);
         }
     }
 }
@@ -126,7 +126,7 @@ fn direct_current_values_preserve_selector_text_without_profile_migration() {
 
 #[test]
 fn supported_old_profiles_migrate_only_exact_typed_none_before_exact_text() {
-    for version in 28..=36 {
+    for version in 28..=37 {
         for surface in ["tclean", "imager"] {
             for name in SELECTORS {
                 assert_transports(&profile_session(version, surface, name, None), name, "");
