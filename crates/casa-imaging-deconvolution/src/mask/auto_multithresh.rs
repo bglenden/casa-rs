@@ -664,7 +664,12 @@ fn smooth(mask: &[bool], shape: [usize; 2], smooth_factor: f64, beam: AutoMaskBe
     let sigma_minor = smooth_factor * beam.minor_fwhm_pixels / 2.354_820_045_030_949_3;
     // Image2DConvolver::_shapeOfKernel uses a square +/-5-sigma Gaussian
     // kernel (`_sizeOfGaussian(width, 5.0)`) and then forces an odd shape.
-    let radius = (5.0 * sigma_major + 0.5) as isize + 1;
+    // An offset beyond the image's extent reaches none of its pixels, so
+    // the kernel stops there: a beam wider than the image (a PSF fitted
+    // to few short baselines) would otherwise ask for a kernel of its own
+    // size, gigabytes for a small image, to the same sums.
+    let extent = isize::try_from(shape[0].max(shape[1])).unwrap_or(isize::MAX);
+    let radius = ((5.0 * sigma_major + 0.5) as isize + 1).min(extent - 1);
     let side = 2 * radius.unsigned_abs() + 1;
     let cos_pa = beam.position_angle_rad.cos();
     let sin_pa = beam.position_angle_rad.sin();
@@ -1000,5 +1005,46 @@ mod tests {
         let mut never = controls;
         never.minimum_percent_change = -1.0;
         assert!(!skip_channel(&five, &five, &noise, cycle(true), &never));
+    }
+
+    /// A beam far wider than the image smooths by the same sums as the
+    /// whole kernel would give: at each pixel, the unnormalized Gaussian
+    /// at its offset from every set pixel. The kernel stops at the image's
+    /// extent, so the smoothing holds kilobytes, not the gigabytes a
+    /// ±5σ kernel of such a beam needs.
+    #[test]
+    fn a_beam_wider_than_the_image_smooths_by_the_same_sums() {
+        let shape = [16, 12];
+        let mut mask = vec![false; 16 * 12];
+        for index in [0, 5 * 12 + 7, 15 * 12 + 11] {
+            mask[index] = true;
+        }
+        let (major, minor, angle) = (4000.0, 2500.0, 0.3_f64);
+        let smoothed = smooth(
+            &mask,
+            shape,
+            1.0,
+            AutoMaskBeam::new(major, minor, angle, 0.1),
+        );
+        let sigma = |fwhm: f64| fwhm / 2.354_820_045_030_949_3;
+        for (target, value) in smoothed.iter().enumerate() {
+            let [x, y] = [target / shape[1], target % shape[1]];
+            let expected = mask
+                .iter()
+                .enumerate()
+                .filter(|(_, set)| **set)
+                .map(|(source, _)| {
+                    let dx = x as f64 - (source / shape[1]) as f64;
+                    let dy = y as f64 - (source % shape[1]) as f64;
+                    let u = dx * angle.cos() + dy * angle.sin();
+                    let v = -dx * angle.sin() + dy * angle.cos();
+                    (-0.5 * ((u / sigma(minor)).powi(2) + (v / sigma(major)).powi(2))).exp()
+                })
+                .sum::<f64>();
+            assert!(
+                (value - expected).abs() <= 1.0e-12,
+                "{target}: {value} against {expected}"
+            );
+        }
     }
 }
