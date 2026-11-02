@@ -144,6 +144,11 @@ path = "tests/scratch_columns_casa.rs"
 required-features = ["slow-tests"]
 
 [[test]]
+name = "virtual_model_casa"
+path = "tests/virtual_model_casa.rs"
+required-features = ["slow-tests"]
+
+[[test]]
 name = "msexplore_cli"
 path = "tests/msexplore_cli.rs"
 

@@ -69,7 +69,7 @@ fn streaming_cube_complete_application_handoff() {
     }
     drop(outcome);
     imaging.imagename = root.path().join("cube-model-column");
-    imaging.savemodel = true;
+    imaging.savemodel = casa_imaging_application::SaveModel::ModelColumn;
     let outcome = casa_imaging_application::execute(
         &imaging,
         context_with(ResourcePolicy::Explicit {

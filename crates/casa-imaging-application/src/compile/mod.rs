@@ -60,7 +60,7 @@ use crate::native::OpenedObservation;
 use crate::{
     ApplicationNative, ApplicationPublication, ApplicationRuntime, AwCatalogDeployment, AwCfSource,
     AwProjection, BackendChoice, Deconvolver, Gridder, ImagingRequest, NativeAwCachePolicy,
-    RunContext, SpecMode,
+    RunContext, SaveModel, SpecMode,
 };
 use direction::Centre;
 use domains::PreparedImageDomain;
@@ -94,6 +94,9 @@ pub(crate) struct Prepared {
     pub(crate) observation: OpenedObservation,
     pub(crate) write_model_column: bool,
     pub(crate) write_corrected_data: bool,
+    /// What saving the run's model as CASA's virtual model needs, when
+    /// `savemodel='virtual'`.
+    pub(crate) virtual_model: Option<crate::virtual_model::VirtualModelPlan>,
     /// What the native run deploys once the availability check passes.
     pub(crate) deployment: Deployment,
     /// The charge of compile's survey of the observation, held until the
@@ -266,6 +269,22 @@ pub(crate) fn prepare(
         .and_then(PhaseCentreEphemeris::external_series)
         .cloned();
     drop(engine);
+    let virtual_model =
+        (request.savemodel == SaveModel::Virtual)
+            .then(|| {
+                if store.msv2().is_none() {
+                    return Err(PrepareError::MeasurementSet(casa_ms::MsError::InvalidInput(
+                    "savemodel='virtual' saves the model in a MeasurementSet v2, as CASA does"
+                        .to_string(),
+                )));
+                }
+                Ok(crate::virtual_model::VirtualModelPlan::new(
+                    request,
+                    domains[0].coordinates.clone(),
+                    Arc::clone(&measures),
+                ))
+            })
+            .transpose()?;
     Ok(Prepared {
         specification,
         geometry,
@@ -290,8 +309,9 @@ pub(crate) fn prepare(
             measures,
             phase_table,
         },
-        write_model_column: request.savemodel,
+        write_model_column: request.savemodel == SaveModel::ModelColumn,
         write_corrected_data: request.save_continuum_residual,
+        virtual_model,
         deployment,
         survey: survey_charge,
     })

@@ -984,10 +984,11 @@
     },
     "savemodel": {
       "status": "Partial",
-      "scope": "Copied; virtual refused (issue 823); modelcolumn writes MODEL_DATA and request checks a solved or start model exists.",
+      "scope": "Copied. modelcolumn writes MODEL_DATA; request checks a solved or start model exists. virtual saves the final model as CASA's virtual model (casa_ms::virtual_model): the selection's fields'/windows' models are cleared first (VisModelData::clearModel), then the standard gridder's GridFT record (MultiTermFTNew over GridFT for mtmfs) and its FT_MODEL grid image are filed, incrementally, under SOURCE (rows and a known source) or MAIN keywords as CASA 6.7.6.14 files them; CASA predicts from them what it predicts from its own. A model of no flux saves nothing. Other gridders, polarizations than I, facets and outlier fields are refused (issue 823).",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "virtual-model"
       ],
       "behaviors": [
         "returns"
@@ -1731,6 +1732,23 @@
         "crates/casa-imaging-application/tests/restart_products_memory.rs",
         "tools/casa-compat/tclean_case_matrix.py"
       ]
+    },
+    "virtual-model": {
+      "kind": "CASA-paired virtual-model records, interop law and test_modelvis matrix",
+      "state": "passed",
+      "scope": "test_modelvis virtual cases 3, 6.1, 9, 10, 11, 13, 15 (MFS, MT-MFS, automask, nsigma) and 19 (cube): CASA's visibility iterator predicts from casa-rs's virtual model within 6.3e-7 NRMS of its own (3e-7 except MT-MFS), and within 1.4e-7 of casa-rs's own MODEL_DATA; placement, keys, indexcombination and channelselection equal CASA's; the machine records equal CASA's in fields and types, values to the last digit of the image's spectral axis and observatory (CASA's nantenna is uninitialised). The test_modelvis matrix passes 13/29 at 92aaa05, and the eight virtual rows rerun at e5eb51d pass 7/8 (6's second call needs a Taylor start-model list; its first call's model is verified); the other rows wait for start-model lists, cube start-model regridding, nchan=-1 with a channel selection, calcres/calcpsf=False, blank-PSF channels and multi-MS (#980). The slow-tests interop law reads CASA's records on refim_twochan.ms (SOURCE) and refim_point.ms (MAIN), clears them and files them again, after which CASA predicts exactly what it did.",
+      "links": [
+        "tools/casa-compat/tclean_virtual_model_verify.py",
+        "crates/casa-ms/src/virtual_model.rs",
+        "crates/casa-ms/tests/virtual_model_casa.rs",
+        "crates/casa-imaging-application/src/virtual_model.rs",
+        "crates/casars-imager/tests/t1/virtual_model.rs"
+      ],
+      "source_revision": "e5eb51d73aa761bd98f9f8e4d4c785807523cde6",
+      "revision": "e5eb51d73aa761bd98f9f8e4d4c785807523cde6",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "CASA Python -I tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-casa-test-cases.json --data-root <casatestdata> --case-prefix test_modelvis ...; then CASA Python -I tools/casa-compat/tclean_virtual_model_verify.py <output>; cargo test -p casa-ms --features slow-tests --test virtual_model_casa",
+      "receipt": "resources/casa-compat/evidence/tclean-virtual-model-20261102.json; receipts, verify reports and logs archived at /Volumes/home/casa-rs/tclean/20261102/virtual-model-823"
     }
   }
 }

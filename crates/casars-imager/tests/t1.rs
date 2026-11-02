@@ -63,6 +63,8 @@ mod start_model;
 mod stokes;
 #[path = "t1/uv_taper.rs"]
 mod uv_taper;
+#[path = "t1/virtual_model.rs"]
+mod virtual_model;
 #[path = "t1/w_projection.rs"]
 mod w_projection;
 #[path = "t1/weighting.rs"]

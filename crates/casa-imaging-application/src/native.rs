@@ -47,6 +47,9 @@ pub(crate) struct NativeInput {
     pub(crate) observation: OpenedObservation,
     pub(crate) write_model_column: bool,
     pub(crate) write_corrected_data: bool,
+    /// Saving the final model as CASA's virtual model, once the products
+    /// are published.
+    pub(crate) virtual_model: Option<crate::virtual_model::VirtualModelPlan>,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
     pub(crate) start_model: Option<crate::compile::StartModel>,
     /// What the run reads in place of forming it ([`imaging::Forms`]).
@@ -139,6 +142,7 @@ pub(crate) struct NativeRun {
     existing: Option<crate::restart::ExistingProducts>,
     forms: imaging::Forms,
     image_response: Option<MinorCycleImageResponse>,
+    virtual_model: Option<crate::virtual_model::VirtualModelPlan>,
 }
 
 /// The batch route of `problem` on `observation`, the observation compile
@@ -240,6 +244,7 @@ pub(crate) fn prepare(
         existing: input.existing,
         forms: input.forms,
         image_response: input.minor_cycle_image_response,
+        virtual_model: input.virtual_model,
     })
 }
 
@@ -264,6 +269,7 @@ pub(crate) fn run(
         existing,
         forms,
         image_response,
+        virtual_model,
     } = run;
     let teams = OnceCell::new();
     // The run's source borrows the batch route, which is released with the
@@ -326,6 +332,22 @@ pub(crate) fn run(
     summary.products = published;
     (summary.product_lanes, summary.product_lanes_reason) = lanes;
     let products = products?;
+    if let Some(plan) = &virtual_model {
+        run_phase(
+            "virtual model",
+            &runtime.cancel,
+            runtime.diagnostics,
+            summary,
+            || {
+                crate::virtual_model::save(
+                    problem,
+                    products.scientific.final_model(),
+                    plan,
+                    &runtime,
+                )
+            },
+        )?;
+    }
     let workers = team.workers();
     let problem = problem.clone();
     Ok(move |summary| ImagingOutcome {
