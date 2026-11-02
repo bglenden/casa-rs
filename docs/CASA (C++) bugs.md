@@ -21,6 +21,7 @@ CASA behaviours casa-rs does not follow:
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
+[an unflagged non-finite sample](#an-unflagged-non-finite-sample-turns-the-image-to-nan),
 [`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
 [`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0),
 [`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process),
@@ -490,6 +491,23 @@ A facet of an `n`-pixel image split `N` ways is `n / N` pixels (integer
 division) from `facet · (n / N)`, so when `N` does not divide `n` the top and
 right remainder strips belong to no facet: CASA grids and cleans nothing
 there, silently. casa-rs refuses such a layout (`NonDivisibleFacetLayout`).
+
+## An unflagged non-finite sample turns the image to NaN
+
+- Date noted: 2026-11-02
+- Status: CASA behaviour casa-rs does not follow (a NaN image loses the
+  product, so casa-rs corrects it)
+- Affected code: CASA's gridding path, which accumulates unflagged samples
+  without testing them for finiteness
+
+CASA grids a NaN or infinite visibility, weight or UVW in an unflagged
+sample like any other, and the transform spreads it, so the products come
+out NaN everywhere without naming the sample. casa-rs fails the run instead
+(`FiniteValuePolicy::RejectUnflaggedInput`, and `PrepareError::NonFiniteUvw`
+for UVW found while compiling), naming the row, channel and correlation so
+the sample can be flagged. Flagged samples and grid padding are skipped, as
+in CASA. The CASA behaviour is as ARCHITECTURE.md has recorded it since the
+review of #792; it has not been rerun against CASA for this entry.
 
 ## `tclean` images DATA when CORRECTED_DATA is missing, and says nothing
 
