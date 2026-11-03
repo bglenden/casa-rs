@@ -1645,6 +1645,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#pbsquare-20261103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pbsquare-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4818,6 +4829,17 @@
     <span class="md-ellipsis">
       
         pb-statistics-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pbsquare-20261103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        pbsquare-20261103
       
     </span>
   </a>
@@ -8007,8 +8029,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'flatnoise'</code></td>
 <td><code>'flatnoise'</code>; <code>normtype</code> → <code>normtype</code></td>
 <td>Implemented</td>
-<td>Passed only to mosaic/AW; pbsquare refused (issue 823); other gridders ignore it. <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>flatnoise</code>, <code>flatsky</code>, <code>pbsquare</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
+<td>Passed only to mosaic/AW; other gridders ignore it. pbsquare divides the residual by the PB peak squared everywhere and takes the model to and from apparent units through PB², zero where PB² is not above |pblimit| (SIImageStore and SIImageStoreMultiTerm divideResidualByWeight, divideModelByWeight, multiplyModelByWeight; #1061). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>flatnoise</code>, <code>flatsky</code>, <code>pbsquare</code></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-pbsquare-20261103">pbsquare-20261103</a></td>
 </tr>
 <tr>
 <td><code>deconvolver</code></td>
@@ -8901,6 +8923,18 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>df91785e691b824477a98fdd614e21c5485cdf06</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
 <li>Command: <code>tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with resources/casa-compat/tclean-pb-statistics-cases.json on the branch and baseline (353bede5a7) binaries, and with tclean-casa-test-cases.json on 39 NOW cases</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-pb-statistics-20261103.json</code>.</li>
+</ul>
+<p><a id="tclean-evidence-pbsquare-20261103"></a></p>
+<h5 id="pbsquare-20261103">pbsquare-20261103<a class="headerlink" href="#pbsquare-20261103" title="Permanent link">&para;</a></h5>
+<p><strong>CASA tclean ad hoc mosaic cases and the main matrix's pbsquare case, against a baseline build; T0 normalization law — measured: 3 ad hoc and 1 matrix pbsquare case pass (worst NRMS 5.1e-5), each refused at the baseline; 4 flat-noise siblings pass.</strong> normtype='pbsquare' (#1061): the residual divided by the PB peak squared everywhere, the model taken to and from apparent units through PB squared where that exceeds |pblimit|, single-term, per cube channel, with pbcor and as an MT-MFS Taylor family (test_widefield_mosaicft_mtmfs_pbsquare.1). usemask='pb' and pbmask stay refused naming #1061.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/ce8c7d2b67a6a2c52e41016bf76dd8ab0b1a7fc1/resources/casa-compat/evidence/tclean-pbsquare-20261103.json">resources/casa-compat/evidence/tclean-pbsquare-20261103.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/ce8c7d2b67a6a2c52e41016bf76dd8ab0b1a7fc1/resources/casa-compat/tclean-pb-masks-cases.json">resources/casa-compat/tclean-pb-masks-cases.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/ce8c7d2b67a6a2c52e41016bf76dd8ab0b1a7fc1/crates/casa-imaging-products/src/normalization.rs">crates/casa-imaging-products/src/normalization.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/ce8c7d2b67a6a2c52e41016bf76dd8ab0b1a7fc1/tools/casa-compat/tclean_case_matrix.py">tools/casa-compat/tclean_case_matrix.py</a></li>
+<li>Revision: <code>cf872db418c7988c0e919b2fca5a973da94702f6</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with resources/casa-compat/tclean-pb-masks-cases.json, and with tclean-casa-test-cases.json --case test_widefield.test_widefield_mosaicft_mtmfs_pbsquare.1 and four test_widefield mosaic cases</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-pbsquare-20261103.json</code>.</li>
 </ul>
 <h2 id="tools">Tools<a class="headerlink" href="#tools" title="Permanent link">&para;</a></h2>
 <p>Each CASA class casa-rs presents in Python, against the signatures recorded from CASA 6.7.6.14 (<code>crates/casars-python/python/tests/data/casa_&lt;class&gt;_signatures.json</code>), which the Python tests hold the classes to. A reviewed class has a file under <code>resources/casa-compat/semantics/tools/</code> giving each method's status, scope and evidence; the others are not reviewed yet. The simulation classes (<code>simulator</code>, <code>componentlist</code>, <code>measures</code>, <code>quanta</code> and <code>simutil</code>) are reviewed in #1053, and <code>image</code>, <code>coordsys</code>, <code>table</code>, <code>msmetadata</code> and <code>ms</code> in #1025.</p>

@@ -1421,21 +1421,22 @@
 <a href=#1421 id=1421 data-nosnippet>1421</a>    <span class="kw">match </span>choice(deserializer)<span class="question-mark">?</span>.as_str() {
 <a href=#1422 id=1422 data-nosnippet>1422</a>        <span class="string">"flatnoise" </span>=&gt; <span class="prelude-val">Ok</span>(ProductNormalization::FlatNoise),
 <a href=#1423 id=1423 data-nosnippet>1423</a>        <span class="string">"flatsky" </span>=&gt; <span class="prelude-val">Ok</span>(ProductNormalization::FlatSky),
-<a href=#1424 id=1424 data-nosnippet>1424</a>        other =&gt; <span class="prelude-val">Err</span>(D::Error::custom(<span class="macro">format!</span>(<span class="string">"normtype {other:?}"</span>))),
-<a href=#1425 id=1425 data-nosnippet>1425</a>    }
-<a href=#1426 id=1426 data-nosnippet>1426</a>}
-<a href=#1427 id=1427 data-nosnippet>1427</a>
-<a href=#1428 id=1428 data-nosnippet>1428</a><span class="kw">fn </span>grid_precision&lt;<span class="lifetime">'de</span>, D: Deserializer&lt;<span class="lifetime">'de</span>&gt;&gt;(
-<a href=#1429 id=1429 data-nosnippet>1429</a>    deserializer: D,
-<a href=#1430 id=1430 data-nosnippet>1430</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;GridPrecision&gt;, D::Error&gt; {
-<a href=#1431 id=1431 data-nosnippet>1431</a>    <span class="kw">match </span>choice(deserializer)<span class="question-mark">?</span>.as_str() {
-<a href=#1432 id=1432 data-nosnippet>1432</a>        <span class="string">"auto" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
-<a href=#1433 id=1433 data-nosnippet>1433</a>        <span class="string">"f32" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(GridPrecision::F32)),
-<a href=#1434 id=1434 data-nosnippet>1434</a>        <span class="string">"f64" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(GridPrecision::F64)),
-<a href=#1435 id=1435 data-nosnippet>1435</a>        other =&gt; <span class="prelude-val">Err</span>(D::Error::custom(<span class="macro">format!</span>(<span class="string">"gridprecision {other:?}"</span>))),
-<a href=#1436 id=1436 data-nosnippet>1436</a>    }
-<a href=#1437 id=1437 data-nosnippet>1437</a>}
-<a href=#1438 id=1438 data-nosnippet>1438</a>
-<a href=#1439 id=1439 data-nosnippet>1439</a><span class="attr">#[cfg(test)]
-<a href=#1440 id=1440 data-nosnippet>1440</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tests;
+<a href=#1424 id=1424 data-nosnippet>1424</a>        <span class="string">"pbsquare" </span>=&gt; <span class="prelude-val">Ok</span>(ProductNormalization::PbSquare),
+<a href=#1425 id=1425 data-nosnippet>1425</a>        other =&gt; <span class="prelude-val">Err</span>(D::Error::custom(<span class="macro">format!</span>(<span class="string">"normtype {other:?}"</span>))),
+<a href=#1426 id=1426 data-nosnippet>1426</a>    }
+<a href=#1427 id=1427 data-nosnippet>1427</a>}
+<a href=#1428 id=1428 data-nosnippet>1428</a>
+<a href=#1429 id=1429 data-nosnippet>1429</a><span class="kw">fn </span>grid_precision&lt;<span class="lifetime">'de</span>, D: Deserializer&lt;<span class="lifetime">'de</span>&gt;&gt;(
+<a href=#1430 id=1430 data-nosnippet>1430</a>    deserializer: D,
+<a href=#1431 id=1431 data-nosnippet>1431</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;GridPrecision&gt;, D::Error&gt; {
+<a href=#1432 id=1432 data-nosnippet>1432</a>    <span class="kw">match </span>choice(deserializer)<span class="question-mark">?</span>.as_str() {
+<a href=#1433 id=1433 data-nosnippet>1433</a>        <span class="string">"auto" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>),
+<a href=#1434 id=1434 data-nosnippet>1434</a>        <span class="string">"f32" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(GridPrecision::F32)),
+<a href=#1435 id=1435 data-nosnippet>1435</a>        <span class="string">"f64" </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(GridPrecision::F64)),
+<a href=#1436 id=1436 data-nosnippet>1436</a>        other =&gt; <span class="prelude-val">Err</span>(D::Error::custom(<span class="macro">format!</span>(<span class="string">"gridprecision {other:?}"</span>))),
+<a href=#1437 id=1437 data-nosnippet>1437</a>    }
+<a href=#1438 id=1438 data-nosnippet>1438</a>}
+<a href=#1439 id=1439 data-nosnippet>1439</a>
+<a href=#1440 id=1440 data-nosnippet>1440</a><span class="attr">#[cfg(test)]
+<a href=#1441 id=1441 data-nosnippet>1441</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>
