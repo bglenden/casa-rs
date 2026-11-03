@@ -511,8 +511,20 @@ pub enum PrepareError {
         /// Its shape.
         shape: Vec<usize>,
     },
-    /// Native mask reprojection supports SIN only.
-    #[error("native mask reprojection currently requires SIN coordinates, not {projection:?}")]
+    /// `projection='NCP'` centred on the celestial equator, where its SIN
+    /// slant `cot δ₀` is infinite. CASA writes it unguarded and places every
+    /// pixel at NaN; casa-rs refuses it (`docs/CASA (C++) bugs.md`).
+    #[error(
+        "projection 'NCP' is undefined for an image centred on the celestial equator: its \
+         slant cot(dec) is infinite (CASA writes it and places every pixel at NaN)"
+    )]
+    NcpAtEquator,
+    /// A mask image's projection, with its parameters, is not one casa-rs
+    /// images in (`casa_imaging_model::Projection`).
+    #[error(
+        "a mask image in projection {projection:?} with these parameters is not one casa-rs \
+         images in yet (#1101)"
+    )]
     MaskImageProjection {
         /// The mask's projection.
         projection: ProjectionType,

@@ -18,7 +18,7 @@ use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 use casa_imaging_model::{
     FixedRestoringBeam, HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization,
-    RestoringBeamPolicy, UvTaper,
+    Projection, RestoringBeamPolicy, UvTaper,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::{Diagnostics, ResourcePolicy};
@@ -59,6 +59,10 @@ pub struct ImagingRequest {
     /// `cell` does.
     #[serde(deserialize_with = "cell_pair_arcsec")]
     pub cell: [f64; 2],
+    /// The celestial projection of the image's direction axes, CASA's
+    /// `projection` (`SIN` by default).
+    #[serde(deserialize_with = "projection")]
+    pub projection: Projection,
     /// The visibility column imaged; `None` takes `CORRECTED_DATA` when it
     /// exists and `DATA` otherwise. `CORRECTED_DATA` asked for on a
     /// MeasurementSet without it images `DATA`, as CASA's `tclean` does;
@@ -1199,6 +1203,13 @@ fn choice<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error
         Value::String(text) => Ok(text),
         value => Err(unexpected(&value, "a choice")),
     }
+}
+
+fn projection<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Projection, D::Error> {
+    let text = choice(deserializer)?;
+    Projection::from_casa_name(&text).ok_or_else(|| {
+        D::Error::custom(format!("projection {text:?} is not one casa-rs images in"))
+    })
 }
 
 fn save_model<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SaveModel, D::Error> {

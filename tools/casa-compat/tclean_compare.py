@@ -4,9 +4,9 @@
 Evidence tooling, not a runtime dependency: run under CASA 6.7.6.14's Python.
 `run_native` calls casa-rs's public Python `casars.tasks.tclean` in a separate
 interpreter; `compare_product` compares one image product with CASA's under
-the T1.5 limits (NRMS <= 1e-3, `.sumwt` within 5e-5 of CASA's peak, WCS, rest
-frequency, units, Stokes, frames, beam axes 1e-3 and position angle 0.01 deg,
-exact masks).
+the T1.5 limits (NRMS <= 1e-3, `.sumwt` within 5e-5 of CASA's peak, WCS and its
+projection, rest frequency, units, Stokes, frames, beam axes 1e-3 and position
+angle 0.01 deg, exact masks).
 """
 
 import hashlib
@@ -84,6 +84,10 @@ def metadata(path, casatools):
                 "referencevalue": coords.referencevalue()["numeric"].tolist(),
                 "referencepixel": coords.referencepixel()["numeric"].tolist(),
                 "increment": coords.increment()["numeric"].tolist(),
+                "projection": coords.projection()["type"],
+                "projection_parameters": [
+                    float(value) for value in coords.projection()["parameters"]
+                ],
                 "restfreq": next(
                     value["restfreq"] for key, value in record.items() if key.startswith("spectral")
                 ),
@@ -114,14 +118,20 @@ def compare_product(native, casa, name, reader, casatools, numpy):
     else:
         numeric = entry["nrms"] <= 1e-3
     left, right = metadata(native, casatools), metadata(casa, casatools)
-    checks = {key: left[key] == right[key] for key in ("unit", "stokes", "units", "codes")}
+    checks = {
+        key: left[key] == right[key] for key in ("unit", "stokes", "units", "codes", "projection")
+    }
     for key, rtol, atol in (
         ("referencevalue", 2e-10, 2e-10),
         ("referencepixel", 0, 1e-8),
         ("increment", 2e-10, 2e-10),
         ("restfreq", 2e-10, 2e-10),
+        ("projection_parameters", 2e-10, 2e-10),
     ):
-        checks[key] = bool(numpy.allclose(left[key], right[key], rtol=rtol, atol=atol))
+        checks[key] = bool(
+            numpy.shape(left[key]) == numpy.shape(right[key])
+            and numpy.allclose(left[key], right[key], rtol=rtol, atol=atol)
+        )
     beam = True
     if ab or bb:
         beam = bool(ab and bb) and all(abs(x - y) <= 1e-3 * abs(y) for x, y in zip(ab[:2], bb[:2]))
