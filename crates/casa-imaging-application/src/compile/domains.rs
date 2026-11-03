@@ -55,6 +55,15 @@ pub(super) enum DomainMask {
     /// Inclusive pixel boxes `[x0, y0, x1, y1]`, each on its channels: a
     /// CRTF region limited to a spectral range over part of a cube.
     ChannelBoxes(Vec<([i64; 4], RangeInclusive<usize>)>),
+    /// A static mask kept, in every plane, where that plane's `.pb`
+    /// exceeds `level` (`SDMaskHandler::makePBMask`): `usemask='pb'`'s
+    /// every pixel, or a named user mask under a `pbmask` above zero.
+    WithinPrimaryBeam {
+        /// The static mask the beam cuts.
+        within: Box<DomainMask>,
+        /// tclean's `pbmask`.
+        level: f64,
+    },
 }
 
 /// One image domain of the run.
@@ -196,14 +205,30 @@ fn warn_inefficient_size(image_size: [usize; 2]) {
 }
 
 /// The main domain's mask, on an image of `channels` channels on
-/// `spectral`: CASA auto-multithresh with tclean's controls, the user mask
-/// image or boxes ([`user_boxes`]), or every pixel.
+/// `spectral`: CASA auto-multithresh with tclean's controls, the pixels
+/// inside the primary beam (`usemask='pb'`), the user mask image or boxes
+/// ([`user_boxes`]), or every pixel. tclean's `setupMask` cuts a named user
+/// mask to the primary beam at a `pbmask` above zero, and leaves every
+/// pixel when no mask is named; an automatic mask reads `pbmask` as it
+/// masks (the minor cycle's `MinorCycleSetup::pbmask`).
 fn request_mask(
     request: &ImagingRequest,
     spectral: &ImageSpectralCoordinate,
     channels: usize,
 ) -> Result<DomainMask, PrepareError> {
+    let within_beam = |within: DomainMask, level: f64| DomainMask::WithinPrimaryBeam {
+        within: Box::new(within),
+        level,
+    };
+    let named = |mask: DomainMask| {
+        if request.pbmask > 0.0 {
+            within_beam(mask, request.pbmask)
+        } else {
+            mask
+        }
+    };
     Ok(match (request.usemask, &request.mask_image) {
+        (UseMask::Pb, _) => within_beam(DomainMask::FullPlane, request.pbmask),
         (UseMask::AutoMultithresh, _) => DomainMask::AutoMultithresh(AutoMultithreshControls {
             sidelobe_factor: request.sidelobethreshold,
             noise_factor: request.noisethreshold,
@@ -218,11 +243,11 @@ fn request_mask(
             noise: noise_estimate(request),
             verbose: request.verbose,
         }),
-        (UseMask::User, Some(path)) => DomainMask::Image(path.clone()),
+        (UseMask::User, Some(path)) => named(DomainMask::Image(path.clone())),
         (UseMask::User, None) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
             DomainMask::FullPlane
         }
-        (UseMask::User, None) => user_boxes(&request.mask_box, spectral, channels)?,
+        (UseMask::User, None) => named(user_boxes(&request.mask_box, spectral, channels)?),
     })
 }
 
@@ -349,20 +374,31 @@ pub(super) fn mask_plans(
     let mut resident = Reservation::none();
     let plans = domains
         .iter()
-        .map(|domain| mask_plan(domain, channels, context, &mut resident))
+        .map(|domain| {
+            mask_plan(
+                domain,
+                domain.mask.clone(),
+                channels,
+                context,
+                &mut resident,
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     Ok((ImageDomainReconstructionMaskPlans::new(plans)?, resident))
 }
 
+/// The plan of `mask` on `domain`'s grid, charging what it keeps resident
+/// to `resident`.
 fn mask_plan(
     domain: &PreparedImageDomain,
+    mask: DomainMask,
     channels: usize,
     context: &RunContext,
     resident: &mut Reservation,
 ) -> Result<ReconstructionMaskPlan, PrepareError> {
     let coordinate = domain.direction;
     let image_size = domain.image_size;
-    Ok(match domain.mask.clone() {
+    Ok(match mask {
         DomainMask::FullPlane => ReconstructionMaskPlan::FullPlane { coordinate },
         DomainMask::Boxes(boxes) => ReconstructionMaskPlan::Boxes {
             coordinate,
@@ -450,6 +486,12 @@ fn mask_plan(
             previous: None,
             stopped_channels: Box::new([]),
         },
+        DomainMask::WithinPrimaryBeam { within, level } => {
+            ReconstructionMaskPlan::within_primary_beam(
+                mask_plan(domain, *within, channels, context, resident)?,
+                level,
+            )?
+        }
     })
 }
 

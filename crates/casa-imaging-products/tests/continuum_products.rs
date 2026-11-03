@@ -276,7 +276,7 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         .materialize::<casa_imaging_deconvolution::MaskError>(
             first_round.join.final_model(),
             first_round.join.normal_state(),
-            None,
+            &casa_imaging_deconvolution::MaskSources::default(),
         )
         .expect("domain masks")
         .into_parts();

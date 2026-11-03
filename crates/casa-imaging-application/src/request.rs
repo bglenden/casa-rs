@@ -180,8 +180,13 @@ pub struct ImagingRequest {
     pub scales: Vec<f64>,
     /// CASA multiscale small-scale bias.
     pub smallscalebias: f64,
-    /// User masks or CASA auto-multithresh.
+    /// User masks, the primary beam's or CASA auto-multithresh.
     pub usemask: UseMask,
+    /// tclean's `pbmask`, in `[0, 1)`: the `.pb` level of `usemask='pb'`'s
+    /// mask, the level a named user mask and auto-multithresh are cut to
+    /// above zero, and the level above which the `nsigma` noise is
+    /// measured.
+    pub pbmask: f64,
     /// Auto-multithresh sidelobe threshold multiplier.
     pub sidelobethreshold: f64,
     /// Auto-multithresh noise threshold multiplier.
@@ -450,9 +455,14 @@ pub enum SpectralMaskRange {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum UseMask {
-    /// The boxes and image the request names; everything when it names none.
+    /// The boxes and image the request names, cut to the primary beam at
+    /// a `pbmask` above zero; everything when it names none.
     User,
-    /// CASA auto-multithresh.
+    /// The pixels whose `.pb` exceeds `pbmask`, in every plane
+    /// (`SDMaskHandler::makePBMask`).
+    Pb,
+    /// CASA auto-multithresh, cut to the primary beam at a `pbmask` above
+    /// zero.
     AutoMultithresh,
 }
 
@@ -752,12 +762,21 @@ impl ImagingRequest {
         }
         let has_boxes = !self.mask_box.is_empty() || self.explicit_empty_mask;
         if (self.mask_image.is_some() && has_boxes)
-            || (self.usemask == UseMask::AutoMultithresh
-                && (self.mask_image.is_some() || has_boxes))
+            || (self.usemask != UseMask::User && (self.mask_image.is_some() || has_boxes))
         {
             return invalid(
                 "usemask, mask_image, mask_box",
-                "name one mask: auto-multithresh, a mask image or boxes",
+                "name one mask: auto-multithresh, the primary beam's, a mask image or boxes",
+            );
+        }
+        if !(0.0..1.0).contains(&self.pbmask) {
+            return invalid("pbmask", "pbmask is a primary-beam level in [0, 1)");
+        }
+        if self.outlierfile.is_some() && (self.usemask == UseMask::Pb || self.pbmask > 0.0) {
+            return invalid(
+                "outlierfile, usemask, pbmask",
+                "outlier fields take the main field's usemask='pb' and pbmask in CASA, which \
+                 is not implemented yet (#814)",
             );
         }
         if self.save_continuum_residual && self.fitspw.is_none() {

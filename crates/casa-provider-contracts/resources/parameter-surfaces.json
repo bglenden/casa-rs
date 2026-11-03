@@ -8065,7 +8065,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 39,
+      "contract_version": 40,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -9202,8 +9202,7 @@
             "provider": {"field": "pbmask"},
             "python": {"name": "pbmask"},
             "presentation": {"label": "PB Mask", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 1061}
+          }
         },
         {
           "name": "sidelobethreshold",
@@ -9879,6 +9878,12 @@
         {
           "from_contract": 38,
           "to_contract": 39,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 39,
+          "to_contract": 40,
           "steps": [],
           "changed_defaults": []
         }

@@ -334,8 +334,6 @@ class Refusals:
                 980,
             )
         usemask = self.text("usemask")
-        if usemask == "pb":
-            self.add("usemask='pb'", NOT_YET, 1061)
         return {
             "cube": cube,
             "gridder": gridder,
@@ -493,6 +491,12 @@ class Refusals:
 
     def masking(self, modes):
         """`Tclean::masking` and `user_mask`."""
+        pbmask = self.values.get("pbmask", 0.0)
+        if isinstance(pbmask, (int, float)) and not isinstance(pbmask, bool):
+            if pbmask >= 1.0:
+                self.add("pbmask >= 1.0", PARITY)
+            elif pbmask < 0.0:
+                self.add("pbmask < 0.0", PARITY)
         entries = self.texts("mask")
         if not modes["user_mask"] or not entries:
             return

@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use casa_imaging_deconvolution::{
     AutoMaskEvidence, AutoMaskPlane, AutoMaskSource, FinalNormalState,
     ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MajorCycleCompletion,
-    MaskError, MaskPlaneKey, ModelGeneration, ModelLifecycle, ModelLifecycleError, NoiseEstimate,
-    NormalBasis, NormalStateError, SpectralChannelValidity, robust_noise,
+    MaskError, MaskPlaneKey, MaskSources, ModelGeneration, ModelLifecycle, ModelLifecycleError,
+    NoiseEstimate, NormalBasis, NormalStateError, SpectralChannelValidity, robust_noise,
 };
 use casa_imaging_deconvolution::{
     Clark, Component, CycleControls, Delta, Hogbom, LinearRefresh, MinorCycleView, Multiscale,
@@ -111,6 +111,11 @@ pub struct MinorCycleSetup<'a> {
     /// negative (`SIImageStore::divideResidualByWeight`): each plane's
     /// peaks and automatic mask then read only the pixels inside the beam.
     pub residual_pixel_mask: bool,
+    /// tclean's `pbmask`, in `[0, 1)`: the `nsigma` noise reads the pixels
+    /// whose `.pb` exceeds it (`SIImageStore::calcRobustRMS`), and above
+    /// zero it is an automatic mask's pixel mask
+    /// (`SDMaskHandler::autoMaskWithinPB`).
+    pub pbmask: f64,
 }
 
 /// One plane of the normal state: image domain, absolute output channel
@@ -299,6 +304,16 @@ pub fn prepare_minor_cycle(
     if pixels::reads_beam(setup) && setup.nsigma > 0.0 && cache.beams.is_none() {
         cache.beams = Some(pixels::domain_beams(normal, base, setup, taylor, &keys)?);
     }
+    // A mask cut to the primary beam reads each plane's `.pb`.
+    let roles = base.shape().domain_roles();
+    let beam = |key: MaskPlaneKey, level: f32| {
+        pixels::plane_beam(
+            normal,
+            setup,
+            (roles, absolute(normal, taylor, key), taylor),
+            level,
+        )
+    };
     let (masks, auto_masks) = if mask_plans.automatic() {
         // An automatic mask smooths by its channel block's common beam and
         // thresholds by the image's sidelobe level, so every plane's PSF is
@@ -326,9 +341,17 @@ pub fn prepare_minor_cycle(
             psf: &psf,
             workers: team.workers(),
         };
-        team.install(|| mask_plans.materialize(base, normal, Some(&source)))?
+        let sources = MaskSources {
+            auto: Some(&source),
+            beam: Some(&beam),
+        };
+        team.install(|| mask_plans.materialize(base, normal, &sources))?
     } else {
-        mask_plans.materialize::<MinorCycleRunError>(base, normal, None)?
+        let sources = MaskSources {
+            auto: None,
+            beam: Some(&beam),
+        };
+        mask_plans.materialize(base, normal, &sources)?
     }
     .into_parts();
     let inputs = Inputs {
@@ -627,26 +650,28 @@ fn plane_keys(normal: &FinalNormalState, taylor: bool) -> Vec<PlaneKey> {
 
 /// The pixels plane `key`'s preparation measures, `plane` read as a view:
 /// its valid pixels and, when the cycle reads the `.pb`
-/// ([`pixels::reads_beam`]), their part inside it.
+/// ([`pixels::reads_beam`]), their part inside it and above `pbmask`.
 fn plane_pixels<'p>(
     inputs: &Inputs<'_>,
     key: PlaneKey,
     plane: &'p PlaneData<'_>,
 ) -> Result<pixels::PlanePixels<'p>, MinorCycleRunError> {
-    let beam = if pixels::reads_beam(inputs.setup) {
+    let (beam, within) = if pixels::reads_beam(inputs.setup) {
         pixels::beam_pixels(
             inputs.setup,
             (inputs.base.shape().domain_roles(), key, inputs.taylor),
             plane.valid.as_slice(),
             plane.response.as_ref(),
         )?
-        .map(|beam| Support::new(plane.shape, beam))
+        .map(|beam| beam.into_supports(plane.shape))
+        .unzip()
     } else {
-        None
+        (None, None)
     };
     Ok(pixels::PlanePixels {
         valid: &plane.valid,
         beam,
+        within: within.flatten(),
     })
 }
 

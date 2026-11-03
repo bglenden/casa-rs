@@ -103,9 +103,9 @@ fn assert_transports(session: &ParameterSession, name: &str, expected: &str) {
 #[test]
 fn current_profiles_and_provider_projection_preserve_selector_text() {
     for name in SELECTORS {
-        assert_transports(&profile_session(38, "tclean", name, None), name, "");
+        assert_transports(&profile_session(40, "tclean", name, None), name, "");
         for &text in TEXTS {
-            assert_transports(&profile_session(38, "tclean", name, Some(text)), name, text);
+            assert_transports(&profile_session(40, "tclean", name, Some(text)), name, text);
         }
     }
 }

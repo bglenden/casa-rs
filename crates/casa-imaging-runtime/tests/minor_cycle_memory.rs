@@ -165,6 +165,7 @@ fn a_minor_cycle_holds_at_most_its_admission_whatever_its_planes() {
             automask: false,
             primary_beam: None,
             residual_pixel_mask: false,
+            pbmask: 0.0,
         };
         let masks = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::FullPlane {
             coordinate: problem.geometry().domains()[0].direction(),
@@ -422,25 +423,48 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
     }
 }
 
-/// A minor cycle's preparation that reads the analytic `.pb` (#1078):
-/// each plane loaded at once forms its beam (`f32`) and keeps its
-/// support beside the `nsigma` noise's copies, all within
-/// [`prepare_bytes`]. A full-plane mask holds one support, so the planes
-/// in flight are what the charge must cover: cubes of 1 and 16 channels
-/// on one worker and on four, a single plane of 128 by 128 pixels, under
-/// either noise estimate.
+/// How a beam-reading preparation reads the `.pb`: for the `nsigma` noise
+/// and the residual's pixel mask at `pbmask` 0, also above a `pbmask` of
+/// 0.3 with a mask cut to the beam there (`usemask='pb'`), or only for that
+/// mask, without `nsigma` and with a negative `pblimit`.
+#[derive(Clone, Copy, Debug)]
+enum BeamReading {
+    Statistics,
+    PbMask,
+    MaskOnly,
+}
+
+/// A minor cycle's preparation that reads the analytic `.pb` (#1078,
+/// #1061): each plane loaded at once forms its beam (`f32`) and keeps its
+/// supports beside the `nsigma` noise's copies, and a mask cut to the beam
+/// forms one plane's beam at a time beside the mask it makes, a plane per
+/// channel, all within [`prepare_bytes`]. A full-plane mask holds one
+/// support, so the planes in flight are what the charge must cover: cubes
+/// of 1 and 16 channels on one worker and on four, a single plane of 128 by
+/// 128 pixels, under either noise estimate and each [`BeamReading`].
 #[test]
 fn a_preparation_that_reads_the_beam_holds_at_most_its_admission() {
     let _measurement = MEASUREMENT.lock().expect("measurement lock");
     let cases = [(32, 1, 1), (32, 16, 1), (32, 16, 4), (128, 1, 1)];
-    for ((width, channels, workers), noise) in cases.into_iter().flat_map(|case| {
-        [
-            casa_imaging_deconvolution::NoiseEstimate::Fast,
-            casa_imaging_deconvolution::NoiseEstimate::Robust,
-        ]
-        .map(|noise| (case, noise))
-    }) {
-        let label = format!("{channels} channels of {width} px on {workers} workers, {noise:?}");
+    let readings = [
+        BeamReading::Statistics,
+        BeamReading::PbMask,
+        BeamReading::MaskOnly,
+    ];
+    for (((width, channels, workers), noise), reading) in cases
+        .into_iter()
+        .flat_map(|case| {
+            [
+                casa_imaging_deconvolution::NoiseEstimate::Fast,
+                casa_imaging_deconvolution::NoiseEstimate::Robust,
+            ]
+            .map(|noise| (case, noise))
+        })
+        .flat_map(|row| readings.map(|reading| (row, reading)))
+    {
+        let label = format!(
+            "{channels} channels of {width} px on {workers} workers, {noise:?}, {reading:?}"
+        );
         let basis = ReconstructionBasis::ChannelLocal { channels };
         let problem = reconstruction_problem(
             31,
@@ -467,11 +491,16 @@ fn a_preparation_that_reads_the_beam_holds_at_most_its_admission() {
             casa_imaging_model::ImageDomainRole::Main,
             vec![[width as f64 / 2.0, width as f64 / 2.0]],
         )]);
+        let mask_only = matches!(reading, BeamReading::MaskOnly);
+        let pbmask = match reading {
+            BeamReading::Statistics => 0.0,
+            BeamReading::PbMask | BeamReading::MaskOnly => 0.3,
+        };
         let setup = MinorCycleSetup {
             algorithm: ReconstructionAlgorithm::Hogbom,
             accounting: HogbomIterationAccounting::Strict,
             response: None,
-            nsigma: 3.0,
+            nsigma: if mask_only { 0.0 } else { 3.0 },
             noise,
             automask: false,
             primary_beam: casa_imaging_products::AnalyticPrimaryBeam::new(
@@ -480,12 +509,19 @@ fn a_preparation_that_reads_the_beam_holds_at_most_its_admission() {
                 Some(&centres),
             )
             .expect("L and S band"),
-            residual_pixel_mask: true,
+            residual_pixel_mask: !mask_only,
+            pbmask,
         };
-        let plans = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::FullPlane {
+        let full = ReconstructionMaskPlan::FullPlane {
             coordinate: problem.geometry().domains()[0].direction(),
-        }])
-        .expect("full-plane mask");
+        };
+        let plan = match reading {
+            BeamReading::Statistics => full,
+            BeamReading::PbMask | BeamReading::MaskOnly => {
+                ReconstructionMaskPlan::within_primary_beam(full, pbmask).expect("a pb mask")
+            }
+        };
+        let plans = ImageDomainReconstructionMaskPlans::new([plan]).expect("the mask");
         let team = WorkerTeam::new(workers).expect("team");
         let mut cache = PsfCache::default();
         let charge = prepare_bytes(&completion, &plans, &setup, &cache, workers)
@@ -512,7 +548,20 @@ fn a_preparation_that_reads_the_beam_holds_at_most_its_admission() {
             excess <= 0,
             "{label}: preparation held {excess} bytes more than it was admitted"
         );
-        assert!(prepared.statistics.nsigma_threshold > 0.0, "{label}");
+        assert!(
+            mask_only || prepared.statistics.nsigma_threshold > 0.0,
+            "{label}"
+        );
+        let mask = prepared.masks().get(0).expect("the mask");
+        assert_eq!(
+            mask.planes().count(),
+            if mask_only || matches!(reading, BeamReading::PbMask) {
+                channels
+            } else {
+                1
+            },
+            "{label}"
+        );
     }
 }
 
@@ -549,5 +598,6 @@ fn automask_setup<'a>(
             })
             .flatten(),
         residual_pixel_mask: with_beam,
+        pbmask: 0.0,
     }
 }

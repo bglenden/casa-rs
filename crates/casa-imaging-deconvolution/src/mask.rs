@@ -10,11 +10,12 @@
 //! A mask covers every plane of its image domain, as CASA's `.mask` image
 //! does: one support shared by every channel or polarization, as CASA
 //! expands a continuum or Stokes I mask, or one per plane, as an automatic
-//! mask makes ([`MaskPlanes`]).
+//! mask or a mask cut to the primary beam makes ([`MaskPlanes`]).
 
 mod auto_multithresh;
 mod auto_planes;
 mod plans;
+mod primary_beam;
 
 use std::sync::Arc;
 
@@ -31,9 +32,10 @@ pub use auto_planes::{
 };
 pub use plans::{
     ImageDomainMaskMaterialization, ImageDomainReconstructionMaskPlans,
-    ImageDomainReconstructionMasks, NoiseMaskExclusion, ReconstructionMaskPlan,
+    ImageDomainReconstructionMasks, MaskSources, NoiseMaskExclusion, ReconstructionMaskPlan,
     ReconstructionMaskSet,
 };
+pub use primary_beam::MaskBeamRead;
 
 /// Reproject decoded source support onto the target direction grid.
 ///
@@ -447,6 +449,13 @@ pub enum MaskError {
     /// Auto-mask controls or beam area are invalid.
     #[error("auto-multithreshold controls are invalid")]
     InvalidAutoControls,
+    /// A primary-beam mask cuts a static mask at a `.pb` level in `[0, 1)`.
+    #[error("a primary-beam mask cuts a static mask at a .pb level in [0, 1)")]
+    InvalidPrimaryBeamMask,
+    /// A mask cut to the primary beam needs the run's `.pb`, as tclean's
+    /// `SDMaskHandler::makePBMask` does.
+    #[error("Need PB/Sensitivity/Weight image before a PB-based mask can be made")]
+    NoPrimaryBeam,
 }
 
 fn validate_shape(shape: [usize; 2]) -> Result<(), MaskError> {

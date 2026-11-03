@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The pixels a minor cycle's statistics read (#1078, #1079): tclean's
-//! residual carries the `.pb`'s support as its pixel mask
+//! The pixels a minor cycle's statistics and masks read (#1078, #1079,
+//! #1061): tclean's residual carries the `.pb`'s support as its pixel mask
 //! (`SIImageStore::divideResidualByWeight`), so its peaks and automatic
 //! mask read only the pixels inside the beam, and its `nsigma` noise
-//! reads the pixels where the `.pb` exceeds `pbmask`, 0
-//! (`SIImageStore::calcRobustRMS`), every pixel when none does. The beam
-//! is the weight image's under a response and the telescope's analytic
-//! beam otherwise; each law places the beam's edge across the plane and
-//! compares with statistics computed here of the pixels on either side.
+//! reads the pixels where the `.pb` exceeds `pbmask`
+//! (`SIImageStore::calcRobustRMS`), every pixel when none does. A `pbmask`
+//! above zero is an automatic mask's pixel mask
+//! (`SDMaskHandler::autoMaskWithinPB`), and `usemask='pb'`, or a named
+//! mask under it, keeps `pb > pbmask` in every plane
+//! (`SDMaskHandler::makePBMask`). The beam is the weight image's under a
+//! response and the telescope's analytic beam otherwise; each law places
+//! the beam's edge, or a `pbmask` level, across the plane and compares
+//! with statistics and masks computed here of the pixels on either side.
 
 #[path = "../../casa-imaging-deconvolution/tests/support/problems.rs"]
 mod problems;
@@ -19,7 +23,7 @@ use std::collections::BTreeMap;
 
 use casa_imaging_deconvolution::{
     AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion,
-    NoiseEstimate, PassImages, ReconstructionMaskPlan,
+    MaskBox, NoiseEstimate, PassImages, ReconstructionMaskPlan,
 };
 use casa_imaging_model::{
     CompiledProblem, HogbomIterationAccounting, ImageDomainRole, ProductNormalization,
@@ -173,7 +177,46 @@ fn setup<'a>(beam: Option<AnalyticPrimaryBeam<'a>>) -> MinorCycleSetup<'a> {
         automask: false,
         primary_beam: beam,
         residual_pixel_mask: true,
+        pbmask: 0.0,
     }
+}
+
+/// The `.pb` of `beam` at `channel`, x-major, zero at or below the cutoff.
+fn pb(beam: &AnalyticPrimaryBeam<'_>, channel: usize) -> Vec<f32> {
+    beam.pb(&ImageDomainRole::Main, channel)
+        .expect("the plane's beam")
+}
+
+/// The pixels of `pb` that exceed `level`, as CASA's Float `pb > pbmask`.
+fn above(pb: &[f32], level: f64) -> Vec<bool> {
+    pb.iter().map(|value| *value > level as f32).collect()
+}
+
+/// A `pbmask` that splits the beam's support on `pb`: the median of its
+/// positive values, which some pixels exceed and others do not.
+fn splitting_level(pb: &[f32]) -> f64 {
+    let mut positive = pb
+        .iter()
+        .copied()
+        .filter(|value| *value > 0.0)
+        .collect::<Vec<_>>();
+    positive.sort_by(f32::total_cmp);
+    let level = f64::from(positive[positive.len() / 2]);
+    let kept = above(pb, level).iter().filter(|kept| **kept).count();
+    assert!(
+        0 < kept && kept < positive.len(),
+        "the level splits the support"
+    );
+    level
+}
+
+/// `plan` cut to the primary beam at `level`.
+fn within_beam(plan: ReconstructionMaskPlan, level: f64) -> ImageDomainReconstructionMaskPlans {
+    ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::within_primary_beam(
+        plan, level,
+    )
+    .expect("a mask cut to the beam")])
+    .expect("the mask")
 }
 
 fn full_plane(problem: &CompiledProblem) -> ImageDomainReconstructionMaskPlans {
@@ -532,4 +575,288 @@ fn a_cube_channel_outside_its_beam_measures_no_noise() {
         "{threshold}, expected {}",
         3.0 * rms
     );
+}
+
+/// The completion of an initial pass over a two-channel cube whose
+/// residual is 0.01 Jy everywhere.
+fn cube_completion(problem: &CompiledProblem) -> MajorCycleCompletion {
+    let scene = Scene::new(problem);
+    let lifecycle = model_lifecycle(problem);
+    let mut cycle = MajorCycle::initial(
+        problem,
+        empty_final_model(&lifecycle),
+        scene.resident_storage(),
+    )
+    .expect("major cycle");
+    let (model, mut pass) = cycle.parts();
+    let mut images = scene.pass_images(model, true);
+    images.sum_weights = vec![1.0; 2];
+    images.published_sum_weights = vec![1.0; 2];
+    images.residual = vec![0.01; 2 * WIDTH * WIDTH];
+    let psf = scene.unit_psf();
+    images.psf = Some(psf.iter().chain(&psf).map(|value| *value as f32).collect());
+    pass.append(images).expect("images");
+    cycle.finish(SAMPLES, BLOCKS).expect("complete")
+}
+
+/// #1061: `usemask='pb'` keeps, in each channel of a cube, the pixels whose
+/// own channel's `.pb` exceeds `pbmask` (`SDMaskHandler::makePBMask`); at
+/// `pbmask` 0 that is the beam's support. The beam narrows from 1.05 to
+/// 1.15 GHz, so the two channels' masks differ. The next boundary keeps
+/// the mask it made, as tclean makes it once, and reads no beam to do so.
+#[test]
+fn usemask_pb_masks_each_channel_inside_its_own_beam() {
+    let problem = reconstruction_problem(
+        31,
+        WIDTH,
+        2,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Hogbom,
+        ReconstructionControls::new(100, 0.1, 0.0),
+    );
+    let centres = edge_centres(&problem);
+    let beam = AnalyticPrimaryBeam::new(
+        &problem,
+        AnalyticPrimaryBeamModel::CasaEvlaCommon,
+        Some(&centres),
+    )
+    .expect("L band")
+    .expect("an analytic beam");
+    let beams = [pb(&beam, 0), pb(&beam, 1)];
+    let level = splitting_level(&beams[0]);
+    let completion = cube_completion(&problem);
+    let full = || ReconstructionMaskPlan::FullPlane {
+        coordinate: problem.geometry().domains()[0].direction(),
+    };
+    for pbmask in [level, 0.0] {
+        let plans = within_beam(full(), pbmask);
+        let prepared = prepare(&completion, &plans, &setup(Some(beam)));
+        let mask = prepared.masks().get(0).expect("the mask");
+        let expected = beams.each_ref().map(|pb| above(pb, pbmask));
+        for (channel, expected) in expected.iter().enumerate() {
+            assert_eq!(
+                mask.plane(channel, 0).expect("the channel's plane"),
+                expected.as_slice(),
+                "pbmask {pbmask}, channel {channel}"
+            );
+        }
+        assert_ne!(expected[0], expected[1], "the channels' beams differ");
+        assert!(expected[0].contains(&true), "pbmask {pbmask}");
+        let next = plans
+            .next_cycle(prepared.masks(), prepared.auto_masks(), 1, false)
+            .expect("the next boundary");
+        let mut without_beam = setup(None);
+        without_beam.residual_pixel_mask = false;
+        let kept = prepare(&completion, &next, &without_beam);
+        assert!(std::ptr::eq(
+            kept.masks().get(0).expect("the mask").support().as_ptr(),
+            mask.support().as_ptr()
+        ));
+    }
+}
+
+/// #1061: a named mask under a `pbmask` above zero is kept where the
+/// `.pb` exceeds it (`makePBMask(combinemask=True)`).
+#[test]
+fn a_named_mask_under_pbmask_is_kept_inside_the_beam() {
+    let problem = problem();
+    let centres = edge_centres(&problem);
+    let beam = AnalyticPrimaryBeam::new(
+        &problem,
+        AnalyticPrimaryBeamModel::CasaEvlaCommon,
+        Some(&centres),
+    )
+    .expect("L band")
+    .expect("an analytic beam");
+    let pb = pb(&beam, 0);
+    let level = splitting_level(&pb);
+    let completion = completion(&problem, &vec![0.01; WIDTH * WIDTH], |_| {});
+    // Rows y of 4 to 11, every column: x-major pixel (x, y) is x · ny + y.
+    let boxes = ReconstructionMaskPlan::Boxes {
+        coordinate: problem.geometry().domains()[0].direction(),
+        boxes: vec![MaskBox::new([0, 4], [WIDTH as i64 - 1, 11]).expect("a box")],
+    };
+    let prepared = prepare(&completion, &within_beam(boxes, level), &setup(Some(beam)));
+    let expected = above(&pb, level)
+        .iter()
+        .enumerate()
+        .map(|(index, kept)| *kept && (4..12).contains(&(index % WIDTH)))
+        .collect::<Vec<_>>();
+    assert!(expected.contains(&true));
+    assert_eq!(
+        prepared
+            .masks()
+            .get(0)
+            .expect("the mask")
+            .plane(0, 0)
+            .expect("the plane"),
+        expected.as_slice()
+    );
+}
+
+/// #1061: a mosaic's `usemask='pb'` mask is its weight image's Float beam
+/// above `pbmask` (`makePBFromWeight`, then `makePBMask`). Weights of 1,
+/// 0.25 and 0 make a beam of 1, 0.5 and 0, so a `pbmask` of 0.6 keeps the
+/// core, and 0.4 or 0 the core and the ring.
+#[test]
+fn a_mosaic_masks_inside_its_weight_beam_above_pbmask() {
+    let problem = problem();
+    let square = |index: usize, half: usize| {
+        let (x, y) = (index / WIDTH, index % WIDTH);
+        x.abs_diff(WIDTH / 2) < half && y.abs_diff(WIDTH / 2) < half
+    };
+    let core = (0..WIDTH * WIDTH)
+        .map(|index| square(index, 3))
+        .collect::<Vec<_>>();
+    let disc = (0..WIDTH * WIDTH)
+        .map(|index| square(index, 6))
+        .collect::<Vec<_>>();
+    let completion = completion(&problem, &vec![0.01; WIDTH * WIDTH], |images| {
+        images.weight = Some(
+            core.iter()
+                .zip(&disc)
+                .map(|(core, disc)| match (core, disc) {
+                    (true, _) => 1.0,
+                    (false, true) => 0.25,
+                    (false, false) => 0.0,
+                })
+                .collect(),
+        );
+    });
+    let response =
+        MinorCycleImageResponse::new(ProductNormalization::FlatNoise, validity().primary_beam())
+            .expect("response");
+    let mut setup = setup(None);
+    setup.response = Some(response);
+    for (pbmask, expected) in [(0.6, &core), (0.4, &disc), (0.0, &disc)] {
+        let full = ReconstructionMaskPlan::FullPlane {
+            coordinate: problem.geometry().domains()[0].direction(),
+        };
+        let prepared = prepare(&completion, &within_beam(full, pbmask), &setup);
+        assert_eq!(
+            prepared
+                .masks()
+                .get(0)
+                .expect("the mask")
+                .plane(0, 0)
+                .expect("the plane"),
+            expected.as_slice(),
+            "pbmask {pbmask}"
+        );
+    }
+}
+
+/// #1061: under a `pbmask` above zero, an automatic mask's pixel mask is
+/// `pb > pbmask`, whatever `pblimit`'s sign (`autoMaskWithinPB` attaches
+/// it to the residual it masks): its median and noise read only those
+/// pixels, and it masks nothing else. A 2 Jy point above the level is
+/// masked; the 0.5 Jy inside the beam's support below it would be too.
+#[test]
+fn an_automatic_mask_under_pbmask_reads_and_masks_above_it() {
+    let problem = problem();
+    let centres = edge_centres(&problem);
+    let beam = AnalyticPrimaryBeam::new(
+        &problem,
+        AnalyticPrimaryBeamModel::CasaEvlaCommon,
+        Some(&centres),
+    )
+    .expect("L band")
+    .expect("an analytic beam");
+    let pb = pb(&beam, 0);
+    let level = splitting_level(&pb);
+    let kept = above(&pb, level);
+    let mut residual = residual(&kept, 0.001, 0.5);
+    residual[kept.iter().position(|kept| *kept).expect("a pixel above")] = 2.0;
+    let completion = completion(&problem, &residual, |_| {});
+    let (median, rms) = classical(&residual, &kept);
+    for masks_residual in [true, false] {
+        let mut setup = setup(Some(beam));
+        setup.automask = true;
+        setup.pbmask = level;
+        setup.residual_pixel_mask = masks_residual;
+        let prepared = prepare(&completion, &automask(&problem), &setup);
+        let row = prepared.auto_masks()[0]
+            .as_ref()
+            .expect("automatic evidence")
+            .plane(0, 0)
+            .copied()
+            .expect("the plane's row");
+        assert!(
+            close(row.median, median) && close(row.robust_rms, rms),
+            "pixel mask {masks_residual}: ({}, {}), expected ({median}, {rms})",
+            row.median,
+            row.robust_rms
+        );
+        let mask = prepared.masks().get(0).expect("the mask");
+        let masked = mask.plane(0, 0).expect("the plane");
+        assert!(masked.contains(&true), "the point is masked");
+        assert!(
+            masked.iter().zip(&kept).all(|(set, kept)| !set || *kept),
+            "pixel mask {masks_residual}: nothing at or below pbmask is masked"
+        );
+    }
+}
+
+/// #1061: the `nsigma` noise reads `calcRobustRMS`'s pixels at `pbmask`,
+/// those whose `.pb` exceeds it, under either estimate, or every pixel
+/// where none does (CAS-13318); the peak still reads the residual's pixel
+/// mask, the beam's support above `pblimit`.
+#[test]
+fn the_nsigma_noise_reads_above_pbmask_and_the_peak_above_pblimit() {
+    let problem = problem();
+    let centres = edge_centres(&problem);
+    let beam = AnalyticPrimaryBeam::new(
+        &problem,
+        AnalyticPrimaryBeamModel::CasaEvlaCommon,
+        Some(&centres),
+    )
+    .expect("L band")
+    .expect("an analytic beam");
+    let pb = pb(&beam, 0);
+    let level = splitting_level(&pb);
+    let kept = above(&pb, level);
+    let inside = support(&beam);
+    let every = vec![true; inside.len()];
+    // A ramp over the whole plane, each part of it its own spread.
+    let mut residual = residual(&every, 0.001, 0.0);
+    let below = inside
+        .iter()
+        .zip(&kept)
+        .position(|(inside, kept)| *inside && !kept)
+        .expect("a pixel between pblimit and pbmask");
+    residual[below] = 3.0;
+    let outside = inside.iter().position(|inside| !inside).expect("outside");
+    residual[outside] = 5.0;
+    let completion = completion(&problem, &residual, |_| {});
+    let rms = |measured: &[bool]| classical(&residual, measured).1;
+    let distinct = [rms(&kept), rms(&inside), rms(&every)];
+    assert!(
+        !close(distinct[0], distinct[1])
+            && !close(distinct[0], distinct[2])
+            && !close(distinct[1], distinct[2]),
+        "the law separates the three: {distinct:?}"
+    );
+    let highest = f64::from(pb.iter().copied().fold(0.0, f32::max));
+    // Chauvenet's criterion would reject the peaks the whole plane holds.
+    let estimates = [NoiseEstimate::Fast, NoiseEstimate::Robust];
+    for (pbmask, measured, estimates) in [
+        (level, &kept, &estimates[..]),
+        (highest, &every, &estimates[..1]),
+    ] {
+        let rms = rms(measured);
+        for &noise in estimates {
+            let mut setup = setup(Some(beam));
+            setup.nsigma = 3.0;
+            setup.noise = noise;
+            setup.pbmask = pbmask;
+            let statistics = prepare(&completion, &full_plane(&problem), &setup).statistics;
+            assert!(
+                close(statistics.nsigma_threshold, 3.0 * rms),
+                "pbmask {pbmask}, {noise:?}: {}, expected {}",
+                statistics.nsigma_threshold,
+                3.0 * rms
+            );
+            assert_eq!(statistics.peak_no_mask, 3.0, "pbmask {pbmask}");
+        }
+    }
 }

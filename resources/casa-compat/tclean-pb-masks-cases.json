@@ -1,7 +1,8 @@
 {
- "note": "#1061: normtype='pbsquare' on a mosaic, single-term and per channel, against CASA 6.7.6.14 with tools/casa-compat/tclean_case_matrix.py. The cases image ALMA's three-field refim_alma_mosaic.ms (340 GHz, noise-free) over an image larger than its beam, so the pbsquare residual, which has no cutoff, reaches past pblimit; test_widefield_mosaicft_mtmfs_pbsquare.1 in tclean-casa-test-cases.json is the Taylor case.",
+ "note": "#1061: tclean's primary-beam masks and normalization against CASA 6.7.6.14 with tools/casa-compat/tclean_case_matrix.py. The pbsquare cases image ALMA's three-field refim_alma_mosaic.ms (340 GHz, noise-free) over an image larger than its beam, so the pbsquare residual, which has no cutoff, reaches past pblimit; test_widefield_mosaicft_mtmfs_pbsquare.1 in tclean-casa-test-cases.json is the Taylor case. The pbmask cases image the VLA's refim_point.ms (1 to 1.95 GHz, 25 m dishes) over 1.7 degrees, past the L-band beam's 0.2 circle, and the same ALMA mosaic: usemask='pb' (SDMaskHandler::makePBMask), a named mask under pbmask, auto-multithresh under pbmask (autoMaskWithinPB) and the nsigma noise at pbmask (calcRobustRMS). Under auto-multithresh pblimit is 0.1, so that a pbmask of 0.2 is not the residual's own pixel mask.",
  "inputs": {
-  "alma": "unittest/tclean/refim_alma_mosaic.ms"
+  "alma": "unittest/tclean/refim_alma_mosaic.ms",
+  "point": "unittest/tclean/refim_point.ms"
  },
  "common": {
   "parallel": false
@@ -68,6 +69,133 @@
     "pblimit": -0.2
    },
    "note": "pbsquare under a negative pblimit: CASA drops the residual's and the image's pixel masks, so the pbsquare residual past the PB, which no cutoff zeroes, is compared too"
+  },
+  "point_standard_usemask_pb": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "12.0arcsec",
+    "specmode": "mfs",
+    "gridder": "standard",
+    "deconvolver": "hogbom",
+    "niter": 200,
+    "usemask": "pb",
+    "pbmask": 0.5
+   },
+   "note": "usemask='pb' on a standard-gridder VLA image: the clean mask is the analytic .pb above pbmask (makePBMask); 200 iterations, since at 1000 the noise-free residual is cleaned to about 1e-4 of its peak, where CASA's Float images and casa-rs's f64 differ by about 1% NRMS"
+  },
+  "alma_mosaic_usemask_pb": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": 800,
+    "cell": "0.06arcsec",
+    "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
+    "specmode": "mfs",
+    "gridder": "mosaic",
+    "deconvolver": "hogbom",
+    "niter": 300,
+    "usemask": "pb",
+    "pbmask": 0.3
+   },
+   "note": "usemask='pb' on a three-field mosaic: the clean mask is the weight image's .pb above pbmask"
+  },
+  "point_cube_usemask_pb": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "12.0arcsec",
+    "specmode": "cube",
+    "gridder": "standard",
+    "deconvolver": "hogbom",
+    "niter": 400,
+    "usemask": "pb",
+    "pbmask": 0.4
+   },
+   "note": "usemask='pb' on a 20-channel cube: each channel's mask is its own .pb above pbmask, the beam narrowing with frequency"
+  },
+  "point_standard_box_pbmask": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "12.0arcsec",
+    "specmode": "mfs",
+    "gridder": "standard",
+    "deconvolver": "hogbom",
+    "niter": 200,
+    "mask": "box[[206pix,156pix],[355pix,305pix]]",
+    "pbmask": 0.5
+   },
+   "note": "a named box under pbmask, crossing the .pb's 0.5 circle: the box kept where the .pb exceeds pbmask (makePBMask(combinemask=True)); 200 iterations, since at 1000 the noise-free residual is cleaned to about 1e-4 of its peak, where CASA's Float images and casa-rs's f64 differ by about 1% NRMS"
+  },
+  "point_automask_pbmask": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "12.0arcsec",
+    "specmode": "mfs",
+    "gridder": "standard",
+    "deconvolver": "hogbom",
+    "niter": 200,
+    "usemask": "auto-multithresh",
+    "pbmask": 0.2,
+    "pblimit": 0.1
+   },
+   "note": "auto-multithresh under pbmask 0.2 and pblimit 0.1: the automatic mask's statistics, pruning and support above pbmask, and the mask cut to it (autoMaskWithinPB); 200 iterations, since at 1000 the noise-free residual is cleaned to about 1e-4 of its peak, where CASA's Float images and casa-rs's f64 differ by about 1% NRMS"
+  },
+  "alma_mosaic_automask_pbmask": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": 800,
+    "cell": "0.06arcsec",
+    "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
+    "specmode": "mfs",
+    "gridder": "mosaic",
+    "deconvolver": "hogbom",
+    "niter": 300,
+    "usemask": "auto-multithresh",
+    "sidelobethreshold": 0.1,
+    "pbmask": 0.2,
+    "pblimit": 0.1
+   },
+   "note": "auto-multithresh on the mosaic under pbmask 0.2 and pblimit 0.1; the data are noise-free, so a sidelobethreshold of 0.1 lets the noise threshold set the mask"
+  },
+  "point_standard_nsigma_pbmask": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "12.0arcsec",
+    "specmode": "mfs",
+    "gridder": "standard",
+    "deconvolver": "hogbom",
+    "niter": 1000,
+    "threshold": "0Jy",
+    "nsigma": 5.0,
+    "pbmask": 0.5
+   },
+   "note": "nsigma under pbmask 0.5: calcRobustRMS's noise of the pixels whose .pb exceeds pbmask, with no clean mask; the run stops on nsigma"
+  },
+  "point_automask_nsigma_pbmask": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "12.0arcsec",
+    "specmode": "mfs",
+    "gridder": "standard",
+    "deconvolver": "hogbom",
+    "niter": 1000,
+    "usemask": "auto-multithresh",
+    "nsigma": 5.0,
+    "pbmask": 0.5
+   },
+   "note": "auto-multithresh with nsigma under pbmask 0.5: at the first boundary the mask takes calcRobustRMS's statistics at pbmask, later its own"
   }
  }
 }

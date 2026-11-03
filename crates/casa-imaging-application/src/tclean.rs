@@ -143,6 +143,8 @@ struct Modes {
     deconvolver: String,
     weighting: String,
     user_mask: bool,
+    /// Whether the mask is CASA's automatic mask, which alone smooths.
+    automatic_mask: bool,
 }
 
 /// tclean's values, each read once, and the request made from them.
@@ -405,9 +407,6 @@ impl<'a> Tclean<'a> {
         }
         self.set("weighting", weighting);
         let usemask = self.text("usemask")?;
-        if usemask == "pb" {
-            return Err(TcleanRefusal::not_yet("usemask", "'pb'", 1061));
-        }
         self.set("usemask", usemask);
         Ok(Modes {
             cube: specmode != "mfs",
@@ -416,6 +415,7 @@ impl<'a> Tclean<'a> {
             deconvolver: deconvolver.to_string(),
             weighting: weighting.to_string(),
             user_mask: usemask == "user",
+            automatic_mask: usemask == "auto-multithresh",
         })
     }
 
@@ -964,7 +964,10 @@ impl<'a> Tclean<'a> {
             .and_then(Value::as_i64)
             .unwrap_or(0)
             > 0;
-        if !modes.user_mask && cleans && smoothfactor.as_f64().is_some_and(|factor| factor <= 0.0) {
+        if modes.automatic_mask
+            && cleans
+            && smoothfactor.as_f64().is_some_and(|factor| factor <= 0.0)
+        {
             return Err(TcleanRefusal::new(
                 "smoothfactor",
                 "CASA's auto-multithresh smooths its mask by a beam of positive width: \
@@ -972,7 +975,21 @@ impl<'a> Tclean<'a> {
             ));
         }
         self.set("smoothfactor", smoothfactor);
-        self.ignore(&["pbmask"])?;
+        // CASA bounds pbmask in every mask mode (`SynthesisParamsDeconv::verify`).
+        let pbmask = self.value("pbmask")?.clone();
+        match pbmask.as_f64() {
+            Some(level) if level >= 1.0 => {
+                return Err(TcleanRefusal::new("pbmask", "pbmask must be < 1.0"));
+            }
+            Some(level) if level < 0.0 => {
+                return Err(TcleanRefusal::new(
+                    "pbmask",
+                    "pbmask must be a positive value",
+                ));
+            }
+            _ => {}
+        }
+        self.set("pbmask", pbmask);
         let entries = self.texts("mask")?;
         // CASA reads `mask` with usemask='user' only.
         let (boxes, image) = if modes.user_mask {
