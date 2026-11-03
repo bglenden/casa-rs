@@ -37,8 +37,8 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[2]
 # nextest's per-test result lines: `PASS [ 0.1s] (1/2) crate::binary test_name`.
 NEXTEST = re.compile(r"^\s*(PASS|FAIL|SIGSEGV|SIGABRT|TIMEOUT)\s+\[.*?\]\s+(?:\(\s*\d+/\d+\)\s+)?(\S+)\s+(\S+)\s*$")
-# pytest -rA summary lines: `PASSED path::test`.
-PYTEST = re.compile(r"^(PASSED|FAILED|ERROR|SKIPPED)\s+(\S+)")
+# pytest -rA summary lines: `PASSED path::test`, `SKIPPED [1] path:line: reason`.
+PYTEST = re.compile(r"^(PASSED|FAILED|ERROR|SKIPPED)\s+(.+?)(?: - .*)?$")
 
 
 def git(*args: str) -> str:
@@ -65,11 +65,20 @@ def fixture_record(path: str) -> dict[str, Any]:
     return record
 
 
+def summary_lines(output: str) -> list[str]:
+    """pytest's short test summary, which follows its captured logs: a log
+    line at level ERROR would otherwise read as a test's outcome."""
+    lines = output.splitlines()
+    starts = [i for i, line in enumerate(lines) if "short test summary info" in line]
+    return lines[starts[-1] + 1:] if starts else []
+
+
 def run(command: list[str], pattern: re.Pattern[str], passed: str) -> tuple[dict[str, str], int]:
     print("+", " ".join(command), file=sys.stderr)
     result = subprocess.run(command, cwd=REPO, capture_output=True, text=True)
     outcomes = {}
-    for line in (result.stdout + result.stderr).splitlines():
+    output = result.stdout + result.stderr
+    for line in summary_lines(output) if pattern is PYTEST else output.splitlines():
         match = pattern.match(line)
         if match:
             groups = match.groups()

@@ -73,7 +73,8 @@ def main() -> int:
         outcomes = {}
         for node in nodes:
             result = subprocess.run([*pytest, "-q", "-rA", node], cwd=TESTS, capture_output=True, text=True, env=env)
-            found = [m.group(1).lower() for m in map(OUTCOME.match, result.stdout.splitlines()) if m]
+            summary = result.stdout.split("short test summary info")[-1] if "short test summary info" in result.stdout else ""
+            found = [m.group(1).lower() for m in map(OUTCOME.match, summary.splitlines()) if m]
             name = node.split("::", 1)[-1]
             if found:
                 outcomes[name] = found[0]
