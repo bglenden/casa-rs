@@ -159,16 +159,19 @@ fn parameters_a_mode_does_not_read_are_ignored() {
 /// What the catalog takes only at tclean's default, wherever CASA reads it.
 #[test]
 fn the_catalog_refuses_what_casa_reads_in_every_mode() {
-    for overrides in [
+    for (overrides, issue) in [
         // CASA projects with any projection in every mode.
-        json!({ "projection": "NCP" }),
+        (json!({ "projection": "NCP" }), "#1064"),
         // CASA masks within the primary beam with pbmask in every mask mode.
-        json!({ "pbmask": 0.5 }),
+        (json!({ "pbmask": 0.5 }), "#1061"),
         // CASA reads psfphasecenter for every gridder named for a mosaic.
-        json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" }),
+        (
+            json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" }),
+            "#1062",
+        ),
     ] {
         let error = resolved(overrides.clone()).expect_err("refused at the catalog");
-        assert!(error.to_string().contains("#980"), "{overrides}: {error}");
+        assert!(error.to_string().contains(issue), "{overrides}: {error}");
     }
 }
 
@@ -293,10 +296,10 @@ fn casa_values_become_the_request_casa_rs_runs() {
 #[test]
 fn values_casa_rs_cannot_honour_are_refused() {
     for (overrides, parameter, issue) in [
-        (json!({ "specmode": "mvc" }), "specmode", "#823"),
-        (json!({ "deconvolver": "mem" }), "deconvolver", "#823"),
+        (json!({ "specmode": "mvc" }), "specmode", "#1069"),
+        (json!({ "deconvolver": "mem" }), "deconvolver", "#1060"),
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
-        (json!({ "usemask": "pb" }), "usemask", "#823"),
+        (json!({ "usemask": "pb" }), "usemask", "#1061"),
         (
             json!({ "usemask": "auto-multithresh", "stokes": "IQUV", "niter": 10 }),
             "usemask",
@@ -310,7 +313,7 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (
             json!({ "specmode": "cube", "interpolation": "cubic" }),
             "interpolation",
-            "#823",
+            "#1066",
         ),
         (
             json!({ "specmode": "cube", "outframe": "GALACTO" }),
@@ -325,9 +328,9 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (
             json!({ "gridder": "wproject", "wprojplanes": -1, "facets": 2 }),
             "facets",
-            "#980",
+            "#1063",
         ),
-        (json!({ "gridder": "awp2" }), "gridder", "#980"),
+        (json!({ "gridder": "awp2" }), "gridder", "#1071"),
         (
             json!({ "gridder": "mosaic", "weighting": "briggs", "specmode": "cube", "nchan": 4 }),
             "mosweight",
@@ -351,13 +354,13 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (
             json!({ "deconvolver": "mtmfs", "nterms": 1 }),
             "nterms",
-            "#980",
+            "#1065",
         ),
         (
             json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
                     "wprojplanes": 32, "facets": 2 }),
             "facets",
-            "#980",
+            "#1070",
         ),
         // Astra's #1015 F1: CASA derives a cube's extent from the selected
         // channels, the start and the width (probed: spw='0:2~4' gives three
@@ -366,17 +369,17 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (
             json!({ "specmode": "cubedata", "spw": "0:2~4" }),
             "nchan",
-            "#980",
+            "#1066",
         ),
         (
             json!({ "specmode": "cubedata", "width": "2" }),
             "nchan",
-            "#980",
+            "#1066",
         ),
         (
             json!({ "specmode": "cube", "start": "1.4GHz" }),
             "nchan",
-            "#980",
+            "#1066",
         ),
     ] {
         let refused = refusal(overrides.clone());

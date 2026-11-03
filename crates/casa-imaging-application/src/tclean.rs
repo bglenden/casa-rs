@@ -296,7 +296,7 @@ impl<'a> Tclean<'a> {
         let specmode = match self.text("specmode")? {
             // CASA reads `cont` as `mfs` (`task_tclean.py`).
             "cont" | "mfs" => "mfs",
-            "mvc" => return Err(TcleanRefusal::not_yet("specmode", "'mvc'", 823)),
+            "mvc" => return Err(TcleanRefusal::not_yet("specmode", "'mvc'", 1069)),
             cube => cube,
         };
         self.set("specmode", specmode);
@@ -331,13 +331,24 @@ impl<'a> Tclean<'a> {
                     980,
                 ));
             }
-            other => return Err(TcleanRefusal::not_yet("gridder", format!("{other:?}"), 980)),
+            other => {
+                // awp2, awphpg and imagemosaic are #1071's.
+                let issue = match other {
+                    "awp2" | "awphpg" | "imagemosaic" => 1071,
+                    _ => 980,
+                };
+                return Err(TcleanRefusal::not_yet(
+                    "gridder",
+                    format!("{other:?}"),
+                    issue,
+                ));
+            }
         };
         self.set("gridder", gridder);
         let deconvolver = self.text("deconvolver")?;
         if !matches!(deconvolver, "hogbom" | "clark" | "multiscale" | "mtmfs") {
-            // `asp` is #223's; #823 decides the other modes.
-            let issue = if deconvolver == "asp" { 223 } else { 823 };
+            // `asp` is #223's; mem and clarkstokes are #1060's.
+            let issue = if deconvolver == "asp" { 223 } else { 1060 };
             return Err(TcleanRefusal::not_yet(
                 "deconvolver",
                 format!("{deconvolver:?}"),
@@ -373,7 +384,7 @@ impl<'a> Tclean<'a> {
         self.set("weighting", weighting);
         let usemask = self.text("usemask")?;
         if usemask == "pb" {
-            return Err(TcleanRefusal::not_yet("usemask", "'pb'", 823));
+            return Err(TcleanRefusal::not_yet("usemask", "'pb'", 1061));
         }
         self.set("usemask", usemask);
         Ok(Modes {
@@ -512,7 +523,7 @@ impl<'a> Tclean<'a> {
                 "nchan",
                 "-1 with a channel selection in spw, a start or a width, whose extent CASA \
                  derives from the selected channels; give nchan",
-                980,
+                1066,
             ));
         }
         Ok(())
@@ -584,7 +595,7 @@ impl<'a> Tclean<'a> {
         self.set("outframe", frame);
         self.set("veltype", velocity_convention(veltype)?);
         if interpolation == "cubic" {
-            return Err(TcleanRefusal::not_yet("interpolation", "'cubic'", 823));
+            return Err(TcleanRefusal::not_yet("interpolation", "'cubic'", 1066));
         }
         self.set("interpolation", interpolation);
         Ok(())
@@ -637,10 +648,16 @@ impl<'a> Tclean<'a> {
                 ));
             }
             "wproject" | "awproject" if facets != 1 => {
+                // W facets are #1063's, AW facets #1070's.
+                let issue = if modes.gridder == "awproject" {
+                    1070
+                } else {
+                    1063
+                };
                 return Err(TcleanRefusal::not_yet(
                     "facets",
                     format!("{facets} with gridder='{}'", modes.gridder),
-                    980,
+                    issue,
                 ));
             }
             _ => {}
@@ -660,7 +677,7 @@ impl<'a> Tclean<'a> {
         let normtype = self.text("normtype")?;
         if matches!(modes.gridder, "mosaic" | "awproject") {
             if normtype == "pbsquare" {
-                return Err(TcleanRefusal::not_yet("normtype", "'pbsquare'", 823));
+                return Err(TcleanRefusal::not_yet("normtype", "'pbsquare'", 1061));
             }
             self.set("normtype", normtype);
         }
@@ -700,7 +717,8 @@ impl<'a> Tclean<'a> {
                     return Err(TcleanRefusal::new(
                         "cfcache",
                         "awproject with aw_cf_source='casa-import' reads an existing CASA \
-                         convolution-function cache: name it with cfcache",
+                         convolution-function cache: name it with cfcache (generating one is \
+                         #1070)",
                     ));
                 }
                 self.set("cfcache", cfcache);
@@ -824,7 +842,7 @@ impl<'a> Tclean<'a> {
             return Err(TcleanRefusal::not_yet(
                 "nterms",
                 "1 with deconvolver='mtmfs'",
-                980,
+                1065,
             ));
         }
         self.set(

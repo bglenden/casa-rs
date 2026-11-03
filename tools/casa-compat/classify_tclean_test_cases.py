@@ -281,7 +281,7 @@ class Refusals:
         """`Tclean::modes`."""
         specmode = self.text("specmode")
         if specmode == "mvc":
-            self.add("specmode='mvc'", NOT_YET, 823)
+            self.add("specmode='mvc'", NOT_YET, 1069)
         cube = specmode not in ("cont", "mfs")
         planes = self.values.get("wprojplanes")
         name = self.text("gridder")
@@ -300,10 +300,11 @@ class Refusals:
         elif name == "awprojectft":
             self.add("gridder='awprojectft' (CASA's other name for awproject)", NOT_YET, 980)
         elif name != "awproject":
-            self.add(f"gridder={name!r}", NOT_YET, 980)
+            issue = 1071 if name in ("awp2", "awphpg", "imagemosaic") else 980
+            self.add(f"gridder={name!r}", NOT_YET, issue)
         deconvolver = self.text("deconvolver")
         if deconvolver not in ("hogbom", "clark", "multiscale", "mtmfs"):
-            issue = 223 if deconvolver == "asp" else 823
+            issue = 223 if deconvolver == "asp" else 1060
             self.add(f"deconvolver={deconvolver!r}", NOT_YET, issue)
         weighting = self.text("weighting")
         if weighting not in ("natural", "uniform", "briggs", "briggsbwtaper"):
@@ -312,7 +313,7 @@ class Refusals:
             self.add("weighting='briggsbwtaper' with specmode='mfs'", PARITY)
         usemask = self.text("usemask")
         if usemask == "pb":
-            self.add("usemask='pb'", NOT_YET, 823)
+            self.add("usemask='pb'", NOT_YET, 1061)
         return {
             "cube": cube,
             "gridder": gridder,
@@ -400,7 +401,7 @@ class Refusals:
             self.add(
                 "nchan=-1 with a channel selection, start or width (derived cube extent)",
                 NOT_YET,
-                980,
+                1066,
             )
         if selected and start == "":
             self.add("start='' with a channel selection in spw", NOT_YET, 980)
@@ -411,7 +412,7 @@ class Refusals:
         if len(restfreq) > 1:
             self.add("restfreq: a list of rest frequencies", NOT_YET, 980)
         if interpolation == "cubic":
-            self.add("interpolation='cubic'", NOT_YET, 823)
+            self.add("interpolation='cubic'", NOT_YET, 1066)
 
     def gridding(self, modes):
         """`Tclean::gridding` and `aw_terms`."""
@@ -420,7 +421,8 @@ class Refusals:
         if gridder == "mosaic" and facets not in (1, None):
             self.add("facets>1 with the mosaic gridder", PARITY)
         if gridder in ("wproject", "awproject") and facets not in (1, None):
-            self.add(f"facets>1 with gridder={gridder!r}", NOT_YET, 980)
+            issue = 1070 if gridder == "awproject" else 1063
+            self.add(f"facets>1 with gridder={gridder!r}", NOT_YET, issue)
         planes = self.integer("wprojplanes")
         if (
             gridder in ("wproject", "awproject")
@@ -431,7 +433,7 @@ class Refusals:
             self.add("wprojplanes below 1 (other than -1)", CASA_RS)
         normtype = self.text("normtype")
         if gridder in ("mosaic", "awproject") and normtype == "pbsquare":
-            self.add("normtype='pbsquare'", NOT_YET, 823)
+            self.add("normtype='pbsquare'", NOT_YET, 1061)
         per_channel = (
             modes["cube"]
             and self.flag("perchanweightdensity") is not False
@@ -480,7 +482,7 @@ class Refusals:
     def deconvolution(self, modes):
         """`Tclean::deconvolution`."""
         if modes["deconvolver"] == "mtmfs" and self.integer("nterms") == 1:
-            self.add("nterms=1 with deconvolver='mtmfs'", NOT_YET, 980)
+            self.add("nterms=1 with deconvolver='mtmfs'", NOT_YET, 1065)
         beam = self.texts("restoringbeam")
         if beam not in ([], ["common"]):
             self.add("restoringbeam: a beam given by its axes", NOT_YET, 980)

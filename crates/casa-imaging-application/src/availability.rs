@@ -61,7 +61,7 @@ impl fmt::Display for Unsupported {
                 "the major-cycle pass has no implementation of {capability:?}"
             ),
             Self::PolarizedTaylorBasis => {
-                formatter.write_str("a Taylor basis reconstructs Stokes I only")
+                formatter.write_str("a Taylor basis reconstructs Stokes I only (#1065)")
             }
             Self::MultiDomainTaylorBasis => {
                 formatter.write_str("a Taylor basis reconstructs one image domain, no outliers")
@@ -75,10 +75,10 @@ impl fmt::Display for Unsupported {
                  and AW projection run on the CPU",
             ),
             Self::FacetedBasis => {
-                formatter.write_str("facets image a single-term MFS image (specmode mfs)")
+                formatter.write_str("facets image a single-term MFS image (specmode mfs; #1063)")
             }
             Self::FacetedKernelSet => {
-                formatter.write_str("facets grid with the standard gridder only")
+                formatter.write_str("facets grid with the standard gridder only (#1063)")
             }
             Self::CubeAwProjection => formatter.write_str(
                 "AW projection images specmode mfs; a cube waits for its per-plane weight check \

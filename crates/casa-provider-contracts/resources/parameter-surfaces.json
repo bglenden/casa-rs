@@ -8357,7 +8357,7 @@
             "python": {"name": "projection"},
             "presentation": {"label": "Projection", "group": "Stage Parameters", "advanced": true}
           },
-          "unimplemented": {"issue": 980}
+          "unimplemented": {"issue": 1064}
         },
         {
           "name": "startmodel",
@@ -8560,7 +8560,7 @@
             "python": {"name": "psfphasecenter"},
             "presentation": {"label": "PSF Phase Center", "group": "Advanced Wide-Field", "advanced": true}
           },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "any", "predicates": [
+          "unimplemented": {"issue": 1062, "applies_when": {"kind": "any", "predicates": [
             {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "mosaic"}},
             {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "mosaicft"}},
             {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "ftmosaic"}}
@@ -8724,7 +8724,7 @@
             "python": {"name": "computepastep"},
             "presentation": {"label": "PA Compute Step", "group": "Advanced Wide-Field", "advanced": true}
           },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "any", "predicates": [
+          "unimplemented": {"issue": 1070, "applies_when": {"kind": "any", "predicates": [
             {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awproject"}},
             {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awphpg"}},
             {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awprojectft"}},
@@ -8744,7 +8744,7 @@
             "python": {"name": "rotatepastep"},
             "presentation": {"label": "PA Rotate Step", "group": "Advanced Wide-Field", "advanced": true}
           },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "any", "predicates": [
+          "unimplemented": {"issue": 1070, "applies_when": {"kind": "any", "predicates": [
             {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awproject"}},
             {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awprojectft"}}
           ]}}
@@ -9205,7 +9205,7 @@
             "python": {"name": "pbmask"},
             "presentation": {"label": "PB Mask", "group": "Stage Parameters", "advanced": true}
           },
-          "unimplemented": {"issue": 980}
+          "unimplemented": {"issue": 1061}
         },
         {
           "name": "sidelobethreshold",
