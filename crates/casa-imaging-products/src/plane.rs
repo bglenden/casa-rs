@@ -111,10 +111,9 @@ pub(crate) fn produce_plane_member(
         ProductRole::PbCorrectedImage(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         ) => {
-            if !valid {
-                return Ok(invalid_residual());
-            }
-            let restored = restored_plane(request, true)?;
+            // `SIImageStore::pbcor` leaves a plane zero only where the PB's
+            // peak is: a blank plane's restored start model is corrected.
+            let restored = restored_plane(request, valid)?;
             let primary_beam =
                 primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane)?;
             correct_primary_beam(

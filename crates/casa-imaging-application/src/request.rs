@@ -728,11 +728,10 @@ impl ImagingRequest {
         if self.startmodel.len() > terms {
             return invalid(
                 "startmodel",
-                if terms == 1 {
-                    "Multiple starting model images are currently not supported. Please merge \
-                     them before supplying as input to startmodel"
-                } else {
+                if self.deconvolver == Deconvolver::Mtmfs {
                     "We currently cannot support more than nterms images as the starting model."
+                } else {
+                    "Only one startmodel image is allowed."
                 },
             );
         }

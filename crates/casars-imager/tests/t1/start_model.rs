@@ -364,10 +364,11 @@ fn a_start_model_on_another_spectral_grid_is_regridded_along_frequency() {
 
 /// A plane no sample reaches restores its start model: CASA's
 /// `SIImageStore::restore` convolves every plane's model with its beam and
-/// adds the residual, whatever the plane's weights (CASA's
-/// `test_startmodel_regrid_cube` restores a regridded model in a channel
-/// the data miss). Its residual is zero, so its restored image is the
-/// model's point convolved with the beam: a peak of the model's flux.
+/// adds the residual, whatever the plane's weights, and `makeImageBeamSet`
+/// gives the plane the largest beam of the domain. Its residual is zero, so
+/// its restored image is the model's point convolved with that beam: a peak
+/// of the model's flux, and the beam's area in the ratio of its sum to its
+/// peak.
 #[test]
 fn a_plane_without_weights_restores_its_start_model() {
     let observation = Observation::synthesise_band(16, &[("point", POINT)]);
@@ -400,5 +401,28 @@ fn a_plane_without_weights_restores_its_start_model() {
     assert!(
         flux > 0.5 && (peak - flux).abs() < 0.02 * flux,
         "the unweighted plane restores a peak of {peak} for a model of {flux} Jy"
+    );
+    // The fitted beams of the channels with data, read off the run's PSF.
+    let image = started.get(".image");
+    let largest = (2..16)
+        .map(|channel| image.channel_beam(channel))
+        .map(|beam| beam.major_in("arcsec").unwrap() * beam.minor_in("arcsec").unwrap())
+        .fold(0.0_f64, f64::max);
+    let smallest = (2..16)
+        .map(|channel| image.channel_beam(channel))
+        .map(|beam| beam.major_in("arcsec").unwrap() * beam.minor_in("arcsec").unwrap())
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        largest > 1.05 * smallest,
+        "the channels' beams must differ for this law: {smallest} and {largest} arcsec²"
+    );
+    let cell_arcsec = observation.geometry().cell_arcsec[0];
+    let gaussian = std::f64::consts::PI / (4.0 * std::f64::consts::LN_2);
+    let expected = gaussian * largest / (cell_arcsec * cell_arcsec);
+    let sum: f64 = restored.iter().map(|value| f64::from(*value)).sum();
+    let area = sum / f64::from(peak);
+    assert!(
+        (area - expected).abs() < 0.02 * expected,
+        "the unweighted plane's beam covers {area} pixels, the largest beam {expected}"
     );
 }

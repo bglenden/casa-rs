@@ -106,7 +106,10 @@ pub use image_expr::{
     MaskExprBuilder, MaskExpression, MaskLogicalOp, ReductionOp,
 };
 pub use image_info::{ImageInfo, ImageType};
-pub use regrid::{RegridMethod, RegridTemplate, Regridded, check_regrid, regrid};
+pub use regrid::{
+    RegridMethod, RegridTemplate, Regridded, check_regrid, check_regrid_along_frequency, regrid,
+    regrid_along_frequency,
+};
 pub use saved_region::{PolygonRegion, RegionStatistics};
 pub use subimage::{SubImage, SubImageMut};
 pub use task_front_end::{image_task_front_end, image_task_returning, image_task_success};

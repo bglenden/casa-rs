@@ -690,6 +690,16 @@ impl Product {
         self.image.coordinates().coordinate(2).increment()[0]
     }
 
+    /// The restoring beam the product's image info records for `channel`.
+    pub fn channel_beam(&self, channel: usize) -> GaussianBeam {
+        *self
+            .image
+            .image_info()
+            .expect("image info")
+            .beam_set
+            .beam(channel, 0)
+    }
+
     /// The restoring beam recorded in the product's image info.
     pub fn restoring_beam(&self) -> GaussianBeam {
         self.image

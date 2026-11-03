@@ -141,13 +141,16 @@ fn an_mfs_start_model_has_one_plane_at_any_frequency() {
     let samples =
         main_samples(&path, template(&[StokesType::I], 1, 1.2e9)).expect("another frequency");
     assert_eq!(samples[SIDE + 2], 5.0, "the plane is seeded as it is");
-    // A cube start model is regridded along frequency onto the MFS plane
-    // (#1067, `regridToModelImage`): at 1.0015 GHz, halfway between its
-    // second and third channels.
+    // A cube is refused as CASA refuses it: `ImageRegrid::_checkAxes` removes
+    // the MFS image's axis of unit length from those it regrids, and then
+    // the shapes differ on an axis it does not regrid.
     let cube = start_model(dir.path(), &[StokesType::I], 4, 1.0e9);
-    let samples = main_samples(&cube, template(&[StokesType::I], 1, 1.0015e9))
-        .expect("the cube interpolated at the plane's frequency");
-    assert_eq!(samples[SIDE + 2], 5.0 + 1500.0);
+    let refused = main_samples(&cube, template(&[StokesType::I], 1, 1.0015e9))
+        .expect_err("a cube start model of an MFS image");
+    assert!(
+        refused.contains("same input and output shapes"),
+        "{refused}"
+    );
 }
 
 #[test]

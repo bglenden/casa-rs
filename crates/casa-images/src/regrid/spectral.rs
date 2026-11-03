@@ -37,8 +37,11 @@ impl SpectralPlan {
     /// # Errors
     ///
     /// The reason when the two are not both spectral, are in different
-    /// frames (casa-rs makes no frequency conversion machine), or the input
-    /// holds one channel, which casacore's linear interpolation reads past.
+    /// frames (casa-rs makes no frequency conversion machine), the input
+    /// holds one channel, which casacore's linear interpolation reads past,
+    /// or the output does and the input more: `ImageRegrid::_checkAxes`
+    /// removes an axis of unit length from those it regrids and then refuses
+    /// the shapes.
     pub(super) fn new(
         (input, input_channels): (&CoordinateModel, usize),
         (output, output_channels): (&CoordinateModel, usize),
@@ -64,6 +67,12 @@ impl SpectralPlan {
             return Err(format!(
                 "the input has {input_channels} channel and the template {output_channels}; a \
                  spectral regrid interpolates between two channels"
+            ));
+        }
+        if output_channels == 1 {
+            return Err(format!(
+                "any axis not being regridded must have the same input and output shapes: the \
+                 template's spectral axis has one channel and the input's {input_channels}"
             ));
         }
         debug_assert_eq!(input.coordinate_type(), CoordinateType::Spectral);
@@ -149,7 +158,7 @@ fn linear(x: f32, at: impl Fn(usize) -> (f32, bool), count: usize) -> (f32, bool
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::regrid::{RegridMethod, RegridTemplate, regrid};
+    use crate::regrid::{RegridMethod, RegridTemplate, regrid, regrid_along_frequency};
 
     /// A 4 × 4 image of one Stokes plane and `channels` channels from
     /// `first_hz`, `step_hz` apart, each plane holding `value(channel)`.
@@ -200,7 +209,7 @@ mod tests {
             10.0 * (k as f32 + 1.0)
         });
         let template = RegridTemplate::of(&cube(0.95e9, 1.0e8, 6, FrequencyRef::LSRK, |_| 0.0));
-        let regridded = regrid(&input, &template, RegridMethod::Linear).unwrap();
+        let regridded = regrid_along_frequency(&input, &template, RegridMethod::Linear).unwrap();
         assert_eq!(regridded.data.shape(), &[4, 4, 1, 6]);
         let planes = (0..6)
             .map(|k| (regridded.data[[1, 2, 0, k]], regridded.mask[[1, 2, 0, k]]))
@@ -218,14 +227,33 @@ mod tests {
         );
         // Another frame, or one input channel, is refused.
         let topo = RegridTemplate::of(&cube(0.95e9, 1.0e8, 6, FrequencyRef::TOPO, |_| 0.0));
-        let error = regrid(&input, &topo, RegridMethod::Linear).unwrap_err();
+        let error = regrid_along_frequency(&input, &topo, RegridMethod::Linear).unwrap_err();
         assert!(error.to_string().contains("spectral frames"), "{error}");
         let one = cube(1.0e9, 1.0e8, 1, FrequencyRef::LSRK, |_| 1.0);
-        let error = regrid(&one, &template, RegridMethod::Linear).unwrap_err();
+        let error = regrid_along_frequency(&one, &template, RegridMethod::Linear).unwrap_err();
         assert!(
             error.to_string().contains("one channel") || error.to_string().contains("1 channel"),
             "{error}"
         );
+        // A cube onto one channel: `_checkAxes` removes the axis of unit
+        // length from those it regrids and refuses the shapes.
+        let plane = RegridTemplate::of(&cube(1.0e9, 1.0e8, 1, FrequencyRef::LSRK, |_| 0.0));
+        let error = regrid_along_frequency(&input, &plane, RegridMethod::Linear).unwrap_err();
+        assert!(
+            error.to_string().contains("same input and output shapes"),
+            "{error}"
+        );
+    }
+
+    /// `imregrid`, `feather` and `simutil` call [`regrid`], which keeps the
+    /// spectral axis out of it: the start model's linear pass is not theirs.
+    #[test]
+    fn the_direction_regrid_refuses_a_spectral_axis_that_differs() {
+        use casa_types::measures::frequency::FrequencyRef;
+        let input = cube(1.0e9, 1.0e8, 4, FrequencyRef::LSRK, |k| k as f32);
+        let template = RegridTemplate::of(&cube(0.95e9, 1.0e8, 6, FrequencyRef::LSRK, |_| 0.0));
+        let error = regrid(&input, &template, RegridMethod::Linear).unwrap_err();
+        assert!(error.to_string().contains("direction axes only"), "{error}");
     }
 
     /// Between channels the line, at a channel its value, beyond the ends

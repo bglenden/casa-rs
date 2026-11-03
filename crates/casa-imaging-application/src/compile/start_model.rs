@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, StokesType};
 use casa_images::{
     AnyPagedImage, ImageError, ImageInterface, ImagePixel, RegridMethod, RegridTemplate, TempImage,
-    TempStoragePolicy, check_regrid, regrid,
+    TempStoragePolicy, check_regrid_along_frequency, regrid_along_frequency,
 };
 use ndarray::{ArrayD, Zip};
 
@@ -45,8 +45,17 @@ use super::domains::PreparedImageDomain;
 #[derive(Clone, Debug)]
 pub(crate) struct StartModel {
     source: Source,
-    input_shape: Vec<usize>,
     template: RegridTemplate,
+}
+
+/// One start-model image: its path and shape, the template it is regridded
+/// onto, and whether its spectral axis is regridded.
+#[derive(Clone, Debug)]
+struct Regrid {
+    path: PathBuf,
+    shape: Vec<usize>,
+    template: RegridTemplate,
+    spectral: bool,
 }
 
 /// Where a start model's pixels come from.
@@ -55,7 +64,7 @@ enum Source {
     /// An explicit `startmodel`: an image per term, `None` for a term that
     /// starts from zero, each regridded onto its term's grid (one Taylor
     /// term, or a cube's every channel).
-    Regrid(Box<[Option<(PathBuf, RegridTemplate)>]>),
+    Regrid(Box<[Option<Regrid>]>),
     /// An earlier run's model on the image's own grid, read as it is: one
     /// image, or one per Taylor term, `None` for a term with none (CASA
     /// makes it zero).
@@ -78,24 +87,16 @@ impl StartModel {
             coordinates: main.coordinates.clone(),
             shape: vec![nx, ny, polarizations, planes / terms],
         };
-        let mut input_shape = term.shape.clone();
         let mut sources = Vec::with_capacity(terms);
         for index in 0..terms {
             let source = match paths.get(index).cloned().flatten() {
-                Some(path) => {
-                    let (shape, template) = Self::check(&path, term.clone())?;
-                    if shape.iter().product::<usize>() > input_shape.iter().product() {
-                        input_shape = shape;
-                    }
-                    Some((path, template))
-                }
+                Some(path) => Some(Self::check(&path, term.clone())?),
                 None => None,
             };
             sources.push(source);
         }
         Ok(Self {
             source: Source::Regrid(sources.into_boxed_slice()),
-            input_shape,
             template: RegridTemplate {
                 coordinates: main.coordinates.clone(),
                 shape: vec![nx, ny, polarizations, planes],
@@ -105,21 +106,17 @@ impl StartModel {
 
     /// Check the image at `path` as a start model of `template`'s image.
     pub(crate) fn onto(path: &Path, template: RegridTemplate) -> Result<Self, PrepareError> {
-        let (input_shape, checked) = Self::check(path, template.clone())?;
+        let checked = Self::check(path, template.clone())?;
         Ok(Self {
-            source: Source::Regrid(Box::new([Some((path.to_path_buf(), checked))])),
-            input_shape,
+            source: Source::Regrid(Box::new([Some(checked)])),
             template,
         })
     }
 
-    /// The image at `path` checked as a start model of `template`'s image:
-    /// its shape, and the template it is regridded onto, whose Stokes are
-    /// relabelled to the image's so its planes are copied by position.
-    fn check(
-        path: &Path,
-        mut template: RegridTemplate,
-    ) -> Result<(Vec<usize>, RegridTemplate), PrepareError> {
+    /// The image at `path` checked as a start model of `template`'s image,
+    /// with the template it is regridded onto, whose Stokes are relabelled
+    /// to the image's so its planes are copied by position.
+    fn check(path: &Path, mut template: RegridTemplate) -> Result<Regrid, PrepareError> {
         let refuse = |reason: String| PrepareError::StartModel {
             path: path.to_path_buf(),
             reason,
@@ -152,17 +149,23 @@ impl StartModel {
                 .coordinates
                 .replace_coordinate(output, coordinates.coordinate(input).clone());
         }
-        check_regrid(&coordinates, &shape, &template).map_err(|error| {
-            refuse(format!(
-                "{error}; casa-rs regrids a start model's direction and spectral axes, in the \
-                 image's frames"
-            ))
-        })?;
+        let spectral =
+            check_regrid_along_frequency(&coordinates, &shape, &template).map_err(|error| {
+                refuse(format!(
+                    "{error}; casa-rs regrids a start model's direction and spectral axes, in \
+                     the image's frames"
+                ))
+            })?;
         if ours != theirs {
             tracing::warn!(startmodel = ?path, input_stokes = ?ours, image_stokes = ?theirs,
                 "startmodel Stokes labels differ: copying planes by position as CASA does; no polarization conversion is performed");
         }
-        Ok((shape, template))
+        Ok(Regrid {
+            path: path.to_path_buf(),
+            shape,
+            template,
+            spectral,
+        })
     }
 
     /// Reuse an earlier run's model, whose images `terms` (one, or one per
@@ -173,7 +176,6 @@ impl StartModel {
     pub(super) fn restart(terms: Box<[Option<PathBuf>]>, template: RegridTemplate) -> Self {
         Self {
             source: Source::Direct(terms),
-            input_shape: template.shape.clone(),
             template,
         }
     }
@@ -187,25 +189,39 @@ impl StartModel {
     /// first two of both images, as `check_regrid` requires. A spectral
     /// regrid holds the direction pass's image, of the output's planes and
     /// the input's channels, with its mask, beside its own output. Terms
-    /// are regridded one at a time, the largest input charged. Direct
+    /// are regridded one at a time, each onto its own term's grid, the
+    /// samples of all of them kept: the largest term's charge. Direct
     /// restart holds only the input image and the emitted samples, within
     /// this charge.
     pub(crate) fn seeding_bytes(&self) -> u64 {
-        let input: usize = self.input_shape.iter().product();
-        let output: usize = self.template.shape.iter().product();
-        let input_plane = self.input_shape[0] * self.input_shape[1];
-        let output_plane = self.template.shape[0] * self.template.shape[1];
-        let position = size_of::<Option<[f64; 2]>>();
-        let spectral = if input / input_plane == output / output_plane {
-            0
-        } else {
-            output_plane * (input / input_plane) * (4 + 1)
+        let samples: usize = self.template.shape.iter().product::<usize>() * 4;
+        let term_bytes = |input_shape: &[usize], output_shape: &[usize], spectral: bool| {
+            let input: usize = input_shape.iter().product();
+            let output: usize = output_shape.iter().product();
+            let input_plane = input_shape[0] * input_shape[1];
+            let output_plane = output_shape[0] * output_shape[1];
+            let position = size_of::<Option<[f64; 2]>>();
+            let direction_pass = if spectral {
+                output_plane * (input / input_plane) * (4 + 1)
+            } else {
+                0
+            };
+            input * (8 + 1 + 4 + 4)
+                + output * (4 + 1)
+                + direction_pass
+                + input_plane * (8 + 1)
+                + output_plane * (8 + 1 + position)
         };
-        (input * (8 + 1 + 4 + 4)
-            + output * (4 + 1 + 4)
-            + spectral
-            + input_plane * (8 + 1)
-            + output_plane * (8 + 1 + position)) as u64
+        let largest = match &self.source {
+            Source::Regrid(terms) => terms
+                .iter()
+                .flatten()
+                .map(|term| term_bytes(&term.shape, &term.template.shape, term.spectral))
+                .max()
+                .unwrap_or(0),
+            Source::Direct(_) => term_bytes(&self.template.shape, &self.template.shape, false),
+        };
+        (samples + largest) as u64
     }
 
     /// The image's pixels along x and y.
@@ -259,11 +275,11 @@ impl StartModel {
         let per_term = total / terms.len();
         let mut samples = Vec::with_capacity(total);
         for term in terms {
-            let Some((path, template)) = term else {
+            let Some(term) = term else {
                 samples.resize(samples.len() + per_term, 0.0);
                 continue;
             };
-            let zeroed = match AnyPagedImage::open(path)? {
+            let zeroed = match AnyPagedImage::open(&term.path)? {
                 AnyPagedImage::Float32(image) => zeroed_copy(&image)?,
                 AnyPagedImage::Float64(image) => zeroed_copy(&image)?,
                 AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
@@ -272,7 +288,7 @@ impl StartModel {
                     ));
                 }
             };
-            let regridded = regrid(&zeroed, template, RegridMethod::Linear)?;
+            let regridded = regrid_along_frequency(&zeroed, &term.template, RegridMethod::Linear)?;
             samples.extend_from_slice(
                 regridded
                     .data
