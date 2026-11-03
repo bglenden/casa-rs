@@ -428,3 +428,30 @@ fn sidelobe(value: &CasaValue) -> f64 {
     };
     value.0
 }
+
+#[test]
+fn scratch_twochan_reproductions() {
+    let observation = Observation::synthesise_band(2, &[("point", POINT)]);
+    let one = observation.try_image(
+        "pcwd",
+        json!({"specmode": "cube", "nchan": 1, "spw": "0:1", "perchanweightdensity": true,
+               "weighting": "briggs", "robust": 0.5, "niter": 0}),
+    );
+    eprintln!("SCRATCH pcwd: {:?}", one.as_ref().err());
+    let iquv = observation.try_image(
+        "iquv",
+        json!({"specmode": "cube", "stokes": "IQUV", "weighting": "briggs", "robust": 0,
+               "niter": 10}),
+    );
+    eprintln!("SCRATCH iquv: {:?}", iquv.as_ref().err());
+    let iquv_natural = observation.try_image(
+        "iquv-natural",
+        json!({"specmode": "cube", "stokes": "IQUV", "niter": 10}),
+    );
+    eprintln!("SCRATCH iquv natural: {:?}", iquv_natural.as_ref().err());
+    let i_briggs = observation.try_image(
+        "i-briggs",
+        json!({"specmode": "cube", "weighting": "briggs", "robust": 0, "niter": 10}),
+    );
+    eprintln!("SCRATCH I briggs: {:?}", i_briggs.as_ref().err());
+}
