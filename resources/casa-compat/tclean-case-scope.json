@@ -88,11 +88,6 @@
    "cases": 14
   },
   {
-   "family": "awproject-cube",
-   "reason": "AW projection of a cube: awproject stays at its current coverage",
-   "cases": 12
-  },
-  {
    "family": "awproject-imported-mosaic",
    "reason": "AW mosaics on imported CASA caches: awproject stays at its current coverage",
    "cases": 14
@@ -432,36 +427,31 @@
   "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.1": {
    "scope": "LATER",
    "families": [
-    "awproject-cache-generation",
-    "awproject-cube"
+    "awproject-cache-generation"
    ]
   },
   "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.2": {
    "scope": "LATER",
    "families": [
-    "awproject-cache-generation",
-    "awproject-cube"
+    "awproject-cache-generation"
    ]
   },
   "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.3": {
    "scope": "LATER",
    "families": [
-    "awproject-cache-generation",
-    "awproject-cube"
+    "awproject-cache-generation"
    ]
   },
   "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.4": {
    "scope": "LATER",
    "families": [
-    "awproject-cache-generation",
-    "awproject-cube"
+    "awproject-cache-generation"
    ]
   },
   "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.5": {
    "scope": "LATER",
    "families": [
-    "awproject-cache-generation",
-    "awproject-cube"
+    "awproject-cache-generation"
    ]
   },
   "test_hetarray_imaging.test_het_pointing_offsets_awproject_mtmfs.1": {
@@ -738,42 +728,36 @@
   "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield.1+2": {
    "scope": "LATER",
    "families": [
-    "awproject-cube",
     "awproject-imported-mosaic"
    ]
   },
   "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield_upTrue.1+2": {
    "scope": "LATER",
    "families": [
-    "awproject-cube",
     "awproject-imported-mosaic"
    ]
   },
   "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield.1+2": {
    "scope": "LATER",
    "families": [
-    "awproject-cube",
     "awproject-imported-mosaic"
    ]
   },
   "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield_upTrue.1+2": {
    "scope": "LATER",
    "families": [
-    "awproject-cube",
     "awproject-imported-mosaic"
    ]
   },
   "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_onefield.1+2": {
    "scope": "LATER",
    "families": [
-    "awproject-cube",
     "awproject-imported-mosaic"
    ]
   },
   "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_twofield.1+2": {
    "scope": "LATER",
    "families": [
-    "awproject-cube",
     "awproject-imported-mosaic"
    ]
   },
@@ -1367,8 +1351,7 @@
   "test_widefield.test_widefield_aproj_cube.1": {
    "scope": "LATER",
    "families": [
-    "awproject-cache-generation",
-    "awproject-cube"
+    "awproject-cache-generation"
    ]
   },
   "test_widefield.test_widefield_aproj_mfs.1": {

@@ -1,0 +1,163 @@
+{
+ "source": {
+  "purpose": "casa-rs's own tclean cases of AW cubes (#719)",
+  "casa_version": "6.7.6.14",
+  "tool": "tools/casa-compat/tclean_case_matrix.py"
+ },
+ "format": "tclean_case_matrix.py's case matrix (resources/casa-compat/tclean-casa-test-cases.json documents it)",
+ "inputs": {
+  "refim_oneshiftpoint.mosaic.ms": "unittest/tclean/refim_oneshiftpoint.mosaic.ms",
+  "cfcache_oneshiftpoint_mosaic_cbFalse": "unittest/tclean/cfcache_oneshiftpoint_mosaic_cbFalse",
+  "cfcache_oneshiftpoint_mosaic_cbTrue": "unittest/tclean/cfcache_oneshiftpoint_mosaic_cbTrue"
+ },
+ "common": {},
+ "cases": {
+  "aw_cube_dirty": {
+   "vis": "refim_oneshiftpoint.mosaic.ms",
+   "imagename": "tst",
+   "params": {
+    "specmode": "cube",
+    "spw": "*",
+    "imsize": 1024,
+    "phasecenter": "",
+    "cell": "10.0arcsec",
+    "gridder": "awproject",
+    "field": "0",
+    "cfcache": "cfcache_oneshiftpoint_mosaic_cbFalse",
+    "conjbeams": false,
+    "wbawp": true,
+    "psterm": false,
+    "pblimit": 0.1,
+    "reffreq": "1.5GHz",
+    "pbcor": true,
+    "mosweight": false,
+    "parallel": false,
+    "niter": 0
+   },
+   "stage": [
+    "cfcache_oneshiftpoint_mosaic_cbFalse"
+   ],
+   "note": "A three-channel AW cube on an imported cache, dirty, as a fresh call: each plane its own weight image",
+   "skip_scalars": false
+  },
+  "aw_cube_clean": {
+   "vis": "refim_oneshiftpoint.mosaic.ms",
+   "imagename": "tst",
+   "params": {
+    "specmode": "cube",
+    "spw": "*",
+    "imsize": 1024,
+    "phasecenter": "",
+    "cell": "10.0arcsec",
+    "gridder": "awproject",
+    "field": "0",
+    "cfcache": "cfcache_oneshiftpoint_mosaic_cbFalse",
+    "conjbeams": false,
+    "wbawp": true,
+    "psterm": false,
+    "pblimit": 0.1,
+    "reffreq": "1.5GHz",
+    "pbcor": true,
+    "mosweight": false,
+    "parallel": false,
+    "niter": 10
+   },
+   "stage": [
+    "cfcache_oneshiftpoint_mosaic_cbFalse"
+   ],
+   "note": "The same cube cleaned 10 iterations a channel, as a fresh call",
+   "skip_scalars": false
+  },
+  "aw_cube_conjugate_dirty": {
+   "vis": "refim_oneshiftpoint.mosaic.ms",
+   "imagename": "tst",
+   "params": {
+    "specmode": "cube",
+    "spw": "*",
+    "imsize": 1024,
+    "phasecenter": "",
+    "cell": "10.0arcsec",
+    "gridder": "awproject",
+    "field": "0",
+    "cfcache": "cfcache_oneshiftpoint_mosaic_cbTrue",
+    "conjbeams": true,
+    "wbawp": true,
+    "psterm": false,
+    "pblimit": 0.1,
+    "reffreq": "1.5GHz",
+    "pbcor": true,
+    "mosweight": false,
+    "parallel": false,
+    "niter": 0
+   },
+   "stage": [
+    "cfcache_oneshiftpoint_mosaic_cbTrue"
+   ],
+   "note": "The same cube with conjugate beams, on their cache",
+   "skip_scalars": false
+  },
+  "aw_restart_one_window": {
+   "sequence": [
+    {
+     "call": 1,
+     "depends_on": [],
+     "line": 6807,
+     "vis": "refim_oneshiftpoint.mosaic.ms",
+     "imagename": "tst",
+     "params": {
+      "niter": 0,
+      "specmode": "cube",
+      "spw": "1",
+      "imsize": 1024,
+      "phasecenter": "",
+      "cell": "10.0arcsec",
+      "gridder": "awproject",
+      "field": "0",
+      "cfcache": "cfcache_oneshiftpoint_mosaic_cbFalse",
+      "conjbeams": false,
+      "wbawp": true,
+      "psterm": false,
+      "pblimit": 0.1,
+      "reffreq": "1.5GHz",
+      "pbcor": true,
+      "mosweight": false,
+      "parallel": false
+     }
+    },
+    {
+     "call": 2,
+     "depends_on": [
+      1
+     ],
+     "line": 6817,
+     "vis": "refim_oneshiftpoint.mosaic.ms",
+     "imagename": "tst",
+     "params": {
+      "niter": 10,
+      "specmode": "cube",
+      "spw": "1",
+      "imsize": 1024,
+      "phasecenter": "",
+      "cell": "10.0arcsec",
+      "gridder": "awproject",
+      "field": "0",
+      "cfcache": "cfcache_oneshiftpoint_mosaic_cbFalse",
+      "conjbeams": false,
+      "wbawp": true,
+      "psterm": false,
+      "pblimit": 0.1,
+      "reffreq": "1.5GHz",
+      "pbcor": true,
+      "mosweight": false,
+      "parallel": false
+     }
+    }
+   ],
+   "skip_scalars": false,
+   "stage": [
+    "cfcache_oneshiftpoint_mosaic_cbFalse"
+   ],
+   "note": "Two calls on one window, where max(sumwt) is the channel's own, so CASA's weight-image reload scales nothing. CASA writes .image and .residual of this one-channel restart with no default mask, unlike a fresh call or a cube's restart, so the case fails on that mask alone; its NRMS is the comparison"
+  }
+ }
+}

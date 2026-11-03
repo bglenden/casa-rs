@@ -46,6 +46,9 @@ mod imaging;
 
 #[path = "common/synthetic_observation.rs"]
 mod synthetic_observation;
+
+#[path = "admission_memory/aw.rs"]
+mod aw;
 use synthetic_observation::{CELL_ARCSEC, observation, observation_as};
 
 #[global_allocator]
@@ -1431,66 +1434,4 @@ fn evla_surface(root: &Path) -> PathBuf {
         .collect::<String>();
     std::fs::write(&path, text).expect("write the EVLA surface");
     path
-}
-
-/// #738: native A-projection MT-MFS at 1024², generating its catalog and
-/// then reusing it, is admitted close to what it holds. Generation is
-/// admitted before it starts: uncharged, it held 274 MB beyond the
-/// admitted memory. A catalog whose groups all fit its bound is charged
-/// those groups: charged the bound of `cf_resident_mb = 512`, the run
-/// reserved 974 MB for a peak of 398 MB. An automatic bound
-/// (`cf_resident_mb = auto`, #449) is admitted by the same path. This
-/// catalog's 15.6 MB of cells lie under its 256 MiB floor, so the bound is
-/// not raised here (#781 review): `aw::cache`'s laws pin the raise, and B3
-/// measured it end to end.
-#[test]
-fn aw_mtmfs_is_admitted_close_to_what_it_holds() {
-    if !alone("aw_mtmfs_is_admitted_close_to_what_it_holds") {
-        return;
-    }
-    let root = tempfile::tempdir().expect("test root");
-    let measurement_set = evla_observation(root.path());
-    let surface = evla_surface(root.path());
-    warm(&measurement_set, root.path());
-    let cache = root.path().join("native-cf");
-    let mut breaches = Vec::new();
-    for (label, resident) in [
-        ("aw generating", json!(512)),
-        ("aw reusing", json!(512)),
-        ("aw automatic", json!("auto")),
-    ] {
-        let mut values = json!({
-            "vis": measurement_set,
-            "imagename": root.path().join(label.replace(' ', "-")),
-            "imsize": 1024,
-            "cell": "10arcsec",
-            "weighting": "natural",
-            "niter": 200,
-            "cycleniter": 50,
-            "gain": 0.2,
-            "threshold": "1mJy",
-            "gridder": "awproject",
-            "wprojplanes": 32,
-            "aw_cf_source": "native-evla",
-            "native_cf_cache": cache,
-            "evla_surface": surface,
-            "native_cf_policy": "generate-missing",
-            "native_cf_working_size": 2048,
-            "native_cf_oversampling": 4,
-            "native_cf_cache_bytes": 2_147_483_648_u64,
-            "native_cf_maximum_cells": 128,
-            "cf_resident_mb": resident,
-            "normtype": "flatnoise",
-            "pbcor": true,
-        });
-        values.as_object_mut().expect("AW controls").extend(
-            mtmfs_controls()
-                .as_object()
-                .expect("MT-MFS controls")
-                .clone(),
-        );
-        let measured = check(&mut breaches, label, &imaging::request(values), 1, AMPLE);
-        breaches.extend(over_charge(label, &measured));
-    }
-    assert!(breaches.is_empty(), "{breaches:#?}");
 }

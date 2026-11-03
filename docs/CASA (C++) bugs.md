@@ -3604,3 +3604,31 @@ sample reaches it: `SIImageStore::restore` restores every plane, and
 there is the model convolved with that beam. Evidence: `casa-images` `regrid::spectral` laws, the
 start-model axis laws, and CASA's `test_modelvis_7` and
 `test_startmodel_regrid_cube`.
+
+## A restarted AW cube's weight image grows on every channel but one
+
+- Date noted: 2026-11-03
+- Status: CASA bug casa-rs does not follow (#719)
+- Affected code: casatools `synthesis/TransformMachines2/CFCache.cc`
+  (`CFCache::loadWtImage`), `synthesis/ImagerObjects/SIImageStore.cc`
+  (`divideWeightBySumwt`, `divideResidualByWeight`)
+
+`AWProjectWBFT` reads the run's `.weight` image back as its average PB, and
+`loadWtImage` multiplies it by `max(sumWtTmp.get())`: the largest sum of
+weights over all channels. `.weight` was divided by each channel's own sum,
+so a second tclean call on the same image name scales channel `c`'s weight by
+`max(sumwt)/sumwt[c]`. A channel with the largest sum is unaffected, and
+`divideResidualByWeight`, which divides by the PB peak times the weight's
+root, moves its residual and every product after it. The result depends on
+whether an earlier call made the image and on how other channels were
+flagged, and no sky could change it.
+
+`refim_oneshiftpoint.mosaic.ms`, three channels, `niter=10`: a fresh call's
+`.weight` peaks are 1.0000, 1.0041 and 1.0233 and its channel 2 residual peak
+is 0.1019; after a `niter=0` call on that name they are 1.0000, 1.0081 and
+1.0472, and 0.1139. casa-rs computes the weight image afresh, and agrees with
+CASA's fresh call within 8e-7 NRMS on every product; on one window, where
+`max(sumwt)` is the channel's own, CASA's restart also stays consistent and
+agrees within 5e-5. `test_mosaic_cube.test_cube_awproject_*` make that second
+call, so they differ from casa-rs on the channels the reload scales. Evidence:
+`resources/casa-compat/tclean-aw-cube-cases.json` and its receipt.

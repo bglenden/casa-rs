@@ -28,8 +28,8 @@ note, by which awproject reads an existing CASA cache and never writes one,
 so a cache the test does not stage from casatestdata is missing; and the
 availability gate (`casa-imaging-application/src/availability.rs`, `check`)
 for what the parameters alone decide (a polarized Taylor basis, facets beyond
-single-term MFS with the standard gridder, AW projection of a cube, of a
-non-square grid or of a list of MeasurementSets).
+single-term MFS with the standard gridder, AW projection of a non-square
+grid or of a list of MeasurementSets).
 
 The output lists the gaps (every source but the parity refusals) most-hit
 first, with how many cases each blocks alone (`sole_blocker`) and examples;
@@ -530,8 +530,6 @@ class Refusals:
             self.add("mtmfs of Stokes planes other than I alone beyond the standard gridder",
                      GATE, 1112)
         if modes["gridder"] == "awproject":
-            if modes["cube"]:
-                self.add("AW projection of a cube (#719)", GATE, 719)
             if self.measurement_sets() > 1:
                 self.add("AW projection of a list of MeasurementSets", GATE, 980)
             imsize, cell = self.values.get("imsize"), self.values.get("cell")
