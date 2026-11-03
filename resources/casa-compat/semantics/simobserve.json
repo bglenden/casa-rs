@@ -10,7 +10,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "casa-suite-20261103"
    ],
    "behaviors": [
     "outputs"
@@ -127,7 +128,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "skymodel-fixture"
+    "skymodel-fixture",
+    "casa-suite-20261103"
    ],
    "behaviors": [
     "sky-model"
@@ -319,7 +321,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "casa-suite-20261103"
    ],
    "behaviors": [
     "antennas"
@@ -343,7 +346,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "casa-suite-20261103"
    ],
    "behaviors": [
     "noise"
@@ -355,7 +359,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "casa-suite-20261103"
    ],
    "behaviors": [
     "noise"
@@ -391,7 +396,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "casa-suite-20261103"
    ],
    "behaviors": [
     "noise"
@@ -531,10 +537,11 @@
    "title": "Thermal noise and leakage",
    "status": "Partial",
    "scope": "thermalnoise 'tsys-atm', 'tsys-manual' and '' with user_pwv, t_ground, t_sky, tau0, seed, leakage and correlator.",
-   "gap": "Noise is compared statistically (variances and KS tests), since draws differ; each environment parameter is exercised once; seed is casa-rs's own stream.",
+   "gap": "Noise is compared statistically (variances and KS tests), since draws differ; each environment parameter is exercised once; seed is casa-rs's own stream. In CASA's own suite, tsys-manual interferometer noise is 5.8% below CASA's recorded level and tsys-atm single-dish noise 5.05% above it, just outside its 5% band; not yet attributed (#1053).",
    "evidence": [
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "casa-suite-20261103"
    ]
   },
   {
@@ -542,10 +549,11 @@
    "title": "Files, overwrite and graphics",
    "status": "Partial",
    "scope": "CASA's file names under the project, overwrite, verbose and graphics.",
-   "gap": "graphics writes no .skymodel.png, .observe.png or .quick.psf yet and warns (#1025).",
+   "gap": "graphics writes no .skymodel.png, .observe.png or .quick.psf yet and warns (#1025). An empty project and wrongly typed comp_nchan or sdant are refused, but not in CASA's words (#1053).",
    "evidence": [
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "casa-suite-20261103"
    ]
   }
  ],
@@ -728,6 +736,20 @@
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata /Volumes/home/casatestdata --atmosphere-model TARGET/release/examples/at_tool_quantities (bg-mac-mini, CPU)",
    "receipt": "resources/casa-compat/evidence/simobserve-parity-20261103.json"
+  },
+  "casa-suite-20261103": {
+   "kind": "CASA's test_task_simobserve with casa-rs in place of CASA's task",
+   "state": "measured",
+   "result": "Of the 54 cases CASA 6.7.6.14 passes on this host, casa-rs passes 45. Of the other 9, 3 refuse as CASA does in casa-rs's own words: an empty project, and comp_nchan and sdant of the wrong type. The other 6 are noise levels just outside the suite's 5% band: tsys-manual interferometer noise 5.8% below CASA's recorded value, and tsys-atm single-dish noise 5.05% above it in all five variants. Not yet attributed. 23 cases fail with CASA's own task too and 16 are skipped by both.",
+   "scope": "CASA's own simobserve suite (93 cases): sky models, component lists, both, noise, bad inputs and correlators, judged by the suite's checks against casatestdata's reference products.",
+   "links": [
+    "tools/simulation/simobserve_casa_suite.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASAPY tools/simulation/simobserve_casa_suite.py --test-file CASA6/casatasks/tests/tasks/test_task_simobserve.py --casatestdata LOCAL_COPY --casars-bin TARGET/release/simobserve --out OUT (bg-mac-mini)",
+   "receipt": "resources/casa-compat/evidence/simobserve-casa-suite-20261103.json",
+   "source_revision": "d5c88b52b718e4b3834447724d66371f269a0083"
   }
  }
 }
