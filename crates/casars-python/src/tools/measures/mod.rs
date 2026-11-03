@@ -42,7 +42,7 @@ use pyo3::prelude::*;
 use crate::convert::holder::Measure;
 use crate::convert::value::CasaValue;
 use crate::convert::{RecordArg, Variant};
-use crate::tools::{LogLine, emit, not_yet_implemented};
+use crate::tools::{LogLine, emit, not_yet_implemented_in};
 
 /// The Python logger CASA's `me` messages go to.
 const LOGGER: &str = "casars.tools.measures";
@@ -104,9 +104,10 @@ impl PyMeasures {
     }
 }
 
-/// A method a later phase implements.
+/// A method casa-rs does not implement yet, refused naming #1053, which
+/// classifies them.
 fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented("measures", method)
+    not_yet_implemented_in("measures", method, 1053)
 }
 
 /// The measures data failed to load: CASA's tool always has them.

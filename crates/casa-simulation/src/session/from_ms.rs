@@ -143,7 +143,7 @@ impl Simulator {
     pub(super) fn refuse_after_openfromms(&self, call: &str) -> SimulatorResult<()> {
         if self.opened.is_some() {
             return Err(SimulatorError::not_yet_implemented(format!(
-                "{call} after openfromms is not yet implemented in casa-rs (#841)"
+                "{call} after openfromms is not yet implemented in casa-rs (#1053)"
             )));
         }
         Ok(())
@@ -161,7 +161,7 @@ impl Simulator {
         match pointing_away_from_phase_centre(self.path(), &self.scans, &opened.scan_times_s)? {
             Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
                 "{what} on a MeasurementSet whose POINTING points scan {} away from its \
-                 field's PHASE_DIR is not yet implemented in casa-rs (#841)",
+                 field's PHASE_DIR is not yet implemented in casa-rs (#1053)",
                 self.scans[scan].scan_number
             ))),
             None => Ok(()),
@@ -230,7 +230,7 @@ fn read_windows(ms: &MeasurementSet) -> SimulatorResult<Vec<SpectralWindow>> {
     if !in_order {
         return Err(SimulatorError::not_yet_implemented(
             "openfromms on a MeasurementSet whose data descriptions are not its spectral \
-             windows in order is not yet implemented in casa-rs (#841)",
+             windows in order is not yet implemented in casa-rs (#1053)",
         ));
     }
     (0..windows.row_count())
@@ -299,7 +299,7 @@ fn read_window(
     if !linear {
         return Err(SimulatorError::not_yet_implemented(format!(
             "openfromms on spectral window {row}, whose channels are not evenly spaced by their \
-             width, is not yet implemented in casa-rs (#841)"
+             width, is not yet implemented in casa-rs (#1053)"
         )));
     }
     Ok(window)
@@ -314,7 +314,7 @@ fn refuse_several_feeds(ms: &MeasurementSet) -> SimulatorResult<()> {
         if feed.i32(row, "FEED_ID").map_err(&error)? != 0 {
             return Err(SimulatorError::not_yet_implemented(
                 "openfromms on a MeasurementSet with several feeds per antenna is not yet \
-                 implemented in casa-rs (#841)",
+                 implemented in casa-rs (#1053)",
             ));
         }
     }
@@ -329,7 +329,7 @@ fn read_fields(session: &Simulator, ms: &MeasurementSet) -> SimulatorResult<Vec<
             if field.num_poly(row).map_err(&error)? != 0 {
                 return Err(SimulatorError::not_yet_implemented(format!(
                     "openfromms on field {row}, whose PHASE_DIR is a polynomial, is not yet \
-                     implemented in casa-rs (#841)"
+                     implemented in casa-rs (#1053)"
                 )));
             }
             let direction = raw_field_phase_direction(ms, row).map_err(&error)?;

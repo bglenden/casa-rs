@@ -656,7 +656,7 @@ fn refuse_partly_flagged_rows(
         if let Some(offset) = partly {
             return Err(SimulatorError::not_yet_implemented(format!(
                 "predict or corrupt after openfromms on MAIN row {}, whose samples are \
-                 flagged without FLAG_ROW, is not yet implemented in casa-rs (#841)",
+                 flagged without FLAG_ROW, is not yet implemented in casa-rs (#1053)",
                 first + offset
             )));
         }

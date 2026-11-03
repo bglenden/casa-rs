@@ -97,7 +97,7 @@ def test_the_bundle_describes_the_class() -> None:
 
 def test_methods_casa_rs_does_not_implement_yet_raise() -> None:
     cl = componentlist()
-    with pytest.raises(NotImplementedError, match="componentlist.setflux is not yet implemented"):
+    with pytest.raises(NotImplementedError, match=r"^componentlist\.setflux is not yet implemented in casa-rs \(#1053\)$"):
         cl.setflux(0, value=1.0)
     with pytest.raises(NotImplementedError, match="componentlist.fromrecord"):
         cl.fromrecord({})

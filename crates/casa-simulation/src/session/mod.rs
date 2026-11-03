@@ -496,7 +496,7 @@ impl Simulator {
         tracing::info!("Selecting data");
         if !ms_select.trim().is_empty() {
             return Err(SimulatorError::not_yet_implemented(format!(
-                "setdata(msselect='{ms_select}') is not yet implemented in casa-rs (#841)"
+                "setdata(msselect='{ms_select}') is not yet implemented in casa-rs (#1053)"
             )));
         }
         let windows: Vec<usize> = (0..self.spectral_windows.len())
@@ -519,7 +519,7 @@ impl Simulator {
         }
         Err(SimulatorError::not_yet_implemented(format!(
             "setdata selecting {kept} of the {} scans observed so far is not yet implemented in \
-             casa-rs (simulation Phase 2); a selection of them all is",
+             casa-rs (#1053); a selection of them all is",
             self.scans.len()
         )))
     }

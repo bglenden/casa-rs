@@ -1,11 +1,12 @@
-"""`casars.simutil`: CASA's `simutil` helper class (#841).
+"""`casars.simutil`: CASA's `simutil` helper class (#841, #1053).
 
 `simutil` is CASA's Python helper class (`casatasks.private.simutil`), not a
-tool, and is not in the object-surface bundle. casa-rs declares
-`readantenna`, (Phase 5a) the direction, pointing, receiver and baseline
-helpers `simobserve` uses, and (Phase 5b) its sky-model helpers
-`modifymodel` and `flatimage`. The signatures are compared with CASA
-6.7.6's (`data/casa_simutil_signatures.json`). The expected values are CASA
+tool, and is not in the object-surface bundle. casa-rs implements
+`readantenna`, the direction, pointing, receiver and baseline helpers
+`simobserve` uses, and its sky-model helpers `modifymodel` and `flatimage`
+(`IMPLEMENTED`); CASA's other public methods refuse, naming #1053. Every
+signature is compared with CASA 6.7.6.14's
+(`data/casa_simutil_signatures.json`). The expected values are CASA
 6.7.6's: `readantenna`'s for the same files (probed 2026-10-21), and the rest
 from casa-simulation's CASA fixtures (`tools/simulation/simutil_oracle.py`
 and `skymodel_oracle.py`), which the Rust tests compare in full; here a
@@ -31,6 +32,14 @@ from casars.data import Image, schema_bundle
 from _casa_tools import casa_signatures, close, describe
 
 CASA = casa_signatures("simutil")
+
+#: The methods casa-rs implements; CASA's others refuse, naming #1053.
+IMPLEMENTED = {
+    "approxBeam", "average_direction", "bandname", "baselineLengths", "calc_pointings2",
+    "dir_m2s", "direction_splitter", "flatimage", "isdirection", "isquantity", "itrf2loc",
+    "median_direction", "modifymodel", "noisetemp", "polsettings", "read_pointings",
+    "readantenna", "wrapang", "write_pointings",
+}
 
 
 @pytest.fixture(scope="module")
@@ -70,6 +79,19 @@ def test_the_class_has_casas_signatures() -> None:
     assert declared == set(CASA["methods"])
     for name, parameters in CASA["methods"].items():
         assert describe(getattr(simutil.simutil, name)) == parameters, name
+
+
+def test_casas_whole_class_is_recorded() -> None:
+    # CASA 6.7.6.14's `simutil` has 57 public methods.
+    assert len(CASA["methods"]) == 57
+    assert IMPLEMENTED < set(CASA["methods"])
+
+
+@pytest.mark.parametrize("method", sorted(set(CASA["methods"]) - IMPLEMENTED))
+def test_methods_casa_rs_does_not_implement_yet_refuse_naming_the_issue(method: str) -> None:
+    arguments = [object()] * sum(parameter["default"] is None for parameter in CASA["methods"][method])
+    with pytest.raises(NotImplementedError, match=rf"^simutil\.{method} is not yet implemented in casa-rs \(#1053\)$"):
+        getattr(simutil.simutil(), method)(*arguments)
 
 
 def test_simutil_is_not_a_bundled_tool() -> None:

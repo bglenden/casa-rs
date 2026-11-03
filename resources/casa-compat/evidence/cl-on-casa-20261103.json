@@ -1,0 +1,45 @@
+{
+ "schema": "casa-tool-tests-on-casa/1",
+ "work_issue": 1053,
+ "date": "2026-11-03",
+ "tool": "componentlist",
+ "oracle": {
+  "casatools": "6.7.6-14"
+ },
+ "tests_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "host": "bg-mac-mini, macOS arm64",
+ "command": "CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool componentlist",
+ "test_file": "crates/casars-python/python/tests/test_tools_componentlist.py",
+ "summary": {
+  "failed": 10,
+  "passed": 11
+ },
+ "tests": {
+  "test_a_dropped_tool_waits_for_the_write_lock_without_the_gil": "failed",
+  "test_a_dropped_tool_writes_its_list": "passed",
+  "test_a_list_keeps_its_table_when_the_working_directory_changes": "passed",
+  "test_a_shape_casa_cannot_construct_raises_and_adds_nothing": "passed",
+  "test_a_spaced_frequency_keeps_its_value": "passed",
+  "test_addcomponent_follows_casa_call_by_call": "failed",
+  "test_an_empty_list_has_no_record": "failed",
+  "test_an_open_of_its_own_table_writes_the_list_before_reading_it": "passed",
+  "test_an_open_releases_the_list_it_replaces": "passed",
+  "test_an_update_rewrites_and_a_read_only_list_is_never_written": "passed",
+  "test_casa_reads_what_casars_writes_when_casa_is_importable": "failed",
+  "test_complex_fluxes_keep_their_real_parts": "passed",
+  "test_every_casa_method_exists_with_casas_signature": "passed",
+  "test_index_errors_are_casas": "failed",
+  "test_methods_casa_rs_does_not_implement_yet_raise": "failed",
+  "test_open_refuses_what_is_not_a_component_list": "passed",
+  "test_records_and_accessors_are_casas": "failed",
+  "test_rename_writes_at_once_and_close_writes_the_rest": "failed",
+  "test_signatures_match_a_live_casa_when_one_is_importable": "passed",
+  "test_the_bundle_describes_the_class": "failed",
+  "test_the_class_is_casas_componentlist": "failed"
+ },
+ "failures_classified": {
+  "casa_rs_only": "test_methods_casa_rs_does_not_implement_yet_raise, test_the_bundle_describes_the_class, test_the_class_is_casas_componentlist, test_a_dropped_tool_waits_for_the_write_lock_without_the_gil, test_casa_reads_what_casars_writes_when_casa_is_importable",
+  "log_channel": "test_addcomponent_follows_casa_call_by_call, test_index_errors_are_casas, test_records_and_accessors_are_casas (compare CASA's log lines with their timestamps), test_an_empty_list_has_no_record (Python's log)",
+  "casa_assertion": "test_rename_writes_at_once_and_close_writes_the_rest: CASA fails AlwaysAssert ok() in SkyCompRep.cc on the test's call sequence"
+ }
+}

@@ -20,14 +20,15 @@
 //! which CASA writes at precision 5 and reads back
 //! ([`casa_simulation::simutil::direction::Directions`]).
 //!
-//! Declared so far (simulation Phases 5a and 5b): `readantenna`; the
-//! direction helpers `direction_splitter`, `average_direction`,
+//! Implemented: `readantenna`; the direction helpers `direction_splitter`, `average_direction`,
 //! `median_direction`, `dir_m2s`, `wrapang`, `isquantity` and
 //! `isdirection`; the pointings `calc_pointings2`, `read_pointings` and
 //! `write_pointings`; `noisetemp`, `bandname` and `polsettings`;
 //! `itrf2loc`, `baselineLengths` and `approxBeam`; and the sky-model
 //! helpers `modifymodel` and `flatimage`
-//! ([`casa_simulation::simutil::skymodel`]).
+//! ([`casa_simulation::simutil::skymodel`]). CASA's other public methods
+//! have its signatures and raise `NotImplementedError` naming #1053, which
+//! classifies them (`stubs.rs`).
 //!
 //! Not being a CASA tool, the class is not in the object-surface bundle
 //! (whose CASA tools are [`crate::tools::TOOLS`]); its Python tests compare
@@ -50,6 +51,7 @@
 //! `float64` scalars, which here are `float`s.
 
 mod ops;
+mod stubs;
 
 use std::path::PathBuf;
 

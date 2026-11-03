@@ -100,15 +100,8 @@ pub(crate) fn emit(py: Python<'_>, logger: &str, lines: &[LogLine]) -> PyResult<
     Ok(())
 }
 
-/// A method of `tool` that a later phase implements (#841).
-pub(crate) fn not_yet_implemented<T>(tool: &str, method: &str) -> PyResult<T> {
-    Err(PyNotImplementedError::new_err(format!(
-        "{tool}.{method} is not yet implemented in casa-rs"
-    )))
-}
-
 /// A method of `tool` casa-rs does not implement yet, refused naming the
-/// issue that records it (#1025).
+/// issue that records it: every refusal names one.
 pub(crate) fn not_yet_implemented_in<T>(tool: &str, method: &str, issue: u32) -> PyResult<T> {
     Err(PyNotImplementedError::new_err(format!(
         "{tool}.{method} is not yet implemented in casa-rs (#{issue})"

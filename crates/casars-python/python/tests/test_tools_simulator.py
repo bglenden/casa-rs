@@ -1103,7 +1103,7 @@ def test_setoptions_and_setvp_follow_casa(tmp_path: Path, caplog: pytest.LogCapt
         assert sm.setoptions(location=1.0) is True
     assert caplog.messages == ["Could not convert location 1 to a Position Measures"]
     assert sm.setoptions(ftmachine="mosaic") is True
-    with pytest.raises(NotImplementedError, match="both.*#841"):
+    with pytest.raises(NotImplementedError, match=r"both.*\(#1053\)"):
         sm.setoptions(ftmachine="both")
     with pytest.raises(NotImplementedError, match="gridfunction"):
         sm.setoptions(gridfunction="BOX")
