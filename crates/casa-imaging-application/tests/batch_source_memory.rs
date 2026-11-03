@@ -93,16 +93,20 @@ const HOST: HostResources = HostResources {
     metal: false,
 };
 
-/// A request for `measurement_set` imaged `imsize` pixels square, with
-/// `controls`.
+/// A request for `measurement_sets` (one, or a list as tclean's `vis`
+/// takes) imaged `imsize` pixels square, with `controls`.
 fn request(
-    measurement_set: &Path,
+    measurement_sets: &[&Path],
     image_name: &Path,
     imsize: usize,
     controls: Value,
 ) -> ImagingRequest {
+    let vis = match measurement_sets {
+        [one] => json!(one),
+        several => json!(several),
+    };
     let mut values = json!({
-        "vis": measurement_set,
+        "vis": vis,
         "imagename": image_name,
         "imsize": imsize,
         "cell": format!("{CELL_ARCSEC}arcsec"),
@@ -176,8 +180,12 @@ fn measure(request: &ImagingRequest, planes_per_wave: u32, memory: u64) -> (Sour
 /// channel between), a mosaic that reads pointing, and the writing passes
 /// of a continuum and a gapped cube that save the model (the first
 /// creating and seeding `MODEL_DATA`), the continuum's again under a policy
-/// that splits its times into several batches: each holds at most its
-/// charge and its block, and the drives fill blocks.
+/// that splits its times into several batches; and over lists of
+/// MeasurementSets, whose source keeps each store's plan, pointing cache
+/// and survey: a continuum over two stores of different windows, a mosaic
+/// reading two stores' pointing, and a continuum writing `MODEL_DATA` into
+/// two stores. Each holds at most its charge and its block, and the drives
+/// fill blocks.
 #[test]
 fn the_batch_source_holds_at_most_its_charge() {
     let root = tempfile::tempdir().expect("test root");
@@ -189,6 +197,8 @@ fn the_batch_source_holds_at_most_its_charge() {
     let narrow = observation(&directory("narrow"), 16);
     let wide = observation(&directory("wide"), 101);
     let alma = pointed_observation_as(&directory("alma"), 16, "ALMA");
+    let alma_again = pointed_observation_as(&directory("alma-again"), 16, "ALMA");
+    let narrow_again = observation(&directory("narrow-again"), 16);
     let cube = json!({
         "specmode": "cube",
         "outframe": "LSRK",
@@ -214,50 +224,85 @@ fn the_batch_source_holds_at_most_its_charge() {
     ]);
     let save = json!({ "savemodel": "modelcolumn", "niter": 10 });
     let ample = 4 << 30;
-    let cases: [(&str, &Path, Value, u32, u64); 9] = [
-        ("continuum", &narrow, json!({}), 1, ample),
-        ("cube resident", &narrow, cube.clone(), 16, ample),
-        ("cube in waves", &narrow, cube, 3, ample),
-        ("continuum of 101 channels", &wide, json!({}), 1, ample),
-        ("gapped linear cube in waves", &wide, gapped, 3, ample),
+    let pointed_mosaic = json!({ "gridder": "mosaic", "usepointing": true });
+    let cases: [(&str, Vec<&Path>, Value, u32, u64); 12] = [
+        ("continuum", vec![&narrow], json!({}), 1, ample),
+        ("cube resident", vec![&narrow], cube.clone(), 16, ample),
+        ("cube in waves", vec![&narrow], cube, 3, ample),
+        (
+            "continuum of 101 channels",
+            vec![&wide],
+            json!({}),
+            1,
+            ample,
+        ),
+        ("gapped linear cube in waves", vec![&wide], gapped, 3, ample),
         (
             "mosaic with pointing",
-            &alma,
-            json!({ "gridder": "mosaic", "usepointing": true }),
+            vec![&alma],
+            pointed_mosaic.clone(),
             1,
             ample,
         ),
         (
             "continuum saving the model",
-            &narrow,
+            vec![&narrow],
             save.clone(),
             1,
             ample,
         ),
         (
             "gapped cube saving the model",
-            &wide,
+            vec![&wide],
             gapped_write,
             10,
             ample,
         ),
         (
             "continuum saving the model in batches",
-            &narrow,
-            save,
+            vec![&narrow],
+            save.clone(),
             1,
             128 << 20,
         ),
+        (
+            "continuum over two MeasurementSets",
+            vec![&narrow, &wide],
+            json!({}),
+            1,
+            ample,
+        ),
+        (
+            "mosaic with pointing over two MeasurementSets",
+            vec![&alma, &alma_again],
+            pointed_mosaic,
+            1,
+            ample,
+        ),
+        (
+            "continuum saving the model into two MeasurementSets",
+            vec![&narrow, &narrow_again],
+            save,
+            1,
+            ample,
+        ),
     ];
     let mut breaches = Vec::new();
-    for (label, measurement_set, controls, planes_per_wave, memory) in cases {
+    for (label, measurement_sets, controls, planes_per_wave, memory) in cases {
         let image = root.path().join(label.replace(' ', "-"));
         let (drive, peak) = measure(
-            &request(measurement_set, &image, 256, controls),
+            &request(&measurement_sets, &image, 256, controls),
             planes_per_wave,
             memory,
         );
-        let held = peak - drive.block as i64 - tile_staging(measurement_set);
+        // The stores are read one after another, each column's session
+        // closing before the next store's opens.
+        let staging = measurement_sets
+            .iter()
+            .map(|measurement_set| tile_staging(measurement_set))
+            .max()
+            .unwrap_or(0);
+        let held = peak - drive.block as i64 - staging;
         eprintln!(
             "{label}: {held} bytes held of {} charged ({} blocks of {} bytes, tiles staged \
              apart)",
@@ -288,7 +333,7 @@ fn a_pass_streams_in_overlapped_batches() {
     let root = tempfile::tempdir().expect("test root");
     let narrow = observation(root.path(), 16);
     let (drive, _) = measure(
-        &request(&narrow, &root.path().join("overlapped"), 256, json!({})),
+        &request(&[&narrow], &root.path().join("overlapped"), 256, json!({})),
         1,
         4 << 30,
     );

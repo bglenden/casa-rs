@@ -171,6 +171,20 @@ MT-MFS, cubes, facets and outlier domains are parameterisations of this one
 path; there is no per-mode driver. Later major cycles re-read the
 observation and grid residual samples; no replay cache is kept.
 
+A request may name a list of MeasurementSets, as tclean's `vis` does.
+Compile surveys each with its own selection, orders them as CASA does (by
+each one's earliest `TIME`), takes the image's coordinates from one of them
+(CASA's `msobj`: the first, or for a cube the one holding its start) and a
+continuum band from all, and the snapshot holds one source per
+MeasurementSet. The source reads each store's partitions in turn, each with
+its own selection and geometry plan, and the final pass writes each one's
+`MODEL_DATA`; weighting density and every pass span them all. A row's
+spectral window and field are keyed among every MeasurementSet's rows, as if
+they were concatenated (CASA's `msId_spw` and `msId_field`), and its dishes
+among every MeasurementSet's aperture classes, so the mosaic's beams and a
+`mosweight` density keep each MeasurementSet's apart. The AW catalog, keyed
+on the first MeasurementSet's frequencies, is refused with several.
+
 The host is detected once per process (`HostResources`). The run's
 `ResourcePolicy` sets its memory and its core allocation: a compute team for
 minor cycles and products, a streaming team for passes. Each phase admits

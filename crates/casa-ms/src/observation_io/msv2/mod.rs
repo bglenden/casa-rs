@@ -677,6 +677,17 @@ impl Msv2Observation {
         self.feeds.receptors(antenna, feed, window)
     }
 
+    /// The earliest MAIN `TIME` of any row, in seconds as stored; `None`
+    /// when MAIN has no row. CASA's tclean images a list of MeasurementSets
+    /// in the order of their earliest `TIME` (`mslisthelper.sort_mslist`).
+    #[must_use]
+    pub fn earliest_time_s(&self) -> Option<f64> {
+        self.partitions
+            .iter()
+            .filter_map(|partition| partition.grid.times_s.first().copied())
+            .reduce(f64::min)
+    }
+
     /// The first MAIN row of partition `id`, `None` when it holds none:
     /// XRADIO's converter numbers an MSv2's partitions in the order their
     /// first rows appear.

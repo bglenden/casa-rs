@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Visibilities written back in the final pass: the final model into
 //! `MODEL_DATA` and the continuum-subtracted data into `CORRECTED_DATA`,
-//! through the batch route's update session.
+//! through the update session of each of the batch route's stores.
 
 use casa_imaging_model::{ContinuumFitRule, SequentialContinuumTransform};
 use casa_imaging_runtime::pass::SourceError;
@@ -27,12 +27,7 @@ impl<'a> VisibilityWriteTarget<'a> {
         &self,
         transform: Option<&'a SequentialContinuumTransform>,
     ) -> Result<VisibilityWriter<'a>, SourceError> {
-        VisibilityWriter::begin(
-            self.0
-                .write_back()
-                .ok_or("the batch route was opened to read only")?,
-            transform,
-        )
+        VisibilityWriter::begin(self.0, transform)
     }
 }
 

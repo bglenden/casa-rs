@@ -307,7 +307,7 @@ fn tclean_returns_casas_summary_record() {
 fn values_casa_rs_cannot_honour_are_refused_at_their_parameter() {
     let directory = tempfile::tempdir().expect("run directory");
     for (values, parameter, issue) in [
-        (json!({ "deconvolver": "mem" }), "deconvolver", "#823"),
+        (json!({ "deconvolver": "mem" }), "deconvolver", "#1060"),
         // tclean reads interactive whether it iterates or not: it checks for
         // its viewer first (Astra's #1015 F8).
         (

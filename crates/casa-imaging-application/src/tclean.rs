@@ -70,9 +70,20 @@ impl ImagingRequest {
         let (request, _) = read(values)?;
         let request: Self = serde_path_to_error::deserialize(Value::Object(request)).map_err(
             |error: serde_path_to_error::Error<serde_json::Error>| {
-                let parameter = match error.path().iter().next() {
-                    Some(serde_path_to_error::Segment::Map { key }) => tclean_parameter(key),
-                    _ => "",
+                // A MeasurementSet's selector is its own parameter.
+                let parameter = match error
+                    .path()
+                    .iter()
+                    .filter_map(|segment| match segment {
+                        serde_path_to_error::Segment::Map { key } => Some(key.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .as_slice()
+                {
+                    ["vis", selector, ..] => *selector,
+                    [key, ..] => tclean_parameter(key),
+                    [] => "",
                 };
                 TcleanRefusal::new(
                     parameter,
@@ -205,6 +216,31 @@ impl<'a> Tclean<'a> {
             .collect()
     }
 
+    /// The items of `name`, one per MeasurementSet: a list's items, or a
+    /// lone value; with `count` MeasurementSets, a list of one or a lone
+    /// value is each MeasurementSet's, and any length but one or `count` is
+    /// refused with CASA's message.
+    fn per_measurement_set(
+        &mut self,
+        name: &str,
+        count: Option<usize>,
+    ) -> Result<Vec<&'a Value>, TcleanRefusal> {
+        let value = self.value(name)?;
+        let items: Vec<&Value> = match value {
+            Value::Array(items) => items.iter().collect(),
+            value => vec![value],
+        };
+        match (count, items.as_slice()) {
+            (None, _) => Ok(items),
+            (Some(count), [item]) => Ok(vec![*item; count]),
+            (Some(count), _) if items.len() == count => Ok(items),
+            (Some(count), _) => Err(TcleanRefusal::new(
+                name,
+                format!("{name} must have a single entry, or {count} entries to match vis list"),
+            )),
+        }
+    }
+
     /// A list of numbers, or one number, as casa-rs's comma-separated text.
     fn number_list(&mut self, name: &str) -> Result<String, TcleanRefusal> {
         let value = self.value(name)?;
@@ -260,7 +296,7 @@ impl<'a> Tclean<'a> {
         let specmode = match self.text("specmode")? {
             // CASA reads `cont` as `mfs` (`task_tclean.py`).
             "cont" | "mfs" => "mfs",
-            "mvc" => return Err(TcleanRefusal::not_yet("specmode", "'mvc'", 823)),
+            "mvc" => return Err(TcleanRefusal::not_yet("specmode", "'mvc'", 1069)),
             cube => cube,
         };
         self.set("specmode", specmode);
@@ -295,13 +331,24 @@ impl<'a> Tclean<'a> {
                     980,
                 ));
             }
-            other => return Err(TcleanRefusal::not_yet("gridder", format!("{other:?}"), 980)),
+            other => {
+                // awp2, awphpg and imagemosaic are #1071's.
+                let issue = match other {
+                    "awp2" | "awphpg" | "imagemosaic" => 1071,
+                    _ => 980,
+                };
+                return Err(TcleanRefusal::not_yet(
+                    "gridder",
+                    format!("{other:?}"),
+                    issue,
+                ));
+            }
         };
         self.set("gridder", gridder);
         let deconvolver = self.text("deconvolver")?;
         if !matches!(deconvolver, "hogbom" | "clark" | "multiscale" | "mtmfs") {
-            // `asp` is #223's; #823 decides the other modes.
-            let issue = if deconvolver == "asp" { 223 } else { 823 };
+            // `asp` is #223's; mem and clarkstokes are #1060's.
+            let issue = if deconvolver == "asp" { 223 } else { 1060 };
             return Err(TcleanRefusal::not_yet(
                 "deconvolver",
                 format!("{deconvolver:?}"),
@@ -337,7 +384,7 @@ impl<'a> Tclean<'a> {
         self.set("weighting", weighting);
         let usemask = self.text("usemask")?;
         if usemask == "pb" {
-            return Err(TcleanRefusal::not_yet("usemask", "'pb'", 823));
+            return Err(TcleanRefusal::not_yet("usemask", "'pb'", 1061));
         }
         self.set("usemask", usemask);
         Ok(Modes {
@@ -352,31 +399,64 @@ impl<'a> Tclean<'a> {
         })
     }
 
+    /// The MeasurementSets of `vis`, each with its selection, as CASA's
+    /// `ImagerParameters::checkAndFixSelectionPars` pairs them: a selector
+    /// given as one text, or a list of one, applies to every MeasurementSet,
+    /// and a longer list gives each MeasurementSet its own, in `vis`'s order;
+    /// any other length is refused. Compile images the MeasurementSets in
+    /// CASA's order, each with its own selection.
     fn selection(&mut self) -> Result<(), TcleanRefusal> {
-        self.copy(&["vis", "imagename"])?;
+        self.copy(&["imagename"])?;
         // CASA's tclean selects whatever selectdata says: its parameter
         // classes never read it (`task_tclean.py`).
         self.ignore(&["selectdata"])?;
-        let field = self.text("field")?;
-        self.set("field", field);
-        for name in ["uvrange", "intent"] {
-            let value = self.text(name)?;
-            self.set(name, value);
+        let vis = self.per_measurement_set("vis", None)?;
+        if vis.is_empty() {
+            return Err(TcleanRefusal::new("vis", "Input MS list is empty"));
         }
-        // `MSSpwGram` reads a lone `*` as every spectral window, every
-        // channel: what an empty selector selects.
-        let spw = self.text("spw")?;
-        self.set("spw", if spw == "*" { "" } else { spw });
-        // Scan, observation, antenna and time selectors keep their exact text:
-        // CASA's tclean refuses whitespace-only text and `none`, and its
-        // grammars give padding and case their own meanings.
-        for name in ["scan", "observation", "antenna", "timerange"] {
-            let value = self.value(name)?;
-            let text = value
-                .as_str()
-                .ok_or_else(|| Self::mismatch(name, "text", value))?;
-            self.set(name, text);
+        let mut selections = vis
+            .into_iter()
+            .map(|path| {
+                path.as_str()
+                    .map(|path| Map::from_iter([("vis".to_string(), json!(path))]))
+                    .ok_or_else(|| Self::mismatch("vis", "a path", path))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let count = selections.len();
+        // Field, spw, uvrange and intent are trimmed; scan, observation,
+        // antenna and time selectors keep their exact text: CASA's tclean
+        // refuses whitespace-only text and `none`, and its grammars give
+        // padding and case their own meanings.
+        for (name, trim) in [
+            ("field", true),
+            ("spw", true),
+            ("uvrange", true),
+            ("intent", true),
+            ("scan", false),
+            ("observation", false),
+            ("antenna", false),
+            ("timerange", false),
+        ] {
+            let values = self.per_measurement_set(name, Some(count))?;
+            for (selection, value) in selections.iter_mut().zip(values) {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| Self::mismatch(name, "text", value))?;
+                let text = if trim { text.trim() } else { text };
+                // `MSSpwGram` reads a lone `*` as every spectral window, every
+                // channel: what an empty selector selects.
+                let text = if name == "spw" && text == "*" {
+                    ""
+                } else {
+                    text
+                };
+                selection.insert(name.to_string(), json!(text));
+            }
         }
+        self.set(
+            "vis",
+            Value::Array(selections.into_iter().map(Value::Object).collect()),
+        );
         let column = match self.text("datacolumn")?.to_ascii_lowercase().as_str() {
             // CASA images DATA when CORRECTED_DATA is absent.
             "corrected" => "none",
@@ -432,14 +512,18 @@ impl<'a> Tclean<'a> {
         start: &str,
         width: &str,
     ) -> Result<(), TcleanRefusal> {
-        let channels_selected = self.text("spw")?.contains(':');
+        // A channel selection in any MeasurementSet's spw.
+        let channels_selected = self
+            .per_measurement_set("spw", None)?
+            .iter()
+            .any(|spw| spw.as_str().is_some_and(|text| text.contains(':')));
         let wide = !matches!(width, "" | "1");
         if nchan == -1 && !counted && (channels_selected || wide || !start.is_empty()) {
             return Err(TcleanRefusal::not_yet(
                 "nchan",
                 "-1 with a channel selection in spw, a start or a width, whose extent CASA \
                  derives from the selected channels; give nchan",
-                980,
+                1066,
             ));
         }
         Ok(())
@@ -511,7 +595,7 @@ impl<'a> Tclean<'a> {
         self.set("outframe", frame);
         self.set("veltype", velocity_convention(veltype)?);
         if interpolation == "cubic" {
-            return Err(TcleanRefusal::not_yet("interpolation", "'cubic'", 823));
+            return Err(TcleanRefusal::not_yet("interpolation", "'cubic'", 1066));
         }
         self.set("interpolation", interpolation);
         Ok(())
@@ -564,10 +648,16 @@ impl<'a> Tclean<'a> {
                 ));
             }
             "wproject" | "awproject" if facets != 1 => {
+                // W facets are #1063's, AW facets #1070's.
+                let issue = if modes.gridder == "awproject" {
+                    1070
+                } else {
+                    1063
+                };
                 return Err(TcleanRefusal::not_yet(
                     "facets",
                     format!("{facets} with gridder='{}'", modes.gridder),
-                    980,
+                    issue,
                 ));
             }
             _ => {}
@@ -587,7 +677,7 @@ impl<'a> Tclean<'a> {
         let normtype = self.text("normtype")?;
         if matches!(modes.gridder, "mosaic" | "awproject") {
             if normtype == "pbsquare" {
-                return Err(TcleanRefusal::not_yet("normtype", "'pbsquare'", 823));
+                return Err(TcleanRefusal::not_yet("normtype", "'pbsquare'", 1061));
             }
             self.set("normtype", normtype);
         }
@@ -627,7 +717,8 @@ impl<'a> Tclean<'a> {
                     return Err(TcleanRefusal::new(
                         "cfcache",
                         "awproject with aw_cf_source='casa-import' reads an existing CASA \
-                         convolution-function cache: name it with cfcache",
+                         convolution-function cache: name it with cfcache (generating one is \
+                         #1070)",
                     ));
                 }
                 self.set("cfcache", cfcache);
@@ -751,7 +842,7 @@ impl<'a> Tclean<'a> {
             return Err(TcleanRefusal::not_yet(
                 "nterms",
                 "1 with deconvolver='mtmfs'",
-                980,
+                1065,
             ));
         }
         self.set(
@@ -970,9 +1061,11 @@ fn pixel_box_list(text: &str) -> Option<Vec<String>> {
         .collect()
 }
 
-/// The `box[[Xpix, Ypix], [Xpix, Ypix]]` regions of one CRTF text, as
-/// `x0,y0,x1,y1` with the lower corner first; a `#` line is a comment, and
-/// any other region is refused.
+/// The `box[[Xpix, Ypix], [Xpix, Ypix]]` and `circle[[Xpix, Ypix], Rpix]`
+/// regions of one CRTF text, as `x0,y0,x1,y1` boxes with the lower corner
+/// first (a circle as one box per row it covers, [`circle_rows`]); a `#`
+/// line is a comment, and any other region, or a region limited to a
+/// spectral `range`, is refused.
 fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
     let refused = || {
         TcleanRefusal::not_yet(
@@ -997,6 +1090,36 @@ fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
     {
         let mut rest = line;
         while !rest.is_empty() {
+            if rest.contains("range=") || rest.contains("range =") {
+                return Err(TcleanRefusal::not_yet(
+                    "mask",
+                    format!("the region {text:?} limited to a spectral range"),
+                    980,
+                ));
+            }
+            if let Some(body) = rest
+                .strip_prefix("circle")
+                .map(str::trim_start)
+                .and_then(|body| body.strip_prefix("[["))
+            {
+                let (centre, after) = body.split_once(']').ok_or_else(refused)?;
+                let centre = centre
+                    .split(',')
+                    .map(|value| pixels(value).ok_or_else(refused))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let [x, y] = centre.as_slice() else {
+                    return Err(refused());
+                };
+                let (radius, after) = after
+                    .trim_start()
+                    .strip_prefix(',')
+                    .and_then(|after| after.split_once(']'))
+                    .ok_or_else(refused)?;
+                let radius = pixels(radius).filter(|radius| *radius > 0.0);
+                boxes.extend(circle_rows([*x, *y], radius.ok_or_else(refused)?));
+                rest = after.trim_start_matches([',', ' ', '\t']);
+                continue;
+            }
             let body = rest
                 .strip_prefix("box")
                 .map(str::trim_start)
@@ -1021,6 +1144,39 @@ fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
         }
     }
     Ok(boxes)
+}
+
+/// A CRTF pixel value, `Npix`, fractional or not.
+fn pixels(text: &str) -> Option<f64> {
+    text.trim()
+        .strip_suffix("pix")
+        .and_then(|number| number.trim().parse::<f64>().ok())
+        .filter(|number| number.is_finite())
+}
+
+/// The pixels of the circle about `centre` of `radius` pixels, one
+/// `x0,y,x1,y` box per row. casacore's `LCEllipsoid` holds a pixel whose
+/// offset from the centre, in radii, has a squared length of at most one,
+/// in `Float`; a circle's rows are runs of pixels, so the boxes hold the
+/// same pixels. Rows and columns outside the image are clipped as a box's.
+fn circle_rows(centre: [f64; 2], radius: f64) -> Vec<String> {
+    let [x, y] = centre.map(|value| value as f32);
+    let radius = radius as f32;
+    let inside = |column: i64, row: i64| {
+        let dx = (column as f32 - x) / radius;
+        let dy = (row as f32 - y) / radius;
+        dx * dx + dy * dy <= 1.0
+    };
+    let span =
+        |centre: f32| (centre - radius).floor() as i64 - 1..=(centre + radius).ceil() as i64 + 1;
+    span(y)
+        .filter_map(|row| {
+            let mut columns = span(x).filter(|column| inside(*column, row));
+            let first = columns.next()?;
+            let last = columns.next_back().unwrap_or(first);
+            Some(format!("{first},{row},{last},{row}"))
+        })
+        .collect()
 }
 
 #[cfg(test)]

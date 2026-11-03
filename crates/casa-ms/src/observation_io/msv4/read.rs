@@ -264,6 +264,22 @@ impl Msv4Observation {
         self.datasets[id.0 as usize].path.trim_start_matches('/')
     }
 
+    /// The earliest time of any dataset, in seconds since MJD 0 in its time
+    /// scale; `None` when no dataset holds a time. It orders a list of
+    /// stores as CASA's tclean orders MeasurementSets by their earliest MAIN
+    /// `TIME` (`mslisthelper.sort_mslist`).
+    #[must_use]
+    pub fn earliest_time_mjd_s(&self) -> Option<f64> {
+        self.datasets
+            .iter()
+            .zip(&self.catalogue.partitions)
+            .filter_map(|(dataset, partition)| {
+                let first = dataset.times.iter().copied().reduce(f64::min)?;
+                Some(partition.time_origin.as_mjd() * 86_400.0 + first)
+            })
+            .reduce(f64::min)
+    }
+
     /// The catalogue while the store is being opened, before any batch or
     /// cursor shares it.
     fn catalogue_mut(&mut self) -> &mut Catalogue {

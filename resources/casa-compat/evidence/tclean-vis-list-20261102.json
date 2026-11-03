@@ -1,0 +1,1086 @@
+{
+  "schema": "tclean-evidence-receipt/1",
+  "title": "tclean with a list of MeasurementSets (vis list), contract 38",
+  "work_issue": 980,
+  "date": "2026-11-02",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "native_revision": "1cb0aad1b4b4844bd3349035f67e464253118789",
+  "binary_sha256": "910a8dfa8024be0d5886a8d369612b9346213445b6e4053c09ecea23ae7f9da6",
+  "host": "macOS-27.0.1-arm64-arm-64bit",
+  "backend": "cpu",
+  "precision": "f64",
+  "driver": "tools/casa-compat/tclean_case_matrix.py (absolute, unresolved --output under ~/ext)",
+  "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
+  "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
+  "selection": "every case of the test-case file that passes a list of MeasurementSets",
+  "model_data_comparison": "MODEL_DATA of each MeasurementSet copy CASA and casa-rs wrote, read with casatools.table, unflagged cells (probe model_compare.py)",
+  "limits": "exact image-product inventory, masks and finite support; NRMS <= 1e-3, .sumwt within 5e-5; WCS, units, beams; exact iterdone/nmajordone/stopcode; maxpsfsidelobe and cyclethreshold 1e-6 relative plus 1e-8 absolute",
+  "summary": {
+    "passed": 13,
+    "total": 13
+  },
+  "cases": {
+    "test_onefield.test_onefield_twoMS.1": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 10,
+              "casa": 10
+            },
+            "nmajordone": {
+              "native": 2,
+              "casa": 2
+            },
+            "stopcode": {
+              "native": 1,
+              "casa": 1
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0.1552683562040329,
+              "casa": 0.15526831150054932
+            },
+            "cyclethreshold": {
+              "native": 0.05715441703796387,
+              "casa": 0.05715440586209297
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst.image": {
+          "nrms": 1.4244171916623102e-07,
+          "passed": true
+        },
+        "tst.mask": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.model": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.pb": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.psf": {
+          "nrms": 1.3455385011169912e-07,
+          "passed": true
+        },
+        "tst.residual": {
+          "nrms": 1.0317568491582707e-07,
+          "passed": true
+        },
+        "tst.sumwt": {
+          "nrms": 0.0,
+          "passed": true
+        }
+      }
+    },
+    "test_onefield.test_onefield_twoMS_Briggs.1": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 10,
+              "casa": 10
+            },
+            "nmajordone": {
+              "native": 2,
+              "casa": 2
+            },
+            "stopcode": {
+              "native": 1,
+              "casa": 1
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0.17878155410289764,
+              "casa": 0.17878152430057526
+            },
+            "cyclethreshold": {
+              "native": 0.06234002858400345,
+              "casa": 0.06234000250697136
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst.image": {
+          "nrms": 1.4350004652283288e-07,
+          "passed": true
+        },
+        "tst.mask": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.model": {
+          "nrms": 7.817324144016686e-08,
+          "passed": true
+        },
+        "tst.pb": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.psf": {
+          "nrms": 1.1343906656285668e-07,
+          "passed": true
+        },
+        "tst.residual": {
+          "nrms": 1.7202124116023082e-07,
+          "passed": true
+        },
+        "tst.sumwt": {
+          "nrms": 7.099671363312264e-08,
+          "passed": true
+        }
+      }
+    },
+    "test_onefield.test_onefield_twoMS_weightSpectrum.1": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 10,
+              "casa": 10
+            },
+            "nmajordone": {
+              "native": 2,
+              "casa": 2
+            },
+            "stopcode": {
+              "native": 1,
+              "casa": 1
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0.1552683562040329,
+              "casa": 0.15526831150054932
+            },
+            "cyclethreshold": {
+              "native": 0.05715441703796387,
+              "casa": 0.05715440586209297
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst.image": {
+          "nrms": 1.4244171916623102e-07,
+          "passed": true
+        },
+        "tst.mask": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.model": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.pb": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.psf": {
+          "nrms": 1.3455385011169912e-07,
+          "passed": true
+        },
+        "tst.residual": {
+          "nrms": 1.0317568491582707e-07,
+          "passed": true
+        },
+        "tst.sumwt": {
+          "nrms": 0.0,
+          "passed": true
+        }
+      }
+    },
+    "test_onefield.test_onefield_twoMS_weightSpectrum2.1": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 10,
+              "casa": 10
+            },
+            "nmajordone": {
+              "native": 2,
+              "casa": 2
+            },
+            "stopcode": {
+              "native": 1,
+              "casa": 1
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0.1552683562040329,
+              "casa": 0.15526831150054932
+            },
+            "cyclethreshold": {
+              "native": 0.05715441703796387,
+              "casa": 0.05715440586209297
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst.image": {
+          "nrms": 1.4244171916623102e-07,
+          "passed": true
+        },
+        "tst.mask": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.model": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.pb": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.psf": {
+          "nrms": 1.3455385011169912e-07,
+          "passed": true
+        },
+        "tst.residual": {
+          "nrms": 1.0317568491582707e-07,
+          "passed": true
+        },
+        "tst.sumwt": {
+          "nrms": 0.0,
+          "passed": true
+        }
+      }
+    },
+    "test_onefield.test_onefield_mtmfs_2spws_2MSs.1": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 10,
+              "casa": 10
+            },
+            "nmajordone": {
+              "native": 2,
+              "casa": 2
+            },
+            "stopcode": {
+              "native": 1,
+              "casa": 1
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0.1552683562040329,
+              "casa": 0.15526831150054932
+            },
+            "cyclethreshold": {
+              "native": 0.06350496411323547,
+              "casa": 0.06350491940975189
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst.alpha": {
+          "nrms": 3.4964360831010883e-07,
+          "passed": true
+        },
+        "tst.alpha.error": {
+          "nrms": 5.179308910452226e-07,
+          "passed": true
+        },
+        "tst.image.tt0": {
+          "nrms": 5.072627498073635e-07,
+          "passed": true
+        },
+        "tst.image.tt1": {
+          "nrms": 9.228630195973139e-07,
+          "passed": true
+        },
+        "tst.mask": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.model.tt0": {
+          "nrms": 6.241289013419942e-07,
+          "passed": true
+        },
+        "tst.model.tt1": {
+          "nrms": 7.820705630986261e-07,
+          "passed": true
+        },
+        "tst.pb.tt0": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.psf.tt0": {
+          "nrms": 1.0253600677351492e-07,
+          "passed": true
+        },
+        "tst.psf.tt1": {
+          "nrms": 1.1464055154092289e-07,
+          "passed": true
+        },
+        "tst.psf.tt2": {
+          "nrms": 1.0441084258375641e-07,
+          "passed": true
+        },
+        "tst.residual.tt0": {
+          "nrms": 1.2146925718765229e-06,
+          "passed": true
+        },
+        "tst.residual.tt1": {
+          "nrms": 1.1471165770730008e-06,
+          "passed": true
+        },
+        "tst.sumwt.tt0": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.sumwt.tt1": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.sumwt.tt2": {
+          "nrms": 0.0,
+          "passed": true
+        }
+      }
+    },
+    "test_cube.test_cube_twoMS_startfreq.1": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 100,
+              "casa": 100
+            },
+            "nmajordone": {
+              "native": 2,
+              "casa": 2
+            },
+            "stopcode": {
+              "native": 1,
+              "casa": 1
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0.12831178307533264,
+              "casa": 0.12831179797649384
+            },
+            "cyclethreshold": {
+              "native": 0.05033243075013161,
+              "casa": 0.05033240094780922
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst.image": {
+          "nrms": 1.5555837065728543e-07,
+          "passed": true
+        },
+        "tst.mask": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.model": {
+          "nrms": 1.3836839683033615e-07,
+          "passed": true
+        },
+        "tst.pb": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.psf": {
+          "nrms": 1.000430993030416e-07,
+          "passed": true
+        },
+        "tst.residual": {
+          "nrms": 3.8669731882076264e-07,
+          "passed": true
+        },
+        "tst.sumwt": {
+          "nrms": 0.0,
+          "passed": true
+        }
+      }
+    },
+    "test_cube.test_cube_twoMS_startfreq.2": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 100,
+              "casa": 100
+            },
+            "nmajordone": {
+              "native": 2,
+              "casa": 2
+            },
+            "stopcode": {
+              "native": 1,
+              "casa": 1
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0.12831178307533264,
+              "casa": 0.12831179797649384
+            },
+            "cyclethreshold": {
+              "native": 0.05033243075013161,
+              "casa": 0.05033240094780922
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst_reverse.image": {
+          "nrms": 1.5555837065728543e-07,
+          "passed": true
+        },
+        "tst_reverse.mask": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst_reverse.model": {
+          "nrms": 1.3836839683033615e-07,
+          "passed": true
+        },
+        "tst_reverse.pb": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst_reverse.psf": {
+          "nrms": 1.000430993030416e-07,
+          "passed": true
+        },
+        "tst_reverse.residual": {
+          "nrms": 3.8669731882076264e-07,
+          "passed": true
+        },
+        "tst_reverse.sumwt": {
+          "nrms": 0.0,
+          "passed": true
+        }
+      }
+    },
+    "test_cube.test_cube_twoMS_startvel.1": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 100,
+              "casa": 100
+            },
+            "nmajordone": {
+              "native": 2,
+              "casa": 2
+            },
+            "stopcode": {
+              "native": 1,
+              "casa": 1
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0.12831175327301025,
+              "casa": 0.12831173837184906
+            },
+            "cyclethreshold": {
+              "native": 0.05033240467309952,
+              "casa": 0.05033236742019653
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst.image": {
+          "nrms": 1.7313538665894274e-07,
+          "passed": true
+        },
+        "tst.mask": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.model": {
+          "nrms": 1.383686133580282e-07,
+          "passed": true
+        },
+        "tst.pb": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.psf": {
+          "nrms": 1.000416712919238e-07,
+          "passed": true
+        },
+        "tst.residual": {
+          "nrms": 3.921574350181203e-07,
+          "passed": true
+        },
+        "tst.sumwt": {
+          "nrms": 0.0,
+          "passed": true
+        }
+      }
+    },
+    "test_cube.test_cube_twoMS_startvel.2": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 100,
+              "casa": 100
+            },
+            "nmajordone": {
+              "native": 2,
+              "casa": 2
+            },
+            "stopcode": {
+              "native": 1,
+              "casa": 1
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0.12831175327301025,
+              "casa": 0.12831173837184906
+            },
+            "cyclethreshold": {
+              "native": 0.05033240467309952,
+              "casa": 0.05033236742019653
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst_reverse.image": {
+          "nrms": 1.7313538665894274e-07,
+          "passed": true
+        },
+        "tst_reverse.mask": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst_reverse.model": {
+          "nrms": 1.383686133580282e-07,
+          "passed": true
+        },
+        "tst_reverse.pb": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst_reverse.psf": {
+          "nrms": 1.000416712919238e-07,
+          "passed": true
+        },
+        "tst_reverse.residual": {
+          "nrms": 3.921574350181203e-07,
+          "passed": true
+        },
+        "tst_reverse.sumwt": {
+          "nrms": 0.0,
+          "passed": true
+        }
+      }
+    },
+    "test_modelvis.test_modelvis_28.1": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 10,
+              "casa": 10
+            },
+            "nmajordone": {
+              "native": 2,
+              "casa": 2
+            },
+            "stopcode": {
+              "native": 1,
+              "casa": 1
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0.1552683562040329,
+              "casa": 0.15526831150054932
+            },
+            "cyclethreshold": {
+              "native": 0.05715441703796387,
+              "casa": 0.05715440586209297
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst.image": {
+          "nrms": 1.4244171916623102e-07,
+          "passed": true
+        },
+        "tst.mask": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.model": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.pb": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.psf": {
+          "nrms": 1.3455385011169912e-07,
+          "passed": true
+        },
+        "tst.residual": {
+          "nrms": 1.0317568491582707e-07,
+          "passed": true
+        },
+        "tst.sumwt": {
+          "nrms": 0.0,
+          "passed": true
+        }
+      },
+      "model_data": {
+        "refim_point_onespw0.ms": {
+          "nrms": 1.5990641186750286e-07,
+          "max_abs_diff_over_max": 6.664652460589689e-07,
+          "casa_max_abs": 0.804905891418457,
+          "native_max_abs": 0.8049054145812988
+        },
+        "refim_point_onespw1.ms": {
+          "nrms": 1.5853268981354194e-07,
+          "max_abs_diff_over_max": 6.664652460589689e-07,
+          "casa_max_abs": 0.804905891418457,
+          "native_max_abs": 0.8049054145812988
+        }
+      }
+    },
+    "test_modelvis.test_modelvis_29.1": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 166,
+              "casa": 166
+            },
+            "nmajordone": {
+              "native": 2,
+              "casa": 2
+            },
+            "stopcode": {
+              "native": 1,
+              "casa": 1
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0.2926100790500641,
+              "casa": 0.2926100790500641
+            },
+            "cyclethreshold": {
+              "native": 0.19859643280506134,
+              "casa": 0.19859632849693298
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst.image": {
+          "nrms": 2.615579568764701e-07,
+          "passed": true
+        },
+        "tst.mask": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.model": {
+          "nrms": 1.1250989170840389e-07,
+          "passed": true
+        },
+        "tst.pb": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst.psf": {
+          "nrms": 1.1667974373834276e-07,
+          "passed": true
+        },
+        "tst.residual": {
+          "nrms": 3.208168835139895e-07,
+          "passed": true
+        },
+        "tst.sumwt": {
+          "nrms": 0.0,
+          "passed": true
+        }
+      },
+      "model_data": {
+        "refim_point_onespw0.ms": {
+          "nrms": 2.0468156316607e-07,
+          "max_abs_diff_over_max": 7.229779171215068e-07,
+          "casa_max_abs": 1.4839783906936646,
+          "native_max_abs": 1.4839776754379272
+        },
+        "refim_point_onespw1.ms": {
+          "casa_max_abs": 0.0,
+          "native_max_abs": 0.0,
+          "both_zero": true
+        }
+      }
+    },
+    "test_hetarray_imaging.test_het_mosaic_mfs_alma_listofms_CAS14255fix.1": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 0,
+              "casa": 0
+            },
+            "nmajordone": {
+              "native": 1,
+              "casa": 1
+            },
+            "stopcode": {
+              "native": 3,
+              "casa": 3
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0,
+              "casa": 0
+            },
+            "cyclethreshold": {
+              "native": 0,
+              "casa": 0
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst_listofms.image": {
+          "nrms": 1.3329185130701309e-05,
+          "passed": true
+        },
+        "tst_listofms.model": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst_listofms.pb": {
+          "nrms": 9.143017615247213e-06,
+          "passed": true
+        },
+        "tst_listofms.psf": {
+          "nrms": 8.674037452069664e-06,
+          "passed": true
+        },
+        "tst_listofms.residual": {
+          "nrms": 1.3329185130701309e-05,
+          "passed": true
+        },
+        "tst_listofms.sumwt": {
+          "nrms": 6.494279903204057e-08,
+          "passed": true
+        },
+        "tst_listofms.weight": {
+          "nrms": 1.3000704272518954e-05,
+          "passed": true
+        }
+      }
+    },
+    "test_hetarray_imaging.test_het_mosaic_mfs_alma_listofms_CAS14350fix.1": {
+      "passed": true,
+      "steps": [
+        {
+          "counts": {
+            "iterdone": {
+              "native": 0,
+              "casa": 0
+            },
+            "nmajordone": {
+              "native": 1,
+              "casa": 1
+            },
+            "stopcode": {
+              "native": 3,
+              "casa": 3
+            }
+          },
+          "scalars": {
+            "maxpsfsidelobe": {
+              "native": 0,
+              "casa": 0
+            },
+            "cyclethreshold": {
+              "native": 0,
+              "casa": 0
+            }
+          }
+        }
+      ],
+      "products": {
+        "tst_listofms.image": {
+          "nrms": 1.3329185130701309e-05,
+          "passed": true
+        },
+        "tst_listofms.model": {
+          "nrms": 0.0,
+          "passed": true
+        },
+        "tst_listofms.pb": {
+          "nrms": 9.143017615247213e-06,
+          "passed": true
+        },
+        "tst_listofms.psf": {
+          "nrms": 8.674037452069664e-06,
+          "passed": true
+        },
+        "tst_listofms.residual": {
+          "nrms": 1.3329185130701309e-05,
+          "passed": true
+        },
+        "tst_listofms.sumwt": {
+          "nrms": 6.494279903204057e-08,
+          "passed": true
+        },
+        "tst_listofms.weight": {
+          "nrms": 1.3000704272518954e-05,
+          "passed": true
+        }
+      }
+    }
+  },
+  "attribution_probes": {
+    "purpose": "Mixed-dish mosaics, MFS, niter=0, through the same driver and binary: refim_sim_hetarray_alma.ms with its 12 m antennas (A*&), its 7 m antennas (J*,N*&) and both (het_single_mfs_1, _2, _4: the dishes are every antenna's, so every pair grids with the widest support); the CAS-14255 list's MeasurementSets alone (alma_alone, aca_alone); and the list with the 7 m MeasurementSet's TIME moved 40 days earlier so CASA visits it first (aca_first), whose first pass CASA grids with the 7 m dishes alone (docs/CASA (C++) bugs.md).",
+    "cases": {
+      "probe.het_single_mfs_1.1": {
+        "passed": true,
+        "products": {
+          "tst.12m.single.image": {
+            "nrms": 5.413707461122028e-07,
+            "passed": true
+          },
+          "tst.12m.single.model": {
+            "nrms": 0.0,
+            "passed": true
+          },
+          "tst.12m.single.pb": {
+            "nrms": 9.571000375905376e-08,
+            "passed": true
+          },
+          "tst.12m.single.psf": {
+            "nrms": 1.2915211852680592e-07,
+            "passed": true
+          },
+          "tst.12m.single.residual": {
+            "nrms": 5.413707461122028e-07,
+            "passed": true
+          },
+          "tst.12m.single.sumwt": {
+            "nrms": 0.0,
+            "passed": true
+          },
+          "tst.12m.single.weight": {
+            "nrms": 1.1591178909955664e-07,
+            "passed": true
+          }
+        }
+      },
+      "probe.het_single_mfs_2.1": {
+        "passed": true,
+        "products": {
+          "tst.7m.single.image": {
+            "nrms": 4.502318061724741e-07,
+            "passed": true
+          },
+          "tst.7m.single.model": {
+            "nrms": 0.0,
+            "passed": true
+          },
+          "tst.7m.single.pb": {
+            "nrms": 1.3761900530658924e-07,
+            "passed": true
+          },
+          "tst.7m.single.psf": {
+            "nrms": 1.20594259053663e-07,
+            "passed": true
+          },
+          "tst.7m.single.residual": {
+            "nrms": 4.502318061724741e-07,
+            "passed": true
+          },
+          "tst.7m.single.sumwt": {
+            "nrms": 0.0,
+            "passed": true
+          },
+          "tst.7m.single.weight": {
+            "nrms": 3.896548071189589e-07,
+            "passed": true
+          }
+        }
+      },
+      "probe.het_single_mfs_4.1": {
+        "passed": true,
+        "products": {
+          "tst.all.single.image": {
+            "nrms": 6.311799651855343e-07,
+            "passed": true
+          },
+          "tst.all.single.model": {
+            "nrms": 0.0,
+            "passed": true
+          },
+          "tst.all.single.pb": {
+            "nrms": 1.1343807621438862e-07,
+            "passed": true
+          },
+          "tst.all.single.psf": {
+            "nrms": 1.678860649245846e-07,
+            "passed": true
+          },
+          "tst.all.single.residual": {
+            "nrms": 6.311799651855343e-07,
+            "passed": true
+          },
+          "tst.all.single.sumwt": {
+            "nrms": 0.0,
+            "passed": true
+          },
+          "tst.all.single.weight": {
+            "nrms": 1.5595391338913495e-07,
+            "passed": true
+          }
+        }
+      },
+      "probe.alma_alone.1": {
+        "passed": true,
+        "products": {
+          "tst_listofms.image": {
+            "nrms": 6.836358675467029e-07,
+            "passed": true
+          },
+          "tst_listofms.model": {
+            "nrms": 0.0,
+            "passed": true
+          },
+          "tst_listofms.pb": {
+            "nrms": 9.70009789638947e-08,
+            "passed": true
+          },
+          "tst_listofms.psf": {
+            "nrms": 6.560518560805935e-08,
+            "passed": true
+          },
+          "tst_listofms.residual": {
+            "nrms": 6.836358675467029e-07,
+            "passed": true
+          },
+          "tst_listofms.sumwt": {
+            "nrms": 6.800286400862059e-08,
+            "passed": true
+          },
+          "tst_listofms.weight": {
+            "nrms": 3.7145853826271225e-07,
+            "passed": true
+          }
+        }
+      },
+      "probe.aca_alone.1": {
+        "passed": true,
+        "products": {
+          "tst_listofms.image": {
+            "nrms": 6.598257123389381e-07,
+            "passed": true
+          },
+          "tst_listofms.model": {
+            "nrms": 0.0,
+            "passed": true
+          },
+          "tst_listofms.pb": {
+            "nrms": 8.623161645250345e-08,
+            "passed": true
+          },
+          "tst_listofms.psf": {
+            "nrms": 7.35141182686928e-08,
+            "passed": true
+          },
+          "tst_listofms.residual": {
+            "nrms": 6.598257123389381e-07,
+            "passed": true
+          },
+          "tst_listofms.sumwt": {
+            "nrms": 0.0,
+            "passed": true
+          },
+          "tst_listofms.weight": {
+            "nrms": 5.421096971151176e-07,
+            "passed": true
+          }
+        }
+      },
+      "probe.aca_first.1": {
+        "passed": false,
+        "products": {
+          "tst_listofms.image": {
+            "nrms": 0.0005385679171331288,
+            "passed": false
+          },
+          "tst_listofms.model": {
+            "nrms": 0.0,
+            "passed": true
+          },
+          "tst_listofms.pb": {
+            "nrms": 0.00035469987476088936,
+            "passed": false
+          },
+          "tst_listofms.psf": {
+            "nrms": 0.0004038101341022778,
+            "passed": true
+          },
+          "tst_listofms.residual": {
+            "nrms": 0.0005385679171331288,
+            "passed": false
+          },
+          "tst_listofms.sumwt": {
+            "nrms": 6.494279903204057e-08,
+            "passed": true
+          },
+          "tst_listofms.weight": {
+            "nrms": 0.0004465384326768922,
+            "passed": true
+          }
+        }
+      }
+    }
+  }
+}

@@ -236,16 +236,27 @@ impl Frames {
         angles_rad: [f64; 2],
         frame: DirectionRef,
     ) -> Result<[f64; 2], BatchGeometryError> {
-        if frame == DirectionRef::J2000 {
+        self.convert((time_mjd_s, scale), angles_rad, frame, DirectionRef::J2000)
+    }
+
+    /// `angles_rad` in `from` converted to `to` at `time_mjd_s` on
+    /// `scale`, from the observatory; unchanged when the frames are the
+    /// same.
+    pub(super) fn convert(
+        &self,
+        (time_mjd_s, scale): (f64, EpochRef),
+        angles_rad: [f64; 2],
+        from: DirectionRef,
+        to: DirectionRef,
+    ) -> Result<[f64; 2], BatchGeometryError> {
+        if from == to {
             return Ok(angles_rad);
         }
-        let direction = MDirection::from_angles(angles_rad[0], angles_rad[1], frame);
+        let direction = MDirection::from_angles(angles_rad[0], angles_rad[1], from);
         let context = self
             .observatory_at(time_mjd_s, scale)
             .with_direction(direction.clone());
-        let (longitude, latitude) = direction
-            .convert_to(DirectionRef::J2000, &context)?
-            .as_angles();
+        let (longitude, latitude) = direction.convert_to(to, &context)?.as_angles();
         Ok([longitude, latitude])
     }
 
