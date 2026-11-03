@@ -1,0 +1,30 @@
+{
+ "schema": "casa-fixture-receipt/1",
+ "title": "simutil's simanalyze helpers against CASA 6.7.6.14: statim, cellsize, convimage, flatimage and the fidelity",
+ "work_issue": 1053,
+ "date": "2026-11-03",
+ "native_revision": "d5c88b52b718e4b3834447724d66371f269a0083",
+ "host": "Linux-6.18.44-fc-v230-x86_64-with-glibc2.39",
+ "fixtures": [
+  {
+   "path": "crates/casa-simulation/tests/data/simanalyze_analysis_casa.json.gz",
+   "sha256": "b1cfc4dbc6dcd064e99dde9ddd9caf3eaa870ec4ee3f81660e4b05192d04e333",
+   "casa_version": "6.7.6-14"
+  }
+ ],
+ "commands": [
+  "cargo nextest run --no-fail-fast -p casa-simulation --test simanalyze_analysis_casa"
+ ],
+ "summary": {
+  "passed": 6
+ },
+ "all_passed": true,
+ "tests": {
+  "casa-simulation::simanalyze_analysis_casa cellsize_matches_casa": "passed",
+  "casa-simulation::simanalyze_analysis_casa convimage_regrids_and_convolves_as_casa_does": "passed",
+  "casa-simulation::simanalyze_analysis_casa difference_and_fidelity_of_casa_rss_convolved_model_match_casa": "passed",
+  "casa-simulation::simanalyze_analysis_casa difference_and_fidelity_of_casas_convolved_model_match_casa": "passed",
+  "casa-simulation::simanalyze_analysis_casa flatimage_of_a_clean_image_matches_casa": "passed",
+  "casa-simulation::simanalyze_analysis_casa statim_matches_casa": "passed"
+ }
+}

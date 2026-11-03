@@ -10,10 +10,10 @@ use casa_imaging_model::{
     ReconstructionBasis, RestoringBeamPolicy,
 };
 
+use crate::analytic_beam::check_frequencies;
 use crate::beam::{RestoringBeam, fixed_restoring_beam};
 use crate::error::ProductsError;
 use crate::source::ContinuumProductInputs;
-use crate::taylor::primary_beam_frequency_supported;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF;
@@ -107,25 +107,7 @@ impl ContinuumProductControls {
         if !needs_beam {
             return Ok(());
         }
-        let spectral = problem.geometry().spectral();
-        let channels = if taylor {
-            1
-        } else {
-            spectral.output_channels()
-        };
-        for output_channel in 0..channels {
-            let frequency_hz = spectral
-                .channel_centre_hz(output_channel)
-                .expect("an output channel has a centre frequency");
-            if !primary_beam_frequency_supported(model, frequency_hz) {
-                return Err(ProductsError::UnsupportedPrimaryBeamFrequency {
-                    model,
-                    output_channel,
-                    frequency_hz,
-                });
-            }
-        }
-        Ok(())
+        check_frequencies(problem, model)
     }
 }
 
