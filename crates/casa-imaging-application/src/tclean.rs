@@ -26,7 +26,12 @@ use std::{collections::BTreeSet, fmt, str::FromStr};
 use casa_types::quanta::{Quantity, Unit};
 use serde_json::{Map, Value, json};
 
+use casa_imaging_model::Projection;
+
 use crate::ImagingRequest;
+
+/// The issue that tracks the projections casa-rs does not image in yet.
+const PROJECTION_ISSUE: u32 = 1101;
 
 /// A tclean value casa-rs refuses, and the parameter that holds it.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -138,6 +143,8 @@ struct Modes {
     deconvolver: String,
     weighting: String,
     user_mask: bool,
+    /// Whether the mask is CASA's automatic mask, which alone smooths.
+    automatic_mask: bool,
 }
 
 /// tclean's values, each read once, and the request made from them.
@@ -342,6 +349,17 @@ impl<'a> Tclean<'a> {
                 issue,
             ));
         }
+        // CASA's tclean images nothing for this pair, whatever `nterms`
+        // (`task_tclean.py` warns and returns before imaging).
+        if deconvolver == "mtmfs" && matches!(specmode, "cube" | "cubedata") {
+            return Err(TcleanRefusal::new(
+                "deconvolver",
+                format!(
+                    "deconvolver='mtmfs' with specmode='{specmode}' is not supported: CASA's \
+                     tclean images nothing for it, and so does casa-rs"
+                ),
+            ));
+        }
         self.set("deconvolver", deconvolver);
         let weighting = self.text("weighting")?;
         if !matches!(
@@ -389,9 +407,6 @@ impl<'a> Tclean<'a> {
         }
         self.set("weighting", weighting);
         let usemask = self.text("usemask")?;
-        if usemask == "pb" {
-            return Err(TcleanRefusal::not_yet("usemask", "'pb'", 1061));
-        }
         self.set("usemask", usemask);
         Ok(Modes {
             cube: specmode != "mfs",
@@ -400,6 +415,7 @@ impl<'a> Tclean<'a> {
             deconvolver: deconvolver.to_string(),
             weighting: weighting.to_string(),
             user_mask: usemask == "user",
+            automatic_mask: usemask == "auto-multithresh",
         })
     }
 
@@ -512,7 +528,38 @@ impl<'a> Tclean<'a> {
             },
         );
         self.set("phasecenter_field", if field { centre } else { "none" });
-        self.ignore(&["projection", "psfphasecenter", "vptable"])
+        self.projection()?;
+        self.ignore(&["psfphasecenter", "vptable"])
+    }
+
+    /// CASA's `projection` (`SynthesisParamsImage::fromRecord`): `NCP`, which
+    /// CASA writes as a slanted `SIN`, or any of casacore's projections,
+    /// spelt as `Projection::type` reads them; any other text CASA refuses.
+    /// casa-rs images in those [`Projection::from_casa_name`] names. The
+    /// catalog trims the text first, as it does every string, so `' TAN'`
+    /// is `TAN` here where CASA refuses it (`docs/CASA (C++) bugs.md`).
+    fn projection(&mut self) -> Result<(), TcleanRefusal> {
+        const CASACORE: [&str; 27] = [
+            "AZP", "SZP", "TAN", "SIN", "STG", "ARC", "ZPN", "ZEA", "AIR", "CYP", "CEA", "CAR",
+            "MER", "COP", "COE", "COD", "COO", "SFL", "PAR", "MOL", "AIT", "BON", "PCO", "TSC",
+            "CSC", "QSC", "HPX",
+        ];
+        let name = self.text("projection")?;
+        if name != "NCP" && !CASACORE.contains(&name) {
+            return Err(TcleanRefusal::new(
+                "projection",
+                format!("Invalid projection code : {name}, as CASA's tclean refuses it"),
+            ));
+        }
+        if Projection::from_casa_name(name).is_none() {
+            return Err(TcleanRefusal::not_yet(
+                "projection",
+                format!("{name:?}"),
+                PROJECTION_ISSUE,
+            ));
+        }
+        self.set("projection", name);
+        Ok(())
     }
 
     fn spectral(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
@@ -668,9 +715,6 @@ impl<'a> Tclean<'a> {
         }
         let normtype = self.text("normtype")?;
         if matches!(modes.gridder, "mosaic" | "awproject") {
-            if normtype == "pbsquare" {
-                return Err(TcleanRefusal::not_yet("normtype", "'pbsquare'", 1061));
-            }
             self.set("normtype", normtype);
         }
         // CASA weighs density by field only for the gridder named mosaic
@@ -820,13 +864,6 @@ impl<'a> Tclean<'a> {
             },
         );
         let nterms = self.integer("nterms")?;
-        if modes.deconvolver == "mtmfs" && nterms == 1 {
-            return Err(TcleanRefusal::not_yet(
-                "nterms",
-                "1 with deconvolver='mtmfs'",
-                1065,
-            ));
-        }
         self.set(
             "nterms",
             if modes.deconvolver == "mtmfs" {
@@ -927,7 +964,10 @@ impl<'a> Tclean<'a> {
             .and_then(Value::as_i64)
             .unwrap_or(0)
             > 0;
-        if !modes.user_mask && cleans && smoothfactor.as_f64().is_some_and(|factor| factor <= 0.0) {
+        if modes.automatic_mask
+            && cleans
+            && smoothfactor.as_f64().is_some_and(|factor| factor <= 0.0)
+        {
             return Err(TcleanRefusal::new(
                 "smoothfactor",
                 "CASA's auto-multithresh smooths its mask by a beam of positive width: \
@@ -935,7 +975,21 @@ impl<'a> Tclean<'a> {
             ));
         }
         self.set("smoothfactor", smoothfactor);
-        self.ignore(&["pbmask"])?;
+        // CASA bounds pbmask in every mask mode (`SynthesisParamsDeconv::verify`).
+        let pbmask = self.value("pbmask")?.clone();
+        match pbmask.as_f64() {
+            Some(level) if level >= 1.0 => {
+                return Err(TcleanRefusal::new("pbmask", "pbmask must be < 1.0"));
+            }
+            Some(level) if level < 0.0 => {
+                return Err(TcleanRefusal::new(
+                    "pbmask",
+                    "pbmask must be a positive value",
+                ));
+            }
+            _ => {}
+        }
+        self.set("pbmask", pbmask);
         let entries = self.texts("mask")?;
         // CASA reads `mask` with usemask='user' only.
         let (boxes, image) = if modes.user_mask {

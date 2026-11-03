@@ -831,6 +831,7 @@ pub struct ReconstructionControls {
     maximum_major_cycles: Option<usize>,
     noise_sigma: Option<f64>,
     noise_estimate: NoiseEstimate,
+    primary_beam_mask: f64,
     cycle_threshold: Option<CycleThresholdRule>,
     hogbom_iteration_accounting: HogbomIterationAccounting,
 }
@@ -847,6 +848,7 @@ impl ReconstructionControls {
             maximum_major_cycles: None,
             noise_sigma: None,
             noise_estimate: NoiseEstimate::Fast,
+            primary_beam_mask: 0.0,
             cycle_threshold: None,
             hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
         }
@@ -875,6 +877,15 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn with_noise_estimate(mut self, noise_estimate: NoiseEstimate) -> Self {
         self.noise_estimate = noise_estimate;
+        self
+    }
+
+    /// Bind tclean's `pbmask`, the `.pb` level in `[0, 1)` above which the
+    /// `nsigma` noise and an automatic mask read the residual
+    /// (`SIImageStore::calcRobustRMS`, `SDMaskHandler::autoMaskWithinPB`).
+    #[must_use]
+    pub const fn with_primary_beam_mask(mut self, level: f64) -> Self {
+        self.primary_beam_mask = level;
         self
     }
 
@@ -944,6 +955,12 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn noise_estimate(self) -> NoiseEstimate {
         self.noise_estimate
+    }
+
+    /// Return tclean's `pbmask`: zero reads the `.pb`'s whole support.
+    #[must_use]
+    pub const fn primary_beam_mask(self) -> f64 {
+        self.primary_beam_mask
     }
 
     /// Return CASA's per-cycle threshold rule, when it is bound.
@@ -1114,6 +1131,11 @@ pub enum ProductNormalization {
     FlatNoise,
     /// Flat-sky normalization using sensitivity state.
     FlatSky,
+    /// CASA's `pbsquare` normalization using sensitivity state: the
+    /// residual divided by the sensitivity's peak, an image of optimal
+    /// signal to noise whose sky is weighted by the beam squared, and the
+    /// model taken to and from it through the beam squared.
+    PbSquare,
 }
 
 /// Comparison used to decide whether a product pixel has valid support.
@@ -1703,6 +1725,8 @@ pub enum RequiredCapability {
     FlatNoiseNormalization,
     /// Flat-sky product normalization.
     FlatSkyNormalization,
+    /// CASA's `pbsquare` product normalization.
+    PbSquareNormalization,
     /// Formation of a particular logical product.
     Product(ProductKind),
 }
@@ -1741,6 +1765,7 @@ impl RequiredCapability {
             Self::UnitResponseNormalization,
             Self::FlatNoiseNormalization,
             Self::FlatSkyNormalization,
+            Self::PbSquareNormalization,
         ];
         capabilities.extend(Self::polarization_catalog());
         capabilities.extend(ProductKind::ALL.into_iter().map(Self::Product));
@@ -1788,6 +1813,7 @@ impl RequiredCapability {
             Self::UnitResponseNormalization => "unit_response_normalization".to_string(),
             Self::FlatNoiseNormalization => "flat_noise_normalization".to_string(),
             Self::FlatSkyNormalization => "flat_sky_normalization".to_string(),
+            Self::PbSquareNormalization => "pb_square_normalization".to_string(),
             Self::Product(product) => format!("product.{}", product.catalog_id()),
         }
     }
@@ -2107,9 +2133,13 @@ fn validate_reconstruction(
     geometry: &CompiledGeometry,
 ) -> Result<(), CompileProblemError> {
     match contract.basis {
-        ReconstructionBasis::Taylor { terms: 0 | 1 } => {
+        // CASA's `mtmfs` runs one Taylor term as a multi-term family
+        // (`SIImageStoreMultiTerm` with `itsNTerms = 1`); every other
+        // single-term MFS deconvolver uses the constant basis, which the
+        // MT-MFS pairing check below keeps apart.
+        ReconstructionBasis::Taylor { terms: 0 } => {
             return Err(CompileProblemError::InvalidCapabilityCombination {
-                reason: "a Taylor basis requires at least two terms; single-term MFS uses the constant basis",
+                reason: "a Taylor basis requires at least one term",
             });
         }
         ReconstructionBasis::ChannelLocal { channels: 0 } => {
@@ -2286,14 +2316,17 @@ fn validate_products(
             reason: "a Taylor coefficient set requires at least one Taylor image product",
         });
     }
+    // CASA forms a spectral index only for a Stokes I image
+    // (`SIImageStoreMultiTerm::calculateAlphaBeta`'s `isOnlyStokesI`).
     if products.contains(ProductKind::SpectralIndex)
         && !(taylor_terms >= 2
+            && reconstruction.polarization.coordinates() == [PolarizationCoordinate::StokesI]
             && products.contains(ProductKind::TaylorTerms)
             && products.contains(ProductKind::Residual)
             && products.contains(ProductKind::RestoredImage))
     {
         return Err(CompileProblemError::InvalidProductCombination {
-            reason: "spectral index requires at least two Taylor terms plus Taylor, residual, and restored-image products",
+            reason: "spectral index requires at least two Taylor terms of Stokes I alone plus Taylor, residual, and restored-image products",
         });
     }
     if products.contains(ProductKind::SpectralIndexError)
@@ -2406,6 +2439,7 @@ fn derive_capabilities(
         ProductNormalization::UnitResponse => RequiredCapability::UnitResponseNormalization,
         ProductNormalization::FlatNoise => RequiredCapability::FlatNoiseNormalization,
         ProductNormalization::FlatSky => RequiredCapability::FlatSkyNormalization,
+        ProductNormalization::PbSquare => RequiredCapability::PbSquareNormalization,
     });
     capabilities.extend(
         products

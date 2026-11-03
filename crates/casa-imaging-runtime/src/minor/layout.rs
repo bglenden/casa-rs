@@ -66,10 +66,10 @@ impl MinorLayout {
         }
     }
 
-    /// The layout the first major cycle of `problem` forms: one Taylor
-    /// family of `T` residual terms and `2T − 1` normal moments on the first
-    /// image domain, or a plane per polarization, image domain and output
-    /// channel, paged when there is a plane per channel.
+    /// The layout the first major cycle of `problem` forms: a Taylor family
+    /// of `T` residual terms and `2T − 1` normal moments per polarization on
+    /// the first image domain, or a plane per polarization, image domain and
+    /// output channel, paged when there is a plane per channel.
     #[must_use]
     pub fn planned(problem: &CompiledProblem) -> Self {
         let target = problem.model_lifecycle().target();
@@ -88,7 +88,7 @@ impl MinorLayout {
         let per_channel = target.polarizations() * domains.len();
         let (planes, shape, terms, paged, channels) = match problem.reconstruction().basis() {
             ReconstructionBasis::Taylor { terms } => (
-                1,
+                target.polarizations(),
                 largest(&domains[..domains.len().min(1)]),
                 (terms as u64, (2 * terms).saturating_sub(1) as u64),
                 false,
@@ -218,13 +218,23 @@ impl MinorLayout {
 }
 
 /// Heap bytes per pixel a plane's preparation holds for its `.pb` under
-/// `setup` ([`super::pixels::beam_pixels`]): the support it keeps and,
-/// for an analytic beam, the beam it forms the support from.
-fn beam_bytes_per_cell(setup: &MinorCycleSetup<'_>) -> u64 {
-    if !super::pixels::reads_beam(setup) {
+/// `setup` ([`super::pixels::beam_pixels`]): the supports it keeps, above
+/// the cutoff and above a `pbmask` above zero, and, for an analytic beam,
+/// the beam it forms them from, which a mask of `mask_plans` cut to the
+/// primary beam also forms ([`super::pixels::plane_beam`]).
+fn beam_bytes_per_cell(
+    setup: &MinorCycleSetup<'_>,
+    mask_plans: &ImageDomainReconstructionMaskPlans,
+) -> u64 {
+    let supports = if super::pixels::reads_beam(setup) {
+        1 + u64::from(setup.pbmask > 0.0)
+    } else {
+        0
+    };
+    if supports == 0 && !mask_plans.reads_primary_beam() {
         return 0;
     }
-    size_of::<bool>() as u64
+    supports * size_of::<bool>() as u64
         + if setup.primary_beam.is_some() {
             casa_imaging_products::ANALYTIC_PRIMARY_BEAM_BYTES_PER_CELL
         } else {
@@ -270,7 +280,7 @@ pub fn prepare_bytes_for(
             0
         }
         .max(if fits { 2 * size_of::<f32>() as u64 } else { 0 })
-            + beam_bytes_per_cell(setup));
+            + beam_bytes_per_cell(setup, mask_plans));
     mask_plans.materialize_bytes_for(
         |domain| layout.domains.get(domain).copied(),
         layout.channels_and_polarizations,
@@ -410,6 +420,7 @@ mod tests {
             automask: false,
             primary_beam: None,
             residual_pixel_mask: false,
+            pbmask: 0.0,
         }
     }
 

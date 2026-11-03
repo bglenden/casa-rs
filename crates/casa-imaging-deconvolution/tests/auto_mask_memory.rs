@@ -17,8 +17,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_imaging_deconvolution::{
     AutoMaskBeam, AutoMaskCycle, AutoMaskPlane, AutoMaskSource, AutoMultithreshControls,
-    ImageDomainReconstructionMaskPlans, MaskError, MaskPlaneKey, NoiseEstimate, PlaneShape,
-    PsfSummary, ReconstructionMaskPlan, auto_multithresh, auto_multithresh_bytes,
+    ImageDomainReconstructionMaskPlans, MaskError, MaskPlaneKey, MaskSources, NoiseEstimate,
+    PlaneShape, PsfSummary, ReconstructionMaskPlan, auto_multithresh, auto_multithresh_bytes,
 };
 use casa_imaging_model::{ReconstructionAlgorithm, ReconstructionBasis, ReconstructionControls};
 
@@ -279,8 +279,12 @@ fn materializing_every_channel_holds_at_most_its_charge() {
             PEAK.store(0, Ordering::Relaxed);
             BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
             MEASURING.store(true, Ordering::Relaxed);
+            let sources = MaskSources {
+                auto: Some(&source),
+                beam: None,
+            };
             let made =
-                pool.install(|| plans.materialize(completion.final_model(), normal, Some(&source)));
+                pool.install(|| plans.materialize(completion.final_model(), normal, &sources));
             MEASURING.store(false, Ordering::Relaxed);
             let (masks, evidence) = made.expect("the masks").into_parts();
             let peak = PEAK.load(Ordering::Relaxed);

@@ -83,24 +83,77 @@ fn moving_source_is_available_through_selected_observation_geometry() {
         .expect("moving-source geometry is evaluated by selected observation traversal");
 }
 
+/// A Taylor basis reconstructs a family per polarization, as CASA's
+/// `SDAlgorithmMSMFS` cleans one Stokes plane at a time
+/// (`test_stokes_mtmfs_Q`, `test_stokes_weighting`).
 #[test]
-fn coupled_taylor_basis_rejects_non_stokes_i_polarization() {
-    for coordinate in [
-        PolarizationCoordinate::StokesQ,
-        PolarizationCoordinate::CircularRl,
+fn a_taylor_basis_reconstructs_any_polarization() {
+    for coordinates in [
+        vec![PolarizationCoordinate::StokesQ],
+        vec![PolarizationCoordinate::CircularRl],
+        vec![
+            PolarizationCoordinate::StokesI,
+            PolarizationCoordinate::StokesQ,
+            PolarizationCoordinate::StokesU,
+            PolarizationCoordinate::StokesV,
+        ],
     ] {
-        let problem = ProblemFixture {
-            basis: ReconstructionBasis::Taylor { terms: 2 },
-            algorithm: ReconstructionAlgorithm::Mtmfs {
-                scales_px: vec![0.0],
-                small_scale_bias: 0.0,
-            },
-            polarizations: vec![coordinate],
-            ..ProblemFixture::standard()
+        for terms in [1, 2] {
+            let problem = ProblemFixture {
+                basis: ReconstructionBasis::Taylor { terms },
+                algorithm: ReconstructionAlgorithm::Mtmfs {
+                    scales_px: vec![0.0],
+                    small_scale_bias: 0.0,
+                },
+                polarizations: coordinates.clone(),
+                ..ProblemFixture::standard()
+            }
+            .compile();
+            assert!(on_cpu(&problem).is_ok(), "{terms} terms of {coordinates:?}");
         }
-        .compile();
-        assert_exactly_unsupported(on_cpu(&problem), [Unsupported::PolarizedTaylorBasis]);
     }
+}
+
+/// A Taylor basis of Stokes planes other than I alone waits for #1112 with
+/// the mosaic and W-projection kernel sets; Stokes I alone runs with them.
+#[test]
+fn a_polarized_taylor_basis_grids_with_the_standard_kernel_set() {
+    let taylor = |polarizations: Vec<PolarizationCoordinate>| ProblemFixture {
+        basis: ReconstructionBasis::Taylor { terms: 2 },
+        algorithm: ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        polarizations,
+        ..ProblemFixture::standard()
+    };
+    let mosaic = |polarizations| {
+        let mut fixture = taylor(polarizations)
+            .with_primary_beam(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
+        fixture.uvw = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
+        fixture.products.push(ProductKind::Sensitivity);
+        fixture
+    };
+    for polarizations in [
+        vec![PolarizationCoordinate::StokesQ],
+        vec![
+            PolarizationCoordinate::StokesI,
+            PolarizationCoordinate::StokesV,
+        ],
+    ] {
+        let mut w = taylor(polarizations.clone());
+        w.measurement_equation = w
+            .measurement_equation
+            .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
+        for fixture in [mosaic(polarizations), w] {
+            assert_exactly_unsupported(
+                on_cpu(&fixture.compile()),
+                [Unsupported::PolarizedTaylorKernelSet],
+            );
+        }
+    }
+    on_cpu(&mosaic(vec![PolarizationCoordinate::StokesI]).compile())
+        .expect("a Stokes I mosaic Taylor basis runs");
 }
 
 #[test]

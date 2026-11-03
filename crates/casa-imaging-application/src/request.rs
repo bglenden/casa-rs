@@ -18,7 +18,7 @@ use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 use casa_imaging_model::{
     FixedRestoringBeam, HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization,
-    RestoringBeamPolicy, UvTaper,
+    Projection, RestoringBeamPolicy, UvTaper,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::{Diagnostics, ResourcePolicy};
@@ -59,6 +59,10 @@ pub struct ImagingRequest {
     /// `cell` does.
     #[serde(deserialize_with = "cell_pair_arcsec")]
     pub cell: [f64; 2],
+    /// The celestial projection of the image's direction axes, CASA's
+    /// `projection` (`SIN` by default).
+    #[serde(deserialize_with = "projection")]
+    pub projection: Projection,
     /// The visibility column imaged; `None` takes `CORRECTED_DATA` when it
     /// exists and `DATA` otherwise. `CORRECTED_DATA` asked for on a
     /// MeasurementSet without it images `DATA`, as CASA's `tclean` does;
@@ -176,8 +180,13 @@ pub struct ImagingRequest {
     pub scales: Vec<f64>,
     /// CASA multiscale small-scale bias.
     pub smallscalebias: f64,
-    /// User masks or CASA auto-multithresh.
+    /// User masks, the primary beam's or CASA auto-multithresh.
     pub usemask: UseMask,
+    /// tclean's `pbmask`, in `[0, 1)`: the `.pb` level of `usemask='pb'`'s
+    /// mask, the level a named user mask and auto-multithresh are cut to
+    /// above zero, and the level above which the `nsigma` noise is
+    /// measured.
+    pub pbmask: f64,
     /// Auto-multithresh sidelobe threshold multiplier.
     pub sidelobethreshold: f64,
     /// Auto-multithresh noise threshold multiplier.
@@ -448,9 +457,14 @@ pub enum SpectralMaskRange {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum UseMask {
-    /// The boxes and image the request names; everything when it names none.
+    /// The boxes and image the request names, cut to the primary beam at
+    /// a `pbmask` above zero; everything when it names none.
     User,
-    /// CASA auto-multithresh.
+    /// The pixels whose `.pb` exceeds `pbmask`, in every plane
+    /// (`SDMaskHandler::makePBMask`).
+    Pb,
+    /// CASA auto-multithresh, cut to the primary beam at a `pbmask` above
+    /// zero.
     AutoMultithresh,
 }
 
@@ -727,10 +741,12 @@ impl ImagingRequest {
                  would own the main field's overlap with no start model of its own",
             );
         }
-        if self.nterms == 0 || (self.nterms > 1) != (self.deconvolver == Deconvolver::Mtmfs) {
+        // CASA's `mtmfs` takes one Taylor term or more; every other
+        // deconvolver images one.
+        if self.nterms == 0 || (self.nterms > 1 && self.deconvolver != Deconvolver::Mtmfs) {
             return invalid(
                 "nterms, deconvolver",
-                "nterms > 1 exactly when deconvolver = mtmfs",
+                "nterms is at least one, and more than one only with deconvolver = mtmfs",
             );
         }
         if self.deconvolver == Deconvolver::Mtmfs && self.specmode != SpecMode::Mfs {
@@ -759,12 +775,21 @@ impl ImagingRequest {
         }
         let has_boxes = !self.mask_box.is_empty() || self.explicit_empty_mask;
         if (self.mask_image.is_some() && has_boxes)
-            || (self.usemask == UseMask::AutoMultithresh
-                && (self.mask_image.is_some() || has_boxes))
+            || (self.usemask != UseMask::User && (self.mask_image.is_some() || has_boxes))
         {
             return invalid(
                 "usemask, mask_image, mask_box",
-                "name one mask: auto-multithresh, a mask image or boxes",
+                "name one mask: auto-multithresh, the primary beam's, a mask image or boxes",
+            );
+        }
+        if !(0.0..1.0).contains(&self.pbmask) {
+            return invalid("pbmask", "pbmask is a primary-beam level in [0, 1)");
+        }
+        if self.outlierfile.is_some() && (self.usemask == UseMask::Pb || self.pbmask > 0.0) {
+            return invalid(
+                "outlierfile, usemask, pbmask",
+                "outlier fields take the main field's usemask='pb' and pbmask in CASA, which \
+                 is not implemented yet (#814)",
             );
         }
         if self.save_continuum_residual && self.fitspw.is_none() {
@@ -1238,6 +1263,13 @@ fn choice<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error
     }
 }
 
+fn projection<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Projection, D::Error> {
+    let text = choice(deserializer)?;
+    Projection::from_casa_name(&text).ok_or_else(|| {
+        D::Error::custom(format!("projection {text:?} is not one casa-rs images in"))
+    })
+}
+
 fn save_model<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SaveModel, D::Error> {
     match choice(deserializer)?.as_str() {
         text if unset(text) => Ok(SaveModel::None),
@@ -1461,6 +1493,7 @@ fn normalization<'de, D: Deserializer<'de>>(
     match choice(deserializer)?.as_str() {
         "flatnoise" => Ok(ProductNormalization::FlatNoise),
         "flatsky" => Ok(ProductNormalization::FlatSky),
+        "pbsquare" => Ok(ProductNormalization::PbSquare),
         other => Err(D::Error::custom(format!("normtype {other:?}"))),
     }
 }

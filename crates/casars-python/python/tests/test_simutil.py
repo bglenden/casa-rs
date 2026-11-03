@@ -37,9 +37,10 @@ CASA = casa_signatures("simutil")
 #: The methods casa-rs implements; CASA's others refuse, naming #1053.
 IMPLEMENTED = {
     "approxBeam", "average_direction", "bandname", "baselineLengths", "calc_pointings2", "cellsize",
-    "convimage", "dir_m2s", "direction_splitter", "flatimage", "getdatum", "isdirection", "ismstp",
-    "isquantity", "itrf2loc", "itrf2locname", "locxyz2itrf", "long2xyz", "median_direction",
-    "modifymodel", "noisetemp", "polsettings", "read_pointings", "readantenna", "statim", "tconpc",
+    "closereport", "convimage", "dir_m2s", "dir_s2m", "direction_splitter", "flatimage", "getdatum",
+    "is4d", "isdirection", "ismstp", "isquantity", "isreport", "itrf2loc", "itrf2locname",
+    "locxyz2itrf", "long2xyz", "median_direction", "modifymodel", "msg", "noisetemp", "openreport",
+    "polsettings", "read_pointings", "readantenna", "setcfg", "spectral", "statim", "tconpc",
     "tmgeod", "utm2long", "utm2xyz", "wrapang", "write_pointings", "xyz2long", "xyz2long_old",
 }
 
@@ -664,17 +665,8 @@ def test_xyz2long_inverts_long2xyz_where_casa_slips() -> None:
             assert found_old == pytest.approx(tuple(old["result"]), rel=1e-12, abs=1e-15), code
 
 
-def itrf2locname_cases() -> list[Any]:
-    # casa-rs places ITRF observatories by the table's X, Y, Z, CASA by its
-    # Long, Lat, Height; SMA's differ by 14 km (#1106). Strict, so the fix
-    # must drop the mark.
-    sma = pytest.mark.xfail(strict=True, reason="SMA's observatory position (#1106)")
-    return [pytest.param(case, id=case["args"][3], marks=[sma] if case["args"][3] == "SMA" else [])
-            for case in GEODESY["itrf2locname"]]
-
-
 @needs_measures_data
-@pytest.mark.parametrize("case", itrf2locname_cases())
+@pytest.mark.parametrize("case", GEODESY["itrf2locname"], ids=lambda case: case["args"][3])
 def test_itrf2locname_places_positions_about_casas_observatory(case: dict[str, Any]) -> None:
     u = simutil.simutil()
     found = u.itrf2locname(*case["args"])

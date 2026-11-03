@@ -3,6 +3,8 @@
 
 use std::mem::size_of;
 
+use casa_types::quanta::unique_prefix_position;
+
 /// A single source row from casacore `ephemerides/Sources`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SourceEntry {
@@ -56,12 +58,12 @@ impl SourceCatalog {
         &self.entries
     }
 
-    /// Look up a source by case-insensitive name.
+    /// The source `name` finds, as casacore's `MeasTable` finds it: the
+    /// entry of that name ignoring case, else the one entry the name agrees
+    /// with over the shorter of their lengths ([`unique_prefix_position`]).
     pub fn get(&self, name: &str) -> Option<&SourceEntry> {
-        let name = name.trim();
-        self.entries
-            .iter()
-            .find(|entry| entry.name.trim().eq_ignore_ascii_case(name))
+        unique_prefix_position(name, &self.entries, |entry| entry.name.as_str())
+            .map(|at| &self.entries[at])
     }
 
     pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {

@@ -995,26 +995,7 @@ impl MeasuresProvider for MeasuresRuntime {
 
     fn observatory(&self, name: &str) -> Result<Option<ObservatoryPosition>, String> {
         self.observatories()
-            .map(|catalog| {
-                catalog.get(name).and_then(|entry| {
-                    let observatory_type = entry.observatory_type.trim();
-                    if observatory_type.eq_ignore_ascii_case("ITRF") {
-                        Some(ObservatoryPosition::Itrf {
-                            x_m: entry.x_m,
-                            y_m: entry.y_m,
-                            z_m: entry.z_m,
-                        })
-                    } else if observatory_type.eq_ignore_ascii_case("WGS84") {
-                        Some(ObservatoryPosition::Wgs84 {
-                            longitude_rad: entry.longitude_deg.to_radians(),
-                            latitude_rad: entry.latitude_deg.to_radians(),
-                            height_m: entry.height_m,
-                        })
-                    } else {
-                        None
-                    }
-                })
-            })
+            .map(|catalog| catalog.get(name).and_then(ObservatoryEntry::position))
             .map_err(|error| error.to_string())
     }
 
@@ -1411,7 +1392,10 @@ mod tests {
         let catalog = runtime.observatories().expect("observatories");
         assert!(catalog.entries().len() > 40);
         assert!(catalog.get("ALMA").is_some());
-        assert!(catalog.get(" alma ").is_some());
+        // casacore keeps spaces: a trailing one still agrees with ALMA over
+        // ALMA's length, a leading one does not.
+        assert!(catalog.get("alma ").is_some());
+        assert!(catalog.get(" alma").is_none());
         let catalog = runtime.sources().expect("sources");
         assert!(catalog.entries().len() > 100);
         let source_0002 = catalog.get("0002-478").expect("catalog source");
@@ -1421,9 +1405,13 @@ mod tests {
         let catalog = runtime.spectral_lines().expect("lines");
         assert!(catalog.entries().len() >= 18);
         let hi = catalog.get("HI").expect("HI line");
-        assert!(catalog.get(" hi ").is_some());
+        assert!(catalog.get("hi ").is_some());
+        assert!(catalog.get(" hi").is_none());
         assert_eq!(hi.frequency_type, "REST");
-        assert!((hi.frequency_hz() - 1.420_405_752e9).abs() < 5.0e3);
+        // casacore's QC::HI, which the table also holds (CASA 6.7.6.14's
+        // me.spectralline('HI')).
+        assert_eq!(hi.frequency_hz(), 1_420_405_751.786);
+        assert_eq!(hi.frequency_ghz * 1.0e9, hi.frequency_hz());
         let tai_minus_utc = runtime.tai_minus_utc_seconds(51_544.5).expect("TAI-UTC");
         assert!((tai_minus_utc - 32.0).abs() < 1e-6);
         let utc = runtime

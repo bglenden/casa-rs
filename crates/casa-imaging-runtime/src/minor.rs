@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use casa_imaging_deconvolution::{
     AutoMaskEvidence, AutoMaskPlane, AutoMaskSource, FinalNormalState,
     ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MajorCycleCompletion,
-    MaskError, MaskPlaneKey, ModelGeneration, ModelLifecycle, ModelLifecycleError, NoiseEstimate,
-    NormalBasis, NormalStateError, SpectralChannelValidity, robust_noise,
+    MaskError, MaskPlaneKey, MaskSources, ModelGeneration, ModelLifecycle, ModelLifecycleError,
+    NoiseEstimate, NormalBasis, NormalStateError, SpectralChannelValidity, robust_noise,
 };
 use casa_imaging_deconvolution::{
     Clark, Component, CycleControls, Delta, Hogbom, LinearRefresh, MinorCycleView, Multiscale,
@@ -111,6 +111,11 @@ pub struct MinorCycleSetup<'a> {
     /// negative (`SIImageStore::divideResidualByWeight`): each plane's
     /// peaks and automatic mask then read only the pixels inside the beam.
     pub residual_pixel_mask: bool,
+    /// tclean's `pbmask`, in `[0, 1)`: the `nsigma` noise reads the pixels
+    /// whose `.pb` exceeds it (`SIImageStore::calcRobustRMS`), and above
+    /// zero it is an automatic mask's pixel mask
+    /// (`SDMaskHandler::autoMaskWithinPB`).
+    pub pbmask: f64,
 }
 
 /// One plane of the normal state: image domain, absolute output channel
@@ -299,6 +304,16 @@ pub fn prepare_minor_cycle(
     if pixels::reads_beam(setup) && setup.nsigma > 0.0 && cache.beams.is_none() {
         cache.beams = Some(pixels::domain_beams(normal, base, setup, taylor, &keys)?);
     }
+    // A mask cut to the primary beam reads each plane's `.pb`.
+    let roles = base.shape().domain_roles();
+    let beam = |key: MaskPlaneKey, level: f32| {
+        pixels::plane_beam(
+            normal,
+            setup,
+            (roles, absolute(normal, taylor, key), taylor),
+            level,
+        )
+    };
     let (masks, auto_masks) = if mask_plans.automatic() {
         // An automatic mask smooths by its channel block's common beam and
         // thresholds by the image's sidelobe level, so every plane's PSF is
@@ -326,9 +341,17 @@ pub fn prepare_minor_cycle(
             psf: &psf,
             workers: team.workers(),
         };
-        team.install(|| mask_plans.materialize(base, normal, Some(&source)))?
+        let sources = MaskSources {
+            auto: Some(&source),
+            beam: Some(&beam),
+        };
+        team.install(|| mask_plans.materialize(base, normal, &sources))?
     } else {
-        mask_plans.materialize::<MinorCycleRunError>(base, normal, None)?
+        let sources = MaskSources {
+            auto: None,
+            beam: Some(&beam),
+        };
+        mask_plans.materialize(base, normal, &sources)?
     }
     .into_parts();
     let inputs = Inputs {
@@ -589,22 +612,26 @@ pub fn run_minor_cycle(
     })
 }
 
-/// Whether `normal` holds one Taylor family (decided once per cycle half).
+/// Whether `normal` holds Taylor families, one per polarization (decided
+/// once per cycle half).
 fn is_taylor(normal: &FinalNormalState) -> bool {
     normal.basis() == NormalBasis::Taylor
 }
 
 /// The planes a minor cycle cleans, in CASA's order within each image
-/// domain: one Taylor family, every channel of every polarization of a
+/// domain: one Taylor family per polarization (`SDAlgorithmMSMFS` cleans
+/// one Stokes plane at a time), every channel of every polarization of a
 /// cube or continuum plane, or each polarization of every image field.
 fn plane_keys(normal: &FinalNormalState, taylor: bool) -> Vec<PlaneKey> {
     let first = normal.slab().core_range().start;
     if taylor {
-        return vec![PlaneKey {
-            domain: 0,
-            channel: first,
-            polarization: 0,
-        }];
+        return (0..normal.polarization_count())
+            .map(|polarization| PlaneKey {
+                domain: 0,
+                channel: first,
+                polarization,
+            })
+            .collect();
     }
     let mut keys = Vec::new();
     for polarization in 0..normal.polarization_count() {
@@ -623,26 +650,28 @@ fn plane_keys(normal: &FinalNormalState, taylor: bool) -> Vec<PlaneKey> {
 
 /// The pixels plane `key`'s preparation measures, `plane` read as a view:
 /// its valid pixels and, when the cycle reads the `.pb`
-/// ([`pixels::reads_beam`]), their part inside it.
+/// ([`pixels::reads_beam`]), their part inside it and above `pbmask`.
 fn plane_pixels<'p>(
     inputs: &Inputs<'_>,
     key: PlaneKey,
     plane: &'p PlaneData<'_>,
 ) -> Result<pixels::PlanePixels<'p>, MinorCycleRunError> {
-    let beam = if pixels::reads_beam(inputs.setup) {
+    let (beam, within) = if pixels::reads_beam(inputs.setup) {
         pixels::beam_pixels(
             inputs.setup,
             (inputs.base.shape().domain_roles(), key, inputs.taylor),
             plane.valid.as_slice(),
             plane.response.as_ref(),
         )?
-        .map(|beam| Support::new(plane.shape, beam))
+        .map(|beam| beam.into_supports(plane.shape))
+        .unzip()
     } else {
-        None
+        (None, None)
     };
     Ok(pixels::PlanePixels {
         valid: &plane.valid,
         beam,
+        within: within.flatten(),
     })
 }
 
@@ -679,7 +708,7 @@ fn measure_psfs(
 /// family.
 fn holds_data(normal: &FinalNormalState, taylor: bool, key: PlaneKey) -> bool {
     let validity = if taylor {
-        normal.support_validity()
+        normal.support_validity(key.polarization)
     } else {
         normal.domain_channel_validity(
             key.domain,
@@ -691,7 +720,7 @@ fn holds_data(normal: &FinalNormalState, taylor: bool, key: PlaneKey) -> bool {
 }
 
 /// The plane of a mask's `key`, whose channel counts from the normal
-/// state's first; a Taylor family is one plane.
+/// state's first; a Taylor family is one channel.
 fn absolute(normal: &FinalNormalState, taylor: bool, key: MaskPlaneKey) -> PlaneKey {
     let first = normal.slab().core_range().start;
     PlaneKey {
@@ -740,7 +769,7 @@ fn automask_plane(
             .get(&key)
             .ok_or(casa_imaging_deconvolution::Error::PsfPeak)?
             .peak();
-        taylor_principal_residual(normal, setup, peak)?
+        taylor_principal_residual(normal, setup, key.polarization, peak)?
     } else {
         let plane = normal.read_plane(key.domain, key.channel, key.polarization)?;
         let raw = plane.read_residual()?;
@@ -813,7 +842,7 @@ fn read_psf(
     if taylor {
         let window = normal.read_window(normal.slab().core_range())?;
         let moment = window
-            .normal_moment(0)
+            .normal_moment(0, key.polarization)
             .expect("a Taylor family has its zeroth moment");
         return Ok(moment
             .normal_approximation()
@@ -836,7 +865,7 @@ struct Inputs<'a> {
     base: &'a ModelGeneration,
     masks: &'a ImageDomainReconstructionMasks,
     setup: &'a MinorCycleSetup<'a>,
-    /// Whether the normal state is one Taylor family.
+    /// Whether the normal state holds Taylor families.
     taylor: bool,
 }
 
@@ -934,7 +963,7 @@ fn load<'a>(
         .map(|(masked, valid)| *masked && *valid)
         .collect();
     let terms = if taylor {
-        read_taylor(normal, setup)?
+        read_taylor(normal, setup, key.polarization)?
     } else {
         read_single(normal, setup, key)?
     };
@@ -1028,26 +1057,28 @@ fn single_residual<'a>(
     ))
 }
 
-/// The Taylor family's residual terms and `2·N_t − 1` PSF moments. Every
-/// moment divides by the zeroth moment's peak, with or without a response
-/// (`SIImageStore::normPSF`, which `SDAlgorithmMSMFS::initializeDeconvolver`
-/// reads, #704). Without a response the residuals divide by the same peak;
-/// with one they take CASA's units and the components convert back over
-/// the zeroth moment's sum weight.
+/// Polarization `polarization`'s Taylor family: its residual terms and
+/// `2·N_t − 1` PSF moments. Every moment divides by the zeroth moment's
+/// peak, with or without a response (`SIImageStore::normPSF`, which
+/// `SDAlgorithmMSMFS::initializeDeconvolver` reads, #704). Without a
+/// response the residuals divide by the same peak; with one they take
+/// CASA's units and the components convert back over the zeroth moment's
+/// sum weight.
 fn read_taylor(
     normal: &FinalNormalState,
     setup: &MinorCycleSetup<'_>,
+    polarization: usize,
 ) -> Result<PlaneTerms<'static>, MinorCycleRunError> {
     let window = normal.read_window(normal.slab().core_range())?;
     let [nx, ny] = normal.shape();
     let shape = PlaneShape::new(nx, ny);
     let principal = window
-        .normal_moment(0)
+        .normal_moment(0, polarization)
         .expect("a Taylor family has its zeroth moment");
     let moments = (0..normal.normal_moment_count())
         .map(|moment| {
             window
-                .normal_moment(moment)
+                .normal_moment(moment, polarization)
                 .expect("every normal moment is present")
                 .normal_approximation()
                 .iter()
@@ -1057,7 +1088,7 @@ fn read_taylor(
         .collect::<Vec<_>>();
     let raw = (0..normal.coefficient_term_count()).map(|term| {
         window
-            .coefficient_term(term)
+            .coefficient_term(term, polarization)
             .expect("every coefficient term is present")
             .residual()
     });
@@ -1076,7 +1107,9 @@ fn read_taylor(
         });
     };
     let normal_weight = principal.sum_weight();
-    let published_weight = window.published_sum_weights()[0];
+    let published_weight = window
+        .published_sum_weight(0, polarization)
+        .expect("a Taylor family has its zeroth sum of weights");
     let sensitivity = principal.sensitivity().to_vec();
     let bound = MosaicSensitivity::new(&sensitivity)?.with_normal_sum_weight(normal_weight)?;
     let residual = raw
@@ -1107,32 +1140,36 @@ fn read_taylor(
     })
 }
 
-/// The zeroth Taylor term's residual in the units the minor cycle cleans,
-/// as [`read_taylor`] gives it, read alone, with the response bound to the
-/// family's weights: an automatic mask reads that term and, of the zeroth
-/// PSF moment, its value at its measured `peak`, not the whole family.
+/// The zeroth Taylor term's residual of polarization `polarization` in the
+/// units the minor cycle cleans, as [`read_taylor`] gives it, read alone,
+/// with the response bound to the family's weights: an automatic mask reads
+/// that term and, of the zeroth PSF moment, its value at its measured
+/// `peak`, not the whole family.
 fn taylor_principal_residual(
     normal: &FinalNormalState,
     setup: &MinorCycleSetup<'_>,
+    polarization: usize,
     peak: usize,
 ) -> Result<(Vec<f64>, Option<ResponseBinding<'static>>), MinorCycleRunError> {
     let window = normal.read_window(normal.slab().core_range())?;
     let principal = window
-        .normal_moment(0)
+        .normal_moment(0, polarization)
         .expect("a Taylor family has its zeroth moment");
     let scale = principal.normal_approximation()[peak].re;
     if !(scale.is_finite() && scale > 0.0) {
         return Err(casa_imaging_deconvolution::Error::PsfPeak.into());
     }
     let term = window
-        .coefficient_term(0)
+        .coefficient_term(0, polarization)
         .expect("a Taylor family has its zeroth term")
         .residual();
     let Some(response) = setup.response else {
         return Ok((term.iter().map(|value| value.re / scale).collect(), None));
     };
     let normal_weight = principal.sum_weight();
-    let published_weight = window.published_sum_weights()[0];
+    let published_weight = window
+        .published_sum_weight(0, polarization)
+        .expect("a Taylor family has its zeroth sum of weights");
     let sensitivity = principal.sensitivity().to_vec();
     let bound = MosaicSensitivity::new(&sensitivity)?.with_normal_sum_weight(normal_weight)?;
     let residual = term

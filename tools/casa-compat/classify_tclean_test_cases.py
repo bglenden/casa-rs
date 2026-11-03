@@ -71,6 +71,16 @@ NOTE = "surface note: restart (#944)"
 CF_NOTE = "surface note: cfcache"
 GATE = "availability.rs gate"
 
+# `Tclean::projection`: casacore's projection names, and those casa-rs
+# images in (`Projection::from_casa_name`), spelt exactly.
+CASACORE_PROJECTIONS = {
+    "AZP", "SZP", "TAN", "SIN", "STG", "ARC", "ZPN", "ZEA", "AIR", "CYP", "CEA", "CAR", "MER",
+    "COP", "COE", "COD", "COO", "SFL", "PAR", "MOL", "AIT", "BON", "PCO", "TSC", "CSC", "QSC",
+    "HPX",
+}
+CASA_RS_PROJECTIONS = {"SIN", "NCP", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "MER", "AIT"}
+PROJECTION_ISSUE = 1101
+
 
 def plain(value):
     """A catalog ParameterValue as Python."""
@@ -306,6 +316,8 @@ class Refusals:
         if deconvolver not in ("hogbom", "clark", "multiscale", "mtmfs"):
             issue = 223 if deconvolver == "asp" else 1060
             self.add(f"deconvolver={deconvolver!r}", NOT_YET, issue)
+        if deconvolver == "mtmfs" and specmode in ("cube", "cubedata"):
+            self.add("deconvolver='mtmfs' with specmode='cube' or 'cubedata'", PARITY)
         weighting = self.text("weighting")
         if weighting not in ("natural", "uniform", "briggs", "briggsbwtaper"):
             self.add(f"weighting={weighting!r}", NOT_YET, 980)
@@ -322,8 +334,6 @@ class Refusals:
                 980,
             )
         usemask = self.text("usemask")
-        if usemask == "pb":
-            self.add("usemask='pb'", NOT_YET, 1061)
         return {
             "cube": cube,
             "gridder": gridder,
@@ -383,10 +393,16 @@ class Refusals:
             self.per_measurement_set(name)
 
     def geometry(self):
-        """`Tclean::geometry`."""
+        """`Tclean::geometry` and `Tclean::projection`."""
         if self.values.get("cell") == []:
             self.add("cell: empty", PARITY)
         self.text("phasecenter")
+        projection = self.text("projection")
+        if isinstance(projection, str):
+            if projection != "NCP" and projection not in CASACORE_PROJECTIONS:
+                self.add("projection: not a casacore projection", PARITY)
+            elif projection not in CASA_RS_PROJECTIONS:
+                self.add(f"projection={projection!r}", NOT_YET, PROJECTION_ISSUE)
 
     def spectral(self, modes):
         """`Tclean::spectral`."""
@@ -434,9 +450,6 @@ class Refusals:
             and planes < 1
         ):
             self.add("wprojplanes below 1 (other than -1)", CASA_RS)
-        normtype = self.text("normtype")
-        if gridder in ("mosaic", "awproject") and normtype == "pbsquare":
-            self.add("normtype='pbsquare'", NOT_YET, 1061)
         if gridder == "awproject":
             # `AwProjection::validate`: CASA's `AWConvFunc` refuses both
             # terms off; deriving the planes waits for #980.
@@ -466,10 +479,8 @@ class Refusals:
                 CF_NOTE,
             )
 
-    def deconvolution(self, modes):
+    def deconvolution(self):
         """`Tclean::deconvolution`."""
-        if modes["deconvolver"] == "mtmfs" and self.integer("nterms") == 1:
-            self.add("nterms=1 with deconvolver='mtmfs'", NOT_YET, 1065)
         beam = self.texts("restoringbeam")
         if beam not in ([], ["common"]):
             self.add("restoringbeam: a beam given by its axes", NOT_YET, 980)
@@ -480,6 +491,12 @@ class Refusals:
 
     def masking(self, modes):
         """`Tclean::masking` and `user_mask`."""
+        pbmask = self.values.get("pbmask", 0.0)
+        if isinstance(pbmask, (int, float)) and not isinstance(pbmask, bool):
+            if pbmask >= 1.0:
+                self.add("pbmask >= 1.0", PARITY)
+            elif pbmask < 0.0:
+                self.add("pbmask < 0.0", PARITY)
         entries = self.texts("mask")
         if not modes["user_mask"] or not entries:
             return
@@ -496,7 +513,7 @@ class Refusals:
         self.geometry()
         self.spectral(modes)
         self.gridding(modes)
-        self.deconvolution(modes)
+        self.deconvolution()
         self.iteration()
         self.masking(modes)
         self.gate(modes)
@@ -504,12 +521,14 @@ class Refusals:
     def gate(self, modes):
         """`availability::check`, for what the parameters alone decide."""
         taylor = modes["deconvolver"] == "mtmfs"
-        if taylor and str(self.values.get("stokes", "I")).strip() != "I":
-            self.add("a Taylor basis (mtmfs) of polarizations other than Stokes I", GATE)
         facets = self.values.get("facets")
         faceted = isinstance(facets, int) and facets > 1
         if faceted and modes["gridder"] in ("standard", "wproject") and (taylor or modes["cube"]):
             self.add("facets beyond single-term MFS", GATE)
+        stokes = self.values.get("stokes", "I")
+        if taylor and stokes != "I" and modes["gridder"] != "standard":
+            self.add("mtmfs of Stokes planes other than I alone beyond the standard gridder",
+                     GATE, 1112)
         if modes["gridder"] == "awproject":
             if modes["cube"]:
                 self.add("AW projection of a cube (#719)", GATE, 719)

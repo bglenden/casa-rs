@@ -14,7 +14,7 @@ use crate::convolution::{CellHold, ConvolutionFunctionSet};
 use crate::error::OperatorError;
 use crate::fft::PlaneFft;
 use crate::geometry::GridGeometry;
-use crate::polarization::PolarizationRouting;
+use crate::polarization::{PolarizationRouting, SumwtSource};
 use crate::sample::Placement;
 
 /// Frequency-domain model basis.
@@ -559,11 +559,18 @@ impl MeasurementOperator {
                     }
                     for pol in 0..pols {
                         images[slot].push(self.requested_image(pol, &gpol_images, mode));
-                        sumwt.push(
-                            self.polarization
-                                .sumwt_source(pol)
-                                .sumwt(|gpol| acc.sumwt_at(plane_local, gpol, term)),
-                        );
+                        // `MultiTermFTNew::finalizeToSkyNew` gives every
+                        // Stokes plane of a Taylor term the first gridded
+                        // correlation's sum (`ToStokesSumWt` without
+                        // coordinates), where a single-term gridder pairs
+                        // the correlations each Stokes plane is formed from.
+                        let source = match self.basis {
+                            Basis::Taylor { .. } => SumwtSource::Plane(0),
+                            Basis::Constant | Basis::ChannelLocal { .. } => {
+                                self.polarization.sumwt_source(pol)
+                            }
+                        };
+                        sumwt.push(source.sumwt(|gpol| acc.sumwt_at(plane_local, gpol, term)));
                     }
                 }
             }

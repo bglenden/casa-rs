@@ -8,6 +8,8 @@
 //! |---|---|
 //! | `simutil.modifymodel` | [`modify_model`] |
 //! | `simutil.flatimage` | [`flat_image`] |
+//! | `simutil.is4d` | [`is_4d`] |
+//! | `simutil.spectral` | [`spectral_size`] |
 //! | `ia.modify(cl.torecord(), subtract=False)` (`ComponentListImage`) | [`add_components`] |
 //! | `simobserve`'s `.compskymodel` | [`ComponentModel`] |
 //!
@@ -50,11 +52,13 @@
 mod add;
 mod component_model;
 mod flat;
+mod layout;
 mod modify;
 
 pub use add::add_components;
 pub use component_model::ComponentModel;
 pub use flat::flat_image;
+pub use layout::{SpectralSize, is_4d, spectral_size};
 pub use modify::{ModelOverrides, ModelSummary, ModelValue, modify_model};
 
 use std::path::{Path, PathBuf};

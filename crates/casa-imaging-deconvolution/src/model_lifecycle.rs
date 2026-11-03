@@ -3,8 +3,8 @@
 //! Owner of a run's model generations and their sparse updates.
 
 use casa_imaging_model::{
-    CompiledProblem, ModelCell, ModelContractError, ModelDeltaTerm, ModelLifecycleContract,
-    ModelSample, ModelSourceShape, ModelSupport, ModelValue,
+    CompiledProblem, DirectionCoordinateSpec, ModelCell, ModelContractError, ModelDeltaTerm,
+    ModelLifecycleContract, ModelSample, ModelSourceShape, ModelSupport, ModelValue,
 };
 use thiserror::Error;
 
@@ -277,22 +277,24 @@ impl ModelLifecycle {
         if shape.domains().len() < 2 {
             return Ok(());
         }
+        let coordinates = (0..shape.domains().len())
+            .map(|domain| {
+                shape
+                    .direction(domain)
+                    .map(DirectionCoordinateSpec::coordinate)
+                    .ok_or(ModelLifecycleError::UnsupportedDirectionConversion)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         for earlier in (0..shape.domains().len() - 1).rev() {
             let [width, height] = shape.domains()[earlier].pixels();
-            let target_coordinate = shape
-                .direction(earlier)
-                .ok_or(ModelLifecycleError::UnsupportedDirectionConversion)?;
             for y in 0..height {
                 for x in 0..width {
                     let mut owner = None;
                     for later in earlier + 1..shape.domains().len() {
-                        let source_coordinate = shape
-                            .direction(later)
-                            .ok_or(ModelLifecycleError::UnsupportedDirectionConversion)?;
                         if let Some(pixel) = crate::mask::reprojected_pixel(
-                            source_coordinate,
+                            &coordinates[later],
                             shape.domains()[later].pixels(),
-                            target_coordinate,
+                            &coordinates[earlier],
                             [x, y],
                         )
                         .map_err(|_| ModelLifecycleError::UnsupportedDirectionConversion)?

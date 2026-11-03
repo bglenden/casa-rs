@@ -293,12 +293,8 @@ def tclean(
     CASA's ``tclean``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #980:
     ``vptable``, ``interactive``.
-    Accepted only at CASA's default, where CASA reads them, until #1061:
-    ``pbmask``.
     Accepted only at CASA's default, where CASA reads them, until #1062:
     ``psfphasecenter``.
-    Accepted only at CASA's default, where CASA reads them, until #1064:
-    ``projection``.
     Accepted only at CASA's default, where CASA reads them, until #1070:
     ``computepastep``, ``rotatepastep``.
     """

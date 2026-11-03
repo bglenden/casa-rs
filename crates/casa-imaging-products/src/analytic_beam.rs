@@ -23,7 +23,8 @@ use crate::plan::AnalyticPrimaryBeamModel;
 use crate::source::PrimaryBeamCentres;
 
 /// Bytes per pixel [`AnalyticPrimaryBeam::support`] holds beside the
-/// support it returns: the plane's beam, one `f32` per pixel.
+/// support it returns: the plane's beam, one `f32` per pixel, which
+/// [`AnalyticPrimaryBeam::pb`] returns.
 pub const ANALYTIC_PRIMARY_BEAM_BYTES_PER_CELL: u64 = size_of::<f32>() as u64;
 
 /// The beam laws an analytic primary beam takes.
@@ -192,11 +193,41 @@ impl<'a> AnalyticPrimaryBeam<'a> {
         })
     }
 
+    /// The `.pb` CASA publishes on the plane of image domain `domain` at
+    /// `output_channel`, x-major: [`Self::plane`] where it exceeds the
+    /// problem's primary-beam cutoff (`|pblimit|`), and zero where it does
+    /// not (`SIImageStore::makePBImage`). A level above zero keeps the
+    /// pixels whose `.pb` exceeds it, as tclean's `pbmask` reads them
+    /// (`pb > pbmask` in `SDMaskHandler::makePBMask` and
+    /// `SIImageStore::calcRobustRMS`).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::plane`].
+    pub fn pb(
+        &self,
+        domain: &ImageDomainRole,
+        output_channel: usize,
+    ) -> Result<Vec<f32>, ProductsError> {
+        let policy = self.problem.products().validity().primary_beam();
+        let mut plane = self.plane(domain, output_channel)?;
+        for value in &mut plane {
+            let kept = match policy.comparison() {
+                ProductSupportComparison::StrictlyGreater => *value > policy.cutoff(),
+            };
+            if !kept {
+                *value = 0.0;
+            }
+        }
+        Ok(plane)
+    }
+
     /// The pixels of [`Self::plane`] where the beam exceeds the problem's
     /// primary-beam cutoff (`|pblimit|`), x-major: the `.pb`'s mask
-    /// (`iif(pb > |pblimit|, True, False)` in `makePBImage`). It holds the
-    /// plane's beam ([`ANALYTIC_PRIMARY_BEAM_BYTES_PER_CELL`]) while it
-    /// forms the support.
+    /// (`iif(pb > |pblimit|, True, False)` in `makePBImage`), where
+    /// [`Self::pb`] is positive. It holds the plane's beam
+    /// ([`ANALYTIC_PRIMARY_BEAM_BYTES_PER_CELL`]) while it forms the
+    /// support.
     ///
     /// # Errors
     ///
@@ -206,13 +237,10 @@ impl<'a> AnalyticPrimaryBeam<'a> {
         domain: &ImageDomainRole,
         output_channel: usize,
     ) -> Result<Vec<bool>, ProductsError> {
-        let policy = self.problem.products().validity().primary_beam();
         Ok(self
-            .plane(domain, output_channel)?
+            .pb(domain, output_channel)?
             .into_iter()
-            .map(|value| match policy.comparison() {
-                ProductSupportComparison::StrictlyGreater => value > policy.cutoff(),
-            })
+            .map(|value| value > 0.0)
             .collect())
     }
 

@@ -9,6 +9,8 @@ CASA behaviours casa-rs follows for parity:
 [MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
 [exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels),
 [multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
+[a Taylor term's sum of weights per Stokes plane](#a-taylor-term-gives-every-stokes-plane-the-first-correlations-sum-of-weights),
+[a Taylor run's `'common'` beam](#restoringbeamcommon-restores-every-taylor-stokes-plane-with-the-first-planes-beam),
 [the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio),
 [the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit),
 [the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans),
@@ -16,6 +18,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[a Taylor run with no weight on its first correlation](#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero),
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
@@ -36,7 +39,9 @@ CASA behaviours casa-rs does not follow:
 [`tb.putcell` with several rows](#tbputcell-with-several-rows-writes-those-before-a-missing-one),
 [`tb.addrows` with a negative count](#tbaddrows-with-a-negative-count-removes-rows),
 [`tb.removerows` and `tb.addcols` that fail part way](#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails),
-[`MSIter`'s receptor angles for a window without its own `FEED` row](#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row).
+[`MSIter`'s receptor angles for a window without its own `FEED` row](#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row),
+[a projection name with spaces](#tclean-refuses-a-projection-name-with-spaces-round-it),
+[NCP on the celestial equator](#ncp-on-the-celestial-equator-places-every-pixel-at-nan).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -433,6 +438,63 @@ term's raw `getWeightImage` moment, so `.weight.tt1` and `.weight.tt2` stay
 the raw Σ W·s^N while `.weight.tt0` is normalized. CASA 6.7.6.14 on
 `refim_alma_mosaic` (mosaic, `nterms=2`) agrees: `weight.ttN / sumwt.ttN` is
 0.6913 for N = 0, 1 and 2. casa-rs publishes the same.
+
+## A Taylor term gives every Stokes plane the first correlation's sum of weights
+
+- Date noted: 2026-11-03
+- Status: deliberate CASA shortcut; casa-rs follows it for parity (#1065)
+- Affected code: `synthesis/TransformMachines2/MultiTermFTNew.cc`
+  (`finalizeToSkyNew`, `finalizeToWeightImage`),
+  `synthesis/TransformMachines/StokesImageUtil.cc` (`ToStokesSumWt`)
+
+A single-term gridder (`FTMachine::finalizeToSkyNew`) forms each Stokes
+plane's `.sumwt` with `ToStokesSumWt`'s coordinate form, from the
+correlations the plane is made of: `min(RR, LL)` for I and V, `min(RL, LR)`
+for Q and U. `MultiTermFTNew` calls the two-argument form instead, which
+"picks the value from the first correlation plane, and fills it into all
+stokes planes", as its comment says, valid when every correlation has the
+same weights. So a Taylor term's `.sumwt.ttN` holds the first gridded
+correlation's sum on every Stokes plane: of parallel-hand data imaged as
+`IQUV`, Q and U have Stokes I's sum where a single term's have zero, and
+the residual of every plane is normalized by that sum. CASA 6.7.6.14's
+`test_stokes_weighting` (call 8, `mtmfs` of `refim_twochan.ms`) writes
+`[143360.94] × 4` in every `.sumwt.ttN`. casa-rs forms a Taylor term's sums
+the same way.
+
+## With no weight on the first correlation, every Taylor plane is zero
+
+- Date noted: 2026-11-03
+- Status: CASA loses data; casa-rs refuses the run until #1109
+- Affected code: `synthesis/ImagerObjects/SIImageStore.cc`
+  (`divideImageByWeightVal`)
+
+Because every Stokes plane takes the first gridded correlation's sum, a
+Taylor run whose first correlation has no weight at all (RR fully flagged
+with LL present, say) has a zero `.sumwt.ttN` on every plane.
+`divideImageByWeightVal` sets a plane whose sum is at most 1e-7 to zero, so
+CASA writes every plane of every term as zeros and the other hand's data is
+lost. casa-rs refuses such a run when it forms the Taylor products, naming
+#1109, rather than write images that read as an empty sky.
+
+## `restoringbeam='common'` restores every Taylor Stokes plane with the first plane's beam
+
+- Date noted: 2026-11-03
+- Status: CASA behaviour; casa-rs's result is the same (#1065)
+- Affected code: `synthesis/ImagerObjects/SDAlgorithmBase.cc` (`restore`),
+  `SDAlgorithmMSMFS.cc` (`restore`), `SIImageStore.cc` (`restore`),
+  `synthesis/TransformMachines/StokesImageUtil.cc` (`ToStokesPSF`)
+
+`SDAlgorithmBase::restore` passes its restoring beam by non-const
+reference to `SIImageStore::restore` on each Stokes plane's sub-store, and
+the first plane's call sets it to that plane's beam (casacore's `SubImage`
+holds one beam of the set). Planes 1 to P−1 are then restored with plane
+0's beam, and `SDAlgorithmMSMFS::restore` records that one beam
+(`setRestoringBeam`), so the image has a single beam. casa-rs restores
+every plane with the beam that encloses all the planes' fitted beams, as it
+does any image's planes under `'common'`, and records that one beam. The
+two agree because `ToStokesPSF` gives every Stokes plane the first
+correlation's PSF, so every plane fits the same beam. A beam the request
+gives is recorded once in the same way.
 
 ## The analytic PB ignores a failed `toPixel`
 
@@ -2103,6 +2165,84 @@ is then slightly wrong for a datum whose x and z offsets differ. casa-rs
 subtracts `dz` (`readantenna::geodesy::xyz_to_geodetic_old`); its longitude
 and, for WGS 84, its latitude are CASA's.
 
+## Ten ITRF observatories' tabulated positions disagree with themselves
+
+- Date noted: 2026-11-03
+- Status: measures data defect; casa-rs reads the table as casacore does
+  (#1106)
+- Affected data: the `geodetic/Observatories` table of the measures data
+  (casarundata 2026.02.19 and 2026.10.27); casacore
+  `measures/Measures/MeasTable.cc` (`doInitObservatories`)
+
+Each row of `Observatories` gives a position twice: `Long`, `Lat` and
+`Height`, and `X`, `Y` and `Z`. casacore builds every observatory from the
+first three alone, for an `ITRF` row as a spherical vector whose length is
+`Height`, and never reads `X`, `Y`, `Z`. For 10 of the 20 `ITRF` rows the two
+descriptions are different places:
+
+| Observatory | distance between them | what is wrong |
+|---|---:|---|
+| OVRO_MMA | 6,370,350 m | `Height` is a geodetic height: casacore places it 1.2 km from the Earth's centre |
+| LOFAR | 6,364,570 m | the same: 49 m from the centre |
+| SAO SMA | 4,983,940 m | `Y` has the wrong sign; `Long`, `Lat`, `Height` are SMA's |
+| NRO | 19,983 m | unknown |
+| SMA | 13,844 m | `Lat` appears to be geodetic beside a geocentric radius |
+| e-MERLIN, MERLIN2 | 6,366 m | unknown |
+| SUNRISE | 743 m | a placeholder: `X`, `Y`, `Z` are zero |
+| EVLA | 34.5 m | rounded `Long`, `Lat` and `Height` |
+| ATF | 24.2 m | unknown |
+
+CASA 6.7.6.14's `me.observatory` returns the `Long`, `Lat`, `Height`
+position for each, so its simulations, `itrf2locname` and frame conversions
+use it. casa-rs reads the table as casacore does
+(`ObservatoryEntry::position` in `casa-measures-data`), so the two place
+every observatory alike, including the three that casacore puts inside the
+Earth. Choosing the other column per row would need knowing which one was
+meant, and would make casa-rs and CASA disagree about the same data; the
+correction belongs in the table.
+
+## `simutil.msg` posts a verbose message twice, in colour
+
+- Date noted: 2026-11-03
+- Status: casa-rs posts it once (#1053)
+- Affected code: `casatasks/src/private/simutil.py` (`msg`)
+
+With `verbose=True`, CASA's `msg` posts each message to its log twice at
+INFO: once with ANSI colour codes around `[origin]` and the words `WARNING`
+and `ERROR`, once with those words still coloured. casa-rs logs it once,
+plain, at INFO on `casars.<origin>`, and writes the open report as CASA
+does. Without `verbose` the two log alike (CASA 6.7.6.14,
+`tools/simulation/simutil_helpers_oracle.py`).
+
+## `simutil.is4d` leaves the image tool open
+
+- Date noted: 2026-11-03
+- Status: CASA defect; casa-rs does not follow it (#1053)
+- Affected code: `casatasks/src/private/simutil.py` (`is4d`)
+
+`is4d` returns `False` before `ia.done()` for an image without CASA's four
+axes in order, so the module's shared image tool stays open and the next
+`ia.open` warns "Another image is already open, closing first". casa-rs
+opens nothing that outlives the call.
+
+## `MDirection::from_source_name` trims a source name
+
+- Date noted: 2026-11-03
+- Status: casa-rs is more lenient (#1110)
+- Affected code: casacore `MeasTable::Source`; casa-types
+  `measures/direction.rs` (`parse_named_direction`)
+
+casacore finds a source by name with `MUString::minimaxNC`, which keeps
+spaces, and so does casa-rs's measures data. CASA 6.7.6.14's `me.source`
+reads its argument as a direction string first, splitting it at spaces:
+it finds `'  0002-478'`, with leading spaces, but not `'\t0002-478'`, with a
+tab. casa-rs's `me.source` splits the same way and agrees on both.
+casa-rs's Rust `MDirection::from_source_name`, which TaQL's measures
+functions and the derived MeasurementSet columns use, trims every kind of
+surrounding white space, a tab too, before it looks a name up, as it does
+for planets and `ZENITH`; there a name with leading white space finds a
+source that casacore's `MeasTable::Source` would not.
+
 ## `direction_splitter` cannot split a direction without an epoch
 
 - Date noted: 2026-10-26
@@ -3374,6 +3514,41 @@ CASA works in arcseconds; the common beams agree within one of the algorithm's
 The two searches can stop at different enclosing beams. For four nearly
 equal channel beams (axis ratio 1.17, the simulation round trip's cube,
 2026-11-03), the axes differ by 2.2e-4 and the position angle by 0.036°.
+
+## `tclean` refuses a projection name with spaces round it
+
+- Date noted: 2026-11-03
+- Status: a casa-rs choice (#1064)
+- Affected code: casatools `synthesis/ImagerObjects/SynthesisUtilMethods.cc`
+  (`SynthesisParamsImage::fromRecord`, reading `projection`)
+
+CASA 6.7.6.14's tclean refuses `projection=' TAN'` with "Invalid projection
+code :  TAN", as it refuses `'tan'` and `'XYZ'`: casacore's
+`Projection::type` reads the name exactly. casa-rs's parameter catalog trims
+every string parameter before tclean reads it (`projection`'s normalization
+is `trim`), so casa-rs images `' TAN'` in TAN. A name of the wrong case or
+one casacore does not know is refused as CASA refuses it. No result of
+CASA's depends on the refusal, and following it would make `projection` the
+one string parameter the catalog does not trim. Evidence: CASA's refusals in
+`crates/casa-imaging-application/tests/data/projections-casa-6.7.6.14.json`,
+and the `tclean_tests` rows `casa_values_become_the_request_casa_rs_runs`
+and `values_casa_rs_cannot_honour_are_refused`.
+
+## NCP on the celestial equator places every pixel at NaN
+
+- Date noted: 2026-11-03
+- Status: CASA defect casa-rs corrects by refusing (#1064)
+- Affected code: casatools `synthesis/ImagerObjects/SynthesisUtilMethods.cc`
+  (`SynthesisParamsImage::buildCoordinateSystem`)
+
+CASA writes `projection='NCP'` as SIN slanted by `[0, cot δ₀]`, with no
+guard for an image centred on the celestial equator, where `cot δ₀` is
+infinite: the image records `[0, inf]` and every pixel's world direction is
+NaN, so no pointing, beam or mask can be placed on it. casa-rs refuses
+such a run before imaging, with an error that says why
+(`PrepareError::NcpAtEquator`, the law
+`ncp_on_the_celestial_equator_is_refused`). Any other declination, however
+close to 0, is imaged as CASA images it.
 
 ## Cubic spectral interpolation reads past a short axis and fits flagged values
 

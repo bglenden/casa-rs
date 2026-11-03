@@ -35,18 +35,6 @@ impl PySimutil {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn closereport(&self) -> PyResult<Py<PyAny>> {
-        stub("closereport")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (direction = None), text_signature = "($self, direction=None)")]
-    fn dir_s2m(&self, direction: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("dir_s2m")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (show = None, filename = None), text_signature = "($self, show=True, filename='')")]
     fn endfig(
         &self,
@@ -173,32 +161,9 @@ impl PySimutil {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (image), text_signature = "($self, image)")]
-    fn is4d(&self, image: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("is4d")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (num), text_signature = "($self, num)")]
     fn isEven(&self, num: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("isEven")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn isreport(&self) -> PyResult<Py<PyAny>> {
-        stub("isreport")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (s, origin = None, priority = None), text_signature = "($self, s, origin=None, priority=None)")]
-    fn msg(
-        &self,
-        s: &Bound<'_, PyAny>,
-        origin: Option<&Bound<'_, PyAny>>,
-        priority: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("msg")
     }
 
     /// Not yet implemented in casa-rs.
@@ -227,12 +192,6 @@ impl PySimutil {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn nextfig(&self) -> PyResult<Py<PyAny>> {
         stub("nextfig")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn openreport(&self) -> PyResult<Py<PyAny>> {
-        stub("openreport")
     }
 
     /// Not yet implemented in casa-rs.
@@ -272,23 +231,6 @@ impl PySimutil {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (mysm, telescope, x, y, z, diam, padnames, posobs, mounttype = None), text_signature = "($self, mysm, telescope, x, y, z, diam, padnames, posobs, mounttype=None)")]
-    fn setcfg(
-        &self,
-        mysm: &Bound<'_, PyAny>,
-        telescope: &Bound<'_, PyAny>,
-        x: &Bound<'_, PyAny>,
-        y: &Bound<'_, PyAny>,
-        z: &Bound<'_, PyAny>,
-        diam: &Bound<'_, PyAny>,
-        padnames: &Bound<'_, PyAny>,
-        posobs: &Bound<'_, PyAny>,
-        mounttype: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setcfg")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (beam = None, cell = None, convsupport = None, sampling = None), text_signature = "($self, beam='', cell='', convsupport=-1, sampling='')")]
     fn sfBeam1d(
         &self,
@@ -298,11 +240,5 @@ impl PySimutil {
         sampling: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("sfBeam1d")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (image), text_signature = "($self, image)")]
-    fn spectral(&self, image: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("spectral")
     }
 }

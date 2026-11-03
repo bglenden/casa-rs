@@ -237,6 +237,25 @@ impl Observation {
 
     /// Observe `components` with `setup`.
     pub fn synthesise_setup(setup: Setup, components: &[(&str, Component)]) -> Self {
+        Self::synthesise_with(setup, None, components)
+    }
+
+    /// Observe `components` with `setup` in the correlations of
+    /// `polarization`, which may give every component a fractional
+    /// polarization.
+    pub fn synthesise_polarized(
+        setup: Setup,
+        polarization: casa_ms::SyntheticPolarizationSetup,
+        components: &[(&str, Component)],
+    ) -> Self {
+        Self::synthesise_with(setup, Some(polarization), components)
+    }
+
+    fn synthesise_with(
+        setup: Setup,
+        polarization: Option<casa_ms::SyntheticPolarizationSetup>,
+        components: &[(&str, Component)],
+    ) -> Self {
         let root = tempfile::tempdir().expect("T1 fixture directory");
         let measurement_set = root.path().join("t1.ms");
         let mut request = SyntheticObservationRequest::vla_ppdisk(
@@ -259,6 +278,9 @@ impl Observation {
         request.duration_seconds = DURATION_SECONDS;
         request.integration_seconds = INTEGRATION_SECONDS;
         request.spectral_windows = setup.spectral_windows;
+        if let Some(polarization) = polarization {
+            request.polarization_setup = polarization;
+        }
         request.model = Some(SyntheticSkyModel::AnalyticComponents {
             path: None,
             schema_version: Some(1),

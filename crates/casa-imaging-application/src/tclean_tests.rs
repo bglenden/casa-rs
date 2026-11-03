@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use super::read;
 use crate::request::tests::{request, resolved};
 use crate::{DataColumn, Deconvolver, Gridder, ImagingRequest, SaveModel, SpecMode, TcleanRefusal};
+use casa_imaging_model::Projection;
 
 /// tclean's refusal of `overrides`.
 fn refusal(overrides: Value) -> TcleanRefusal {
@@ -35,6 +36,8 @@ fn modes() -> Vec<Value> {
         }),
         json!({ "deconvolver": "mtmfs", "nterms": 2, "scales": [0, 3] }),
         json!({ "usemask": "auto-multithresh" }),
+        json!({ "usemask": "auto-multithresh", "pbmask": 0.2 }),
+        json!({ "usemask": "pb", "pbmask": 0.3 }),
         json!({ "weighting": "superuniform" }),
         json!({ "weighting": "radial", "specmode": "cube", "nchan": 4 }),
         json!({ "weighting": "briggsabs", "specmode": "cube", "nchan": 4 }),
@@ -159,20 +162,11 @@ fn parameters_a_mode_does_not_read_are_ignored() {
 /// What the catalog takes only at tclean's default, wherever CASA reads it.
 #[test]
 fn the_catalog_refuses_what_casa_reads_in_every_mode() {
-    for (overrides, issue) in [
-        // CASA projects with any projection in every mode.
-        (json!({ "projection": "NCP" }), "#1064"),
-        // CASA masks within the primary beam with pbmask in every mask mode.
-        (json!({ "pbmask": 0.5 }), "#1061"),
-        // CASA reads psfphasecenter for every gridder named for a mosaic.
-        (
-            json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" }),
-            "#1062",
-        ),
-    ] {
-        let error = resolved(overrides.clone()).expect_err("refused at the catalog");
-        assert!(error.to_string().contains(issue), "{overrides}: {error}");
-    }
+    // CASA reads psfphasecenter for every gridder named for a mosaic.
+    let overrides =
+        json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" });
+    let error = resolved(overrides.clone()).expect_err("refused at the catalog");
+    assert!(error.to_string().contains("#1062"), "{overrides}: {error}");
 }
 
 #[test]
@@ -278,9 +272,38 @@ fn casa_values_become_the_request_casa_rs_runs() {
         (bare.threshold, bare.cell, bare.imsize),
         (0.002, [0.5, 0.5], [64, 32])
     );
-    // nterms is read with mtmfs.
-    let terms = request(json!({ "deconvolver": "mtmfs", "nterms": 3 }));
-    assert_eq!((terms.deconvolver, terms.nterms), (Deconvolver::Mtmfs, 3));
+    // nterms is read with mtmfs, one term included (CASA's
+    // `test_onefield_mtmfs_nterms1`).
+    for nterms in [1, 3] {
+        let terms = request(json!({ "deconvolver": "mtmfs", "nterms": nterms }));
+        assert_eq!(
+            (terms.deconvolver, terms.nterms),
+            (Deconvolver::Mtmfs, nterms)
+        );
+    }
+    // projection names casacore's projection as casacore spells it.
+    for (text, projection) in [
+        ("SIN", Projection::Sin),
+        ("NCP", Projection::Ncp),
+        ("TAN", Projection::Tan),
+        ("ARC", Projection::Arc),
+        ("STG", Projection::Stg),
+        ("ZEA", Projection::Zea),
+        ("CAR", Projection::Car),
+        ("SFL", Projection::Sfl),
+        ("MER", Projection::Mer),
+        ("AIT", Projection::Ait),
+    ] {
+        assert_eq!(
+            request(json!({ "projection": text })).projection,
+            projection
+        );
+    }
+    // The catalog trims it, as it does every string; CASA refuses " TAN".
+    assert_eq!(
+        request(json!({ "projection": " TAN" })).projection,
+        Projection::Tan
+    );
     // savemodel names where the model goes, CASA's virtual model among them.
     for (text, saved) in [
         ("none", SaveModel::None),
@@ -317,7 +340,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "specmode": "mvc" }), "specmode", "#1069"),
         (json!({ "deconvolver": "mem" }), "deconvolver", "#1060"),
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
-        (json!({ "usemask": "pb" }), "usemask", "#1061"),
         (
             json!({ "specmode": "cube", "outframe": "GALACTO" }),
             "outframe",
@@ -363,16 +385,13 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "#980",
         ),
         (
-            json!({ "deconvolver": "mtmfs", "nterms": 1 }),
-            "nterms",
-            "#1065",
-        ),
-        (
             json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
                     "wprojplanes": 32, "facets": 2 }),
             "facets",
             "#1070",
         ),
+        (json!({ "projection": "AZP" }), "projection", "#1101"),
+        (json!({ "projection": "HPX" }), "projection", "#1101"),
     ] {
         let refused = refusal(overrides.clone());
         assert_eq!(refused.parameter, parameter, "{overrides}");
@@ -386,6 +405,18 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "cell": [] }), "cell"),
         // CASA's tclean refuses these itself.
         (json!({ "weighting": "briggsbwtaper" }), "weighting"),
+        (json!({ "projection": "XYZ" }), "projection"),
+        (json!({ "projection": "ncp" }), "projection"),
+        (json!({ "projection": "tan" }), "projection"),
+        // `test_cube_mtmfs_nterms1`, `test_cubedata_mtmfs_nterms1`.
+        (
+            json!({ "specmode": "cube", "deconvolver": "mtmfs", "nterms": 1 }),
+            "deconvolver",
+        ),
+        (
+            json!({ "specmode": "cubedata", "deconvolver": "mtmfs", "nterms": 1 }),
+            "deconvolver",
+        ),
         (
             json!({ "gridder": "wproject", "wprojplanes": 0 }),
             "wprojplanes",
@@ -830,6 +861,34 @@ fn automask_controls_and_the_noise_estimate_are_read() {
         assert_eq!(
             request(json!({ "niter": 10, "smoothfactor": factor })).smoothfactor,
             factor
+        );
+    }
+}
+
+/// tclean reads `usemask='pb'` and `pbmask` into the request in every mask
+/// mode, and refuses a `pbmask` outside `[0, 1)` with CASA's messages
+/// (`SynthesisParamsDeconv::verify`).
+#[test]
+fn pbmask_is_read_in_every_mask_mode_and_bounded_as_casa_bounds_it() {
+    let pb = request(json!({ "usemask": "pb" }));
+    assert_eq!((pb.usemask, pb.pbmask), (crate::UseMask::Pb, 0.0));
+    // Only CASA's automatic mask smooths, so only it needs a positive
+    // smoothfactor.
+    let unsmoothed = request(json!({ "usemask": "pb", "niter": 10, "smoothfactor": 0.0 }));
+    assert_eq!(unsmoothed.smoothfactor, 0.0);
+    for usemask in ["user", "pb", "auto-multithresh"] {
+        let read = request(json!({ "usemask": usemask, "pbmask": 0.25 }));
+        assert_eq!(read.pbmask, 0.25, "{usemask}");
+        read.validate().expect("a valid pbmask");
+    }
+    for (pbmask, message) in [
+        (1.0, "pbmask must be < 1.0"),
+        (-0.1, "pbmask must be a positive value"),
+    ] {
+        let refused = refusal(json!({ "usemask": "pb", "pbmask": pbmask }));
+        assert_eq!(
+            (refused.parameter.as_str(), refused.message.as_str()),
+            ("pbmask", message)
         );
     }
 }
