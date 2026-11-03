@@ -84,16 +84,6 @@ impl PySimutil {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (datumcode, verbose = None), text_signature = "($self, datumcode, verbose=False)")]
-    fn getdatum(
-        &self,
-        datumcode: &Bound<'_, PyAny>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getdatum")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (width, height, angle, spacing, pb), text_signature = "($self, width, height, angle, spacing, pb)")]
     fn getShiftTriangularTiling(
         &self,
@@ -198,44 +188,6 @@ impl PySimutil {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn isreport(&self) -> PyResult<Py<PyAny>> {
         stub("isreport")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (x, y, z, obsname), text_signature = "($self, x, y, z, obsname)")]
-    fn itrf2locname(
-        &self,
-        x: &Bound<'_, PyAny>,
-        y: &Bound<'_, PyAny>,
-        z: &Bound<'_, PyAny>,
-        obsname: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("itrf2locname")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (lat, longitude, alt, locx = None, locy = None, locz = None), text_signature = "($self, lat, longitude, alt, locx=0.0, locy=0.0, locz=0.0)")]
-    fn locxyz2itrf(
-        &self,
-        lat: &Bound<'_, PyAny>,
-        longitude: &Bound<'_, PyAny>,
-        alt: &Bound<'_, PyAny>,
-        locx: Option<&Bound<'_, PyAny>>,
-        locy: Option<&Bound<'_, PyAny>>,
-        locz: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("locxyz2itrf")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (lon, lat, elevation, datum), text_signature = "($self, lon, lat, elevation, datum)")]
-    fn long2xyz(
-        &self,
-        lon: &Bound<'_, PyAny>,
-        lat: &Bound<'_, PyAny>,
-        elevation: &Bound<'_, PyAny>,
-        datum: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("long2xyz")
     }
 
     /// Not yet implemented in casa-rs.
@@ -352,92 +304,5 @@ impl PySimutil {
     #[pyo3(signature = (image), text_signature = "($self, image)")]
     fn spectral(&self, image: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("spectral")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (sf, orlim, er, esq, rf), text_signature = "($self, sf, orlim, er, esq, rf)")]
-    fn tconpc(
-        &self,
-        sf: &Bound<'_, PyAny>,
-        orlim: &Bound<'_, PyAny>,
-        er: &Bound<'_, PyAny>,
-        esq: &Bound<'_, PyAny>,
-        rf: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("tconpc")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (n, e, eps, cm, fe, sf, so, r, v0, v2, v4, v6, r#fn, er, esq), text_signature = "($self, n, e, eps, cm, fe, sf, so, r, v0, v2, v4, v6, fn, er, esq)")]
-    fn tmgeod(
-        &self,
-        n: &Bound<'_, PyAny>,
-        e: &Bound<'_, PyAny>,
-        eps: &Bound<'_, PyAny>,
-        cm: &Bound<'_, PyAny>,
-        fe: &Bound<'_, PyAny>,
-        sf: &Bound<'_, PyAny>,
-        so: &Bound<'_, PyAny>,
-        r: &Bound<'_, PyAny>,
-        v0: &Bound<'_, PyAny>,
-        v2: &Bound<'_, PyAny>,
-        v4: &Bound<'_, PyAny>,
-        v6: &Bound<'_, PyAny>,
-        r#fn: &Bound<'_, PyAny>,
-        er: &Bound<'_, PyAny>,
-        esq: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("tmgeod")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (east, north, zone, datum, nors), text_signature = "($self, east, north, zone, datum, nors)")]
-    fn utm2long(
-        &self,
-        east: &Bound<'_, PyAny>,
-        north: &Bound<'_, PyAny>,
-        zone: &Bound<'_, PyAny>,
-        datum: &Bound<'_, PyAny>,
-        nors: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("utm2long")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (easting, northing, elevation, zone, datum, nors), text_signature = "($self, easting, northing, elevation, zone, datum, nors)")]
-    fn utm2xyz(
-        &self,
-        easting: &Bound<'_, PyAny>,
-        northing: &Bound<'_, PyAny>,
-        elevation: &Bound<'_, PyAny>,
-        zone: &Bound<'_, PyAny>,
-        datum: &Bound<'_, PyAny>,
-        nors: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("utm2xyz")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (x, y, z, datum), text_signature = "($self, x, y, z, datum)")]
-    fn xyz2long(
-        &self,
-        x: &Bound<'_, PyAny>,
-        y: &Bound<'_, PyAny>,
-        z: &Bound<'_, PyAny>,
-        datum: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("xyz2long")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (x, y, z, datum), text_signature = "($self, x, y, z, datum)")]
-    fn xyz2long_old(
-        &self,
-        x: &Bound<'_, PyAny>,
-        y: &Bound<'_, PyAny>,
-        z: &Bound<'_, PyAny>,
-        datum: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("xyz2long_old")
     }
 }

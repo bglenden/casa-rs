@@ -37,9 +37,10 @@ CASA = casa_signatures("simutil")
 #: The methods casa-rs implements; CASA's others refuse, naming #1053.
 IMPLEMENTED = {
     "approxBeam", "average_direction", "bandname", "baselineLengths", "calc_pointings2", "cellsize",
-    "convimage", "dir_m2s", "direction_splitter", "flatimage", "isdirection", "ismstp", "isquantity",
-    "itrf2loc", "median_direction", "modifymodel", "noisetemp", "polsettings", "read_pointings",
-    "readantenna", "statim", "wrapang", "write_pointings",
+    "convimage", "dir_m2s", "direction_splitter", "flatimage", "getdatum", "isdirection", "ismstp",
+    "isquantity", "itrf2loc", "itrf2locname", "locxyz2itrf", "long2xyz", "median_direction",
+    "modifymodel", "noisetemp", "polsettings", "read_pointings", "readantenna", "statim", "tconpc",
+    "tmgeod", "utm2long", "utm2xyz", "wrapang", "write_pointings", "xyz2long", "xyz2long_old",
 }
 
 
@@ -603,3 +604,80 @@ def test_ismstp_tells_total_power_as_casa_does(tmp_path: Path) -> None:
     assert u.ismstp(missing) is False
     with pytest.raises(RuntimeError, match=rf"^can't understand the file '{missing}'$"):
         u.ismstp(missing, halt=True)
+
+
+#: CASA 6.7.6.14's simutil geodesy on a grid of inputs
+#: (tools/simulation/simutil_geodesy_oracle.py).
+GEODESY = json.loads((Path(__file__).resolve().parent / "data" / "casa_simutil_geodesy.json").read_text(encoding="utf-8"))
+
+
+def test_getdatum_gives_casas_table() -> None:
+    assert GEODESY["casa_version"] == "6.7.6-14"
+    u = simutil.simutil()
+    for code, casa in GEODESY["getdatum"].items():
+        if "error" in casa:
+            with pytest.raises(RuntimeError, match=f"^{casa['error']}$"):
+                u.getdatum(code)
+            continue
+        found = u.getdatum(code)
+        assert isinstance(found, tuple) and list(found) == casa, code
+        # CASA's table writes whole offsets as ints.
+        assert [type(value) for value in found] == [type(value) for value in casa], code
+
+
+def test_tconpc_and_tmgeod_are_casas() -> None:
+    u = simutil.simutil()
+    for case in GEODESY["tconpc"]:
+        assert u.tconpc(*case["args"]) == pytest.approx(tuple(case["result"]), rel=1e-12, abs=1e-15)
+    for case in GEODESY["tmgeod"]:
+        assert u.tmgeod(*case["args"]) == pytest.approx(tuple(case["result"]), rel=1e-12, abs=1e-15)
+
+
+def test_utm_and_geodetic_conversions_are_casas() -> None:
+    u = simutil.simutil()
+    for case in GEODESY["utm2long"]:
+        assert u.utm2long(*case["args"]) == pytest.approx(tuple(case["result"]), rel=1e-12), case["args"]
+    for name in ("utm2xyz", "long2xyz"):
+        for case in GEODESY[name]:
+            found = getattr(u, name)(*case["args"])
+            assert found == pytest.approx(tuple(case["result"]), rel=0.0, abs=1e-6), (name, case["args"])
+    for case in GEODESY["locxyz2itrf"]:
+        assert u.locxyz2itrf(*case["args"]) == pytest.approx(tuple(case["result"]), rel=0.0, abs=1e-6)
+
+
+def test_xyz2long_inverts_long2xyz_where_casa_slips() -> None:
+    """CASA's xyz2long subtracts the datum's x offset from y, and
+    xyz2long_old its x offset from z; casa-rs subtracts dy and dz
+    (docs/CASA (C++) bugs.md). Where the offsets agree they give CASA's
+    values; elsewhere casa-rs's inverts long2xyz."""
+    u = simutil.simutil()
+    for forward, casa, old in zip(GEODESY["long2xyz"], GEODESY["xyz2long"], GEODESY["xyz2long_old"]):
+        lon, lat, height, code = forward["args"]
+        dx, dy, dz, _, _ = u.getdatum(code)
+        found = u.xyz2long(*casa["args"])
+        if dx == dy:
+            assert found == pytest.approx(tuple(casa["result"]), rel=1e-12, abs=1e-9), code
+        assert found == pytest.approx((lon, lat, height), rel=0.0, abs=1e-6), code
+        found_old = u.xyz2long_old(*old["args"])
+        assert found_old[0] == pytest.approx(old["result"][0], rel=1e-12, abs=1e-15), code
+        if dx == dz:
+            assert found_old == pytest.approx(tuple(old["result"]), rel=1e-12, abs=1e-15), code
+
+
+def itrf2locname_cases() -> list[Any]:
+    # casa-rs places ITRF observatories by the table's X, Y, Z, CASA by its
+    # Long, Lat, Height; SMA's differ by 14 km (#1106). Strict, so the fix
+    # must drop the mark.
+    sma = pytest.mark.xfail(strict=True, reason="SMA's observatory position (#1106)")
+    return [pytest.param(case, id=case["args"][3], marks=[sma] if case["args"][3] == "SMA" else [])
+            for case in GEODESY["itrf2locname"]]
+
+
+@needs_measures_data
+@pytest.mark.parametrize("case", itrf2locname_cases())
+def test_itrf2locname_places_positions_about_casas_observatory(case: dict[str, Any]) -> None:
+    u = simutil.simutil()
+    found = u.itrf2locname(*case["args"])
+    assert isinstance(found, tuple) and all(isinstance(axis, np.ndarray) for axis in found)
+    for axis, casa in zip(found, case["result"]):
+        assert axis == pytest.approx(casa["ndarray"], rel=0.0, abs=1e-6), case["args"][3]

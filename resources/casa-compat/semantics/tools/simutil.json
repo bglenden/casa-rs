@@ -176,12 +176,12 @@
    ]
   },
   "getdatum": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "CASA's datum table: (dx, dy, dz, er, rf), whole offsets as ints; an unknown datum raises CASA's message.",
    "evidence": [
     "signature",
-    "refusals"
+    "geodesy-casa",
+    "binding-tests"
    ]
   },
   "imclean": {
@@ -263,30 +263,30 @@
    ]
   },
   "itrf2locname": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "itrf2loc about a known observatory's WGS84 position, as CASA finds it with me.observatory and long2xyz.",
    "evidence": [
     "signature",
-    "refusals"
+    "geodesy-casa",
+    "binding-tests"
    ]
   },
   "locxyz2itrf": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Local east, north and up offsets about a WGS84 point to Earth-centred (x, y, z).",
    "evidence": [
     "signature",
-    "refusals"
+    "geodesy-casa",
+    "binding-tests"
    ]
   },
   "long2xyz": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Geodetic longitude, latitude and elevation on a datum to Earth-centred (x, y, z).",
    "evidence": [
     "signature",
-    "refusals"
+    "geodesy-casa",
+    "binding-tests"
    ]
   },
   "median_direction": {
@@ -444,39 +444,39 @@
    ]
   },
   "tconpc": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "The transverse Mercator zone constants (eps, r, so, v0, v2, v4, v6).",
    "evidence": [
     "signature",
-    "refusals"
+    "geodesy-casa",
+    "binding-tests"
    ]
   },
   "tmgeod": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Grid coordinates to (lat, lon, conv, kp), the longitude west-positive.",
    "evidence": [
     "signature",
-    "refusals"
+    "geodesy-casa",
+    "binding-tests"
    ]
   },
   "utm2long": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "UTM easting and northing to (lon, lat) on a datum; verbose's position message is not logged.",
    "evidence": [
     "signature",
-    "refusals"
+    "geodesy-casa",
+    "binding-tests"
    ]
   },
   "utm2xyz": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "UTM easting, northing and elevation to Earth-centred (x, y, z).",
    "evidence": [
     "signature",
-    "refusals"
+    "geodesy-casa",
+    "binding-tests"
    ]
   },
   "wrapang": {
@@ -497,21 +497,21 @@
    ]
   },
   "xyz2long": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Earth-centred x, y, z to (lon, lat, height) on a datum; CASA subtracts the x offset from y, casa-rs the y offset (decision xyz2long-y-offset).",
    "evidence": [
     "signature",
-    "refusals"
+    "geodesy-casa",
+    "binding-tests"
    ]
   },
   "xyz2long_old": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "The older iteration, (lon, lat); CASA subtracts the x offset from z, casa-rs the z offset (decision xyz2long-old-z-offset).",
    "evidence": [
     "signature",
-    "refusals"
+    "geodesy-casa",
+    "binding-tests"
    ]
   }
  },
@@ -655,6 +655,32 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "xyz2long-y-offset",
+   "state": "Previously agreed",
+   "inputs": "xyz2long on a datum whose x and y offsets differ, such as NAD27.",
+   "casa": "Computes the longitude as atan2(y-dx, x-dx), subtracting the x offset from y; long2xyz then xyz2long on NAD27 at ALMA moves the longitude by 2.2 arcseconds.",
+   "ours": "Subtracts dy, so xyz2long inverts long2xyz.",
+   "rationale": "The rest of the function subtracts (dx, dy, dz); recorded in docs/CASA (C++) bugs.md as \"simutil.xyz2long subtracts the x offset from y\".",
+   "impact": "Longitudes on datums other than WGS 84 and NAD83 are correct; WGS 84's agree with CASA's.",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.",
+   "evidence": [
+    "geodesy-casa"
+   ]
+  },
+  {
+   "id": "xyz2long-old-z-offset",
+   "state": "Previously agreed",
+   "inputs": "xyz2long_old on a datum whose x and z offsets differ.",
+   "casa": "Its second term is (z-dx)**2/er**2, subtracting the x offset from z.",
+   "ours": "Subtracts dz.",
+   "rationale": "The rest of the function subtracts (dx, dy, dz); recorded in docs/CASA (C++) bugs.md as \"simutil.xyz2long_old subtracts the x offset from z\".",
+   "impact": "Latitudes on such datums are slightly different from CASA's; longitudes and WGS 84's results agree.",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.",
+   "evidence": [
+    "geodesy-casa"
+   ]
   }
  ],
  "evidence": {
@@ -751,6 +777,15 @@
    "command": "python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)",
    "receipt": "resources/casa-compat/evidence/simanalyze-fixtures-20261103.json",
    "source_revision": "d5c88b52b718e4b3834447724d66371f269a0083"
+  },
+  "geodesy-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Recorded from CASA 6.7.6-14 by simutil_geodesy_oracle.py: getdatum of all 24 datums and an unknown one, tconpc and tmgeod of three ellipsoids and five UTM points, the UTM and geodetic conversions on four datums, locxyz2itrf about three points and itrf2locname about five observatories. The Python tests agree to 1e-12 (positions to 1e-6 m), and where CASA slips on a datum's offsets casa-rs inverts long2xyz instead.",
+   "scope": "The geodesy helpers.",
+   "links": [
+    "crates/casars-python/python/tests/test_simutil.py"
+   ]
   }
  }
 }

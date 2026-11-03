@@ -27,7 +27,10 @@
 //! `itrf2loc`, `baselineLengths` and `approxBeam`; and the sky-model
 //! helpers `modifymodel` and `flatimage`
 //! ([`casa_simulation::simutil::skymodel`]); and the analysis helpers
-//! `ismstp`, `cellsize`, `statim` and `convimage` (`analysis.rs`). CASA's
+//! `ismstp`, `cellsize`, `statim` and `convimage` (`analysis.rs`); and the
+//! geodesy `getdatum`, `tconpc`, `tmgeod`, `utm2long`, `long2xyz`,
+//! `xyz2long`, `xyz2long_old`, `utm2xyz`, `locxyz2itrf` and `itrf2locname`
+//! (`geodesy.rs`). CASA's
 //! other public methods
 //! have its signatures and raise `NotImplementedError` naming #1053, which
 //! classifies them (`stubs.rs`).
@@ -53,6 +56,7 @@
 //! `float64` scalars, which here are `float`s.
 
 mod analysis;
+mod geodesy;
 mod ops;
 mod stubs;
 
