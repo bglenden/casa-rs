@@ -65,10 +65,10 @@ def main() -> int:
         (package / "data.py").write_text(DATA, encoding="utf-8")
         test = TESTS / f"test_tools_{args.tool}.py"
         env = {"PYTHONPATH": f"{scratch}:{TESTS}", "PATH": "/usr/bin:/bin", "HOME": str(Path.home())}
-        pytest = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider"]
+        pytest = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "--rootdir", str(TESTS), "-c", "/dev/null"]
         collected = subprocess.run([*pytest, "-q", "--collect-only", str(test)], cwd=TESTS,
                                    capture_output=True, text=True, env=env)
-        nodes = [line for line in collected.stdout.splitlines() if "::" in line]
+        nodes = [f"{test.name}::{line.split('::', 1)[1]}" for line in collected.stdout.splitlines() if "::" in line]
         # One process a test: a call that crashes CASA ends only its own test.
         outcomes = {}
         for node in nodes:
