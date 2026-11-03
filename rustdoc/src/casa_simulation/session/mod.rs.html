@@ -496,7 +496,7 @@
 <a href=#496 id=496 data-nosnippet>496</a>        <span class="macro">tracing::info!</span>(<span class="string">"Selecting data"</span>);
 <a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">if </span>!ms_select.trim().is_empty() {
 <a href=#498 id=498 data-nosnippet>498</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
-<a href=#499 id=499 data-nosnippet>499</a>                <span class="string">"setdata(msselect='{ms_select}') is not yet implemented in casa-rs (#841)"
+<a href=#499 id=499 data-nosnippet>499</a>                <span class="string">"setdata(msselect='{ms_select}') is not yet implemented in casa-rs (#1053)"
 <a href=#500 id=500 data-nosnippet>500</a>            </span>)));
 <a href=#501 id=501 data-nosnippet>501</a>        }
 <a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">let </span>windows: Vec&lt;usize&gt; = (<span class="number">0</span>..<span class="self">self</span>.spectral_windows.len())
@@ -519,7 +519,7 @@
 <a href=#519 id=519 data-nosnippet>519</a>        }
 <a href=#520 id=520 data-nosnippet>520</a>        <span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#521 id=521 data-nosnippet>521</a>            <span class="string">"setdata selecting {kept} of the {} scans observed so far is not yet implemented in \
-<a href=#522 id=522 data-nosnippet>522</a>             casa-rs (simulation Phase 2); a selection of them all is"</span>,
+<a href=#522 id=522 data-nosnippet>522</a>             casa-rs (#1053); a selection of them all is"</span>,
 <a href=#523 id=523 data-nosnippet>523</a>            <span class="self">self</span>.scans.len()
 <a href=#524 id=524 data-nosnippet>524</a>        )))
 <a href=#525 id=525 data-nosnippet>525</a>    }

@@ -7991,6 +7991,9 @@ use:
 - <code>noisetemp</code>, <code>bandname</code> and <code>polsettings</code>;
 - <code>itrf2loc</code>, <code>baselineLengths</code> and <code>approxBeam</code>;
 - the sky-model helpers <code>modifymodel</code> and <code>flatimage</code>.</p>
+<p>CASA's other public methods exist with CASA's signatures and raise
+<code>NotImplementedError</code> naming issue #1053, which records which ones casa-rs
+will implement.</p>
 <p><code>casars.simutil</code> is the class's public import: CASA's <code>private</code> path would
 mislabel a supported entry point.</p>
 

@@ -391,7 +391,7 @@
 <a href=#391 id=391 data-nosnippet>391</a>        <span class="kw">let </span>ftmachine = options.ftmachine.to_lowercase();
 <a href=#392 id=392 data-nosnippet>392</a>        <span class="kw">if </span>OTHER_FTMACHINES.contains(<span class="kw-2">&amp;</span>ftmachine.as_str()) {
 <a href=#393 id=393 data-nosnippet>393</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
-<a href=#394 id=394 data-nosnippet>394</a>                <span class="string">"setoptions(ftmachine='{ftmachine}') is not yet implemented in casa-rs (#841)"
+<a href=#394 id=394 data-nosnippet>394</a>                <span class="string">"setoptions(ftmachine='{ftmachine}') is not yet implemented in casa-rs (#1053)"
 <a href=#395 id=395 data-nosnippet>395</a>            </span>)));
 <a href=#396 id=396 data-nosnippet>396</a>        }
 <a href=#397 id=397 data-nosnippet>397</a>        <span class="kw">let </span>single_dish = <span class="kw">if </span>ftmachine == <span class="string">"sd" </span>{
@@ -399,7 +399,7 @@
 <a href=#399 id=399 data-nosnippet>399</a>                SingleDishKernel::from_grid_function(<span class="kw-2">&amp;</span>options.grid_function).ok_or_else(|| {
 <a href=#400 id=400 data-nosnippet>400</a>                    SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#401 id=401 data-nosnippet>401</a>                        <span class="string">"setoptions(ftmachine='sd', gridfunction='{}') is not yet implemented \
-<a href=#402 id=402 data-nosnippet>402</a>                         in casa-rs (#841); 'PB', 'BOX' and 'SF' are"</span>,
+<a href=#402 id=402 data-nosnippet>402</a>                         in casa-rs (#1053); 'PB', 'BOX' and 'SF' are"</span>,
 <a href=#403 id=403 data-nosnippet>403</a>                        options.grid_function
 <a href=#404 id=404 data-nosnippet>404</a>                    ))
 <a href=#405 id=405 data-nosnippet>405</a>                })<span class="question-mark">?</span>,
@@ -407,7 +407,7 @@
 <a href=#407 id=407 data-nosnippet>407</a>        } <span class="kw">else </span>{
 <a href=#408 id=408 data-nosnippet>408</a>            <span class="kw">if </span>options.grid_function.to_lowercase() != <span class="string">"sf" </span>{
 <a href=#409 id=409 data-nosnippet>409</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
-<a href=#410 id=410 data-nosnippet>410</a>                    <span class="string">"setoptions(gridfunction='{}') is not yet implemented in casa-rs (#841); \
+<a href=#410 id=410 data-nosnippet>410</a>                    <span class="string">"setoptions(gridfunction='{}') is not yet implemented in casa-rs (#1053); \
 <a href=#411 id=411 data-nosnippet>411</a>                     'SF' is"</span>,
 <a href=#412 id=412 data-nosnippet>412</a>                    options.grid_function
 <a href=#413 id=413 data-nosnippet>413</a>                )));
@@ -465,7 +465,7 @@
 <a href=#465 id=465 data-nosnippet>465</a>                <span class="kw">if </span><span class="self">self</span>.options.resources.backend() == BackendRequest::Metal {
 <a href=#466 id=466 data-nosnippet>466</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
 <a href=#467 id=467 data-nosnippet>467</a>                        <span class="string">"predict with setoptions(ftmachine='wproject') on the Metal backend is \
-<a href=#468 id=468 data-nosnippet>468</a>                         not yet implemented in casa-rs (#841); backend 'auto' or 'cpu' \
+<a href=#468 id=468 data-nosnippet>468</a>                         not yet implemented in casa-rs (#1053); backend 'auto' or 'cpu' \
 <a href=#469 id=469 data-nosnippet>469</a>                         predicts it on the CPU"</span>,
 <a href=#470 id=470 data-nosnippet>470</a>                    ));
 <a href=#471 id=471 data-nosnippet>471</a>                }
@@ -483,7 +483,7 @@
 <a href=#483 id=483 data-nosnippet>483</a>    </span><span class="kw">pub fn </span>set_vp(<span class="kw-2">&amp;mut </span><span class="self">self</span>, spec: <span class="kw-2">&amp;</span>VoltagePatternSpec) -&gt; SimulatorResult&lt;()&gt; {
 <a href=#484 id=484 data-nosnippet>484</a>        <span class="kw">if </span>!spec.use_default_vp &amp;&amp; !spec.vp_table.is_empty() {
 <a href=#485 id=485 data-nosnippet>485</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
-<a href=#486 id=486 data-nosnippet>486</a>                <span class="string">"setvp(vptable='{}') is not yet implemented in casa-rs (#841); the default \
+<a href=#486 id=486 data-nosnippet>486</a>                <span class="string">"setvp(vptable='{}') is not yet implemented in casa-rs (#1053); the default \
 <a href=#487 id=487 data-nosnippet>487</a>                 voltage patterns are"</span>,
 <a href=#488 id=488 data-nosnippet>488</a>                spec.vp_table
 <a href=#489 id=489 data-nosnippet>489</a>            )));
@@ -545,8 +545,8 @@
 <a href=#545 id=545 data-nosnippet>545</a>        }
 <a href=#546 id=546 data-nosnippet>546</a>        <span class="kw">if </span>images.len() &gt; <span class="number">1 </span>{
 <a href=#547 id=547 data-nosnippet>547</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
-<a href=#548 id=548 data-nosnippet>548</a>                <span class="string">"predict from {} model images is not yet implemented in casa-rs (simulation \
-<a href=#549 id=549 data-nosnippet>549</a>                 Phase 2); one image is"</span>,
+<a href=#548 id=548 data-nosnippet>548</a>                <span class="string">"predict from {} model images is not yet implemented in casa-rs (#1053); one \
+<a href=#549 id=549 data-nosnippet>549</a>                 image is"</span>,
 <a href=#550 id=550 data-nosnippet>550</a>                images.len()
 <a href=#551 id=551 data-nosnippet>551</a>            )));
 <a href=#552 id=552 data-nosnippet>552</a>        }
@@ -555,7 +555,7 @@
 <a href=#555 id=555 data-nosnippet>555</a>        </span><span class="kw">if </span>spec.incremental &amp;&amp; <span class="self">self</span>.data_plan.corrupts_by_jones() {
 <a href=#556 id=556 data-nosnippet>556</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
 <a href=#557 id=557 data-nosnippet>557</a>                <span class="string">"an incremental predict after a corrupt with setgain or setleakage terms is not \
-<a href=#558 id=558 data-nosnippet>558</a>                 yet implemented in casa-rs (simulation Phase 3)"</span>,
+<a href=#558 id=558 data-nosnippet>558</a>                 yet implemented in casa-rs (#1053)"</span>,
 <a href=#559 id=559 data-nosnippet>559</a>            ));
 <a href=#560 id=560 data-nosnippet>560</a>        }
 <a href=#561 id=561 data-nosnippet>561</a>        <span class="kw">if </span>images.is_empty() &amp;&amp; lists.is_empty() {
@@ -568,7 +568,7 @@
 <a href=#568 id=568 data-nosnippet>568</a>        </span>{
 <a href=#569 id=569 data-nosnippet>569</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#570 id=570 data-nosnippet>570</a>                <span class="string">"predict refocused to the distance {} m of field {} is not yet implemented in \
-<a href=#571 id=571 data-nosnippet>571</a>                 casa-rs (#841)"</span>,
+<a href=#571 id=571 data-nosnippet>571</a>                 casa-rs (#1053)"</span>,
 <a href=#572 id=572 data-nosnippet>572</a>                field.distance_m, field.name
 <a href=#573 id=573 data-nosnippet>573</a>            )));
 <a href=#574 id=574 data-nosnippet>574</a>        }
@@ -613,7 +613,7 @@
 <a href=#613 id=613 data-nosnippet>613</a>            </span><span class="kw">let </span><span class="prelude-val">Some</span>(model) = model.filter(|<span class="kw">_</span>| list.is_none()) <span class="kw">else </span>{
 <a href=#614 id=614 data-nosnippet>614</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
 <a href=#615 id=615 data-nosnippet>615</a>                    <span class="string">"predict(complist=…) after setoptions(ftmachine='sd') is not yet \
-<a href=#616 id=616 data-nosnippet>616</a>                     implemented in casa-rs (#841); a model image is"</span>,
+<a href=#616 id=616 data-nosnippet>616</a>                     implemented in casa-rs (#1053); a model image is"</span>,
 <a href=#617 id=617 data-nosnippet>617</a>                ));
 <a href=#618 id=618 data-nosnippet>618</a>            };
 <a href=#619 id=619 data-nosnippet>619</a>            <span class="kw">return </span><span class="self">self</span>.predict_single_dish(model, kernel, beam, spec.incremental);
@@ -727,7 +727,7 @@
 <a href=#727 id=727 data-nosnippet>727</a>        {
 <a href=#728 id=728 data-nosnippet>728</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#729 id=729 data-nosnippet>729</a>                <span class="string">"predict(complist='{label}') under the {beam:?} primary beam with beam squint \
-<a href=#730 id=730 data-nosnippet>730</a>                 is not yet implemented in casa-rs (#841): CASA squints the RR and LL beams \
+<a href=#730 id=730 data-nosnippet>730</a>                 is not yet implemented in casa-rs (#1053): CASA squints the RR and LL beams \
 <a href=#731 id=731 data-nosnippet>731</a>                 for components; setvp(dosquint=False) predicts them unsquinted"
 <a href=#732 id=732 data-nosnippet>732</a>            </span>)));
 <a href=#733 id=733 data-nosnippet>733</a>        }
@@ -792,7 +792,7 @@
 <a href=#792 id=792 data-nosnippet>792</a>        <span class="kw">let </span>prediction = ComponentPrediction::new(<span class="kw-2">&amp;</span>list, targets, reservation).map_err(
 <a href=#793 id=793 data-nosnippet>793</a>            |ComponentRefusal::NotYetImplemented(reason)| {
 <a href=#794 id=794 data-nosnippet>794</a>                SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
-<a href=#795 id=795 data-nosnippet>795</a>                    <span class="string">"predict(complist='{label}'): {reason} (#841)"
+<a href=#795 id=795 data-nosnippet>795</a>                    <span class="string">"predict(complist='{label}'): {reason} (#1053)"
 <a href=#796 id=796 data-nosnippet>796</a>                </span>))
 <a href=#797 id=797 data-nosnippet>797</a>            },
 <a href=#798 id=798 data-nosnippet>798</a>        )<span class="question-mark">?</span>;
@@ -820,7 +820,7 @@
 <a href=#820 id=820 data-nosnippet>820</a>        {
 <a href=#821 id=821 data-nosnippet>821</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
 <a href=#822 id=822 data-nosnippet>822</a>                <span class="string">"predicting scans whose spectral windows have different correlations is not yet \
-<a href=#823 id=823 data-nosnippet>823</a>                 implemented in casa-rs (#841)"</span>,
+<a href=#823 id=823 data-nosnippet>823</a>                 implemented in casa-rs (#1053)"</span>,
 <a href=#824 id=824 data-nosnippet>824</a>            ));
 <a href=#825 id=825 data-nosnippet>825</a>        }
 <a href=#826 id=826 data-nosnippet>826</a>        first
@@ -829,7 +829,7 @@
 <a href=#829 id=829 data-nosnippet>829</a>                Correlation::from_casacore_code(code).ok_or_else(|| {
 <a href=#830 id=830 data-nosnippet>830</a>                    SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#831 id=831 data-nosnippet>831</a>                        <span class="string">"predicting correlation code {code} is not yet implemented in casa-rs \
-<a href=#832 id=832 data-nosnippet>832</a>                         (#841)"
+<a href=#832 id=832 data-nosnippet>832</a>                         (#1053)"
 <a href=#833 id=833 data-nosnippet>833</a>                    </span>))
 <a href=#834 id=834 data-nosnippet>834</a>                })
 <a href=#835 id=835 data-nosnippet>835</a>            })
@@ -848,7 +848,7 @@
 <a href=#848 id=848 data-nosnippet>848</a>            .ok_or_else(|| {
 <a href=#849 id=849 data-nosnippet>849</a>                SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#850 id=850 data-nosnippet>850</a>                    <span class="string">"setvp(dovp=True) for telescope {telescope} is not yet implemented in \
-<a href=#851 id=851 data-nosnippet>851</a>                     casa-rs (#841); the default patterns of ALMA, ACA, VLA and EVLA are"
+<a href=#851 id=851 data-nosnippet>851</a>                     casa-rs (#1053); the default patterns of ALMA, ACA, VLA and EVLA are"
 <a href=#852 id=852 data-nosnippet>852</a>                </span>))
 <a href=#853 id=853 data-nosnippet>853</a>            })<span class="question-mark">?</span>;
 <a href=#854 id=854 data-nosnippet>854</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(beam))
@@ -886,7 +886,7 @@
 <a href=#886 id=886 data-nosnippet>886</a>        <span class="kw">match </span>moved {
 <a href=#887 id=887 data-nosnippet>887</a>            <span class="prelude-val">Some</span>(scan) =&gt; <span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#888 id=888 data-nosnippet>888</a>                <span class="string">"predict with {what} for scan {} pointed away from its field {} is not yet \
-<a href=#889 id=889 data-nosnippet>889</a>                 implemented in casa-rs (simulation Phase 2, #884); pointings at their \
+<a href=#889 id=889 data-nosnippet>889</a>                 implemented in casa-rs (#1053); pointings at their \
 <a href=#890 id=890 data-nosnippet>890</a>                 fields' centres are"</span>,
 <a href=#891 id=891 data-nosnippet>891</a>                scan.scan_number, <span class="self">self</span>.fields[scan.field_id].name
 <a href=#892 id=892 data-nosnippet>892</a>            ))),
@@ -1206,7 +1206,7 @@
 <a href=#1206 id=1206 data-nosnippet>1206</a></span><span class="kw">fn </span>model_error(error: PredictError) -&gt; SimulatorError {
 <a href=#1207 id=1207 data-nosnippet>1207</a>    <span class="kw">match </span>error {
 <a href=#1208 id=1208 data-nosnippet>1208</a>        PredictError::UnsupportedModel(reason) =&gt; SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
-<a href=#1209 id=1209 data-nosnippet>1209</a>            <span class="string">"predict from this model is not yet implemented in casa-rs (#841): {reason}"
+<a href=#1209 id=1209 data-nosnippet>1209</a>            <span class="string">"predict from this model is not yet implemented in casa-rs (#1053): {reason}"
 <a href=#1210 id=1210 data-nosnippet>1210</a>        </span>)),
 <a href=#1211 id=1211 data-nosnippet>1211</a>        PredictError::Image { path, .. } =&gt; {
 <a href=#1212 id=1212 data-nosnippet>1212</a>            SimulatorError::raised(<span class="macro">format!</span>(<span class="string">"Unable to open image {path}."</span>))
@@ -1222,7 +1222,7 @@
 <a href=#1222 id=1222 data-nosnippet>1222</a>        PredictError::Operator(OperatorError::Polarization { reason }) =&gt; {
 <a href=#1223 id=1223 data-nosnippet>1223</a>            SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#1224 id=1224 data-nosnippet>1224</a>                <span class="string">"predicting a Stokes I model into the correlations {correlations:?} is not yet \
-<a href=#1225 id=1225 data-nosnippet>1225</a>                 implemented in casa-rs (#841): {reason}"
+<a href=#1225 id=1225 data-nosnippet>1225</a>                 implemented in casa-rs (#1053): {reason}"
 <a href=#1226 id=1226 data-nosnippet>1226</a>            </span>))
 <a href=#1227 id=1227 data-nosnippet>1227</a>        }
 <a href=#1228 id=1228 data-nosnippet>1228</a>        other =&gt; model_error(other),

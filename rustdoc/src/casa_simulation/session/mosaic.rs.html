@@ -74,7 +74,7 @@
 <a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">if </span>!MOSAIC_TELESCOPES.contains(<span class="kw-2">&amp;</span>telescope) {
 <a href=#75 id=75 data-nosnippet>75</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#76 id=76 data-nosnippet>76</a>                <span class="string">"predict with setoptions(ftmachine='mosaic') for telescope {telescope} is not \
-<a href=#77 id=77 data-nosnippet>77</a>                 yet implemented in casa-rs (#841); ALMA's and ACA's heterogeneous-array beams \
+<a href=#77 id=77 data-nosnippet>77</a>                 yet implemented in casa-rs (#1053); ALMA's and ACA's heterogeneous-array beams \
 <a href=#78 id=78 data-nosnippet>78</a>                 are"
 <a href=#79 id=79 data-nosnippet>79</a>            </span>)));
 <a href=#80 id=80 data-nosnippet>80</a>        }
@@ -88,7 +88,7 @@
 <a href=#88 id=88 data-nosnippet>88</a>            </span><span class="kw">if </span>antenna.diameter_m.is_nan() || antenna.diameter_m &lt;= <span class="number">0.0 </span>{
 <a href=#89 id=89 data-nosnippet>89</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#90 id=90 data-nosnippet>90</a>                    <span class="string">"predict with setoptions(ftmachine='mosaic') for antenna {} of diameter {} \
-<a href=#91 id=91 data-nosnippet>91</a>                     m is not yet implemented in casa-rs (#841)"</span>,
+<a href=#91 id=91 data-nosnippet>91</a>                     m is not yet implemented in casa-rs (#1053)"</span>,
 <a href=#92 id=92 data-nosnippet>92</a>                    antenna.name, antenna.diameter_m
 <a href=#93 id=93 data-nosnippet>93</a>                )));
 <a href=#94 id=94 data-nosnippet>94</a>            }
@@ -111,7 +111,7 @@
 <a href=#111 id=111 data-nosnippet>111</a>            classes.push(u8::try_from(class).map_err(|<span class="kw">_</span>| {
 <a href=#112 id=112 data-nosnippet>112</a>                SimulatorError::not_yet_implemented(
 <a href=#113 id=113 data-nosnippet>113</a>                    <span class="string">"predict with setoptions(ftmachine='mosaic') for more than 255 dish \
-<a href=#114 id=114 data-nosnippet>114</a>                     diameters is not yet implemented in casa-rs (#841)"</span>,
+<a href=#114 id=114 data-nosnippet>114</a>                     diameters is not yet implemented in casa-rs (#1053)"</span>,
 <a href=#115 id=115 data-nosnippet>115</a>                )
 <a href=#116 id=116 data-nosnippet>116</a>            })<span class="question-mark">?</span>);
 <a href=#117 id=117 data-nosnippet>117</a>        }
@@ -160,7 +160,7 @@
 <a href=#160 id=160 data-nosnippet>160</a>                </span>.ok_or_else(|| {
 <a href=#161 id=161 data-nosnippet>161</a>                    SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#162 id=162 data-nosnippet>162</a>                        <span class="string">"predict with setoptions(ftmachine='mosaic') for field {} pointed \
-<a href=#163 id=163 data-nosnippet>163</a>                         outside the model image is not yet implemented in casa-rs (#841); \
+<a href=#163 id=163 data-nosnippet>163</a>                         outside the model image is not yet implemented in casa-rs (#1053); \
 <a href=#164 id=164 data-nosnippet>164</a>                         CASA predicts nothing for it"</span>,
 <a href=#165 id=165 data-nosnippet>165</a>                        <span class="self">self</span>.fields[scan.field_id].name
 <a href=#166 id=166 data-nosnippet>166</a>                    ))

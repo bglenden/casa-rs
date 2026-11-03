@@ -143,7 +143,7 @@
 <a href=#143 id=143 data-nosnippet>143</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>refuse_after_openfromms(<span class="kw-2">&amp;</span><span class="self">self</span>, call: <span class="kw-2">&amp;</span>str) -&gt; SimulatorResult&lt;()&gt; {
 <a href=#144 id=144 data-nosnippet>144</a>        <span class="kw">if </span><span class="self">self</span>.opened.is_some() {
 <a href=#145 id=145 data-nosnippet>145</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
-<a href=#146 id=146 data-nosnippet>146</a>                <span class="string">"{call} after openfromms is not yet implemented in casa-rs (#841)"
+<a href=#146 id=146 data-nosnippet>146</a>                <span class="string">"{call} after openfromms is not yet implemented in casa-rs (#1053)"
 <a href=#147 id=147 data-nosnippet>147</a>            </span>)));
 <a href=#148 id=148 data-nosnippet>148</a>        }
 <a href=#149 id=149 data-nosnippet>149</a>        <span class="prelude-val">Ok</span>(())
@@ -161,7 +161,7 @@
 <a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">match </span>pointing_away_from_phase_centre(<span class="self">self</span>.path(), <span class="kw-2">&amp;</span><span class="self">self</span>.scans, <span class="kw-2">&amp;</span>opened.scan_times_s)<span class="question-mark">? </span>{
 <a href=#162 id=162 data-nosnippet>162</a>            <span class="prelude-val">Some</span>(scan) =&gt; <span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#163 id=163 data-nosnippet>163</a>                <span class="string">"{what} on a MeasurementSet whose POINTING points scan {} away from its \
-<a href=#164 id=164 data-nosnippet>164</a>                 field's PHASE_DIR is not yet implemented in casa-rs (#841)"</span>,
+<a href=#164 id=164 data-nosnippet>164</a>                 field's PHASE_DIR is not yet implemented in casa-rs (#1053)"</span>,
 <a href=#165 id=165 data-nosnippet>165</a>                <span class="self">self</span>.scans[scan].scan_number
 <a href=#166 id=166 data-nosnippet>166</a>            ))),
 <a href=#167 id=167 data-nosnippet>167</a>            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(()),
@@ -230,7 +230,7 @@
 <a href=#230 id=230 data-nosnippet>230</a>    <span class="kw">if </span>!in_order {
 <a href=#231 id=231 data-nosnippet>231</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
 <a href=#232 id=232 data-nosnippet>232</a>            <span class="string">"openfromms on a MeasurementSet whose data descriptions are not its spectral \
-<a href=#233 id=233 data-nosnippet>233</a>             windows in order is not yet implemented in casa-rs (#841)"</span>,
+<a href=#233 id=233 data-nosnippet>233</a>             windows in order is not yet implemented in casa-rs (#1053)"</span>,
 <a href=#234 id=234 data-nosnippet>234</a>        ));
 <a href=#235 id=235 data-nosnippet>235</a>    }
 <a href=#236 id=236 data-nosnippet>236</a>    (<span class="number">0</span>..windows.row_count())
@@ -299,7 +299,7 @@
 <a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">if </span>!linear {
 <a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#301 id=301 data-nosnippet>301</a>            <span class="string">"openfromms on spectral window {row}, whose channels are not evenly spaced by their \
-<a href=#302 id=302 data-nosnippet>302</a>             width, is not yet implemented in casa-rs (#841)"
+<a href=#302 id=302 data-nosnippet>302</a>             width, is not yet implemented in casa-rs (#1053)"
 <a href=#303 id=303 data-nosnippet>303</a>        </span>)));
 <a href=#304 id=304 data-nosnippet>304</a>    }
 <a href=#305 id=305 data-nosnippet>305</a>    <span class="prelude-val">Ok</span>(window)
@@ -314,7 +314,7 @@
 <a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">if </span>feed.i32(row, <span class="string">"FEED_ID"</span>).map_err(<span class="kw-2">&amp;</span>error)<span class="question-mark">? </span>!= <span class="number">0 </span>{
 <a href=#315 id=315 data-nosnippet>315</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
 <a href=#316 id=316 data-nosnippet>316</a>                <span class="string">"openfromms on a MeasurementSet with several feeds per antenna is not yet \
-<a href=#317 id=317 data-nosnippet>317</a>                 implemented in casa-rs (#841)"</span>,
+<a href=#317 id=317 data-nosnippet>317</a>                 implemented in casa-rs (#1053)"</span>,
 <a href=#318 id=318 data-nosnippet>318</a>            ));
 <a href=#319 id=319 data-nosnippet>319</a>        }
 <a href=#320 id=320 data-nosnippet>320</a>    }
@@ -329,7 +329,7 @@
 <a href=#329 id=329 data-nosnippet>329</a>            <span class="kw">if </span>field.num_poly(row).map_err(<span class="kw-2">&amp;</span>error)<span class="question-mark">? </span>!= <span class="number">0 </span>{
 <a href=#330 id=330 data-nosnippet>330</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#331 id=331 data-nosnippet>331</a>                    <span class="string">"openfromms on field {row}, whose PHASE_DIR is a polynomial, is not yet \
-<a href=#332 id=332 data-nosnippet>332</a>                     implemented in casa-rs (#841)"
+<a href=#332 id=332 data-nosnippet>332</a>                     implemented in casa-rs (#1053)"
 <a href=#333 id=333 data-nosnippet>333</a>                </span>)));
 <a href=#334 id=334 data-nosnippet>334</a>            }
 <a href=#335 id=335 data-nosnippet>335</a>            <span class="kw">let </span>direction = raw_field_phase_direction(ms, row).map_err(<span class="kw-2">&amp;</span>error)<span class="question-mark">?</span>;

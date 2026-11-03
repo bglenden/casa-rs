@@ -175,7 +175,7 @@
 <a href=#175 id=175 data-nosnippet>175</a>        <span class="kw">if </span>!spec.on_the_fly {
 <a href=#176 id=176 data-nosnippet>176</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(
 <a href=#177 id=177 data-nosnippet>177</a>                <span class="string">"setnoise(OTF=False), which writes a calibration table, is not yet implemented \
-<a href=#178 id=178 data-nosnippet>178</a>                 in casa-rs (simulation Phase 3)"</span>,
+<a href=#178 id=178 data-nosnippet>178</a>                 in casa-rs (#1053)"</span>,
 <a href=#179 id=179 data-nosnippet>179</a>            ));
 <a href=#180 id=180 data-nosnippet>180</a>        }
 <a href=#181 id=181 data-nosnippet>181</a>        <span class="kw">if </span>mode == NoiseMode::Simple {
@@ -332,8 +332,8 @@
 <a href=#332 id=332 data-nosnippet>332</a>                <span class="kw">if </span>!term.covers(scan.spectral_window_id) {
 <a href=#333 id=333 data-nosnippet>333</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#334 id=334 data-nosnippet>334</a>                        <span class="string">"corrupt of spectral window {}, observed after a setgain, setleakage or \
-<a href=#335 id=335 data-nosnippet>335</a>                         settrop term was set, is not yet implemented in casa-rs (simulation \
-<a href=#336 id=336 data-nosnippet>336</a>                         Phases 3 and 4): CASA leaves it uncorrupted"</span>,
+<a href=#335 id=335 data-nosnippet>335</a>                         settrop term was set, is not yet implemented in casa-rs (#1053): \
+<a href=#336 id=336 data-nosnippet>336</a>                         CASA leaves it uncorrupted"</span>,
 <a href=#337 id=337 data-nosnippet>337</a>                        window.name
 <a href=#338 id=338 data-nosnippet>338</a>                    )));
 <a href=#339 id=339 data-nosnippet>339</a>                }
@@ -357,7 +357,7 @@
 <a href=#357 id=357 data-nosnippet>357</a>            {
 <a href=#358 id=358 data-nosnippet>358</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#359 id=359 data-nosnippet>359</a>                    <span class="string">"corrupt of spectral window {}, defined after a setnoise(mode='tsys-atm') \
-<a href=#360 id=360 data-nosnippet>360</a>                     term was set, is not yet implemented in casa-rs (simulation Phase 4): \
+<a href=#360 id=360 data-nosnippet>360</a>                     term was set, is not yet implemented in casa-rs (#1053): \
 <a href=#361 id=361 data-nosnippet>361</a>                     the term has no atmosphere for it"</span>,
 <a href=#362 id=362 data-nosnippet>362</a>                    <span class="self">self</span>.spectral_windows[scan.spectral_window_id].name
 <a href=#363 id=363 data-nosnippet>363</a>                )));
@@ -431,7 +431,7 @@
 <a href=#431 id=431 data-nosnippet>431</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(table) = calibration_table_root(<span class="kw-2">&amp;</span>spec.table) {
 <a href=#432 id=432 data-nosnippet>432</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SimulatorError::not_yet_implemented(<span class="macro">format!</span>(
 <a href=#433 id=433 data-nosnippet>433</a>            <span class="string">"setnoise(mode='{}', table=...), which writes the T calibration table {table}.T.cal, \
-<a href=#434 id=434 data-nosnippet>434</a>             is not yet implemented in casa-rs (simulation Phase 3)"</span>,
+<a href=#434 id=434 data-nosnippet>434</a>             is not yet implemented in casa-rs (#1053)"</span>,
 <a href=#435 id=435 data-nosnippet>435</a>            spec.mode
 <a href=#436 id=436 data-nosnippet>436</a>        )));
 <a href=#437 id=437 data-nosnippet>437</a>    }
