@@ -470,125 +470,149 @@
 <a href=#470 id=470 data-nosnippet>470</a>    <span class="doccomment">/// A reconstruction mask image is complex-valued.
 <a href=#471 id=471 data-nosnippet>471</a>    </span><span class="attr">#[error(<span class="string">"reconstruction masks require a real CASA image"</span>)]
 <a href=#472 id=472 data-nosnippet>472</a>    </span>ComplexMaskImage,
-<a href=#473 id=473 data-nosnippet>473</a>    <span class="doccomment">/// A reconstruction mask image is not one direction plane.
-<a href=#474 id=474 data-nosnippet>474</a>    </span><span class="attr">#[error(
-<a href=#475 id=475 data-nosnippet>475</a>        <span class="string">"reconstruction mask must contain one two-dimensional direction plane; shape {shape:?}"
-<a href=#476 id=476 data-nosnippet>476</a>    </span>)]
-<a href=#477 id=477 data-nosnippet>477</a>    </span>MaskImageShape {
-<a href=#478 id=478 data-nosnippet>478</a>        <span class="doccomment">/// The image shape.
-<a href=#479 id=479 data-nosnippet>479</a>        </span>shape: Vec&lt;usize&gt;,
-<a href=#480 id=480 data-nosnippet>480</a>    },
-<a href=#481 id=481 data-nosnippet>481</a>    <span class="doccomment">/// A reconstruction mask image has no direction coordinate.
-<a href=#482 id=482 data-nosnippet>482</a>    </span><span class="attr">#[error(<span class="string">"mask image has no direction coordinate"</span>)]
-<a href=#483 id=483 data-nosnippet>483</a>    </span>MaskImageDirection,
-<a href=#484 id=484 data-nosnippet>484</a>    <span class="doccomment">/// Native mask reprojection supports SIN only.
-<a href=#485 id=485 data-nosnippet>485</a>    </span><span class="attr">#[error(<span class="string">"native mask reprojection currently requires SIN coordinates, not {projection:?}"</span>)]
-<a href=#486 id=486 data-nosnippet>486</a>    </span>MaskImageProjection {
-<a href=#487 id=487 data-nosnippet>487</a>        <span class="doccomment">/// The mask's projection.
-<a href=#488 id=488 data-nosnippet>488</a>        </span>projection: ProjectionType,
-<a href=#489 id=489 data-nosnippet>489</a>    },
-<a href=#490 id=490 data-nosnippet>490</a>    <span class="doccomment">/// The mask's direction frame has no native law.
-<a href=#491 id=491 data-nosnippet>491</a>    </span><span class="attr">#[error(<span class="string">"mask direction frame {frame} is not supported by native imaging"</span>)]
-<a href=#492 id=492 data-nosnippet>492</a>    </span>MaskImageFrame {
-<a href=#493 id=493 data-nosnippet>493</a>        <span class="doccomment">/// The mask's frame.
-<a href=#494 id=494 data-nosnippet>494</a>        </span>frame: DirectionRef,
-<a href=#495 id=495 data-nosnippet>495</a>    },
-<a href=#496 id=496 data-nosnippet>496</a>    <span class="doccomment">/// A `startmodel` casa-rs cannot start from.
-<a href=#497 id=497 data-nosnippet>497</a>    </span><span class="attr">#[error(<span class="string">"startmodel {}: {reason}"</span>, path.display())]
-<a href=#498 id=498 data-nosnippet>498</a>    </span>StartModel {
-<a href=#499 id=499 data-nosnippet>499</a>        <span class="doccomment">/// The start model.
-<a href=#500 id=500 data-nosnippet>500</a>        </span>path: PathBuf,
-<a href=#501 id=501 data-nosnippet>501</a>        <span class="doccomment">/// Why it is refused.
-<a href=#502 id=502 data-nosnippet>502</a>        </span>reason: String,
-<a href=#503 id=503 data-nosnippet>503</a>    },
-<a href=#504 id=504 data-nosnippet>504</a>    <span class="doccomment">/// The outlier file could not be read or describes no valid domain.
-<a href=#505 id=505 data-nosnippet>505</a>    </span><span class="attr">#[error(<span class="string">"outlier file {}: {problem}"</span>, path.display())]
-<a href=#506 id=506 data-nosnippet>506</a>    </span>OutlierFile {
-<a href=#507 id=507 data-nosnippet>507</a>        <span class="doccomment">/// The outlier file.
-<a href=#508 id=508 data-nosnippet>508</a>        </span>path: PathBuf,
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="doccomment">/// What is wrong with it.
-<a href=#510 id=510 data-nosnippet>510</a>        </span>problem: OutlierProblem,
-<a href=#511 id=511 data-nosnippet>511</a>    },
-<a href=#512 id=512 data-nosnippet>512</a>    <span class="doccomment">/// An output directory could not be created.
-<a href=#513 id=513 data-nosnippet>513</a>    </span><span class="attr">#[error(<span class="string">"cannot create output directory {}: {source}"</span>, path.display())]
-<a href=#514 id=514 data-nosnippet>514</a>    </span>OutputDirectory {
-<a href=#515 id=515 data-nosnippet>515</a>        <span class="doccomment">/// The directory.
-<a href=#516 id=516 data-nosnippet>516</a>        </span>path: PathBuf,
-<a href=#517 id=517 data-nosnippet>517</a>        <span class="doccomment">/// The file-system failure.
-<a href=#518 id=518 data-nosnippet>518</a>        </span>source: std::io::Error,
+<a href=#473 id=473 data-nosnippet>473</a>    <span class="doccomment">/// A reconstruction mask image has an axis besides its direction,
+<a href=#474 id=474 data-nosnippet>474</a>    /// Stokes and spectral axes with more than one pixel.
+<a href=#475 id=475 data-nosnippet>475</a>    </span><span class="attr">#[error(
+<a href=#476 id=476 data-nosnippet>476</a>        <span class="string">"a reconstruction mask image has direction, Stokes and spectral axes, and any other \
+<a href=#477 id=477 data-nosnippet>477</a>         axis one pixel long; shape {shape:?}"
+<a href=#478 id=478 data-nosnippet>478</a>    </span>)]
+<a href=#479 id=479 data-nosnippet>479</a>    </span>MaskImageShape {
+<a href=#480 id=480 data-nosnippet>480</a>        <span class="doccomment">/// The image shape.
+<a href=#481 id=481 data-nosnippet>481</a>        </span>shape: Vec&lt;usize&gt;,
+<a href=#482 id=482 data-nosnippet>482</a>    },
+<a href=#483 id=483 data-nosnippet>483</a>    <span class="doccomment">/// A reconstruction mask image has no direction coordinate.
+<a href=#484 id=484 data-nosnippet>484</a>    </span><span class="attr">#[error(<span class="string">"mask image has no direction coordinate"</span>)]
+<a href=#485 id=485 data-nosnippet>485</a>    </span>MaskImageDirection,
+<a href=#486 id=486 data-nosnippet>486</a>    <span class="doccomment">/// tclean cannot expand a mask image to the image's channels or Stokes
+<a href=#487 id=487 data-nosnippet>487</a>    /// planes (`SDMaskHandler::expandMask`), and refuses it.
+<a href=#488 id=488 data-nosnippet>488</a>    </span><span class="attr">#[error(<span class="string">"Error in constructing the clean mask from {}: {reason}"</span>, path.display())]
+<a href=#489 id=489 data-nosnippet>489</a>    </span>MaskImageExpansion {
+<a href=#490 id=490 data-nosnippet>490</a>        <span class="doccomment">/// The mask image.
+<a href=#491 id=491 data-nosnippet>491</a>        </span>path: PathBuf,
+<a href=#492 id=492 data-nosnippet>492</a>        <span class="doccomment">/// CASA's reason.
+<a href=#493 id=493 data-nosnippet>493</a>        </span>reason: String,
+<a href=#494 id=494 data-nosnippet>494</a>    },
+<a href=#495 id=495 data-nosnippet>495</a>    <span class="doccomment">/// A mask image tclean regrids along frequency or Stokes onto the image
+<a href=#496 id=496 data-nosnippet>496</a>    /// (`SDMaskHandler::copyMask`), which casa-rs does not yet.
+<a href=#497 id=497 data-nosnippet>497</a>    </span><span class="attr">#[error(
+<a href=#498 id=498 data-nosnippet>498</a>        <span class="string">"mask image {} of shape {shape:?} would be regridded along frequency or Stokes onto \
+<a href=#499 id=499 data-nosnippet>499</a>         the image, which casa-rs does not implement yet (#980)"</span>,
+<a href=#500 id=500 data-nosnippet>500</a>        path.display()
+<a href=#501 id=501 data-nosnippet>501</a>    )]
+<a href=#502 id=502 data-nosnippet>502</a>    </span>MaskImageRegrid {
+<a href=#503 id=503 data-nosnippet>503</a>        <span class="doccomment">/// The mask image.
+<a href=#504 id=504 data-nosnippet>504</a>        </span>path: PathBuf,
+<a href=#505 id=505 data-nosnippet>505</a>        <span class="doccomment">/// Its shape.
+<a href=#506 id=506 data-nosnippet>506</a>        </span>shape: Vec&lt;usize&gt;,
+<a href=#507 id=507 data-nosnippet>507</a>    },
+<a href=#508 id=508 data-nosnippet>508</a>    <span class="doccomment">/// Native mask reprojection supports SIN only.
+<a href=#509 id=509 data-nosnippet>509</a>    </span><span class="attr">#[error(<span class="string">"native mask reprojection currently requires SIN coordinates, not {projection:?}"</span>)]
+<a href=#510 id=510 data-nosnippet>510</a>    </span>MaskImageProjection {
+<a href=#511 id=511 data-nosnippet>511</a>        <span class="doccomment">/// The mask's projection.
+<a href=#512 id=512 data-nosnippet>512</a>        </span>projection: ProjectionType,
+<a href=#513 id=513 data-nosnippet>513</a>    },
+<a href=#514 id=514 data-nosnippet>514</a>    <span class="doccomment">/// The mask's direction frame has no native law.
+<a href=#515 id=515 data-nosnippet>515</a>    </span><span class="attr">#[error(<span class="string">"mask direction frame {frame} is not supported by native imaging"</span>)]
+<a href=#516 id=516 data-nosnippet>516</a>    </span>MaskImageFrame {
+<a href=#517 id=517 data-nosnippet>517</a>        <span class="doccomment">/// The mask's frame.
+<a href=#518 id=518 data-nosnippet>518</a>        </span>frame: DirectionRef,
 <a href=#519 id=519 data-nosnippet>519</a>    },
-<a href=#520 id=520 data-nosnippet>520</a>}
-<a href=#521 id=521 data-nosnippet>521</a>
-<a href=#522 id=522 data-nosnippet>522</a><span class="doccomment">/// What is wrong with an outlier file.
-<a href=#523 id=523 data-nosnippet>523</a></span><span class="attr">#[derive(Debug, thiserror::Error)]
-<a href=#524 id=524 data-nosnippet>524</a></span><span class="kw">pub enum </span>OutlierProblem {
-<a href=#525 id=525 data-nosnippet>525</a>    <span class="doccomment">/// The file could not be read.
-<a href=#526 id=526 data-nosnippet>526</a>    </span><span class="attr">#[error(<span class="string">"cannot read: {0}"</span>)]
-<a href=#527 id=527 data-nosnippet>527</a>    </span>Read(<span class="attr">#[source] </span>std::io::Error),
-<a href=#528 id=528 data-nosnippet>528</a>    <span class="doccomment">/// The file defines no image domain.
-<a href=#529 id=529 data-nosnippet>529</a>    </span><span class="attr">#[error(<span class="string">"did not define any image domains"</span>)]
-<a href=#530 id=530 data-nosnippet>530</a>    </span>Empty,
-<a href=#531 id=531 data-nosnippet>531</a>    <span class="doccomment">/// A line is not one `parameter=value` pair.
-<a href=#532 id=532 data-nosnippet>532</a>    </span><span class="attr">#[error(<span class="string">"line {line} must contain one parameter=value pair"</span>)]
-<a href=#533 id=533 data-nosnippet>533</a>    </span>NotAPair {
-<a href=#534 id=534 data-nosnippet>534</a>        <span class="doccomment">/// The 1-based line.
-<a href=#535 id=535 data-nosnippet>535</a>        </span>line: usize,
-<a href=#536 id=536 data-nosnippet>536</a>    },
-<a href=#537 id=537 data-nosnippet>537</a>    <span class="doccomment">/// A line holds more than one `=`.
-<a href=#538 id=538 data-nosnippet>538</a>    </span><span class="attr">#[error(<span class="string">"line {line} contains more than one '='"</span>)]
-<a href=#539 id=539 data-nosnippet>539</a>    </span>SeveralEquals {
-<a href=#540 id=540 data-nosnippet>540</a>        <span class="doccomment">/// The 1-based line.
-<a href=#541 id=541 data-nosnippet>541</a>        </span>line: usize,
-<a href=#542 id=542 data-nosnippet>542</a>    },
-<a href=#543 id=543 data-nosnippet>543</a>    <span class="doccomment">/// A line repeats a field of its image.
-<a href=#544 id=544 data-nosnippet>544</a>    </span><span class="attr">#[error(<span class="string">"line {line} repeats field {key:?}"</span>)]
-<a href=#545 id=545 data-nosnippet>545</a>    </span>RepeatedField {
-<a href=#546 id=546 data-nosnippet>546</a>        <span class="doccomment">/// The 1-based line.
-<a href=#547 id=547 data-nosnippet>547</a>        </span>line: usize,
-<a href=#548 id=548 data-nosnippet>548</a>        <span class="doccomment">/// The field.
-<a href=#549 id=549 data-nosnippet>549</a>        </span>key: String,
-<a href=#550 id=550 data-nosnippet>550</a>    },
-<a href=#551 id=551 data-nosnippet>551</a>    <span class="doccomment">/// An image sets fields native imaging does not support.
-<a href=#552 id=552 data-nosnippet>552</a>    </span><span class="attr">#[error(<span class="string">"outlier image {ordinal} contains unsupported field(s): {}"</span>, fields.join(<span class="string">", "</span>))]
-<a href=#553 id=553 data-nosnippet>553</a>    </span>UnsupportedFields {
-<a href=#554 id=554 data-nosnippet>554</a>        <span class="doccomment">/// The image, counted from zero.
-<a href=#555 id=555 data-nosnippet>555</a>        </span>ordinal: usize,
-<a href=#556 id=556 data-nosnippet>556</a>        <span class="doccomment">/// The fields.
-<a href=#557 id=557 data-nosnippet>557</a>        </span>fields: Vec&lt;String&gt;,
-<a href=#558 id=558 data-nosnippet>558</a>    },
-<a href=#559 id=559 data-nosnippet>559</a>    <span class="doccomment">/// An image lacks a required field.
-<a href=#560 id=560 data-nosnippet>560</a>    </span><span class="attr">#[error(<span class="string">"outlier image {ordinal} is missing required {key}"</span>)]
-<a href=#561 id=561 data-nosnippet>561</a>    </span>MissingField {
-<a href=#562 id=562 data-nosnippet>562</a>        <span class="doccomment">/// The image, counted from zero.
-<a href=#563 id=563 data-nosnippet>563</a>        </span>ordinal: usize,
-<a href=#564 id=564 data-nosnippet>564</a>        <span class="doccomment">/// The field.
-<a href=#565 id=565 data-nosnippet>565</a>        </span>key: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#520 id=520 data-nosnippet>520</a>    <span class="doccomment">/// A `startmodel` casa-rs cannot start from.
+<a href=#521 id=521 data-nosnippet>521</a>    </span><span class="attr">#[error(<span class="string">"startmodel {}: {reason}"</span>, path.display())]
+<a href=#522 id=522 data-nosnippet>522</a>    </span>StartModel {
+<a href=#523 id=523 data-nosnippet>523</a>        <span class="doccomment">/// The start model.
+<a href=#524 id=524 data-nosnippet>524</a>        </span>path: PathBuf,
+<a href=#525 id=525 data-nosnippet>525</a>        <span class="doccomment">/// Why it is refused.
+<a href=#526 id=526 data-nosnippet>526</a>        </span>reason: String,
+<a href=#527 id=527 data-nosnippet>527</a>    },
+<a href=#528 id=528 data-nosnippet>528</a>    <span class="doccomment">/// The outlier file could not be read or describes no valid domain.
+<a href=#529 id=529 data-nosnippet>529</a>    </span><span class="attr">#[error(<span class="string">"outlier file {}: {problem}"</span>, path.display())]
+<a href=#530 id=530 data-nosnippet>530</a>    </span>OutlierFile {
+<a href=#531 id=531 data-nosnippet>531</a>        <span class="doccomment">/// The outlier file.
+<a href=#532 id=532 data-nosnippet>532</a>        </span>path: PathBuf,
+<a href=#533 id=533 data-nosnippet>533</a>        <span class="doccomment">/// What is wrong with it.
+<a href=#534 id=534 data-nosnippet>534</a>        </span>problem: OutlierProblem,
+<a href=#535 id=535 data-nosnippet>535</a>    },
+<a href=#536 id=536 data-nosnippet>536</a>    <span class="doccomment">/// An output directory could not be created.
+<a href=#537 id=537 data-nosnippet>537</a>    </span><span class="attr">#[error(<span class="string">"cannot create output directory {}: {source}"</span>, path.display())]
+<a href=#538 id=538 data-nosnippet>538</a>    </span>OutputDirectory {
+<a href=#539 id=539 data-nosnippet>539</a>        <span class="doccomment">/// The directory.
+<a href=#540 id=540 data-nosnippet>540</a>        </span>path: PathBuf,
+<a href=#541 id=541 data-nosnippet>541</a>        <span class="doccomment">/// The file-system failure.
+<a href=#542 id=542 data-nosnippet>542</a>        </span>source: std::io::Error,
+<a href=#543 id=543 data-nosnippet>543</a>    },
+<a href=#544 id=544 data-nosnippet>544</a>}
+<a href=#545 id=545 data-nosnippet>545</a>
+<a href=#546 id=546 data-nosnippet>546</a><span class="doccomment">/// What is wrong with an outlier file.
+<a href=#547 id=547 data-nosnippet>547</a></span><span class="attr">#[derive(Debug, thiserror::Error)]
+<a href=#548 id=548 data-nosnippet>548</a></span><span class="kw">pub enum </span>OutlierProblem {
+<a href=#549 id=549 data-nosnippet>549</a>    <span class="doccomment">/// The file could not be read.
+<a href=#550 id=550 data-nosnippet>550</a>    </span><span class="attr">#[error(<span class="string">"cannot read: {0}"</span>)]
+<a href=#551 id=551 data-nosnippet>551</a>    </span>Read(<span class="attr">#[source] </span>std::io::Error),
+<a href=#552 id=552 data-nosnippet>552</a>    <span class="doccomment">/// The file defines no image domain.
+<a href=#553 id=553 data-nosnippet>553</a>    </span><span class="attr">#[error(<span class="string">"did not define any image domains"</span>)]
+<a href=#554 id=554 data-nosnippet>554</a>    </span>Empty,
+<a href=#555 id=555 data-nosnippet>555</a>    <span class="doccomment">/// A line is not one `parameter=value` pair.
+<a href=#556 id=556 data-nosnippet>556</a>    </span><span class="attr">#[error(<span class="string">"line {line} must contain one parameter=value pair"</span>)]
+<a href=#557 id=557 data-nosnippet>557</a>    </span>NotAPair {
+<a href=#558 id=558 data-nosnippet>558</a>        <span class="doccomment">/// The 1-based line.
+<a href=#559 id=559 data-nosnippet>559</a>        </span>line: usize,
+<a href=#560 id=560 data-nosnippet>560</a>    },
+<a href=#561 id=561 data-nosnippet>561</a>    <span class="doccomment">/// A line holds more than one `=`.
+<a href=#562 id=562 data-nosnippet>562</a>    </span><span class="attr">#[error(<span class="string">"line {line} contains more than one '='"</span>)]
+<a href=#563 id=563 data-nosnippet>563</a>    </span>SeveralEquals {
+<a href=#564 id=564 data-nosnippet>564</a>        <span class="doccomment">/// The 1-based line.
+<a href=#565 id=565 data-nosnippet>565</a>        </span>line: usize,
 <a href=#566 id=566 data-nosnippet>566</a>    },
-<a href=#567 id=567 data-nosnippet>567</a>    <span class="doccomment">/// A field takes a value outside the installed multi-domain slice.
-<a href=#568 id=568 data-nosnippet>568</a>    </span><span class="attr">#[error(<span class="string">"outlier field {key}={value:?} is outside the installed multi-domain slice"</span>)]
-<a href=#569 id=569 data-nosnippet>569</a>    </span>OutsideSlice {
-<a href=#570 id=570 data-nosnippet>570</a>        <span class="doccomment">/// The field.
-<a href=#571 id=571 data-nosnippet>571</a>        </span>key: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-<a href=#572 id=572 data-nosnippet>572</a>        <span class="doccomment">/// Its value.
-<a href=#573 id=573 data-nosnippet>573</a>        </span>value: String,
+<a href=#567 id=567 data-nosnippet>567</a>    <span class="doccomment">/// A line repeats a field of its image.
+<a href=#568 id=568 data-nosnippet>568</a>    </span><span class="attr">#[error(<span class="string">"line {line} repeats field {key:?}"</span>)]
+<a href=#569 id=569 data-nosnippet>569</a>    </span>RepeatedField {
+<a href=#570 id=570 data-nosnippet>570</a>        <span class="doccomment">/// The 1-based line.
+<a href=#571 id=571 data-nosnippet>571</a>        </span>line: usize,
+<a href=#572 id=572 data-nosnippet>572</a>        <span class="doccomment">/// The field.
+<a href=#573 id=573 data-nosnippet>573</a>        </span>key: String,
 <a href=#574 id=574 data-nosnippet>574</a>    },
-<a href=#575 id=575 data-nosnippet>575</a>    <span class="doccomment">/// `imsize` is not one positive size or a positive x, y pair.
-<a href=#576 id=576 data-nosnippet>576</a>    </span><span class="attr">#[error(<span class="string">"outlier imsize must be one positive size or a positive pair"</span>)]
-<a href=#577 id=577 data-nosnippet>577</a>    </span>ImageSize,
-<a href=#578 id=578 data-nosnippet>578</a>    <span class="doccomment">/// `cell` is not one positive arcsec value or a positive x, y pair.
-<a href=#579 id=579 data-nosnippet>579</a>    </span><span class="attr">#[error(<span class="string">"outlier cell must be one positive arcsec value or a positive pair"</span>)]
-<a href=#580 id=580 data-nosnippet>580</a>    </span>Cell,
-<a href=#581 id=581 data-nosnippet>581</a>    <span class="doccomment">/// A `cell` value is not a number.
-<a href=#582 id=582 data-nosnippet>582</a>    </span><span class="attr">#[error(<span class="string">"invalid outlier cell {text:?}"</span>)]
-<a href=#583 id=583 data-nosnippet>583</a>    </span>CellValue {
-<a href=#584 id=584 data-nosnippet>584</a>        <span class="doccomment">/// The given value.
-<a href=#585 id=585 data-nosnippet>585</a>        </span>text: String,
-<a href=#586 id=586 data-nosnippet>586</a>    },
-<a href=#587 id=587 data-nosnippet>587</a>    <span class="doccomment">/// `mask` is not `circle[[xpix,ypix],rpix]` in finite pixels.
-<a href=#588 id=588 data-nosnippet>588</a>    </span><span class="attr">#[error(<span class="string">"outlier mask must use circle[[xpix,ypix],rpix] with finite pix values"</span>)]
-<a href=#589 id=589 data-nosnippet>589</a>    </span>MaskSyntax,
-<a href=#590 id=590 data-nosnippet>590</a>    <span class="doccomment">/// The mask circle's centre is outside its image or its radius negative.
-<a href=#591 id=591 data-nosnippet>591</a>    </span><span class="attr">#[error(<span class="string">"outlier circle mask exceeds its image domain"</span>)]
-<a href=#592 id=592 data-nosnippet>592</a>    </span>MaskOutside,
-<a href=#593 id=593 data-nosnippet>593</a>}
+<a href=#575 id=575 data-nosnippet>575</a>    <span class="doccomment">/// An image sets fields native imaging does not support.
+<a href=#576 id=576 data-nosnippet>576</a>    </span><span class="attr">#[error(<span class="string">"outlier image {ordinal} contains unsupported field(s): {}"</span>, fields.join(<span class="string">", "</span>))]
+<a href=#577 id=577 data-nosnippet>577</a>    </span>UnsupportedFields {
+<a href=#578 id=578 data-nosnippet>578</a>        <span class="doccomment">/// The image, counted from zero.
+<a href=#579 id=579 data-nosnippet>579</a>        </span>ordinal: usize,
+<a href=#580 id=580 data-nosnippet>580</a>        <span class="doccomment">/// The fields.
+<a href=#581 id=581 data-nosnippet>581</a>        </span>fields: Vec&lt;String&gt;,
+<a href=#582 id=582 data-nosnippet>582</a>    },
+<a href=#583 id=583 data-nosnippet>583</a>    <span class="doccomment">/// An image lacks a required field.
+<a href=#584 id=584 data-nosnippet>584</a>    </span><span class="attr">#[error(<span class="string">"outlier image {ordinal} is missing required {key}"</span>)]
+<a href=#585 id=585 data-nosnippet>585</a>    </span>MissingField {
+<a href=#586 id=586 data-nosnippet>586</a>        <span class="doccomment">/// The image, counted from zero.
+<a href=#587 id=587 data-nosnippet>587</a>        </span>ordinal: usize,
+<a href=#588 id=588 data-nosnippet>588</a>        <span class="doccomment">/// The field.
+<a href=#589 id=589 data-nosnippet>589</a>        </span>key: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#590 id=590 data-nosnippet>590</a>    },
+<a href=#591 id=591 data-nosnippet>591</a>    <span class="doccomment">/// A field takes a value outside the installed multi-domain slice.
+<a href=#592 id=592 data-nosnippet>592</a>    </span><span class="attr">#[error(<span class="string">"outlier field {key}={value:?} is outside the installed multi-domain slice"</span>)]
+<a href=#593 id=593 data-nosnippet>593</a>    </span>OutsideSlice {
+<a href=#594 id=594 data-nosnippet>594</a>        <span class="doccomment">/// The field.
+<a href=#595 id=595 data-nosnippet>595</a>        </span>key: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#596 id=596 data-nosnippet>596</a>        <span class="doccomment">/// Its value.
+<a href=#597 id=597 data-nosnippet>597</a>        </span>value: String,
+<a href=#598 id=598 data-nosnippet>598</a>    },
+<a href=#599 id=599 data-nosnippet>599</a>    <span class="doccomment">/// `imsize` is not one positive size or a positive x, y pair.
+<a href=#600 id=600 data-nosnippet>600</a>    </span><span class="attr">#[error(<span class="string">"outlier imsize must be one positive size or a positive pair"</span>)]
+<a href=#601 id=601 data-nosnippet>601</a>    </span>ImageSize,
+<a href=#602 id=602 data-nosnippet>602</a>    <span class="doccomment">/// `cell` is not one positive arcsec value or a positive x, y pair.
+<a href=#603 id=603 data-nosnippet>603</a>    </span><span class="attr">#[error(<span class="string">"outlier cell must be one positive arcsec value or a positive pair"</span>)]
+<a href=#604 id=604 data-nosnippet>604</a>    </span>Cell,
+<a href=#605 id=605 data-nosnippet>605</a>    <span class="doccomment">/// A `cell` value is not a number.
+<a href=#606 id=606 data-nosnippet>606</a>    </span><span class="attr">#[error(<span class="string">"invalid outlier cell {text:?}"</span>)]
+<a href=#607 id=607 data-nosnippet>607</a>    </span>CellValue {
+<a href=#608 id=608 data-nosnippet>608</a>        <span class="doccomment">/// The given value.
+<a href=#609 id=609 data-nosnippet>609</a>        </span>text: String,
+<a href=#610 id=610 data-nosnippet>610</a>    },
+<a href=#611 id=611 data-nosnippet>611</a>    <span class="doccomment">/// `mask` is not `circle[[xpix,ypix],rpix]` in finite pixels.
+<a href=#612 id=612 data-nosnippet>612</a>    </span><span class="attr">#[error(<span class="string">"outlier mask must use circle[[xpix,ypix],rpix] with finite pix values"</span>)]
+<a href=#613 id=613 data-nosnippet>613</a>    </span>MaskSyntax,
+<a href=#614 id=614 data-nosnippet>614</a>    <span class="doccomment">/// The mask circle's centre is outside its image or its radius negative.
+<a href=#615 id=615 data-nosnippet>615</a>    </span><span class="attr">#[error(<span class="string">"outlier circle mask exceeds its image domain"</span>)]
+<a href=#616 id=616 data-nosnippet>616</a>    </span>MaskOutside,
+<a href=#617 id=617 data-nosnippet>617</a>}
 </code></pre></div></section></main></body></html>
