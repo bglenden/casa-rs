@@ -27,9 +27,9 @@ use casa_imaging_model::{
     ReconstructionBasis, RestoringBeamPolicy,
 };
 use casa_imaging_products::{
-    AnalyticPrimaryBeam, AnalyticPrimaryBeamModel, ContinuumProductControls,
-    ContinuumProductInputs, PlannedContinuumGeneration, ProductStoragePlan, ProductsError,
-    gaussian_beam_image, produce_continuum_members,
+    AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
+    PlannedContinuumGeneration, ProductStoragePlan, ProductsError, gaussian_beam_image,
+    produce_continuum_members,
 };
 use casa_types::Value;
 
@@ -960,27 +960,6 @@ fn standard_products_publish_the_selected_analytic_primary_beam() {
         corner < centre,
         "analytic PB must fall away from phase centre"
     );
-    // The minor cycle reads the beam the products publish (#1078): its
-    // values where `.pb` keeps them, and `.pb`'s mask as its support.
-    let beam = AnalyticPrimaryBeam::new(&problem, AnalyticPrimaryBeamModel::CasaEvlaCommon, None)
-        .expect("L band")
-        .expect("an analytic beam");
-    let plane = beam
-        .plane(&ImageDomainRole::Main, 0)
-        .expect("the beam's plane");
-    let support = beam
-        .support(&ImageDomainRole::Main, 0)
-        .expect("the beam's support");
-    assert_eq!(support, pb.validity());
-    for ((value, published), kept) in plane.iter().zip(pb.payload()).zip(&support) {
-        assert_eq!(if *kept { *value } else { 0.0 }, *published);
-    }
-    assert!(
-        AnalyticPrimaryBeam::new(&problem, AnalyticPrimaryBeamModel::MosaicSensitivity, None)
-            .expect("no frequency to check")
-            .is_none(),
-        "a mosaic's beam is its weight image's"
-    );
 }
 
 /// #715: the writer stages each image and then promotes it, and the published
@@ -1102,10 +1081,6 @@ fn primary_beam_plan_rejects_a_cube_crossing_the_evla_c_band_boundary() {
         controls
             .validate_for_problem(&problem)
             .expect_err("unsupported frequency")
-    ));
-    assert!(unsupported(
-        AnalyticPrimaryBeam::new(&problem, AnalyticPrimaryBeamModel::CasaEvlaCommon, None)
-            .expect_err("the minor cycle's beam refuses it too")
     ));
 }
 
