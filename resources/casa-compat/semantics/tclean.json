@@ -385,7 +385,8 @@
       "scope": "With gridder exactly mosaic and density weighting, True weighs each field by its own density and Briggs factors (multiField): a continuum density per field (VisImagingWeight), or with a cube's per-channel density each field's padded density cube, gridded from that field's rows alone with Briggs factors per channel and a fixed swing pad of two planes a side (BriggsCubeWeightor::fillImgWeightCol, issue 818); mosaicft and ftmosaic set it False, as CASA. The density spans the selected fields' keys from the first to the last with data and is held for the whole run.",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "mosweight-cube-20261103"
       ],
       "behaviors": [
         "gridders"
@@ -1773,6 +1774,24 @@
         "crates/casa-imaging-application/src/imaging/observation_source/keys.rs",
         "crates/casa-imaging-operator/src/mosaic/mod.rs",
         "crates/casars-imager/tests/t1/vis_list.rs",
+        "tools/casa-compat/tclean_case_matrix.py"
+      ]
+    },
+    "mosweight-cube-20261103": {
+      "kind": "CASA tclean test-case matrix, ad hoc mosaic cubes, per-sample weight attribution, T0/T1 laws",
+      "state": "measured: test_mosaic_cube briggsbwtaper 1-2 pass (5.6e-4/6.4e-4 NRMS); off-centre fields differ by CASA's two-frame cube density, attributed per sample",
+      "source_revision": "4d85b91e9596d36846727ca4abf64df6e9a53f94",
+      "revision": "ab3c883f3e4682a35b2aec0cc65bc364c3642220",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with resources/casa-compat/tclean-mosweight-cube-cases.json (19 cases), and with tclean-casa-test-cases.json --case-prefix test_mosaic_cube. --include-skipped and 16 cube density cases",
+      "receipt": "resources/casa-compat/evidence/tclean-mosweight-cube-20261103.json",
+      "scope": "tclean mosweight=True on a mosaic cube's per-channel density (BriggsCubeWeightor multiField). CASA's skipped test_mosaic_cube.test_mosaic_briggsbwtaper 1 and 2 pass every product (worst NRMS 6.4e-4); the other 17 test_mosaic_cube cases are unchanged (11 pass, the 6 AW cube cases refused by #719's gate); 14 non-mosaic cube density cases pass to 5.2e-6. One ALMA mosaic field imaged at its own centre agrees with CASA to 1e-7 with sumwt exact, uniform and Briggs; at its neighbour's centre it differs (uniform PSF 2.6e-2), and an evidence-only build that grids the density at GridFT's rotation and looks it up at the MeasurementSet uvw, as CASA does, matches all 130,032 of CASA's (row, channel) weights to 4.2e-10 (docs/CASA (C++) bugs.md). Three fields together at the test's centre: uniform PSF 9.3e-3, Briggs 5.6e-4. An EVLA mosaic cube differs even for one field at its own centre, with or without mosweight (PSF 3.6e-3), unattributed (#789). Native: T0 per-field cube density law, T1 sumwt additivity over fields, and the density pass's counting law with every field's cube.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-mosweight-cube-20261103.json",
+        "resources/casa-compat/tclean-mosweight-cube-cases.json",
+        "crates/casa-imaging-operator/tests/density_fields.rs",
+        "crates/casars-imager/tests/t1/mosaic.rs",
+        "crates/casa-imaging-runtime/tests/pass_memory.rs",
         "tools/casa-compat/tclean_case_matrix.py"
       ]
     }
