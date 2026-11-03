@@ -3,18 +3,18 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "39449e232ce19bfc4a3884d61f615a07532cd019",
-  "parameter_surfaces_sha256": "75971d01b533264891d340a3f21f3f125e901c85093d52fe1129814972b3c506",
-  "parameter_catalog_sha256": "2feb237df1620d8b3ef76fd219fd27a252ca8e54621238aa91f0ce93b5acf5b9",
+  "casa_rs_revision": "a0252d8765aaee536e447478dc9f0ae2a191150f",
+  "parameter_surfaces_sha256": "c0c341a969973ab594652fc504adab18738689b4301f9172167388bbc83c3369",
+  "parameter_catalog_sha256": "af7b80bc2453cb21d9a19094471f22eadadfc1efd100a7aa2f05262abbf362f8",
   "tclean_rs_sha256": "b2807186d29342d82b0b37ce2da0e2142666b7150a146f18d9fffc0a0ec20c03",
-  "tclean_contract_version": 38
+  "tclean_contract_version": 39
  },
  "totals": {
   "resolved_cases": 354,
   "cases_where_casa_expects_an_error": 4,
   "cases_counted": 350,
-  "cases_with_no_refusal": 265,
-  "cases_with_a_gap": 85,
+  "cases_with_no_refusal": 269,
+  "cases_with_a_gap": 81,
   "cases_with_only_refusals_casa_shares": 0,
   "single_call_cases_with_no_refusal": 213
  },
@@ -126,19 +126,6 @@
     "test_onefield.test_onefield_mtmfs_smallscalebias.1",
     "test_cube.test_cube_mtmfs_nterms1.1",
     "test_cube.test_cubedata_mtmfs_nterms1.1"
-   ]
-  },
-  {
-   "reason": "startmodel given as a list",
-   "source": "catalog: value domain",
-   "issue": null,
-   "cases": 4,
-   "sole_blocker": 4,
-   "examples": [
-    "test_cube.test_cube_continuum_subtract_uvsub.1+2",
-    "test_modelvis.test_modelvis_5.1+2",
-    "test_modelvis.test_modelvis_6.1+2",
-    "test_startmodel.test_startmodel_mtmfs_restart.1+2+3+4"
    ]
   },
   {
@@ -1343,15 +1330,8 @@
    "refusals": []
   },
   "test_cube.test_cube_continuum_subtract_uvsub.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "startmodel given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_cube.test_cube_badchannel_restoringbeam.1": {
    "runs_without_refusal": true,
@@ -1786,26 +1766,12 @@
    "refusals": []
   },
   "test_modelvis.test_modelvis_5.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "startmodel given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_6.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "startmodel given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_7.1+2": {
    "runs_without_refusal": true,
@@ -1931,21 +1897,8 @@
    "refusals": []
   },
   "test_startmodel.test_startmodel_mtmfs_restart.1+2+3+4": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "startmodel given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 2
-    },
-    {
-     "reason": "startmodel given as a list",
-     "source": "catalog: value domain",
-     "issue": null,
-     "call": 4
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_startmodel.test_startmodel_with_mask_mfs.1": {
    "runs_without_refusal": true,

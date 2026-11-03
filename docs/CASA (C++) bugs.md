@@ -3372,3 +3372,26 @@ through `swapyz(flipgrid, copyOfFlag, flipdata)`, which skips every entry
 casa-rs follows. Evidence: the operator laws in
 `casa-imaging-operator/tests/cubic.rs` and the cubic cases of
 `resources/casa-compat/tclean-cube-axes-cases.json`.
+
+## A one-channel start model is regridded onto a cube by reading past its axis
+
+- Date noted: 2026-11-03
+- Status: CASA bug casa-rs corrects, by refusing (#1067)
+- Affected code: casatools `synthesis/ImagerObjects/SIImageStore.cc`
+  (`regridToModelImage`), casacore `images/Images/ImageRegrid.tcc`
+  (`regrid1D`) and `scimath/Mathematics/InterpolateArray1D.tcc` (`linear`)
+
+`SIImageStore::regridToModelImage` regrids a start model over its direction
+and spectral axes with `ImageRegrid` and `Interpolate2D::LINEAR`. Along
+frequency, `regrid1D` hands casacore's linear interpolation the input's
+channel pixels, and for a model of one channel onto a cube of several the
+interpolation steps its bracketing index to -1 and reads before the start
+of its arrays. casa-rs refuses a one-channel start model on a cube's
+spectral axis ("a spectral regrid interpolates between two channels"). A
+one-plane model of an MFS image keeps its plane at any frequency, as CASA's
+regrid leaves a degenerate axis. Beyond the model's channels CASA's
+interpolation takes the end channel's value and only masks it; the model
+image has no mask, so those planes start from the end channel's model.
+casa-rs follows that. Evidence: `casa-images` `regrid::spectral` laws, the
+start-model axis laws, and CASA's `test_modelvis_7` and
+`test_startmodel_regrid_cube`.
