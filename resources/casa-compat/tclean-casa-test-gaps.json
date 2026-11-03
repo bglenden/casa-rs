@@ -3,20 +3,20 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "5558d4853fdc0c112617508e0612eb454b1da35c",
+  "casa_rs_revision": "dcfada319739294dca45799a06785f93a4187cca",
   "parameter_surfaces_sha256": "75971d01b533264891d340a3f21f3f125e901c85093d52fe1129814972b3c506",
   "parameter_catalog_sha256": "2feb237df1620d8b3ef76fd219fd27a252ca8e54621238aa91f0ce93b5acf5b9",
-  "tclean_rs_sha256": "441c8d220f793a77a5e634f310f15122a917aabfa64db2f2c4590e7c95c2df8c",
+  "tclean_rs_sha256": "133fee90787d952067685ad62e43bbb56421b1342ee163484846d6fee43f4909",
   "tclean_contract_version": 38
  },
  "totals": {
   "resolved_cases": 354,
   "cases_where_casa_expects_an_error": 4,
   "cases_counted": 350,
-  "cases_with_no_refusal": 242,
-  "cases_with_a_gap": 108,
+  "cases_with_no_refusal": 241,
+  "cases_with_a_gap": 109,
   "cases_with_only_refusals_casa_shares": 0,
-  "single_call_cases_with_no_refusal": 199
+  "single_call_cases_with_no_refusal": 198
  },
  "gaps": [
   {
@@ -331,6 +331,16 @@
    "sole_blocker": 0,
    "examples": [
     "test_stokes.test_stokes_mtmfs_IQUV.1+2"
+   ]
+  },
+  {
+   "reason": "perchanweightdensity=True with specmode='cubesource' and a density weighting",
+   "source": "tclean.rs not_yet",
+   "issue": 980,
+   "cases": 1,
+   "sole_blocker": 1,
+   "examples": [
+    "test_ephemeris.test_multifield_cube_exttab_eph.1"
    ]
   },
   {
@@ -2738,8 +2748,15 @@
    "refusals": []
   },
   "test_ephemeris.test_multifield_cube_exttab_eph.1": {
-   "runs_without_refusal": true,
-   "refusals": []
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "perchanweightdensity=True with specmode='cubesource' and a density weighting",
+     "source": "tclean.rs not_yet",
+     "issue": 980,
+     "call": 1
+    }
+   ]
   },
   "test_errors_failures.test_wrong_spw_select_data.1": {
    "runs_without_refusal": true,
