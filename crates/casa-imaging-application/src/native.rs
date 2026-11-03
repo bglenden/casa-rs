@@ -12,8 +12,9 @@ use casa_imaging_deconvolution::{
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_model::GeometryPlan;
 use casa_imaging_products::{
-    ContinuumProductInputs, FacetSumWeights, MinorCycleImageResponse, PlannedContinuumGeneration,
-    ProductStoragePlan, ProductsError, PublishedContinuumGeneration, produce_continuum_members,
+    AnalyticPrimaryBeam, ContinuumProductInputs, FacetSumWeights, MinorCycleImageResponse,
+    PlannedContinuumGeneration, ProductStoragePlan, ProductsError, PublishedContinuumGeneration,
+    produce_continuum_members,
 };
 use casa_imaging_runtime::pass::{PassError, WorkerTeam};
 use casa_imaging_runtime::{
@@ -303,6 +304,12 @@ pub(crate) fn run(
         virtual_model,
     } = run;
     let teams = OnceCell::new();
+    let primary_beam = match publication.controls.primary_beam_model() {
+        Some(model) => {
+            AnalyticPrimaryBeam::new(problem, model, publication.primary_beam_centres.as_ref())?
+        }
+        None => None,
+    };
     // The run's source borrows the batch route, which is released with the
     // source's charge once the run has finished with it.
     let visibility_write = route
@@ -317,6 +324,7 @@ pub(crate) fn run(
             existing,
             forms,
             image_response,
+            primary_beam,
             visibility_write,
             products: (products, source.memory()),
             host: runtime.host,

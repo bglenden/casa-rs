@@ -215,12 +215,27 @@ impl MinorLayout {
     }
 }
 
+/// Heap bytes per pixel a plane's preparation holds for its `.pb` under
+/// `setup` ([`super::pixels::beam_pixels`]): the support it keeps and,
+/// for an analytic beam, the beam it forms the support from.
+fn beam_bytes_per_cell(setup: &MinorCycleSetup<'_>) -> u64 {
+    if !super::pixels::reads_beam(setup) {
+        return 0;
+    }
+    size_of::<bool>() as u64
+        + if setup.primary_beam.is_some() {
+            casa_imaging_products::ANALYTIC_PRIMARY_BEAM_BYTES_PER_CELL
+        } else {
+            0
+        }
+}
+
 /// Heap bytes [`super::prepare_minor_cycle`] holds at most: the masks it
 /// materializes, what it records of every plane, and on each of the planes
 /// loaded at once on `workers`, the load and its measurement (the robust
 /// noise's two copies under `nsigma`, the PSF fit's single-precision copies
-/// for a plane not yet in `cache`). The PSF summaries it adds to `cache`
-/// are the run's ([`psf_cache_bytes`]).
+/// for a plane not yet in `cache`, and its `.pb` support). The PSF
+/// summaries it adds to `cache` are the run's ([`psf_cache_bytes`]).
 #[must_use]
 pub fn prepare_bytes(
     completion: &MajorCycleCompletion,
@@ -247,12 +262,13 @@ pub fn prepare_bytes_for(
     workers: usize,
 ) -> u64 {
     let measure = layout.shape.len() as u64
-        * if setup.nsigma > 0.0 {
+        * (if setup.nsigma > 0.0 {
             2 * size_of::<f64>() as u64
         } else {
             0
         }
-        .max(if fits { 2 * size_of::<f32>() as u64 } else { 0 });
+        .max(if fits { 2 * size_of::<f32>() as u64 } else { 0 })
+            + beam_bytes_per_cell(setup));
     mask_plans.materialize_bytes_for(
         |domain| layout.domains.get(domain).copied(),
         layout.channels_and_polarizations,
@@ -382,7 +398,7 @@ mod tests {
 
     use super::*;
 
-    fn setup(algorithm: ReconstructionAlgorithm) -> MinorCycleSetup {
+    fn setup(algorithm: ReconstructionAlgorithm) -> MinorCycleSetup<'static> {
         MinorCycleSetup {
             algorithm,
             accounting: HogbomIterationAccounting::Strict,
@@ -390,6 +406,8 @@ mod tests {
             nsigma: 0.0,
             noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
             automask: false,
+            primary_beam: None,
+            residual_pixel_mask: false,
         }
     }
 

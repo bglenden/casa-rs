@@ -17,9 +17,6 @@ use crate::normalization::{MosaicSensitivity, normalize_plane, normalized_psf_va
 use crate::plan::{AnalyticPrimaryBeamModel, PlannedMember};
 use crate::restore::{rescale_residual_to_beam, restore_model_plane};
 use crate::source::ContinuumProductInputs;
-use crate::taylor::{
-    analytic_alma_airy_primary_beam, analytic_evla_primary_beam, analytic_vla_primary_beam,
-};
 
 pub(crate) struct PlaneMemberRequest<'request, 'inputs, 'plane> {
     pub(crate) member: &'request PlannedMember,
@@ -367,45 +364,24 @@ fn primary_beam_plane(
     domain_role: &ImageDomainRole,
     plane: &FinalNormalPlaneReader<'_>,
 ) -> Result<Vec<f32>, ProductsError> {
-    match model {
-        Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
-            analytic_evla_primary_beam(inputs, domain_role, plane.shape(), plane.output_channel())
-        }
-        Some(AnalyticPrimaryBeamModel::CasaVlaBand) => {
-            analytic_vla_primary_beam(inputs, domain_role, plane.shape(), plane.output_channel())
-        }
-        Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => analytic_alma_airy_primary_beam(
-            inputs,
-            domain_role,
-            plane.shape(),
-            plane.output_channel(),
-            crate::taylor::CasaAlmaAiry::ALMA_12M,
-        ),
-        Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => analytic_alma_airy_primary_beam(
-            inputs,
-            domain_role,
-            plane.shape(),
-            plane.output_channel(),
-            crate::taylor::CasaAlmaAiry::ACA_7M,
-        ),
-        Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
-            let shape = plane.shape();
-            // A Stokes plane no correlation feeds has a zero sum of weights:
-            // CASA's weight image, and so its PB and the pixel mask taken
-            // from it, are zero there, though the sensitivity is shared.
-            let sum_weight = plane.sum_weight();
-            if !sum_weight.is_finite() || sum_weight <= 0.0 {
-                return Ok(vec![0.0; shape[0] * shape[1]]);
-            }
-            Ok(
-                MosaicSensitivity::try_new(&plane.read_sensitivity()?)?.map_or_else(
-                    || vec![0.0; shape[0] * shape[1]],
-                    |sensitivity| sensitivity.primary_beam(),
-                ),
-            )
-        }
-        None => unreachable!("planning refuses a PB product or mask without a primary-beam model"),
+    let model = model.expect("planning refuses a PB product or mask without a primary-beam model");
+    if let Some(beam) = inputs.analytic_primary_beam(model) {
+        return beam.plane(domain_role, plane.output_channel());
     }
+    let shape = plane.shape();
+    // A Stokes plane no correlation feeds has a zero sum of weights:
+    // CASA's weight image, and so its PB and the pixel mask taken from it,
+    // are zero there, though the sensitivity is shared.
+    let sum_weight = plane.sum_weight();
+    if !sum_weight.is_finite() || sum_weight <= 0.0 {
+        return Ok(vec![0.0; shape[0] * shape[1]]);
+    }
+    Ok(
+        MosaicSensitivity::try_new(&plane.read_sensitivity()?)?.map_or_else(
+            || vec![0.0; shape[0] * shape[1]],
+            |sensitivity| sensitivity.primary_beam(),
+        ),
+    )
 }
 
 fn correct_primary_beam(
