@@ -1,5 +1,5 @@
 {
- "note": "#818: mosweight=True on a mosaic cube's per-channel density (BriggsCubeWeightor's multiField), against CASA 6.7.6.14, with tools/casa-compat/tclean_case_matrix.py. The ALMA cases take test_mosaic_cube.test_mosaic_briggsbwtaper's geometry (three fields, one LSRK window of three channels); the EVLA cases take test_mosaic_cube's two-field geometry (three one-channel TOPO windows). The mosweight=False rows weigh one density over every field, as a baseline.",
+ "note": "#818: mosweight=True on a mosaic cube's per-channel density (BriggsCubeWeightor's multiField), against CASA 6.7.6.14, with tools/casa-compat/tclean_case_matrix.py. The ALMA cases take test_mosaic_cube.test_mosaic_briggsbwtaper's geometry (three fields, one LSRK window of three channels); the EVLA cases take test_mosaic_cube's two-field geometry (three one-channel TOPO windows). The mosweight=False rows weigh one density over every field, as a baseline. The probe_ cases attribute the differences: one field imaged at its own centre and at its neighbour's, and the EVLA geometry under natural, standard and single-field mosaic weighting.",
  "inputs": {
   "alma": "unittest/tclean/refim_alma_mosaic.ms",
   "evla": "unittest/tclean/refim_oneshiftpoint.mosaic.ms"
@@ -14,8 +14,14 @@
    "vis": "alma",
    "imagename": "img",
    "params": {
-    "imsize": [350, 280],
-    "cell": [0.06, 0.06],
+    "imsize": [
+     350,
+     280
+    ],
+    "cell": [
+     0.06,
+     0.06
+    ],
     "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
     "niter": 0,
     "weighting": "briggs",
@@ -27,8 +33,14 @@
    "vis": "alma",
    "imagename": "img",
    "params": {
-    "imsize": [350, 280],
-    "cell": [0.06, 0.06],
+    "imsize": [
+     350,
+     280
+    ],
+    "cell": [
+     0.06,
+     0.06
+    ],
     "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
     "niter": 0,
     "weighting": "briggs",
@@ -40,8 +52,14 @@
    "vis": "alma",
    "imagename": "img",
    "params": {
-    "imsize": [350, 280],
-    "cell": [0.06, 0.06],
+    "imsize": [
+     350,
+     280
+    ],
+    "cell": [
+     0.06,
+     0.06
+    ],
     "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
     "niter": 0,
     "weighting": "uniform",
@@ -52,8 +70,14 @@
    "vis": "alma",
    "imagename": "img",
    "params": {
-    "imsize": [350, 280],
-    "cell": [0.06, 0.06],
+    "imsize": [
+     350,
+     280
+    ],
+    "cell": [
+     0.06,
+     0.06
+    ],
     "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
     "niter": 0,
     "weighting": "briggsabs",
@@ -66,8 +90,14 @@
    "vis": "alma",
    "imagename": "img",
    "params": {
-    "imsize": [350, 280],
-    "cell": [0.06, 0.06],
+    "imsize": [
+     350,
+     280
+    ],
+    "cell": [
+     0.06,
+     0.06
+    ],
     "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
     "niter": 0,
     "weighting": "briggs",
@@ -80,8 +110,14 @@
    "vis": "alma",
    "imagename": "img",
    "params": {
-    "imsize": [350, 280],
-    "cell": [0.06, 0.06],
+    "imsize": [
+     350,
+     280
+    ],
+    "cell": [
+     0.06,
+     0.06
+    ],
     "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
     "field": "0,2",
     "niter": 0,
@@ -94,8 +130,14 @@
    "vis": "alma",
    "imagename": "img",
    "params": {
-    "imsize": [350, 280],
-    "cell": [0.06, 0.06],
+    "imsize": [
+     350,
+     280
+    ],
+    "cell": [
+     0.06,
+     0.06
+    ],
     "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
     "niter": 100,
     "weighting": "briggs",
@@ -148,6 +190,157 @@
     "weighting": "briggs",
     "robust": 0.5,
     "mosweight": false
+   }
+  },
+  "probe_alma_field0_own_centre": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": [
+     350,
+     280
+    ],
+    "cell": [
+     0.06,
+     0.06
+    ],
+    "niter": 0,
+    "weighting": "uniform",
+    "mosweight": true,
+    "field": "0",
+    "phasecenter": "J2000 12:01:51.903005 -18.51.49.94373"
+   }
+  },
+  "probe_alma_field0_off_centre": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": [
+     350,
+     280
+    ],
+    "cell": [
+     0.06,
+     0.06
+    ],
+    "niter": 0,
+    "weighting": "uniform",
+    "mosweight": true,
+    "field": "0",
+    "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369"
+   }
+  },
+  "probe_alma_field1_own_centre": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": [
+     350,
+     280
+    ],
+    "cell": [
+     0.06,
+     0.06
+    ],
+    "niter": 0,
+    "weighting": "uniform",
+    "mosweight": true,
+    "field": "1",
+    "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369"
+   }
+  },
+  "probe_alma_field1_own_centre_briggs": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": [
+     350,
+     280
+    ],
+    "cell": [
+     0.06,
+     0.06
+    ],
+    "niter": 0,
+    "weighting": "briggs",
+    "mosweight": true,
+    "field": "1",
+    "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
+    "robust": 0.5
+   }
+  },
+  "probe_evla_natural_two_fields": {
+   "vis": "evla",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "10.0arcsec",
+    "spw": "*",
+    "pblimit": 0.1,
+    "niter": 0,
+    "field": "0,1",
+    "phasecenter": "J2000 19:59:28.500000 +40.40.01.50000",
+    "weighting": "natural"
+   }
+  },
+  "probe_evla_standard_uniform_field0": {
+   "vis": "evla",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "10.0arcsec",
+    "spw": "*",
+    "pblimit": 0.1,
+    "niter": 0,
+    "gridder": "standard",
+    "field": "0",
+    "phasecenter": "J2000 19:59:28.500000 +40.40.01.50000",
+    "weighting": "uniform"
+   }
+  },
+  "probe_evla_uniform_mw_field0": {
+   "vis": "evla",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "10.0arcsec",
+    "spw": "*",
+    "pblimit": 0.1,
+    "niter": 0,
+    "field": "0",
+    "phasecenter": "J2000 19:59:28.500000 +40.40.01.50000",
+    "weighting": "uniform",
+    "mosweight": true
+   }
+  },
+  "probe_evla_uniform_mwF_field0": {
+   "vis": "evla",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "10.0arcsec",
+    "spw": "*",
+    "pblimit": 0.1,
+    "niter": 0,
+    "field": "0",
+    "phasecenter": "J2000 19:59:28.500000 +40.40.01.50000",
+    "weighting": "uniform",
+    "mosweight": false
+   }
+  },
+  "probe_evla_uniform_mw_field1_own_centre": {
+   "vis": "evla",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "10.0arcsec",
+    "spw": "*",
+    "pblimit": 0.1,
+    "niter": 0,
+    "field": "1",
+    "phasecenter": "J2000 19:59:28.500000 +41.00.01.50000",
+    "weighting": "uniform",
+    "mosweight": true
    }
   }
  }

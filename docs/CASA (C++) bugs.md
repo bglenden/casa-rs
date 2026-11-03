@@ -476,6 +476,35 @@ rule at the MeasurementSet uvw, as `VisImagingWeight` does
 own field centre agree with CASA either way; off-centre and multi-field cubes
 under a density weighting differ from CASA's weights by this mechanism.
 
+Measured on a mosaic (2026-11-03, #818, CASA 6.7.6.14, CPU f64). On a mosaic
+a row's uvw is `MosaicFT`'s reprojection (`girarUVW`, in which w does not
+reach u and v), so casa-rs bins and looks up a mosaic cube's density there,
+while CASA bins at `GridFT`'s rotation and looks up at the MeasurementSet
+uvw. On `refim_alma_mosaic.ms` (three fields 7.5″ apart, three channels,
+350×280 at 0.06″, `mosweight=True`, where each field's density is its own,
+`BriggsCubeWeightor`'s `multiField`):
+
+- one field imaged at its own centre agrees with CASA on every product, the
+  PSF to 1e-7 and `.sumwt` exactly, under uniform and Briggs weighting;
+- the same field imaged at its neighbour's centre differs, uniform weighting
+  PSF NRMS 2.6e-2 and `.sumwt` 4.1e-4: 4,135 of its 130,032 (row, channel)
+  weights differ from CASA's `IMAGING_WEIGHT`;
+- an evidence-only build that grids the density at `GridFT`'s rotation of the
+  MeasurementSet uvw and looks it up at the MeasurementSet uvw, as CASA does,
+  matches all 130,032 of CASA's weights to 4.2e-10;
+- the three fields together, at the test's centre (the middle field's): PSF
+  NRMS 9.3e-3 under uniform weighting, 5.6e-4 under Briggs 0.5 (2.6e-2 is
+  sparser: each field's density holds a third of the samples); with one
+  density over all fields (`mosweight=False`), Briggs PSF 3.9e-4.
+
+So this ALMA mosaic cube's differences under a density weighting, with or
+without `mosweight`, are this entry's mechanism (#789 records the
+seven-pointing case). An EVLA mosaic cube (`refim_oneshiftpoint.mosaic.ms`,
+three one-channel windows) differs from CASA under uniform weighting even
+for one field at its own centre, with or without `mosweight` (PSF NRMS
+3.6e-3, ten `.pb` mask pixels), where the standard gridder agrees to 1e-7;
+this mechanism does not explain it, and it stays open in #789.
+
 ## Continuum `briggsabs` at robust 0 and noise 0 weighs every visibility infinite
 
 - Date noted: 2026-11-02
