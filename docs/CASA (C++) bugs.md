@@ -505,6 +505,18 @@ for one field at its own centre, with or without `mosweight` (PSF NRMS
 3.6e-3, ten `.pb` mask pixels), where the standard gridder agrees to 1e-7;
 this mechanism does not explain it, and it stays open in #789.
 
+`simanalyze`'s own cube images meet it with one pointing too (2026-11-03,
+the simulation round trip, #980). `simobserve` centres a pointing on the
+model's centre pixel. For `core5ps.skymodel`'s 1873 pixels of 0.043″, that is
+half a pixel, 0.0215″ west and north, from the reference direction
+`simanalyze` images at. CASA's `simobserve` and casa-rs's put it at the same
+direction. Under `simanalyze`'s Briggs call on a 4-channel cube, the PSF
+differs from CASA's by 3.4e-4 and `.sumwt` by 1.2e-5 at that phase centre.
+At the pointing's own direction, they agree to 1.2e-7 and 5.6e-8, and the
+clean matches iteration for iteration (900, model 1.7e-7). The mosaic of
+the same cube differs by 3.3e-3 under Briggs and agrees within 1e-6 under
+natural weighting.
+
 ## Continuum `briggsabs` at robust 0 and noise 0 weighs every visibility infinite
 
 - Date noted: 2026-11-02
@@ -3328,3 +3340,6 @@ and the common-beam search then never ended. casa-rs works in radians where
 CASA works in arcseconds; the common beams agree within one of the algorithm's
 0.1% growth steps (`casa-numerics` law
 `the_common_beam_of_sub_arcsecond_beams_is_found_whatever_the_unit`).
+The two searches can stop at different enclosing beams. For four nearly
+equal channel beams (axis ratio 1.17, the simulation round trip's cube,
+2026-11-03), the axes differ by 2.2e-4 and the position angle by 0.036°.

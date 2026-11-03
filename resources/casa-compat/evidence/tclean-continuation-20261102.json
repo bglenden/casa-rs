@@ -21,6 +21,7 @@
   "selection": "every resolved case the 74a3b85 classification refused for restart, calcres or calcpsf, and every other sequence (multi-call) case",
   "before": "matrix casa-tests-r2-74a3b856f0-20261102T160716Z (the lead's run at 74a3b85)",
   "run_directory": "/Users/brianglendenning/ext/SoftwareProjects/casa-rs-cloud/matrix/a758-continuation-4fe0e56-20261102T180759Z",
+  "archive": {"nas": "/Volumes/home/casa-rs/tclean/20261103/tclean-matrix-rounds1-4-and-continuation.tar", "sha256": "97fdb3ddf9699ff407a91d30ce62fc6183f71ed7ee87905f1a2c0af7600970e0", "members": "receipt.json, driver logs and case lists of both run directories (and of the lead's rounds 1-4); the run directories themselves were removed 2026-11-03"},
   "limits": "exact image-product inventory, masks and finite support; NRMS <= 1e-3, .sumwt within 5e-5; WCS, units, beams; exact iterdone/nmajordone/stopcode; maxpsfsidelobe and cyclethreshold 1e-6 relative plus 1e-8 absolute",
   "summary": {
     "class_before": 31,
