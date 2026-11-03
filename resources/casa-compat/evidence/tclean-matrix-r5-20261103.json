@@ -1671,5 +1671,145 @@
    "scope": "NOW",
    "passed": true
   }
+ },
+ "supplement_r5b": {
+  "purpose": "the cases #1083 (CRTF ranges over part of a cube) and #1084 (mosweight on a mosaic cube's per-channel density) changed, after round 5's revision",
+  "native_revision": "24d8125b83 (main 53e504e, through #1084, plus the matrix tools)",
+  "selection": "--include-skipped --case-prefix test_mosaic_cube. test_mask.test_mask_2.2 test_mask.test_mask_1.2 test_widefield.test_widefield_mosaicft_cube.1 test_onefield.test_onefield_pcwdT_and_pcwdF.1",
+  "receipt_sha256": "689f28224ad9592d76e3a87ee4d59ed6de846f4d20c30db83a878214454d0486",
+  "archive": {
+   "nas": "/Volumes/home/casa-rs/tclean/20261103/tclean-final-supplement-and-roundtrip-24d8125b83.tar",
+   "sha256": "0ddbf57906afaadd2716a1bd00d38003b5286a04a1bcac63613507bbb5a091ab"
+  },
+  "totals": {
+   "cases": 23,
+   "passed": 17,
+   "NOW": {
+    "cases": 17,
+    "passed": 17
+   },
+   "LATER": {
+    "cases": 6,
+    "passed": 0
+   }
+  },
+  "note": "test_mosaic_cube.test_mosaic_briggsbwtaper.1 and .2 are NOW cases CASA's own suite skips (casa_skip); they run with --include-skipped and pass",
+  "cases": {
+   "test_onefield.test_onefield_pcwdT_and_pcwdF.1": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mask.test_mask_1.2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mask.test_mask_2.2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_widefield.test_widefield_mosaicft_cube.1": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_mosaic_briggsbwtaper.1": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_mosaic_briggsbwtaper.2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_cube_standard_onefield.1+2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_cube_standard_twofield.1+2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield.1+2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_twofield.1+2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_cube_mosaic_cbFalse_mwTrue_onefield.1+2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_cube_mosaic_cbFalse_mwTrue_twofield.1+2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield.1+2": {
+    "scope": "LATER",
+    "passed": false,
+    "attribution": "LATER: refused naming #719 (AW cubes), as the scope expects"
+   },
+   "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield.1+2": {
+    "scope": "LATER",
+    "passed": false,
+    "attribution": "LATER: refused naming #719 (AW cubes), as the scope expects"
+   },
+   "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_onefield.1+2": {
+    "scope": "LATER",
+    "passed": false,
+    "attribution": "LATER: refused naming #719 (AW cubes), as the scope expects"
+   },
+   "test_mosaic_cube.test_cube_awproject_cbFalse_mwTrue_twofield.1+2": {
+    "scope": "LATER",
+    "passed": false,
+    "attribution": "LATER: refused naming #719 (AW cubes), as the scope expects"
+   },
+   "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_onefield_upTrue.1+2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_cube_mosaic_cbFalse_mwFalse_twofield_upTrue.1+2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_onefield_upTrue.1+2": {
+    "scope": "LATER",
+    "passed": false,
+    "attribution": "LATER: refused naming #719 (AW cubes), as the scope expects"
+   },
+   "test_mosaic_cube.test_cube_awproject_cbFalse_mwFalse_twofield_upTrue.1+2": {
+    "scope": "LATER",
+    "passed": false,
+    "attribution": "LATER: refused naming #719 (AW cubes), as the scope expects"
+   },
+   "test_mosaic_cube.test_cube_wproj_onefield.1+2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_cube_wproj_onefield_autowprojplanes.1+2": {
+    "scope": "NOW",
+    "passed": true
+   },
+   "test_mosaic_cube.test_cube_wproj_twofield.1+2": {
+    "scope": "NOW",
+    "passed": true
+   }
+  }
+ },
+ "final_now": {
+  "summary": "NOW at the final code (round 5, with round 5b replacing the cases #1083 and #1084 changed): 243 of 251 pass; the other 8 are recorded divergences",
+  "recorded_divergences": {
+   "test_onefield.test_onefield_pcwdT_and_pcwdF.2": "recorded divergence: CASA's .gridwt scratch file in the product inventory",
+   "test_iterbot.test_iterbot_cube_nsigma.1": "recorded divergence: the cube nsigma f32 floor",
+   "test_iterbot.test_iterbot_fullstokes_cube_fullsummary_true.1": "recorded divergence: the full-Stokes cube channel-0 near-tie",
+   "test_iterbot.test_iterbot_fullstokes_cube_fullsummary_false.1": "recorded divergence: the full-Stokes cube channel-0 near-tie",
+   "test_multifield.test_multifield_facets_mfs.1": "recorded CASA bug: the facet mask",
+   "test_cube.test_cube_5.1": "recorded divergence: test_cube_5's floor(width) tie",
+   "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.3": "recorded divergence: CASA's single-precision mosaic weight image (#1077), 2 mask pixels within 1.3e-7 of pblimit",
+   "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.4": "recorded divergence: CASA's single-precision mosaic weight image (#1077), 1 mask pixel"
+  },
+  "also_passing": [
+   "test_mosaic_cube.test_mosaic_briggsbwtaper.1",
+   "test_mosaic_cube.test_mosaic_briggsbwtaper.2"
+  ]
  }
 }
