@@ -59,9 +59,10 @@ CUBE = "@cube4"
 
 # name: (observations [(project suffix, simobserve overrides)], imaging).
 SCENARIOS = {
-    # One 12 m pointing: the standard gridder.
+    # One 12 m pointing (a map smaller than the beam): the standard
+    # gridder. An unset map covers the 80-arcsec model with a mosaic.
     "alma12_single": (
-        [("12m", {"antennalist": "alma.cycle10.1.cfg", "mapsize": ["", ""]})],
+        [("12m", {"antennalist": "alma.cycle10.1.cfg", "mapsize": ["1arcsec", "1arcsec"]})],
         {"niter": 500, "threshold": "0.1mJy", "weighting": "natural"},
     ),
     # A 12 m mosaic: several fields, so the mosaic gridder.
@@ -85,7 +86,7 @@ SCENARIOS = {
     ),
     # One pointing of a 4-channel model: simanalyze's cube.
     "alma12_single_cube": (
-        [("12m", {"skymodel": CUBE, "antennalist": "alma.cycle10.1.cfg", "mapsize": ["", ""]})],
+        [("12m", {"skymodel": CUBE, "antennalist": "alma.cycle10.1.cfg", "mapsize": ["1arcsec", "1arcsec"]})],
         {"niter": 500, "threshold": "0.1mJy", "weighting": "briggs"},
     ),
     # A mosaic of the 4-channel model: a cube mosaic, whose Briggs density
