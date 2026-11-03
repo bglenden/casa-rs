@@ -15,7 +15,8 @@ Python:
 Each scenario of `SCENARIOS` runs casa-rs's `simobserve` task binary
 (`crates/casars-simulation`, through `--json-run`) noise-free on a sky
 model from casatestdata, with an antenna configuration from CASA's data
-directory, in `OUT/sim/<scenario>`. The tclean call is CASA's own:
+directory (by path, through CASA's `ctsys.resolve`), in
+`OUT/sim/<scenario>`. The tclean call is CASA's own:
 `simutil.imtclean` with `dryrun=True` writes the call `simanalyze` would
 make to `<imagename>.tclean.last`, with simanalyze's choices. Those
 choices are the gridder (standard for one source field, mosaic for
@@ -88,6 +89,9 @@ def simulate(name: str, suffix: str, overrides: dict, args) -> str:
     project = f"{name}_{suffix}"
     params = dict(CORE, **overrides)
     params["skymodel"] = os.path.join(args.casatestdata, params["skymodel"])
+    # The configuration from CASA's own data tree, by path, whatever data
+    # directories casa-rs's simobserve finds.
+    params["antennalist"] = antenna_list(params["antennalist"])
     params.update(project=project, graphics="none", overwrite=True)
     request = os.path.join(work, project + ".json")
     with open(request, "w", encoding="utf-8") as handle:
@@ -109,6 +113,28 @@ def simulate(name: str, suffix: str, overrides: dict, args) -> str:
     if not os.path.isdir(os.path.join(args.out, "sim", ms)):
         raise SystemExit(f"{project}: no MeasurementSet {ms}")
     return ms
+
+
+def antenna_list(name: str) -> str:
+    """CASA's `alma/simmos/<name>`, as `ctsys.resolve` finds it."""
+    from casatools import ctsys
+
+    path = ctsys.resolve(os.path.join("alma", "simmos", name))
+    if not os.path.isfile(path):
+        raise SystemExit(f"CASA's data has no antenna configuration {name}")
+    return path
+
+
+def literal(text: str):
+    """A `.tclean.last` value, written by `repr`: a Python literal, or a
+    NumPy scalar or array, as plain JSON values."""
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        import numpy
+
+        value = eval(text, {"__builtins__": {}}, {"np": numpy, "numpy": numpy, "array": numpy.array})
+        return value.tolist() if hasattr(value, "tolist") else value
 
 
 def source_fields(ms: str) -> int:
@@ -179,7 +205,7 @@ def simanalyze_call(name: str, ms_paths: list[str], imaging: dict, args) -> dict
         if line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        call[key.strip()] = ast.literal_eval(value.strip())
+        call[key.strip()] = literal(value.strip())
     return call
 
 
