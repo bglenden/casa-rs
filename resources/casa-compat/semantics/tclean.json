@@ -504,10 +504,11 @@
     },
     "normtype": {
       "status": "Implemented",
-      "scope": "Passed only to mosaic/AW; pbsquare refused (issue 823); other gridders ignore it.",
+      "scope": "Passed only to mosaic/AW; other gridders ignore it. pbsquare divides the residual by the PB peak squared everywhere and takes the model to and from apparent units through PB², zero where PB² is not above |pblimit| (SIImageStore and SIImageStoreMultiTerm divideResidualByWeight, divideModelByWeight, multiplyModelByWeight; #1061).",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "pbsquare-20261103"
       ],
       "behaviors": [
         "gridders"
@@ -1814,6 +1815,22 @@
         "crates/casa-imaging-runtime/tests/beam_statistics.rs",
         "crates/casa-imaging-runtime/tests/minor_cycle_memory.rs",
         "crates/casa-imaging-products/tests/analytic_primary_beam.rs",
+        "tools/casa-compat/tclean_case_matrix.py"
+      ]
+    },
+    "pbsquare-20261103": {
+      "kind": "CASA tclean ad hoc mosaic cases and the main matrix's pbsquare case, against a baseline build; T0 normalization law",
+      "state": "measured: 3 ad hoc and 1 matrix pbsquare case pass (worst NRMS 5.1e-5), each refused at the baseline; 4 flat-noise siblings pass",
+      "source_revision": "ce8c7d2b67a6a2c52e41016bf76dd8ab0b1a7fc1",
+      "revision": "cf872db418c7988c0e919b2fca5a973da94702f6",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with resources/casa-compat/tclean-pb-masks-cases.json, and with tclean-casa-test-cases.json --case test_widefield.test_widefield_mosaicft_mtmfs_pbsquare.1 and four test_widefield mosaic cases",
+      "receipt": "resources/casa-compat/evidence/tclean-pbsquare-20261103.json",
+      "scope": "normtype='pbsquare' (#1061): the residual divided by the PB peak squared everywhere, the model taken to and from apparent units through PB squared where that exceeds |pblimit|, single-term, per cube channel, with pbcor and as an MT-MFS Taylor family (test_widefield_mosaicft_mtmfs_pbsquare.1). usemask='pb' and pbmask stay refused naming #1061.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-pbsquare-20261103.json",
+        "resources/casa-compat/tclean-pb-masks-cases.json",
+        "crates/casa-imaging-products/src/normalization.rs",
         "tools/casa-compat/tclean_case_matrix.py"
       ]
     },

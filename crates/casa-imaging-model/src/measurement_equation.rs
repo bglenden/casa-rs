@@ -526,7 +526,9 @@ pub(crate) fn compile_product_boundary(
     if pb_corrected
         || matches!(
             normalization,
-            ProductNormalization::FlatNoise | ProductNormalization::FlatSky
+            ProductNormalization::FlatNoise
+                | ProductNormalization::FlatSky
+                | ProductNormalization::PbSquare
         )
     {
         operations.push(ProductBoundaryOperation::BlankInvalid);

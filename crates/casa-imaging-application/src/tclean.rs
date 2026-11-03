@@ -730,9 +730,6 @@ impl<'a> Tclean<'a> {
         }
         let normtype = self.text("normtype")?;
         if matches!(modes.gridder, "mosaic" | "awproject") {
-            if normtype == "pbsquare" {
-                return Err(TcleanRefusal::not_yet("normtype", "'pbsquare'", 1061));
-            }
             self.set("normtype", normtype);
         }
         // CASA weighs density by field only for the gridder named mosaic

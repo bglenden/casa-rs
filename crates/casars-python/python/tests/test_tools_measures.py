@@ -285,6 +285,24 @@ def test_observatories_are_the_measures_datas() -> None:
                                            6372960.257723439), rel=1e-14)
 
 
+#: CASA 6.7.6.14's me.observatory for every observatory, with its table row
+#: (tools/casa-compat/observatories_oracle.py).
+OBSERVATORIES = json.loads(
+    (Path(__file__).resolve().parent / "data" / "casa_observatories.json").read_text(encoding="utf-8")
+)["observatories"]
+
+
+@needs_measures_data
+@pytest.mark.parametrize("name", sorted(OBSERVATORIES))
+def test_every_observatory_is_where_casa_places_it(name: str) -> None:
+    # casacore reads Long, Lat and Height for an ITRF entry too, Height its
+    # radius, and never X, Y and Z, which disagree for ten entries (#1106).
+    expected = OBSERVATORIES[name]["position"]
+    close(measures().observatory(name),
+          position(expected["refer"], *(expected[key]["value"] for key in ("m0", "m1", "m2"))),
+          rel=1e-14, abs_=1e-15)
+
+
 @needs_measures_data
 def test_unknown_names_log_and_return_an_empty_record(caplog: pytest.LogCaptureFixture) -> None:
     me = measures()

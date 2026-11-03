@@ -700,7 +700,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `rotatepastep` | `360.0` | `360.0`; `rotatepastep` → `rotatepastep` | Default only | Read and ignored; non-default values catalog-refused for applicable AW families (issue 980). [gridders](#tclean-behavior-gridders)<br>Catalog domain: `float`; Non-default refused when (gridder='awproject' or gridder='awprojectft') (#1070) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `pointingoffsetsigdev` | `[]` | `[]`; `pointingoffsetsigdev` → `pointingoffsetsigdev` | Implemented | Scalar/list numbers converted to comma text for AW; otherwise ignored. [gridders](#tclean-behavior-gridders)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `pblimit` | `0.2` | `0.2`; `pblimit` → `pblimit` | Implemented | Copied; request requires non-zero magnitude below 1. Where it is not negative and the run has a .pb, the residual carries the .pb's support (pb > pblimit) as its pixel mask, and the minor cycle's peaks and automatic mask read only those pixels (SIImageStore::divideResidualByWeight, getPeakResidual, #1079); a negative pblimit leaves the residual unmasked. [gridders](#tclean-behavior-gridders)<br>Catalog domain: `float` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [pb-statistics-20261103](#tclean-evidence-pb-statistics-20261103) |
-| `normtype` | `'flatnoise'` | `'flatnoise'`; `normtype` → `normtype` | Implemented | Passed only to mosaic/AW; pbsquare refused (issue 823); other gridders ignore it. [gridders](#tclean-behavior-gridders)<br>Catalog domain: `flatnoise`, `flatsky`, `pbsquare` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
+| `normtype` | `'flatnoise'` | `'flatnoise'`; `normtype` → `normtype` | Implemented | Passed only to mosaic/AW; other gridders ignore it. pbsquare divides the residual by the PB peak squared everywhere and takes the model to and from apparent units through PB², zero where PB² is not above \|pblimit\| (SIImageStore and SIImageStoreMultiTerm divideResidualByWeight, divideModelByWeight, multiplyModelByWeight; #1061). [gridders](#tclean-behavior-gridders)<br>Catalog domain: `flatnoise`, `flatsky`, `pbsquare` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [pbsquare-20261103](#tclean-evidence-pbsquare-20261103) |
 | `deconvolver` | `'hogbom'` | `'hogbom'`; `deconvolver` → `deconvolver` | Partial | hogbom/clark/multiscale/mtmfs pass; asp refused with issue 223; other CASA algorithms refused with issue 823. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `asp`, `clark`, `clark_exp`, `clarkstokes`, `clarkstokes_exp`, `hogbom`, `mem`, `mtmfs`, `multiscale` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `scales` | `[]` | `[]`; `scales` → `scales` | Partial | Number list; forwarded only for multiscale/mtmfs, otherwise normalized to none; request disallows negative scales. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `nterms` | `2` | `2`; `nterms` → `nterms` | Partial | Used only by mtmfs; other deconvolvers force one. mtmfs nterms=1 refused (issue 980); request enforces >1 exactly for mtmfs. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `integer` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
@@ -1327,6 +1327,19 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Command: `tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with resources/casa-compat/tclean-pb-statistics-cases.json on the branch and baseline (353bede5a7) binaries, and with tclean-casa-test-cases.json on 39 NOW cases`.
 - Receipt: `resources/casa-compat/evidence/tclean-pb-statistics-20261103.json`.
 
+<a id="tclean-evidence-pbsquare-20261103"></a>
+##### pbsquare-20261103
+
+**CASA tclean ad hoc mosaic cases and the main matrix's pbsquare case, against a baseline build; T0 normalization law — measured: 3 ad hoc and 1 matrix pbsquare case pass (worst NRMS 5.1e-5), each refused at the baseline; 4 flat-noise siblings pass.** normtype='pbsquare' (#1061): the residual divided by the PB peak squared everywhere, the model taken to and from apparent units through PB squared where that exceeds |pblimit|, single-term, per cube channel, with pbcor and as an MT-MFS Taylor family (test_widefield_mosaicft_mtmfs_pbsquare.1). usemask='pb' and pbmask stay refused naming #1061.
+
+- [resources/casa-compat/evidence/tclean-pbsquare-20261103.json](https://github.com/bglenden/casa-rs/blob/ce8c7d2b67a6a2c52e41016bf76dd8ab0b1a7fc1/resources/casa-compat/evidence/tclean-pbsquare-20261103.json)
+- [resources/casa-compat/tclean-pb-masks-cases.json](https://github.com/bglenden/casa-rs/blob/ce8c7d2b67a6a2c52e41016bf76dd8ab0b1a7fc1/resources/casa-compat/tclean-pb-masks-cases.json)
+- [crates/casa-imaging-products/src/normalization.rs](https://github.com/bglenden/casa-rs/blob/ce8c7d2b67a6a2c52e41016bf76dd8ab0b1a7fc1/crates/casa-imaging-products/src/normalization.rs)
+- [tools/casa-compat/tclean_case_matrix.py](https://github.com/bglenden/casa-rs/blob/ce8c7d2b67a6a2c52e41016bf76dd8ab0b1a7fc1/tools/casa-compat/tclean_case_matrix.py)
+- Revision: `cf872db418c7988c0e919b2fca5a973da94702f6`; CASA: `casatasks 6.7.6.14; casatools 6.7.6-14`.
+- Command: `tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with resources/casa-compat/tclean-pb-masks-cases.json, and with tclean-casa-test-cases.json --case test_widefield.test_widefield_mosaicft_mtmfs_pbsquare.1 and four test_widefield mosaic cases`.
+- Receipt: `resources/casa-compat/evidence/tclean-pbsquare-20261103.json`.
+
 <a id="tclean-evidence-projections-20261103"></a>
 ##### projections-20261103
 
@@ -1598,7 +1611,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `linelist` |  | Implemented | The rest lines of the measures data, their names joined by spaces in the table's order, with CASA's deprecation warning. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists) |
 | `listcodes` | `ms` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `measure` | `v, rf, off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `observatory` | `name='ALMA'` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `observatory` | `name='ALMA'` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [casa-observatories](#measures-evidence-casa-observatories) |
 | `obslist` |  | Implemented | The observatories of the measures data, by name in the table's order, as CASA lists them; CASA's readantenna, sensitivity and itrf2locname, and simobserve, call it. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists), [casa-values](#measures-evidence-casa-values) |
 | `posangle` | `m1, m2` | Implemented | Angular separation and position angle, as casacore computes them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `position` | `rf='WGS84', v0=[], v1=[], v2=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
@@ -1721,6 +1734,13 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 ##### casa-lists
 
 **CASA-recorded values — measured.** Recorded from CASA 6.7.6-14 by measures_lists_oracle.py, with how CASA makes each list from its table. obslist and linelist equal CASA's character for character (the tables are the same in both data versions); sourcelist is checked against casa-rs's own Sources table, which its data version holds with more rows than CASA's 1139. Passes in the Python tests. me.obslist, me.sourcelist and me.linelist.
+
+- [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py)
+
+<a id="measures-evidence-casa-observatories"></a>
+##### casa-observatories
+
+**CASA-recorded values — measured.** Recorded from CASA 6.7.6-14 by observatories_oracle.py with each observatory's table row: me.observatory for all 59 observatories equals CASA's to 1e-14 relative, ITRF entries included, which casacore reads from Long, Lat and Height and not X, Y, Z (#1106). Passes in the Python tests. me.observatory for every name me.obslist gives.
 
 - [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py)
 

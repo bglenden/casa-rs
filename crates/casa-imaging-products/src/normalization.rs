@@ -12,7 +12,9 @@
 //! | residual, flat noise | ÷ (pbmax·√\|weight\|) where that exceeds pblimit·pbmax², else 0 | [`MosaicSensitivity::normalize`], [`MosaicSensitivity::normalize_weighted_residual_sample`] |
 //! | residual, flat sky, one term | ÷ weight where it exceeds pblimit²·pbmax², else 0 | the same |
 //! | residual, flat sky, Taylor family | ÷ weight where it exceeds \|pblimit\|·pbmax², else 0 | [`MosaicSensitivity::normalize_weighted_residual_sample`] |
+//! | residual, pbsquare | ÷ pbmax² everywhere | the same |
 //! | model, flat noise | × PB before prediction, ÷ PB after the solve | [`MosaicSensitivity::physical_to_apparent`], [`MosaicSensitivity::apparent_to_physical`] |
+//! | model, pbsquare | × PB², ÷ PB², where PB² exceeds \|pblimit\|, else 0 | the same |
 //! | pbcor | restored ÷ PB where PB > pblimit | [`MosaicSensitivity::correct_primary_beam`] |
 //!
 //! The PB and residual rules are `SIImageStore::makePBFromWeight` and
@@ -82,7 +84,8 @@ pub struct MinorCycleImageResponse {
 }
 
 impl MinorCycleImageResponse {
-    /// Bind CASA's flat-noise or flat-sky image units and PB support.
+    /// Bind CASA's flat-noise, flat-sky or pbsquare image units and PB
+    /// support.
     ///
     /// # Errors
     ///
@@ -93,7 +96,9 @@ impl MinorCycleImageResponse {
     ) -> Result<Self, ProductsError> {
         if !matches!(
             normalization,
-            ProductNormalization::FlatNoise | ProductNormalization::FlatSky
+            ProductNormalization::FlatNoise
+                | ProductNormalization::FlatSky
+                | ProductNormalization::PbSquare
         ) {
             return Err(ProductsError::UnsupportedNormalization);
         }
@@ -119,9 +124,10 @@ impl MinorCycleImageResponse {
 /// One plane's direction-dependent sensitivity, borrowed from the normal
 /// state.
 ///
-/// It derives CASA's unit-peak PB, the flat-noise and flat-sky residuals,
-/// PB support and the apparent and physical model. It owns no CLEAN mask
-/// and leaves the normal state unchanged.
+/// It derives CASA's unit-peak PB, the flat-noise, flat-sky and pbsquare
+/// residuals, PB support and the apparent and physical model, through the
+/// PB (flat noise) or PB² (pbsquare). It owns no CLEAN mask and leaves the
+/// normal state unchanged.
 #[derive(Debug, Clone, Copy)]
 pub struct MosaicSensitivity<'a> {
     values: &'a [f64],
@@ -217,6 +223,15 @@ impl<'a> MosaicSensitivity<'a> {
         Self::finite(f64::from(pb))
     }
 
+    /// The beam squared pbsquare converts the model with, as CASA's Float
+    /// stages form it: `abs(weight) / PBScale²`
+    /// (`SIImageStore::divideModelByWeight`, `multiplyModelByWeight`).
+    fn model_primary_beam_squared_at(self, index: usize) -> Result<f64, ProductsError> {
+        let weight = (self.values[index] / self.normal_sum_weight) as f32;
+        let square = weight.abs() / (self.model_pb_scale * self.model_pb_scale);
+        Self::finite(f64::from(square))
+    }
+
     /// Build CASA's unit-peak PB, `sqrt(|sensitivity| / peak)`.
     #[must_use]
     pub fn primary_beam(self) -> Vec<f32> {
@@ -247,13 +262,14 @@ impl<'a> MosaicSensitivity<'a> {
             .collect())
     }
 
-    /// Normalize a raw residual plane to flat noise or flat sky.
+    /// Normalize a raw residual plane to flat noise, flat sky or pbsquare.
     ///
     /// This is [`Self::normalize_weighted_residual_sample`] in the raw
     /// sensitivity's units, where every sum of weights cancels: flat noise
     /// divides by √(|sensitivity|·peak) where that exceeds cutoff·peak, flat
     /// sky by the sensitivity where it exceeds cutoff²·peak, and the
-    /// residual is zero elsewhere.
+    /// residual is zero elsewhere; pbsquare divides every pixel by the
+    /// peak.
     ///
     /// # Errors
     ///
@@ -283,6 +299,9 @@ impl<'a> MosaicSensitivity<'a> {
                         ((sensitivity.abs() * self.peak).sqrt(), limit * self.peak)
                     }
                     ProductNormalization::FlatSky => (*sensitivity, limit * limit * self.peak),
+                    ProductNormalization::PbSquare => {
+                        return Ok(Self::finite(f64::from(*value) / self.peak)? as f32);
+                    }
                     ProductNormalization::UnitResponse => {
                         return Err(ProductsError::UnsupportedNormalization);
                     }
@@ -306,7 +325,7 @@ impl<'a> MosaicSensitivity<'a> {
     /// `weight` where it exceeds `cutoff^2 * PBScale^2` for one term
     /// (PB > cutoff) and `cutoff * PBScale^2` for a Taylor family
     /// (PB > √cutoff), as CASA's two image stores do. Elsewhere the residual
-    /// is zero.
+    /// is zero. Pbsquare divides every pixel by `PBScale^2`, with no cutoff.
     ///
     /// # Errors
     ///
@@ -336,6 +355,11 @@ impl<'a> MosaicSensitivity<'a> {
         if !weight.is_finite() {
             return Err(ProductsError::GeneratedNonfinite);
         }
+        if normalization == ProductNormalization::PbSquare {
+            return Self::finite(f64::from(
+                residual / (self.model_pb_scale * self.model_pb_scale),
+            ));
+        }
         let pb_scale = f64::from(self.model_pb_scale);
         let limit = f64::from(policy.cutoff().abs());
         let (denominator, cutoff) = match normalization {
@@ -347,7 +371,7 @@ impl<'a> MosaicSensitivity<'a> {
                 ResidualFamily::Single => (weight, limit * limit * pb_scale * pb_scale),
                 ResidualFamily::Taylor => (weight, limit * pb_scale * pb_scale),
             },
-            ProductNormalization::UnitResponse => {
+            ProductNormalization::UnitResponse | ProductNormalization::PbSquare => {
                 return Err(ProductsError::UnsupportedNormalization);
             }
         };
@@ -413,8 +437,9 @@ impl<'a> MosaicSensitivity<'a> {
     /// solves in.
     ///
     /// CASA flat noise multiplies by the PB inside its support and zeroes
-    /// the rest; flat sky is the identity. Apply this before
-    /// restoring-beam convolution.
+    /// the rest; pbsquare multiplies by the PB squared where that exceeds
+    /// the cutoff and zeroes the rest; flat sky is the identity. Apply this
+    /// before restoring-beam convolution.
     ///
     /// # Errors
     ///
@@ -431,6 +456,14 @@ impl<'a> MosaicSensitivity<'a> {
                 let pb = self.model_primary_beam_at(index)?;
                 if Self::supported(pb, policy) {
                     Self::finite(value * pb)
+                } else {
+                    Ok(0.0)
+                }
+            }
+            ProductNormalization::PbSquare => {
+                let square = self.model_primary_beam_squared_at(index)?;
+                if Self::supported(square, policy) {
+                    Self::finite(value * square)
                 } else {
                     Ok(0.0)
                 }
@@ -460,6 +493,14 @@ impl<'a> MosaicSensitivity<'a> {
                 let pb = self.model_primary_beam_at(index)?;
                 if Self::supported(pb, policy) {
                     Self::finite(value / pb)
+                } else {
+                    Ok(0.0)
+                }
+            }
+            ProductNormalization::PbSquare => {
+                let square = self.model_primary_beam_squared_at(index)?;
+                if Self::supported(square, policy) {
+                    Self::finite(value / square)
                 } else {
                     Ok(0.0)
                 }
@@ -543,6 +584,83 @@ mod tests {
         for nonfinite in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             assert!(psf_peak([1.0, nonfinite].into_iter()).is_err());
         }
+    }
+
+    /// CASA's `pbsquare` (`SIImageStore::divideResidualByWeight`,
+    /// `divideModelByWeight`, `multiplyModelByWeight`): the residual divided
+    /// by the PB peak squared everywhere, with no cutoff, and the model
+    /// taken to and from apparent units through PB², zero where PB² is not
+    /// above |pblimit|.
+    #[test]
+    fn pbsquare_divides_the_residual_by_the_peak_and_the_model_by_pb_squared() {
+        // The weight is the sensitivity over a sum of weights of 1, so
+        // PBScale = √(4 / 1) = 2 and PBScale² = 4: PB² = |weight| / 4 = 1,
+        // 0.25, 0.09, 0.01 and, for the negative weight, 0.01 again.
+        let sensitivity = [4.0, 1.0, 0.36, 0.04, -0.04];
+        let response = MosaicSensitivity::new(&sensitivity)
+            .unwrap()
+            .with_normal_sum_weight(1.0)
+            .unwrap();
+        let pb = policy(0.2);
+        let residual = [8.0, 4.0, 2.0, 1.0, 1.0];
+        let raw = response
+            .normalize(
+                &residual.map(|value| value as f32),
+                ProductNormalization::PbSquare,
+                pb,
+            )
+            .unwrap();
+        // ÷ the peak 4, everywhere.
+        assert_eq!(raw, [2.0, 1.0, 0.5, 0.25, 0.25]);
+        for family in [ResidualFamily::Single, ResidualFamily::Taylor] {
+            let weighted = (0..sensitivity.len())
+                .map(|index| {
+                    response
+                        .normalize_weighted_residual_sample(
+                            residual[index],
+                            index,
+                            ProductNormalization::PbSquare,
+                            family,
+                            2.0,
+                            pb,
+                        )
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            // ÷ sumwt 2, then ÷ PBScale² = 4, everywhere.
+            assert_eq!(weighted, [1.0, 0.5, 0.25, 0.125, 0.125], "{family:?}");
+        }
+        let convert = |cutoff: f32, to_apparent: bool| {
+            (0..sensitivity.len())
+                .map(|index| {
+                    if to_apparent {
+                        response.physical_to_apparent(
+                            1.0,
+                            index,
+                            ProductNormalization::PbSquare,
+                            policy(cutoff),
+                        )
+                    } else {
+                        response.apparent_to_physical(
+                            0.25,
+                            index,
+                            ProductNormalization::PbSquare,
+                            policy(cutoff),
+                        )
+                    }
+                    .unwrap()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(convert(0.2, true), [1.0, 0.25, 0.0, 0.0, 0.0]);
+        assert_eq!(convert(0.2, false), [0.25, 1.0, 0.0, 0.0, 0.0]);
+        // Below a cutoff of 0.005 the negative weight converts as its
+        // absolute value does (CASA's `abs(wt)`).
+        let square = f64::from(0.04_f32 / 4.0);
+        let apparent = convert(0.005, true);
+        assert_eq!(apparent[3..], [square, square]);
+        let physical = convert(0.005, false);
+        assert_eq!(physical[3..], [0.25 / square, 0.25 / square]);
     }
 
     #[test]

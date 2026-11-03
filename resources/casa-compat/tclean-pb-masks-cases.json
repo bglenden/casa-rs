@@ -1,0 +1,73 @@
+{
+ "note": "#1061: normtype='pbsquare' on a mosaic, single-term and per channel, against CASA 6.7.6.14 with tools/casa-compat/tclean_case_matrix.py. The cases image ALMA's three-field refim_alma_mosaic.ms (340 GHz, noise-free) over an image larger than its beam, so the pbsquare residual, which has no cutoff, reaches past pblimit; test_widefield_mosaicft_mtmfs_pbsquare.1 in tclean-casa-test-cases.json is the Taylor case.",
+ "inputs": {
+  "alma": "unittest/tclean/refim_alma_mosaic.ms"
+ },
+ "common": {
+  "parallel": false
+ },
+ "cases": {
+  "alma_mosaic_pbsquare": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": 640,
+    "cell": "0.06arcsec",
+    "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
+    "specmode": "mfs",
+    "gridder": "mosaic",
+    "deconvolver": "hogbom",
+    "niter": 200,
+    "normtype": "pbsquare"
+   },
+   "note": "pbsquare on a single-term mosaic: the residual divided by the PB peak squared, the model through PB squared"
+  },
+  "alma_mosaic_pbsquare_cube": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": 640,
+    "cell": "0.06arcsec",
+    "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
+    "specmode": "cube",
+    "gridder": "mosaic",
+    "deconvolver": "hogbom",
+    "niter": 200,
+    "normtype": "pbsquare"
+   },
+   "note": "pbsquare per channel of a three-channel mosaic cube, each channel by its own weight image"
+  },
+  "alma_mosaic_pbsquare_pbcor": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": 640,
+    "cell": "0.06arcsec",
+    "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
+    "specmode": "mfs",
+    "gridder": "mosaic",
+    "deconvolver": "hogbom",
+    "niter": 200,
+    "normtype": "pbsquare",
+    "pbcor": true
+   },
+   "note": "pbsquare with pbcor: the restored image divided by the PB"
+  },
+  "alma_mosaic_pbsquare_negative_pblimit": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": 640,
+    "cell": "0.06arcsec",
+    "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
+    "specmode": "mfs",
+    "gridder": "mosaic",
+    "deconvolver": "hogbom",
+    "niter": 200,
+    "normtype": "pbsquare",
+    "pblimit": -0.2
+   },
+   "note": "pbsquare under a negative pblimit: CASA drops the residual's and the image's pixel masks, so the pbsquare residual past the PB, which no cutoff zeroes, is compared too"
+  }
+ }
+}

@@ -292,6 +292,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::UnitResponseNormalization
             | RequiredCapability::FlatNoiseNormalization
             | RequiredCapability::FlatSkyNormalization
+            | RequiredCapability::PbSquareNormalization
             | RequiredCapability::Product(
                 ProductKind::Psf
                     | ProductKind::Residual
