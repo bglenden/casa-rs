@@ -590,7 +590,7 @@ fn casa_tabular_convention(veltype: DopplerRef) -> bool {
 /// taken as the velocity it stands for in the grid's convention.
 fn casa_regrid_request(
     axis_config: &CubeAxisConfig,
-    nchan: usize,
+    nchan: Option<usize>,
 ) -> MsResult<regrid::RegridRequest> {
     let kind = |value: &Option<CubeAxisValue>| match value {
         None => None,
@@ -655,7 +655,8 @@ fn casa_regrid_request(
 
 /// The `nchan` planes of the image spectral axis
 /// `SynthesisParamsImage::buildCoordinateSystemCore` makes from a
-/// frequency- or velocity-mode `chanFreq` vector.
+/// frequency- or velocity-mode `chanFreq` vector; `None` (tclean's
+/// `nchan=-1`) takes as many planes as `chanFreq` holds (`getImFreq`).
 ///
 /// For a linear convention it is a linear coordinate with
 /// `crval = chanFreq[0]` and `cdelt = chanFreq[1] − chanFreq[0]`
@@ -670,10 +671,11 @@ fn casa_regrid_request(
 /// the last step) differ.
 fn casa_regridded_image_axis_hz(
     channels: &regrid::CasaChannelFrequencies,
-    nchan: usize,
+    nchan: Option<usize>,
     veltype: DopplerRef,
 ) -> Vec<f64> {
     let centres_hz = &channels.centres_hz;
+    let nchan = nchan.unwrap_or(centres_hz.len());
     let first_hz = centres_hz[0];
     let last = centres_hz.len() - 1;
     let increment_hz = if last == 0 {
@@ -769,8 +771,9 @@ impl CubeSpectralSetup {
     /// within `axis_config.selected_band_hz` when that band begins above
     /// their lowest channel centre, so the cube starts at the first
     /// selected channel. `nchan` counts the output channels; `None`
-    /// (tclean's `nchan=-1`) leaves the count to a channel-mode grid and is
-    /// refused for a frequency or velocity grid. Which channels of each
+    /// (tclean's `nchan=-1`) takes as many output channels as fit from the
+    /// start, or the band's lower edge, to the band's far edge
+    /// (`regridChanBounds` with `nchan < 0`). Which channels of each
     /// window the axis reads is [`Self::source_channel_support`].
     #[allow(clippy::too_many_arguments)]
     pub fn for_casa_cube_axis(
@@ -820,13 +823,6 @@ impl CubeSpectralSetup {
                 derived_engine,
             );
         }
-        let nchan = nchan.filter(|&nchan| nchan > 0).ok_or_else(|| {
-            MsError::VersionError(
-                "a frequency or velocity cube axis needs a positive output channel count"
-                    .to_string(),
-            )
-        })?;
-
         let output_freq_ref = effective_output_frequency_ref(source_freq_ref, axis_config)?;
         let frame = if matches!(axis_config.specmode, CubeSpecMode::Cubedata)
             || source_freq_ref == output_freq_ref
@@ -891,7 +887,7 @@ impl CubeSpectralSetup {
             ),
             output_frame_reference_time_mjd_sec: reference_row_time_mjd_sec,
             output_frame_field_id: field_id,
-            output_channel_widths_hz: if nchan == 1 {
+            output_channel_widths_hz: if output_channel_frequencies_hz.len() == 1 {
                 vec![channels.steps_hz[0].abs()]
             } else {
                 channel_widths_from_centers(&output_channel_frequencies_hz)?
@@ -3048,7 +3044,7 @@ mod tests {
             frame: None,
         });
         let quantity = |start, width, veltype| {
-            casa_regrid_request(&config(start, width, veltype), 3)
+            casa_regrid_request(&config(start, width, veltype), Some(3))
                 .unwrap()
                 .quantity
         };
@@ -3074,21 +3070,21 @@ mod tests {
             (Some(CubeAxisValue::Channel(2)), frequency.clone()),
         ] {
             let error =
-                casa_regrid_request(&config(start, width, DopplerRef::RADIO), 3).unwrap_err();
+                casa_regrid_request(&config(start, width, DopplerRef::RADIO), Some(3)).unwrap_err();
             assert!(error.to_string().contains("Cannot mix start and width"));
         }
         let doppler = Some(CubeAxisValue::Doppler {
             value: 0.1,
             convention: DopplerRef::RADIO,
         });
-        let request = casa_regrid_request(&config(doppler, None, DopplerRef::Z), 3).unwrap();
+        let request = casa_regrid_request(&config(doppler, None, DopplerRef::Z), Some(3)).unwrap();
         let start = request.start.unwrap();
         assert!((start - SPEED_OF_LIGHT_M_S * (1.0 / 0.9 - 1.0)).abs() < 1e-6);
         let missing_rest = CubeAxisConfig {
             rest_frequency_hz: None,
             ..config(velocity, None, DopplerRef::RADIO)
         };
-        let error = casa_regrid_request(&missing_rest, 3).unwrap_err();
+        let error = casa_regrid_request(&missing_rest, Some(3)).unwrap_err();
         assert!(error.to_string().contains("requires a rest frequency"));
     }
 

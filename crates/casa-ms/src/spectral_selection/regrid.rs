@@ -17,7 +17,9 @@
 //! its starting edge) falls outside the data's edges, where
 //! `regridChanBounds` resets it to the nearer edge ("Keep center in
 //! limits"). An optical-velocity grid may also be truncated to the data's
-//! band, so it can hold fewer channels than `nchan`.
+//! band, so it can hold fewer channels than `nchan`. With tclean's
+//! `nchan=-1` the grid runs from `start`, or the data's lower edge, to the
+//! data's far edge in whole output channels.
 //!
 //! casacore evaluates these steps in `lDouble`, which is `double` on the
 //! arm64 hosts the CASA oracle runs on; the port evaluates them in `f64`
@@ -56,8 +58,10 @@ pub(super) struct RegridRequest {
     pub(super) start: Option<f64>,
     /// Signed channel width (Hz or m/s); `None` for `width=''`.
     pub(super) width: Option<f64>,
-    /// Requested number of output channels (`nchan`), at least one.
-    pub(super) nchan: usize,
+    /// Requested number of output channels (`nchan`), at least one;
+    /// `None` for tclean's `nchan=-1`, which fills the data's band from
+    /// the start.
+    pub(super) nchan: Option<usize>,
     /// Rest frequency in Hz; required for a velocity quantity.
     pub(super) rest_frequency_hz: f64,
 }
@@ -162,6 +166,18 @@ impl Band {
     }
 }
 
+/// `regridChanBounds`'s `nchan` as each branch leaves it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChannelCount {
+    /// `nchan > 0`: the grid holds this many channels.
+    Given(usize),
+    /// `nchan < 0`: as many channels as fill the band from the start.
+    Derived,
+    /// `nchan = 0`: the optical-velocity branch spent the count on the
+    /// bandwidth.
+    Spent,
+}
+
 /// `regridChanBounds`'s grid once converted to frequency.
 #[derive(Debug, Clone, Copy)]
 struct FrequencyGrid {
@@ -176,22 +192,21 @@ struct FrequencyGrid {
     /// `startIsEnd`.
     start_is_end: bool,
     /// `nchan`, which the optical-velocity branch spends (sets to 0).
-    nchan: usize,
+    nchan: ChannelCount,
     /// `regridCenter` after its half-channel shift, in the request's unit.
     start: f64,
 }
 
 /// The `(lo, hi)` bounds of CASA's output channels, in the data's order
-/// (`regridChanBounds`'s real-number path; `regridBandwidth` is unset and
-/// `nchan` positive for every tclean grid, and those branches are left
-/// out).
+/// (`regridChanBounds`'s real-number path; `regridBandwidth` is unset for
+/// every tclean grid, and its branches are left out).
 fn regrid_chan_bounds(
     request: &RegridRequest,
     frequencies_hz: &[f64],
     widths_hz: &[f64],
 ) -> MsResult<Vec<(f64, f64)>> {
     let (band, descending) = ascending_band(frequencies_hz, widths_hz)?;
-    if request.nchan == 0 {
+    if request.nchan == Some(0) {
         return Err(MsError::VersionError(
             "cube output channel count must be positive".to_string(),
         ));
@@ -296,8 +311,31 @@ fn frequency_grid(request: &RegridRequest, band: &Band) -> FrequencyGrid {
         channel_width_hz: channel_width,
         centre_is_start: true,
         start_is_end,
-        nchan: request.nchan,
+        nchan: channel_count(request),
         start,
+    }
+}
+
+/// `nchan` as `convertGridPars` hands it on: positive, or `-1` unset.
+fn channel_count(request: &RegridRequest) -> ChannelCount {
+    request
+        .nchan
+        .map_or(ChannelCount::Derived, ChannelCount::Given)
+}
+
+/// `regridChanWidthF` from a velocity width `channel_width` about the
+/// grid's velocity `centre_velocity`, when the width is set and `nchan` did
+/// not already fix it: twice the frequency step from that velocity to half
+/// a width below it.
+fn velocity_width_hz(
+    channel_width: f64,
+    centre_velocity: f64,
+    to_frequency: impl Fn(f64) -> f64,
+) -> f64 {
+    if channel_width > 0.0 {
+        2.0 * (to_frequency(centre_velocity - channel_width / 2.0) - to_frequency(centre_velocity))
+    } else {
+        -1.0
     }
 }
 
@@ -328,12 +366,25 @@ fn radio_velocity_grid(request: &RegridRequest, band: &Band) -> FrequencyGrid {
         let centre_hz = (band.first().0 + band.last().0) / 2.0;
         (centre_hz, vrad(centre_hz, rest_hz))
     };
+    let Some(nchan) = request.nchan else {
+        return FrequencyGrid {
+            centre_hz,
+            bandwidth_hz: -1.0,
+            channel_width_hz: velocity_width_hz(channel_width, centre_velocity, |velocity| {
+                freq_from_vrad(velocity, rest_hz)
+            }),
+            centre_is_start,
+            start_is_end,
+            nchan: ChannelCount::Derived,
+            start,
+        };
+    };
     let channel_width_hz = if channel_width > 0.0 {
         2.0 * (freq_from_vrad(centre_velocity - channel_width / 2.0, rest_hz) - centre_hz)
     } else {
         band.first().1
     };
-    let bandwidth_hz = request.nchan as f64 * channel_width_hz;
+    let bandwidth_hz = nchan as f64 * channel_width_hz;
     if centre_is_start {
         if start_is_end {
             centre_hz -= bandwidth_hz / 2.0;
@@ -348,7 +399,7 @@ fn radio_velocity_grid(request: &RegridRequest, band: &Band) -> FrequencyGrid {
         channel_width_hz,
         centre_is_start,
         start_is_end,
-        nchan: request.nchan,
+        nchan: ChannelCount::Given(nchan),
         start,
     }
 }
@@ -381,7 +432,20 @@ fn optical_velocity_grid(request: &RegridRequest, band: &Band) -> FrequencyGrid 
         let centre_hz = (frequency_hz - width_hz + last_hz + last_width_hz) / 2.0;
         (centre_hz, vopt(centre_hz, rest_hz))
     };
-    let nchan = request.nchan as f64;
+    let Some(nchan) = request.nchan else {
+        return FrequencyGrid {
+            centre_hz,
+            bandwidth_hz: -1.0,
+            channel_width_hz: velocity_width_hz(channel_width, centre_velocity, |velocity| {
+                freq_from_vopt(velocity, rest_hz)
+            }),
+            centre_is_start,
+            start_is_end,
+            nchan: ChannelCount::Derived,
+            start,
+        };
+    };
+    let nchan = nchan as f64;
     let divide_by_two = if centre_is_start { 1.0 } else { 0.5 };
     let velocity_width = if channel_width > 0.0 {
         channel_width
@@ -422,7 +486,7 @@ fn optical_velocity_grid(request: &RegridRequest, band: &Band) -> FrequencyGrid 
         channel_width_hz,
         centre_is_start,
         start_is_end,
-        nchan: 0,
+        nchan: ChannelCount::Spent,
         start,
     }
 }
@@ -455,19 +519,47 @@ fn possible_centre_and_bandwidth(
             *centre_hz += bandwidth_hz / 2.0;
         }
     };
-    if grid.bandwidth_hz <= 0.0 || grid.nchan != 0 {
+    if grid.bandwidth_hz <= 0.0 || grid.nchan != ChannelCount::Spent {
         let mut bandwidth_hz = last_hz - first_hz + first_width_hz / 2.0 + last_width_hz / 2.0;
-        if grid.nchan != 0 {
-            let nchan = grid.nchan as f64;
-            bandwidth_hz = if grid.channel_width_hz <= 0.0 {
-                first_width_hz * nchan
+        // Equidistant in frequency: whole channels of the output width
+        // ("define via width of first channel to avoid numerical problems").
+        let whole_channels = |bandwidth_hz: f64| {
+            if quantity == RegridQuantity::OpticalVelocity {
+                return bandwidth_hz;
+            }
+            let width_hz = if grid.channel_width_hz <= 0.0 {
+                first_width_hz
             } else {
-                grid.channel_width_hz * nchan
+                grid.channel_width_hz
+            };
+            width_hz * ((bandwidth_hz + width_hz * 0.01) / width_hz).floor()
+        };
+        if grid.nchan != ChannelCount::Spent {
+            bandwidth_hz = match grid.nchan {
+                ChannelCount::Given(nchan) if grid.channel_width_hz <= 0.0 => {
+                    first_width_hz * nchan as f64
+                }
+                ChannelCount::Given(nchan) => grid.channel_width_hz * nchan as f64,
+                ChannelCount::Derived | ChannelCount::Spent => whole_channels(bandwidth_hz),
             };
             // "Center was not set by user but calculated".
             if grid.centre_hz <= 0.0 || grid.start < -C {
                 centre_hz = first_hz - first_width_hz / 2.0 + bandwidth_hz / 2.0;
                 centre_is_start = false;
+            } else if grid.nchan == ChannelCount::Derived {
+                // "Center but not nchan was set by user": the band runs
+                // from the start to the data's far edge; CASA measures a
+                // centre that is a centre with whole channel widths.
+                bandwidth_hz = if !centre_is_start {
+                    2.0 * f64::min(
+                        centre_hz - first_hz - first_width_hz,
+                        last_hz + last_width_hz - centre_hz,
+                    )
+                } else if grid.start_is_end {
+                    whole_channels(centre_hz - band.lower_edge_hz())
+                } else {
+                    whole_channels(band.upper_edge_hz() - centre_hz)
+                };
             }
         }
         if centre_is_start {

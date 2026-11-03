@@ -389,11 +389,10 @@ class Refusals:
         self.text("phasecenter")
 
     def spectral(self, modes):
-        """`Tclean::spectral` and `refuse_derived_extent`."""
+        """`Tclean::spectral`."""
         nchan = self.integer("nchan")
         if modes["cube"] and isinstance(nchan, int) and nchan < 1 and nchan != -1:
             self.add("nchan below 1 (other than -1)", CASA_RS)
-        start, width = self.text("start"), self.text("width")
         outframe, veltype = self.text("outframe"), self.text("veltype")
         restfreq = self.texts("restfreq")
         interpolation = self.text("interpolation")
@@ -407,16 +406,6 @@ class Refusals:
             if restfreq:
                 self.add("restfreq with specmode='mfs'", NOT_YET, 980)
             return
-        # A channel selection in any MeasurementSet's spw.
-        selected = any(":" in spw for spw in self.per_measurement_set("spw"))
-        if nchan == -1 and (selected or width not in ("", "1", None) or start not in ("", None)):
-            self.add(
-                "nchan=-1 with a channel selection, start or width (derived cube extent)",
-                NOT_YET,
-                1066,
-            )
-        if selected and start == "":
-            self.add("start='' with a channel selection in spw", NOT_YET, 980)
         if not valid_frame:
             self.add(f"outframe={outframe!r}", NOT_YET, 980)
         if (veltype or "").lower() not in ("radio", "optical", "z", "beta", "relativistic", "true"):
