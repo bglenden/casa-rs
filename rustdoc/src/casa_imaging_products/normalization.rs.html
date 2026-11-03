@@ -397,464 +397,465 @@
 <a href=#397 id=397 data-nosnippet>397</a>        policy: PrimaryBeamValidityPolicy,
 <a href=#398 id=398 data-nosnippet>398</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f32&gt;, ProductsError&gt; {
 <a href=#399 id=399 data-nosnippet>399</a>        (<span class="number">0</span>..<span class="self">self</span>.values.len())
-<a href=#400 id=400 data-nosnippet>400</a>            .map(|index| {
-<a href=#401 id=401 data-nosnippet>401</a>                <span class="kw">let </span>pb = <span class="self">self</span>.model_primary_beam_at(index)<span class="question-mark">?</span>;
-<a href=#402 id=402 data-nosnippet>402</a>                <span class="prelude-val">Ok</span>(<span class="kw">if </span><span class="self">Self</span>::supported(pb, policy) {
-<a href=#403 id=403 data-nosnippet>403</a>                    pb <span class="kw">as </span>f32
-<a href=#404 id=404 data-nosnippet>404</a>                } <span class="kw">else </span>{
-<a href=#405 id=405 data-nosnippet>405</a>                    <span class="number">0.0
-<a href=#406 id=406 data-nosnippet>406</a>                </span>})
-<a href=#407 id=407 data-nosnippet>407</a>            })
-<a href=#408 id=408 data-nosnippet>408</a>            .collect()
-<a href=#409 id=409 data-nosnippet>409</a>    }
-<a href=#410 id=410 data-nosnippet>410</a>
-<a href=#411 id=411 data-nosnippet>411</a>    <span class="doccomment">/// Whether pixel `index` of [`Self::weighted_primary_beam`] is positive:
-<a href=#412 id=412 data-nosnippet>412</a>    /// its Float PB exceeds the cutoff (`SIImageStore::makePBFromWeight`
-<a href=#413 id=413 data-nosnippet>413</a>    /// keeps `sqrt(|weight|) / pbmax` above `|pblimit|` and zeroes the
-<a href=#414 id=414 data-nosnippet>414</a>    /// rest), the pixels `SIImageStore::calcRobustRMS` measures the noise
-<a href=#415 id=415 data-nosnippet>415</a>    /// on at tclean's `pbmask` of 0 (`pb &gt; pbmasklevel`).
-<a href=#416 id=416 data-nosnippet>416</a>    ///
-<a href=#417 id=417 data-nosnippet>417</a>    /// # Errors
-<a href=#418 id=418 data-nosnippet>418</a>    ///
-<a href=#419 id=419 data-nosnippet>419</a>    /// A non-finite PB value.
-<a href=#420 id=420 data-nosnippet>420</a>    </span><span class="kw">pub fn </span>weighted_primary_beam_positive_at(
-<a href=#421 id=421 data-nosnippet>421</a>        <span class="self">self</span>,
-<a href=#422 id=422 data-nosnippet>422</a>        index: usize,
-<a href=#423 id=423 data-nosnippet>423</a>        policy: PrimaryBeamValidityPolicy,
-<a href=#424 id=424 data-nosnippet>424</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;bool, ProductsError&gt; {
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::supported(<span class="self">self</span>.model_primary_beam_at(index)<span class="question-mark">?</span>, policy))
-<a href=#426 id=426 data-nosnippet>426</a>    }
-<a href=#427 id=427 data-nosnippet>427</a>
-<a href=#428 id=428 data-nosnippet>428</a>    <span class="doccomment">/// Return PB support, independent of the CLEAN mask and model.
-<a href=#429 id=429 data-nosnippet>429</a>    </span><span class="attr">#[must_use]
-<a href=#430 id=430 data-nosnippet>430</a>    </span><span class="kw">pub fn </span>validity(<span class="self">self</span>, policy: PrimaryBeamValidityPolicy) -&gt; Vec&lt;bool&gt; {
-<a href=#431 id=431 data-nosnippet>431</a>        (<span class="number">0</span>..<span class="self">self</span>.values.len())
-<a href=#432 id=432 data-nosnippet>432</a>            .map(|index| <span class="self">self</span>.valid_at(index, policy))
-<a href=#433 id=433 data-nosnippet>433</a>            .collect()
-<a href=#434 id=434 data-nosnippet>434</a>    }
-<a href=#435 id=435 data-nosnippet>435</a>
-<a href=#436 id=436 data-nosnippet>436</a>    <span class="doccomment">/// Map a physical flat-sky model pixel to the units the minor cycle
-<a href=#437 id=437 data-nosnippet>437</a>    /// solves in.
-<a href=#438 id=438 data-nosnippet>438</a>    ///
-<a href=#439 id=439 data-nosnippet>439</a>    /// CASA flat noise multiplies by the PB inside its support and zeroes
-<a href=#440 id=440 data-nosnippet>440</a>    /// the rest; pbsquare multiplies by the PB squared where that exceeds
-<a href=#441 id=441 data-nosnippet>441</a>    /// the cutoff and zeroes the rest; flat sky is the identity. Apply this
-<a href=#442 id=442 data-nosnippet>442</a>    /// before restoring-beam convolution.
-<a href=#443 id=443 data-nosnippet>443</a>    ///
-<a href=#444 id=444 data-nosnippet>444</a>    /// # Errors
-<a href=#445 id=445 data-nosnippet>445</a>    ///
-<a href=#446 id=446 data-nosnippet>446</a>    /// Unit-response normalization, or non-finite arithmetic.
-<a href=#447 id=447 data-nosnippet>447</a>    </span><span class="kw">pub fn </span>physical_to_apparent(
-<a href=#448 id=448 data-nosnippet>448</a>        <span class="self">self</span>,
-<a href=#449 id=449 data-nosnippet>449</a>        value: f64,
-<a href=#450 id=450 data-nosnippet>450</a>        index: usize,
-<a href=#451 id=451 data-nosnippet>451</a>        normalization: ProductNormalization,
-<a href=#452 id=452 data-nosnippet>452</a>        policy: PrimaryBeamValidityPolicy,
-<a href=#453 id=453 data-nosnippet>453</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;f64, ProductsError&gt; {
-<a href=#454 id=454 data-nosnippet>454</a>        <span class="kw">match </span>normalization {
-<a href=#455 id=455 data-nosnippet>455</a>            ProductNormalization::FlatNoise =&gt; {
-<a href=#456 id=456 data-nosnippet>456</a>                <span class="kw">let </span>pb = <span class="self">self</span>.model_primary_beam_at(index)<span class="question-mark">?</span>;
-<a href=#457 id=457 data-nosnippet>457</a>                <span class="kw">if </span><span class="self">Self</span>::supported(pb, policy) {
-<a href=#458 id=458 data-nosnippet>458</a>                    <span class="self">Self</span>::finite(value * pb)
-<a href=#459 id=459 data-nosnippet>459</a>                } <span class="kw">else </span>{
-<a href=#460 id=460 data-nosnippet>460</a>                    <span class="prelude-val">Ok</span>(<span class="number">0.0</span>)
-<a href=#461 id=461 data-nosnippet>461</a>                }
-<a href=#462 id=462 data-nosnippet>462</a>            }
-<a href=#463 id=463 data-nosnippet>463</a>            ProductNormalization::PbSquare =&gt; {
-<a href=#464 id=464 data-nosnippet>464</a>                <span class="kw">let </span>square = <span class="self">self</span>.model_primary_beam_squared_at(index)<span class="question-mark">?</span>;
-<a href=#465 id=465 data-nosnippet>465</a>                <span class="kw">if </span><span class="self">Self</span>::supported(square, policy) {
-<a href=#466 id=466 data-nosnippet>466</a>                    <span class="self">Self</span>::finite(value * square)
-<a href=#467 id=467 data-nosnippet>467</a>                } <span class="kw">else </span>{
-<a href=#468 id=468 data-nosnippet>468</a>                    <span class="prelude-val">Ok</span>(<span class="number">0.0</span>)
-<a href=#469 id=469 data-nosnippet>469</a>                }
-<a href=#470 id=470 data-nosnippet>470</a>            }
-<a href=#471 id=471 data-nosnippet>471</a>            ProductNormalization::FlatSky =&gt; <span class="self">Self</span>::finite(value),
-<a href=#472 id=472 data-nosnippet>472</a>            ProductNormalization::UnitResponse =&gt; <span class="prelude-val">Err</span>(ProductsError::UnsupportedNormalization),
-<a href=#473 id=473 data-nosnippet>473</a>        }
-<a href=#474 id=474 data-nosnippet>474</a>    }
-<a href=#475 id=475 data-nosnippet>475</a>
-<a href=#476 id=476 data-nosnippet>476</a>    <span class="doccomment">/// Map a solved pixel to the physical model that prediction consumes.
-<a href=#477 id=477 data-nosnippet>477</a>    ///
-<a href=#478 id=478 data-nosnippet>478</a>    /// Apply it to every pixel after multiscale expansion, not only to the
-<a href=#479 id=479 data-nosnippet>479</a>    /// component centre. PB support is not the CLEAN mask.
-<a href=#480 id=480 data-nosnippet>480</a>    ///
-<a href=#481 id=481 data-nosnippet>481</a>    /// # Errors
-<a href=#482 id=482 data-nosnippet>482</a>    ///
-<a href=#483 id=483 data-nosnippet>483</a>    /// Unit-response normalization, or non-finite arithmetic.
-<a href=#484 id=484 data-nosnippet>484</a>    </span><span class="kw">pub fn </span>apparent_to_physical(
-<a href=#485 id=485 data-nosnippet>485</a>        <span class="self">self</span>,
-<a href=#486 id=486 data-nosnippet>486</a>        value: f64,
-<a href=#487 id=487 data-nosnippet>487</a>        index: usize,
-<a href=#488 id=488 data-nosnippet>488</a>        normalization: ProductNormalization,
-<a href=#489 id=489 data-nosnippet>489</a>        policy: PrimaryBeamValidityPolicy,
-<a href=#490 id=490 data-nosnippet>490</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;f64, ProductsError&gt; {
-<a href=#491 id=491 data-nosnippet>491</a>        <span class="kw">match </span>normalization {
-<a href=#492 id=492 data-nosnippet>492</a>            ProductNormalization::FlatNoise =&gt; {
-<a href=#493 id=493 data-nosnippet>493</a>                <span class="kw">let </span>pb = <span class="self">self</span>.model_primary_beam_at(index)<span class="question-mark">?</span>;
-<a href=#494 id=494 data-nosnippet>494</a>                <span class="kw">if </span><span class="self">Self</span>::supported(pb, policy) {
-<a href=#495 id=495 data-nosnippet>495</a>                    <span class="self">Self</span>::finite(value / pb)
-<a href=#496 id=496 data-nosnippet>496</a>                } <span class="kw">else </span>{
-<a href=#497 id=497 data-nosnippet>497</a>                    <span class="prelude-val">Ok</span>(<span class="number">0.0</span>)
-<a href=#498 id=498 data-nosnippet>498</a>                }
-<a href=#499 id=499 data-nosnippet>499</a>            }
-<a href=#500 id=500 data-nosnippet>500</a>            ProductNormalization::PbSquare =&gt; {
-<a href=#501 id=501 data-nosnippet>501</a>                <span class="kw">let </span>square = <span class="self">self</span>.model_primary_beam_squared_at(index)<span class="question-mark">?</span>;
-<a href=#502 id=502 data-nosnippet>502</a>                <span class="kw">if </span><span class="self">Self</span>::supported(square, policy) {
-<a href=#503 id=503 data-nosnippet>503</a>                    <span class="self">Self</span>::finite(value / square)
-<a href=#504 id=504 data-nosnippet>504</a>                } <span class="kw">else </span>{
-<a href=#505 id=505 data-nosnippet>505</a>                    <span class="prelude-val">Ok</span>(<span class="number">0.0</span>)
-<a href=#506 id=506 data-nosnippet>506</a>                }
-<a href=#507 id=507 data-nosnippet>507</a>            }
-<a href=#508 id=508 data-nosnippet>508</a>            ProductNormalization::FlatSky =&gt; <span class="self">Self</span>::finite(value),
-<a href=#509 id=509 data-nosnippet>509</a>            ProductNormalization::UnitResponse =&gt; <span class="prelude-val">Err</span>(ProductsError::UnsupportedNormalization),
-<a href=#510 id=510 data-nosnippet>510</a>        }
-<a href=#511 id=511 data-nosnippet>511</a>    }
-<a href=#512 id=512 data-nosnippet>512</a>
-<a href=#513 id=513 data-nosnippet>513</a>    <span class="doccomment">/// PB-correct a normalized plane inside the PB support and zero it
-<a href=#514 id=514 data-nosnippet>514</a>    /// outside.
-<a href=#515 id=515 data-nosnippet>515</a>    ///
-<a href=#516 id=516 data-nosnippet>516</a>    /// # Errors
-<a href=#517 id=517 data-nosnippet>517</a>    ///
-<a href=#518 id=518 data-nosnippet>518</a>    /// A non-finite result.
-<a href=#519 id=519 data-nosnippet>519</a>    ///
-<a href=#520 id=520 data-nosnippet>520</a>    /// # Panics
-<a href=#521 id=521 data-nosnippet>521</a>    ///
-<a href=#522 id=522 data-nosnippet>522</a>    /// If `values` is not one value per sensitivity pixel.
-<a href=#523 id=523 data-nosnippet>523</a>    </span><span class="kw">pub fn </span>correct_primary_beam(
-<a href=#524 id=524 data-nosnippet>524</a>        <span class="self">self</span>,
-<a href=#525 id=525 data-nosnippet>525</a>        values: <span class="kw-2">&amp;</span>[f32],
-<a href=#526 id=526 data-nosnippet>526</a>        policy: PrimaryBeamValidityPolicy,
-<a href=#527 id=527 data-nosnippet>527</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f32&gt;, ProductsError&gt; {
-<a href=#528 id=528 data-nosnippet>528</a>        <span class="macro">assert_eq!</span>(
-<a href=#529 id=529 data-nosnippet>529</a>            values.len(),
-<a href=#530 id=530 data-nosnippet>530</a>            <span class="self">self</span>.values.len(),
-<a href=#531 id=531 data-nosnippet>531</a>            <span class="string">"a plane and its sensitivity have one shape"
-<a href=#532 id=532 data-nosnippet>532</a>        </span>);
-<a href=#533 id=533 data-nosnippet>533</a>        values
-<a href=#534 id=534 data-nosnippet>534</a>            .iter()
-<a href=#535 id=535 data-nosnippet>535</a>            .enumerate()
-<a href=#536 id=536 data-nosnippet>536</a>            .map(|(index, value)| {
-<a href=#537 id=537 data-nosnippet>537</a>                <span class="kw">let </span>pb = <span class="self">self</span>.primary_beam_at(index);
-<a href=#538 id=538 data-nosnippet>538</a>                <span class="kw">let </span>corrected = <span class="kw">if </span><span class="self">Self</span>::supported(pb, policy) {
-<a href=#539 id=539 data-nosnippet>539</a>                    f64::from(<span class="kw-2">*</span>value) / pb
-<a href=#540 id=540 data-nosnippet>540</a>                } <span class="kw">else </span>{
-<a href=#541 id=541 data-nosnippet>541</a>                    <span class="number">0.0
-<a href=#542 id=542 data-nosnippet>542</a>                </span>} <span class="kw">as </span>f32;
-<a href=#543 id=543 data-nosnippet>543</a>                corrected
-<a href=#544 id=544 data-nosnippet>544</a>                    .is_finite()
-<a href=#545 id=545 data-nosnippet>545</a>                    .then_some(corrected)
-<a href=#546 id=546 data-nosnippet>546</a>                    .ok_or(ProductsError::GeneratedNonfinite)
-<a href=#547 id=547 data-nosnippet>547</a>            })
-<a href=#548 id=548 data-nosnippet>548</a>            .collect()
-<a href=#549 id=549 data-nosnippet>549</a>    }
-<a href=#550 id=550 data-nosnippet>550</a>}
-<a href=#551 id=551 data-nosnippet>551</a>
-<a href=#552 id=552 data-nosnippet>552</a><span class="attr">#[cfg(test)]
-<a href=#553 id=553 data-nosnippet>553</a></span><span class="kw">mod </span>tests {
-<a href=#554 id=554 data-nosnippet>554</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#555 id=555 data-nosnippet>555</a>    <span class="kw">use </span>casa_imaging_model::ProductBlankingPolicy;
-<a href=#556 id=556 data-nosnippet>556</a>
-<a href=#557 id=557 data-nosnippet>557</a>    <span class="kw">fn </span>policy(cutoff: f32) -&gt; PrimaryBeamValidityPolicy {
-<a href=#558 id=558 data-nosnippet>558</a>        PrimaryBeamValidityPolicy::new(
-<a href=#559 id=559 data-nosnippet>559</a>            cutoff,
-<a href=#560 id=560 data-nosnippet>560</a>            ProductSupportComparison::StrictlyGreater,
-<a href=#561 id=561 data-nosnippet>561</a>            ProductBlankingPolicy::Zero,
-<a href=#562 id=562 data-nosnippet>562</a>        )
-<a href=#563 id=563 data-nosnippet>563</a>        .expect(<span class="string">"PB policy"</span>)
-<a href=#564 id=564 data-nosnippet>564</a>    }
-<a href=#565 id=565 data-nosnippet>565</a>
-<a href=#566 id=566 data-nosnippet>566</a>    <span class="attr">#[test]
-<a href=#567 id=567 data-nosnippet>567</a>    </span><span class="kw">fn </span>psf_normalization_is_exact_and_preserves_coupled_signed_terms() {
-<a href=#568 id=568 data-nosnippet>568</a>        <span class="kw">for </span>amplitude <span class="kw">in </span>[f32::MIN_POSITIVE, <span class="number">1.000_000_7</span>, <span class="number">12345.67</span>] {
-<a href=#569 id=569 data-nosnippet>569</a>            <span class="kw">let </span>principal = [-<span class="number">0.25 </span>* amplitude, amplitude, <span class="number">0.5 </span>* amplitude];
-<a href=#570 id=570 data-nosnippet>570</a>            <span class="kw">let </span>peak = psf_peak(principal.into_iter()).unwrap();
-<a href=#571 id=571 data-nosnippet>571</a>            <span class="macro">assert_eq!</span>(peak, amplitude);
-<a href=#572 id=572 data-nosnippet>572</a>            <span class="macro">assert_eq!</span>(
-<a href=#573 id=573 data-nosnippet>573</a>                principal.map(|value| normalized_psf_value(value, peak)),
-<a href=#574 id=574 data-nosnippet>574</a>                [-<span class="number">0.25</span>, <span class="number">1.0</span>, <span class="number">0.5</span>]
-<a href=#575 id=575 data-nosnippet>575</a>            );
-<a href=#576 id=576 data-nosnippet>576</a>            <span class="kw">let </span>coupled = [-<span class="number">0.5 </span>* amplitude, <span class="number">0.25 </span>* amplitude];
-<a href=#577 id=577 data-nosnippet>577</a>            <span class="macro">assert_eq!</span>(
-<a href=#578 id=578 data-nosnippet>578</a>                coupled.map(|value| normalized_psf_value(value, peak)),
-<a href=#579 id=579 data-nosnippet>579</a>                [-<span class="number">0.5</span>, <span class="number">0.25</span>]
-<a href=#580 id=580 data-nosnippet>580</a>            );
-<a href=#581 id=581 data-nosnippet>581</a>        }
-<a href=#582 id=582 data-nosnippet>582</a>        <span class="kw">let </span>peak = psf_peak([<span class="number">0.0</span>; <span class="number">3</span>].into_iter()).unwrap();
-<a href=#583 id=583 data-nosnippet>583</a>        <span class="macro">assert_eq!</span>(normalized_psf_value(<span class="number">0.0</span>, peak), <span class="number">0.0</span>);
-<a href=#584 id=584 data-nosnippet>584</a>        <span class="kw">for </span>nonfinite <span class="kw">in </span>[f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-<a href=#585 id=585 data-nosnippet>585</a>            <span class="macro">assert!</span>(psf_peak([<span class="number">1.0</span>, nonfinite].into_iter()).is_err());
-<a href=#586 id=586 data-nosnippet>586</a>        }
-<a href=#587 id=587 data-nosnippet>587</a>    }
-<a href=#588 id=588 data-nosnippet>588</a>
-<a href=#589 id=589 data-nosnippet>589</a>    <span class="doccomment">/// CASA's `pbsquare` (`SIImageStore::divideResidualByWeight`,
-<a href=#590 id=590 data-nosnippet>590</a>    /// `divideModelByWeight`, `multiplyModelByWeight`): the residual divided
-<a href=#591 id=591 data-nosnippet>591</a>    /// by the PB peak squared everywhere, with no cutoff, and the model
-<a href=#592 id=592 data-nosnippet>592</a>    /// taken to and from apparent units through PB², zero where PB² is not
-<a href=#593 id=593 data-nosnippet>593</a>    /// above |pblimit|.
-<a href=#594 id=594 data-nosnippet>594</a>    </span><span class="attr">#[test]
-<a href=#595 id=595 data-nosnippet>595</a>    </span><span class="kw">fn </span>pbsquare_divides_the_residual_by_the_peak_and_the_model_by_pb_squared() {
-<a href=#596 id=596 data-nosnippet>596</a>        <span class="comment">// The weight is the sensitivity over a sum of weights of 1, so
-<a href=#597 id=597 data-nosnippet>597</a>        // PBScale = √(4 / 1) = 2 and PBScale² = 4: PB² = |weight| / 4 = 1,
-<a href=#598 id=598 data-nosnippet>598</a>        // 0.25, 0.09, 0.01 and, for the negative weight, 0.01 again.
-<a href=#599 id=599 data-nosnippet>599</a>        </span><span class="kw">let </span>sensitivity = [<span class="number">4.0</span>, <span class="number">1.0</span>, <span class="number">0.36</span>, <span class="number">0.04</span>, -<span class="number">0.04</span>];
-<a href=#600 id=600 data-nosnippet>600</a>        <span class="kw">let </span>response = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity)
-<a href=#601 id=601 data-nosnippet>601</a>            .unwrap()
-<a href=#602 id=602 data-nosnippet>602</a>            .with_normal_sum_weight(<span class="number">1.0</span>)
-<a href=#603 id=603 data-nosnippet>603</a>            .unwrap();
-<a href=#604 id=604 data-nosnippet>604</a>        <span class="kw">let </span>pb = policy(<span class="number">0.2</span>);
-<a href=#605 id=605 data-nosnippet>605</a>        <span class="kw">let </span>residual = [<span class="number">8.0</span>, <span class="number">4.0</span>, <span class="number">2.0</span>, <span class="number">1.0</span>, <span class="number">1.0</span>];
-<a href=#606 id=606 data-nosnippet>606</a>        <span class="kw">let </span>raw = response
-<a href=#607 id=607 data-nosnippet>607</a>            .normalize(
-<a href=#608 id=608 data-nosnippet>608</a>                <span class="kw-2">&amp;</span>residual.map(|value| value <span class="kw">as </span>f32),
-<a href=#609 id=609 data-nosnippet>609</a>                ProductNormalization::PbSquare,
-<a href=#610 id=610 data-nosnippet>610</a>                pb,
-<a href=#611 id=611 data-nosnippet>611</a>            )
-<a href=#612 id=612 data-nosnippet>612</a>            .unwrap();
-<a href=#613 id=613 data-nosnippet>613</a>        <span class="comment">// ÷ the peak 4, everywhere.
-<a href=#614 id=614 data-nosnippet>614</a>        </span><span class="macro">assert_eq!</span>(raw, [<span class="number">2.0</span>, <span class="number">1.0</span>, <span class="number">0.5</span>, <span class="number">0.25</span>, <span class="number">0.25</span>]);
-<a href=#615 id=615 data-nosnippet>615</a>        <span class="kw">for </span>family <span class="kw">in </span>[ResidualFamily::Single, ResidualFamily::Taylor] {
-<a href=#616 id=616 data-nosnippet>616</a>            <span class="kw">let </span>weighted = (<span class="number">0</span>..sensitivity.len())
-<a href=#617 id=617 data-nosnippet>617</a>                .map(|index| {
-<a href=#618 id=618 data-nosnippet>618</a>                    response
-<a href=#619 id=619 data-nosnippet>619</a>                        .normalize_weighted_residual_sample(
-<a href=#620 id=620 data-nosnippet>620</a>                            residual[index],
-<a href=#621 id=621 data-nosnippet>621</a>                            index,
-<a href=#622 id=622 data-nosnippet>622</a>                            ProductNormalization::PbSquare,
-<a href=#623 id=623 data-nosnippet>623</a>                            family,
-<a href=#624 id=624 data-nosnippet>624</a>                            <span class="number">2.0</span>,
-<a href=#625 id=625 data-nosnippet>625</a>                            pb,
-<a href=#626 id=626 data-nosnippet>626</a>                        )
-<a href=#627 id=627 data-nosnippet>627</a>                        .unwrap()
-<a href=#628 id=628 data-nosnippet>628</a>                })
-<a href=#629 id=629 data-nosnippet>629</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#630 id=630 data-nosnippet>630</a>            <span class="comment">// ÷ sumwt 2, then ÷ PBScale² = 4, everywhere.
-<a href=#631 id=631 data-nosnippet>631</a>            </span><span class="macro">assert_eq!</span>(weighted, [<span class="number">1.0</span>, <span class="number">0.5</span>, <span class="number">0.25</span>, <span class="number">0.125</span>, <span class="number">0.125</span>], <span class="string">"{family:?}"</span>);
-<a href=#632 id=632 data-nosnippet>632</a>        }
-<a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span>convert = |cutoff: f32, to_apparent: bool| {
-<a href=#634 id=634 data-nosnippet>634</a>            (<span class="number">0</span>..sensitivity.len())
-<a href=#635 id=635 data-nosnippet>635</a>                .map(|index| {
-<a href=#636 id=636 data-nosnippet>636</a>                    <span class="kw">if </span>to_apparent {
-<a href=#637 id=637 data-nosnippet>637</a>                        response.physical_to_apparent(
-<a href=#638 id=638 data-nosnippet>638</a>                            <span class="number">1.0</span>,
-<a href=#639 id=639 data-nosnippet>639</a>                            index,
-<a href=#640 id=640 data-nosnippet>640</a>                            ProductNormalization::PbSquare,
-<a href=#641 id=641 data-nosnippet>641</a>                            policy(cutoff),
-<a href=#642 id=642 data-nosnippet>642</a>                        )
-<a href=#643 id=643 data-nosnippet>643</a>                    } <span class="kw">else </span>{
-<a href=#644 id=644 data-nosnippet>644</a>                        response.apparent_to_physical(
-<a href=#645 id=645 data-nosnippet>645</a>                            <span class="number">0.25</span>,
-<a href=#646 id=646 data-nosnippet>646</a>                            index,
-<a href=#647 id=647 data-nosnippet>647</a>                            ProductNormalization::PbSquare,
-<a href=#648 id=648 data-nosnippet>648</a>                            policy(cutoff),
-<a href=#649 id=649 data-nosnippet>649</a>                        )
-<a href=#650 id=650 data-nosnippet>650</a>                    }
-<a href=#651 id=651 data-nosnippet>651</a>                    .unwrap()
-<a href=#652 id=652 data-nosnippet>652</a>                })
-<a href=#653 id=653 data-nosnippet>653</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#654 id=654 data-nosnippet>654</a>        };
-<a href=#655 id=655 data-nosnippet>655</a>        <span class="macro">assert_eq!</span>(convert(<span class="number">0.2</span>, <span class="bool-val">true</span>), [<span class="number">1.0</span>, <span class="number">0.25</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]);
-<a href=#656 id=656 data-nosnippet>656</a>        <span class="macro">assert_eq!</span>(convert(<span class="number">0.2</span>, <span class="bool-val">false</span>), [<span class="number">0.25</span>, <span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]);
-<a href=#657 id=657 data-nosnippet>657</a>        <span class="comment">// Below a cutoff of 0.005 the negative weight converts as its
-<a href=#658 id=658 data-nosnippet>658</a>        // absolute value does (CASA's `abs(wt)`).
-<a href=#659 id=659 data-nosnippet>659</a>        </span><span class="kw">let </span>square = f64::from(<span class="number">0.04_f32 </span>/ <span class="number">4.0</span>);
-<a href=#660 id=660 data-nosnippet>660</a>        <span class="kw">let </span>apparent = convert(<span class="number">0.005</span>, <span class="bool-val">true</span>);
-<a href=#661 id=661 data-nosnippet>661</a>        <span class="macro">assert_eq!</span>(apparent[<span class="number">3</span>..], [square, square]);
-<a href=#662 id=662 data-nosnippet>662</a>        <span class="kw">let </span>physical = convert(<span class="number">0.005</span>, <span class="bool-val">false</span>);
-<a href=#663 id=663 data-nosnippet>663</a>        <span class="macro">assert_eq!</span>(physical[<span class="number">3</span>..], [<span class="number">0.25 </span>/ square, <span class="number">0.25 </span>/ square]);
-<a href=#664 id=664 data-nosnippet>664</a>    }
-<a href=#665 id=665 data-nosnippet>665</a>
-<a href=#666 id=666 data-nosnippet>666</a>    <span class="attr">#[test]
-<a href=#667 id=667 data-nosnippet>667</a>    </span><span class="kw">fn </span>response_support_is_separate_from_model_values_and_normalization() {
-<a href=#668 id=668 data-nosnippet>668</a>        <span class="kw">let </span>response = MosaicSensitivity::new(<span class="kw-2">&amp;</span>[<span class="number">4.0</span>, <span class="number">1.0</span>, <span class="number">0.04</span>, <span class="number">0.0</span>, -<span class="number">0.04</span>]).unwrap();
-<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">let </span>pb = policy(<span class="number">0.2</span>);
-<a href=#670 id=670 data-nosnippet>670</a>        <span class="macro">assert_eq!</span>(response.validity(pb), [<span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>]);
-<a href=#671 id=671 data-nosnippet>671</a>        <span class="macro">assert_eq!</span>(response.primary_beam(), [<span class="number">1.0</span>, <span class="number">0.5</span>, <span class="number">0.1</span>, <span class="number">0.0</span>, <span class="number">0.1</span>]);
-<a href=#672 id=672 data-nosnippet>672</a>        <span class="macro">assert_eq!</span>(
-<a href=#673 id=673 data-nosnippet>673</a>            response
-<a href=#674 id=674 data-nosnippet>674</a>                .normalize(
-<a href=#675 id=675 data-nosnippet>675</a>                    <span class="kw-2">&amp;</span>[<span class="number">8.0</span>, <span class="number">4.0</span>, <span class="number">0.8</span>, <span class="number">1.0</span>, <span class="number">1.0</span>],
-<a href=#676 id=676 data-nosnippet>676</a>                    ProductNormalization::FlatNoise,
-<a href=#677 id=677 data-nosnippet>677</a>                    pb
-<a href=#678 id=678 data-nosnippet>678</a>                )
-<a href=#679 id=679 data-nosnippet>679</a>                .unwrap(),
-<a href=#680 id=680 data-nosnippet>680</a>            [<span class="number">2.0</span>, <span class="number">2.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]
-<a href=#681 id=681 data-nosnippet>681</a>        );
-<a href=#682 id=682 data-nosnippet>682</a>        <span class="macro">assert_eq!</span>(
-<a href=#683 id=683 data-nosnippet>683</a>            response
-<a href=#684 id=684 data-nosnippet>684</a>                .physical_to_apparent(<span class="number">4.0</span>, <span class="number">1</span>, ProductNormalization::FlatNoise, pb)
-<a href=#685 id=685 data-nosnippet>685</a>                .unwrap(),
-<a href=#686 id=686 data-nosnippet>686</a>            <span class="number">2.0
-<a href=#687 id=687 data-nosnippet>687</a>        </span>);
-<a href=#688 id=688 data-nosnippet>688</a>        <span class="macro">assert_eq!</span>(
-<a href=#689 id=689 data-nosnippet>689</a>            response
-<a href=#690 id=690 data-nosnippet>690</a>                .apparent_to_physical(<span class="number">2.0</span>, <span class="number">1</span>, ProductNormalization::FlatNoise, pb)
-<a href=#691 id=691 data-nosnippet>691</a>                .unwrap(),
-<a href=#692 id=692 data-nosnippet>692</a>            <span class="number">4.0
-<a href=#693 id=693 data-nosnippet>693</a>        </span>);
-<a href=#694 id=694 data-nosnippet>694</a>        <span class="macro">assert_eq!</span>(
-<a href=#695 id=695 data-nosnippet>695</a>            response
-<a href=#696 id=696 data-nosnippet>696</a>                .apparent_to_physical(<span class="number">2.0</span>, <span class="number">2</span>, ProductNormalization::FlatNoise, pb)
-<a href=#697 id=697 data-nosnippet>697</a>                .unwrap(),
-<a href=#698 id=698 data-nosnippet>698</a>            <span class="number">0.0
-<a href=#699 id=699 data-nosnippet>699</a>        </span>);
-<a href=#700 id=700 data-nosnippet>700</a>        <span class="macro">assert_eq!</span>(
-<a href=#701 id=701 data-nosnippet>701</a>            response
-<a href=#702 id=702 data-nosnippet>702</a>                .apparent_to_physical(<span class="number">2.0</span>, <span class="number">2</span>, ProductNormalization::FlatSky, pb)
-<a href=#703 id=703 data-nosnippet>703</a>                .unwrap(),
-<a href=#704 id=704 data-nosnippet>704</a>            <span class="number">2.0
-<a href=#705 id=705 data-nosnippet>705</a>        </span>);
-<a href=#706 id=706 data-nosnippet>706</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#707 id=707 data-nosnippet>707</a>            MinorCycleImageResponse::new(ProductNormalization::UnitResponse, pb),
-<a href=#708 id=708 data-nosnippet>708</a>            <span class="prelude-val">Err</span>(ProductsError::UnsupportedNormalization)
-<a href=#709 id=709 data-nosnippet>709</a>        ));
-<a href=#710 id=710 data-nosnippet>710</a>    }
-<a href=#711 id=711 data-nosnippet>711</a>
-<a href=#712 id=712 data-nosnippet>712</a>    <span class="doccomment">/// `SIImageStore::divideResidualByWeight`'s cutoffs, pblimit·pbmax² on
-<a href=#713 id=713 data-nosnippet>713</a>    /// pbmax·√|weight| for flat noise and pblimit²·pbmax² on the weight for
-<a href=#714 id=714 data-nosnippet>714</a>    /// flat sky, are both PB &gt; pblimit where the weight is positive.
-<a href=#715 id=715 data-nosnippet>715</a>    </span><span class="attr">#[test]
-<a href=#716 id=716 data-nosnippet>716</a>    </span><span class="kw">fn </span>flat_noise_and_flat_sky_residuals_keep_casa_support() {
-<a href=#717 id=717 data-nosnippet>717</a>        <span class="kw">let </span>sensitivity = [<span class="number">4.0</span>, <span class="number">0.2</span>, <span class="number">0.4</span>, <span class="number">0.5</span>, -<span class="number">0.5</span>, <span class="number">0.15</span>, <span class="number">0.17</span>];
-<a href=#718 id=718 data-nosnippet>718</a>        <span class="kw">let </span>response = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity).unwrap();
-<a href=#719 id=719 data-nosnippet>719</a>        <span class="kw">let </span>limit = policy(<span class="number">0.2</span>);
-<a href=#720 id=720 data-nosnippet>720</a>        <span class="comment">// PB = sqrt(|sensitivity| / 4): 1, 0.224, 0.316, 0.354, 0.354, 0.194, 0.206.
-<a href=#721 id=721 data-nosnippet>721</a>        </span><span class="kw">let </span>support = response.validity(limit);
-<a href=#722 id=722 data-nosnippet>722</a>        <span class="macro">assert_eq!</span>(support, [<span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>]);
-<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">for </span>(normalization, expected) <span class="kw">in </span>[
-<a href=#724 id=724 data-nosnippet>724</a>            (ProductNormalization::FlatNoise, support.clone()),
-<a href=#725 id=725 data-nosnippet>725</a>            (
-<a href=#726 id=726 data-nosnippet>726</a>                ProductNormalization::FlatSky,
-<a href=#727 id=727 data-nosnippet>727</a>                <span class="macro">vec!</span>[<span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>],
-<a href=#728 id=728 data-nosnippet>728</a>            ),
-<a href=#729 id=729 data-nosnippet>729</a>        ] {
-<a href=#730 id=730 data-nosnippet>730</a>            <span class="kw">let </span>staged = (<span class="number">0</span>..sensitivity.len())
-<a href=#731 id=731 data-nosnippet>731</a>                .map(|index| {
-<a href=#732 id=732 data-nosnippet>732</a>                    response
-<a href=#733 id=733 data-nosnippet>733</a>                        .normalize_weighted_residual_sample(
-<a href=#734 id=734 data-nosnippet>734</a>                            <span class="number">2.0</span>,
-<a href=#735 id=735 data-nosnippet>735</a>                            index,
-<a href=#736 id=736 data-nosnippet>736</a>                            normalization,
-<a href=#737 id=737 data-nosnippet>737</a>                            ResidualFamily::Single,
-<a href=#738 id=738 data-nosnippet>738</a>                            <span class="number">2.0</span>,
-<a href=#739 id=739 data-nosnippet>739</a>                            limit,
-<a href=#740 id=740 data-nosnippet>740</a>                        )
-<a href=#741 id=741 data-nosnippet>741</a>                        .unwrap()
-<a href=#742 id=742 data-nosnippet>742</a>                })
-<a href=#743 id=743 data-nosnippet>743</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#744 id=744 data-nosnippet>744</a>            <span class="kw">let </span>raw = response.normalize(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>; <span class="number">7</span>], normalization, limit).unwrap();
-<a href=#745 id=745 data-nosnippet>745</a>            <span class="kw">for </span>(index, valid) <span class="kw">in </span>expected.iter().enumerate() {
-<a href=#746 id=746 data-nosnippet>746</a>                <span class="macro">assert_eq!</span>(
-<a href=#747 id=747 data-nosnippet>747</a>                    staged[index] != <span class="number">0.0</span>,
-<a href=#748 id=748 data-nosnippet>748</a>                    <span class="kw-2">*</span>valid,
-<a href=#749 id=749 data-nosnippet>749</a>                    <span class="string">"{normalization:?} staged {index}"
-<a href=#750 id=750 data-nosnippet>750</a>                </span>);
-<a href=#751 id=751 data-nosnippet>751</a>                <span class="macro">assert_eq!</span>(raw[index] != <span class="number">0.0</span>, <span class="kw-2">*</span>valid, <span class="string">"{normalization:?} raw {index}"</span>);
-<a href=#752 id=752 data-nosnippet>752</a>                <span class="macro">assert!</span>(
-<a href=#753 id=753 data-nosnippet>753</a>                    (staged[index] - f64::from(raw[index])).abs() &lt;= <span class="number">1.0e-6 </span>* staged[index].abs(),
-<a href=#754 id=754 data-nosnippet>754</a>                    <span class="string">"{normalization:?} {index}: {} != {}"</span>,
-<a href=#755 id=755 data-nosnippet>755</a>                    staged[index],
-<a href=#756 id=756 data-nosnippet>756</a>                    raw[index]
-<a href=#757 id=757 data-nosnippet>757</a>                );
-<a href=#758 id=758 data-nosnippet>758</a>            }
-<a href=#759 id=759 data-nosnippet>759</a>        }
-<a href=#760 id=760 data-nosnippet>760</a>        <span class="kw">let </span>flat_sky = (<span class="number">0</span>..<span class="number">5</span>)
-<a href=#761 id=761 data-nosnippet>761</a>            .map(|index| {
-<a href=#762 id=762 data-nosnippet>762</a>                response
-<a href=#763 id=763 data-nosnippet>763</a>                    .normalize_weighted_residual_sample(
-<a href=#764 id=764 data-nosnippet>764</a>                        <span class="number">2.0</span>,
-<a href=#765 id=765 data-nosnippet>765</a>                        index,
-<a href=#766 id=766 data-nosnippet>766</a>                        ProductNormalization::FlatSky,
-<a href=#767 id=767 data-nosnippet>767</a>                        ResidualFamily::Single,
-<a href=#768 id=768 data-nosnippet>768</a>                        <span class="number">2.0</span>,
-<a href=#769 id=769 data-nosnippet>769</a>                        limit,
-<a href=#770 id=770 data-nosnippet>770</a>                    )
-<a href=#771 id=771 data-nosnippet>771</a>                    .unwrap()
-<a href=#772 id=772 data-nosnippet>772</a>            })
-<a href=#773 id=773 data-nosnippet>773</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#774 id=774 data-nosnippet>774</a>        <span class="macro">assert_eq!</span>(flat_sky, [<span class="number">0.25</span>, <span class="number">5.0</span>, <span class="number">2.5</span>, <span class="number">2.0</span>, <span class="number">0.0</span>]);
-<a href=#775 id=775 data-nosnippet>775</a>    }
-<a href=#776 id=776 data-nosnippet>776</a>
-<a href=#777 id=777 data-nosnippet>777</a>    <span class="doccomment">/// `SIImageStoreMultiTerm::divideResidualByWeight` keeps
-<a href=#778 id=778 data-nosnippet>778</a>    /// |pblimit|·pbmax² for flat sky: a Taylor family's flat-sky residual is
-<a href=#779 id=779 data-nosnippet>779</a>    /// zero where pblimit &lt; PB ≤ √pblimit, which one term keeps. Flat noise
-<a href=#780 id=780 data-nosnippet>780</a>    /// is the same for both.
-<a href=#781 id=781 data-nosnippet>781</a>    </span><span class="attr">#[test]
-<a href=#782 id=782 data-nosnippet>782</a>    </span><span class="kw">fn </span>a_taylor_flat_sky_residual_keeps_casas_multi_term_cutoff() {
-<a href=#783 id=783 data-nosnippet>783</a>        <span class="kw">let </span>sensitivity = [<span class="number">4.0</span>, <span class="number">0.2</span>, <span class="number">0.4</span>, <span class="number">0.5</span>, -<span class="number">0.5</span>, <span class="number">0.15</span>, <span class="number">0.17</span>, <span class="number">0.9</span>];
-<a href=#784 id=784 data-nosnippet>784</a>        <span class="kw">let </span>response = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity).unwrap();
-<a href=#785 id=785 data-nosnippet>785</a>        <span class="kw">let </span>limit = policy(<span class="number">0.2</span>);
-<a href=#786 id=786 data-nosnippet>786</a>        <span class="comment">// weight / pbmax² = 1, 0.05, 0.1, 0.125, -0.125, 0.0375, 0.0425,
-<a href=#787 id=787 data-nosnippet>787</a>        // 0.225: only the first and last exceed pblimit.
-<a href=#788 id=788 data-nosnippet>788</a>        </span><span class="kw">let </span>sample = |normalization, family| {
-<a href=#789 id=789 data-nosnippet>789</a>            (<span class="number">0</span>..sensitivity.len())
-<a href=#790 id=790 data-nosnippet>790</a>                .map(|index| {
-<a href=#791 id=791 data-nosnippet>791</a>                    response
-<a href=#792 id=792 data-nosnippet>792</a>                        .normalize_weighted_residual_sample(
-<a href=#793 id=793 data-nosnippet>793</a>                            <span class="number">2.0</span>,
-<a href=#794 id=794 data-nosnippet>794</a>                            index,
-<a href=#795 id=795 data-nosnippet>795</a>                            normalization,
-<a href=#796 id=796 data-nosnippet>796</a>                            family,
-<a href=#797 id=797 data-nosnippet>797</a>                            <span class="number">2.0</span>,
-<a href=#798 id=798 data-nosnippet>798</a>                            limit,
-<a href=#799 id=799 data-nosnippet>799</a>                        )
-<a href=#800 id=800 data-nosnippet>800</a>                        .unwrap()
-<a href=#801 id=801 data-nosnippet>801</a>                })
-<a href=#802 id=802 data-nosnippet>802</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#803 id=803 data-nosnippet>803</a>        };
-<a href=#804 id=804 data-nosnippet>804</a>        <span class="kw">let </span>taylor = sample(ProductNormalization::FlatSky, ResidualFamily::Taylor);
-<a href=#805 id=805 data-nosnippet>805</a>        <span class="macro">assert_eq!</span>(
-<a href=#806 id=806 data-nosnippet>806</a>            taylor.iter().map(|value| <span class="kw-2">*</span>value != <span class="number">0.0</span>).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#807 id=807 data-nosnippet>807</a>            [<span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>]
-<a href=#808 id=808 data-nosnippet>808</a>        );
-<a href=#809 id=809 data-nosnippet>809</a>        <span class="kw">let </span>single = sample(ProductNormalization::FlatSky, ResidualFamily::Single);
-<a href=#810 id=810 data-nosnippet>810</a>        <span class="kw">for </span>index <span class="kw">in </span>[<span class="number">0</span>, <span class="number">7</span>] {
-<a href=#811 id=811 data-nosnippet>811</a>            <span class="macro">assert_eq!</span>(
-<a href=#812 id=812 data-nosnippet>812</a>                taylor[index], single[index],
-<a href=#813 id=813 data-nosnippet>813</a>                <span class="string">"same value where both keep it"
-<a href=#814 id=814 data-nosnippet>814</a>            </span>);
-<a href=#815 id=815 data-nosnippet>815</a>        }
-<a href=#816 id=816 data-nosnippet>816</a>        <span class="macro">assert_eq!</span>(
-<a href=#817 id=817 data-nosnippet>817</a>            sample(ProductNormalization::FlatNoise, ResidualFamily::Taylor),
-<a href=#818 id=818 data-nosnippet>818</a>            sample(ProductNormalization::FlatNoise, ResidualFamily::Single)
-<a href=#819 id=819 data-nosnippet>819</a>        );
-<a href=#820 id=820 data-nosnippet>820</a>    }
-<a href=#821 id=821 data-nosnippet>821</a>
-<a href=#822 id=822 data-nosnippet>822</a>    <span class="attr">#[test]
-<a href=#823 id=823 data-nosnippet>823</a>    </span><span class="kw">fn </span>weighted_residual_support_is_not_the_published_pb_mask() {
-<a href=#824 id=824 data-nosnippet>824</a>        <span class="kw">let </span>response = MosaicSensitivity::new(<span class="kw-2">&amp;</span>[<span class="number">4.0</span>, <span class="number">0.2</span>, <span class="number">0.4</span>, <span class="number">0.5</span>, -<span class="number">0.5</span>]).unwrap();
-<a href=#825 id=825 data-nosnippet>825</a>        <span class="kw">let </span>pb = policy(<span class="number">0.1</span>);
-<a href=#826 id=826 data-nosnippet>826</a>        <span class="macro">assert!</span>(
-<a href=#827 id=827 data-nosnippet>827</a>            response
-<a href=#828 id=828 data-nosnippet>828</a>                .weighted_primary_beam(pb)
-<a href=#829 id=829 data-nosnippet>829</a>                .unwrap()
-<a href=#830 id=830 data-nosnippet>830</a>                .iter()
-<a href=#831 id=831 data-nosnippet>831</a>                .all(|value| <span class="kw-2">*</span>value &gt; <span class="number">0.0</span>)
-<a href=#832 id=832 data-nosnippet>832</a>        );
-<a href=#833 id=833 data-nosnippet>833</a>        <span class="kw">let </span>flat_noise = response
-<a href=#834 id=834 data-nosnippet>834</a>            .normalize_weighted_residual_sample(
-<a href=#835 id=835 data-nosnippet>835</a>                <span class="number">2.0</span>,
-<a href=#836 id=836 data-nosnippet>836</a>                <span class="number">4</span>,
-<a href=#837 id=837 data-nosnippet>837</a>                ProductNormalization::FlatNoise,
-<a href=#838 id=838 data-nosnippet>838</a>                ResidualFamily::Single,
-<a href=#839 id=839 data-nosnippet>839</a>                <span class="number">2.0</span>,
-<a href=#840 id=840 data-nosnippet>840</a>                pb,
-<a href=#841 id=841 data-nosnippet>841</a>            )
-<a href=#842 id=842 data-nosnippet>842</a>            .unwrap();
-<a href=#843 id=843 data-nosnippet>843</a>        <span class="macro">assert!</span>((flat_noise - <span class="number">1.0 </span>/ <span class="number">2.0_f64</span>.sqrt()).abs() &lt; <span class="number">1.0e-7</span>);
-<a href=#844 id=844 data-nosnippet>844</a>        <span class="macro">assert_eq!</span>(
-<a href=#845 id=845 data-nosnippet>845</a>            MosaicSensitivity::new(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>])
-<a href=#846 id=846 data-nosnippet>846</a>                .unwrap()
-<a href=#847 id=847 data-nosnippet>847</a>                .normalize_weighted_residual_sample(
-<a href=#848 id=848 data-nosnippet>848</a>                    <span class="number">1.0</span>,
-<a href=#849 id=849 data-nosnippet>849</a>                    <span class="number">0</span>,
-<a href=#850 id=850 data-nosnippet>850</a>                    ProductNormalization::FlatNoise,
-<a href=#851 id=851 data-nosnippet>851</a>                    ResidualFamily::Single,
-<a href=#852 id=852 data-nosnippet>852</a>                    f64::from(<span class="number">1.0e-7_f32</span>),
-<a href=#853 id=853 data-nosnippet>853</a>                    pb
-<a href=#854 id=854 data-nosnippet>854</a>                )
-<a href=#855 id=855 data-nosnippet>855</a>                .unwrap(),
-<a href=#856 id=856 data-nosnippet>856</a>            <span class="number">10_000_000.0
-<a href=#857 id=857 data-nosnippet>857</a>        </span>);
-<a href=#858 id=858 data-nosnippet>858</a>    }
-<a href=#859 id=859 data-nosnippet>859</a>}
+<a href=#400 id=400 data-nosnippet>400</a>            .map(|index| <span class="self">self</span>.weighted_primary_beam_at(index, policy))
+<a href=#401 id=401 data-nosnippet>401</a>            .collect()
+<a href=#402 id=402 data-nosnippet>402</a>    }
+<a href=#403 id=403 data-nosnippet>403</a>
+<a href=#404 id=404 data-nosnippet>404</a>    <span class="doccomment">/// Pixel `index` of [`Self::weighted_primary_beam`]: its Float PB
+<a href=#405 id=405 data-nosnippet>405</a>    /// where that exceeds the cutoff, and zero elsewhere
+<a href=#406 id=406 data-nosnippet>406</a>    /// (`SIImageStore::makePBFromWeight` keeps `sqrt(|weight|) / pbmax`
+<a href=#407 id=407 data-nosnippet>407</a>    /// above `|pblimit|` and zeroes the rest). It is positive at the pixels
+<a href=#408 id=408 data-nosnippet>408</a>    /// `SIImageStore::calcRobustRMS` measures the noise on at tclean's
+<a href=#409 id=409 data-nosnippet>409</a>    /// `pbmask` of 0, and exceeds a `pbmask` above zero at those
+<a href=#410 id=410 data-nosnippet>410</a>    /// `calcRobustRMS` and `SDMaskHandler::makePBMask` keep
+<a href=#411 id=411 data-nosnippet>411</a>    /// (`pb &gt; pbmasklevel`).
+<a href=#412 id=412 data-nosnippet>412</a>    ///
+<a href=#413 id=413 data-nosnippet>413</a>    /// # Errors
+<a href=#414 id=414 data-nosnippet>414</a>    ///
+<a href=#415 id=415 data-nosnippet>415</a>    /// A non-finite PB value.
+<a href=#416 id=416 data-nosnippet>416</a>    </span><span class="kw">pub fn </span>weighted_primary_beam_at(
+<a href=#417 id=417 data-nosnippet>417</a>        <span class="self">self</span>,
+<a href=#418 id=418 data-nosnippet>418</a>        index: usize,
+<a href=#419 id=419 data-nosnippet>419</a>        policy: PrimaryBeamValidityPolicy,
+<a href=#420 id=420 data-nosnippet>420</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;f32, ProductsError&gt; {
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">let </span>pb = <span class="self">self</span>.model_primary_beam_at(index)<span class="question-mark">?</span>;
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="prelude-val">Ok</span>(<span class="kw">if </span><span class="self">Self</span>::supported(pb, policy) {
+<a href=#423 id=423 data-nosnippet>423</a>            pb <span class="kw">as </span>f32
+<a href=#424 id=424 data-nosnippet>424</a>        } <span class="kw">else </span>{
+<a href=#425 id=425 data-nosnippet>425</a>            <span class="number">0.0
+<a href=#426 id=426 data-nosnippet>426</a>        </span>})
+<a href=#427 id=427 data-nosnippet>427</a>    }
+<a href=#428 id=428 data-nosnippet>428</a>
+<a href=#429 id=429 data-nosnippet>429</a>    <span class="doccomment">/// Return PB support, independent of the CLEAN mask and model.
+<a href=#430 id=430 data-nosnippet>430</a>    </span><span class="attr">#[must_use]
+<a href=#431 id=431 data-nosnippet>431</a>    </span><span class="kw">pub fn </span>validity(<span class="self">self</span>, policy: PrimaryBeamValidityPolicy) -&gt; Vec&lt;bool&gt; {
+<a href=#432 id=432 data-nosnippet>432</a>        (<span class="number">0</span>..<span class="self">self</span>.values.len())
+<a href=#433 id=433 data-nosnippet>433</a>            .map(|index| <span class="self">self</span>.valid_at(index, policy))
+<a href=#434 id=434 data-nosnippet>434</a>            .collect()
+<a href=#435 id=435 data-nosnippet>435</a>    }
+<a href=#436 id=436 data-nosnippet>436</a>
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="doccomment">/// Map a physical flat-sky model pixel to the units the minor cycle
+<a href=#438 id=438 data-nosnippet>438</a>    /// solves in.
+<a href=#439 id=439 data-nosnippet>439</a>    ///
+<a href=#440 id=440 data-nosnippet>440</a>    /// CASA flat noise multiplies by the PB inside its support and zeroes
+<a href=#441 id=441 data-nosnippet>441</a>    /// the rest; pbsquare multiplies by the PB squared where that exceeds
+<a href=#442 id=442 data-nosnippet>442</a>    /// the cutoff and zeroes the rest; flat sky is the identity. Apply this
+<a href=#443 id=443 data-nosnippet>443</a>    /// before restoring-beam convolution.
+<a href=#444 id=444 data-nosnippet>444</a>    ///
+<a href=#445 id=445 data-nosnippet>445</a>    /// # Errors
+<a href=#446 id=446 data-nosnippet>446</a>    ///
+<a href=#447 id=447 data-nosnippet>447</a>    /// Unit-response normalization, or non-finite arithmetic.
+<a href=#448 id=448 data-nosnippet>448</a>    </span><span class="kw">pub fn </span>physical_to_apparent(
+<a href=#449 id=449 data-nosnippet>449</a>        <span class="self">self</span>,
+<a href=#450 id=450 data-nosnippet>450</a>        value: f64,
+<a href=#451 id=451 data-nosnippet>451</a>        index: usize,
+<a href=#452 id=452 data-nosnippet>452</a>        normalization: ProductNormalization,
+<a href=#453 id=453 data-nosnippet>453</a>        policy: PrimaryBeamValidityPolicy,
+<a href=#454 id=454 data-nosnippet>454</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;f64, ProductsError&gt; {
+<a href=#455 id=455 data-nosnippet>455</a>        <span class="kw">match </span>normalization {
+<a href=#456 id=456 data-nosnippet>456</a>            ProductNormalization::FlatNoise =&gt; {
+<a href=#457 id=457 data-nosnippet>457</a>                <span class="kw">let </span>pb = <span class="self">self</span>.model_primary_beam_at(index)<span class="question-mark">?</span>;
+<a href=#458 id=458 data-nosnippet>458</a>                <span class="kw">if </span><span class="self">Self</span>::supported(pb, policy) {
+<a href=#459 id=459 data-nosnippet>459</a>                    <span class="self">Self</span>::finite(value * pb)
+<a href=#460 id=460 data-nosnippet>460</a>                } <span class="kw">else </span>{
+<a href=#461 id=461 data-nosnippet>461</a>                    <span class="prelude-val">Ok</span>(<span class="number">0.0</span>)
+<a href=#462 id=462 data-nosnippet>462</a>                }
+<a href=#463 id=463 data-nosnippet>463</a>            }
+<a href=#464 id=464 data-nosnippet>464</a>            ProductNormalization::PbSquare =&gt; {
+<a href=#465 id=465 data-nosnippet>465</a>                <span class="kw">let </span>square = <span class="self">self</span>.model_primary_beam_squared_at(index)<span class="question-mark">?</span>;
+<a href=#466 id=466 data-nosnippet>466</a>                <span class="kw">if </span><span class="self">Self</span>::supported(square, policy) {
+<a href=#467 id=467 data-nosnippet>467</a>                    <span class="self">Self</span>::finite(value * square)
+<a href=#468 id=468 data-nosnippet>468</a>                } <span class="kw">else </span>{
+<a href=#469 id=469 data-nosnippet>469</a>                    <span class="prelude-val">Ok</span>(<span class="number">0.0</span>)
+<a href=#470 id=470 data-nosnippet>470</a>                }
+<a href=#471 id=471 data-nosnippet>471</a>            }
+<a href=#472 id=472 data-nosnippet>472</a>            ProductNormalization::FlatSky =&gt; <span class="self">Self</span>::finite(value),
+<a href=#473 id=473 data-nosnippet>473</a>            ProductNormalization::UnitResponse =&gt; <span class="prelude-val">Err</span>(ProductsError::UnsupportedNormalization),
+<a href=#474 id=474 data-nosnippet>474</a>        }
+<a href=#475 id=475 data-nosnippet>475</a>    }
+<a href=#476 id=476 data-nosnippet>476</a>
+<a href=#477 id=477 data-nosnippet>477</a>    <span class="doccomment">/// Map a solved pixel to the physical model that prediction consumes.
+<a href=#478 id=478 data-nosnippet>478</a>    ///
+<a href=#479 id=479 data-nosnippet>479</a>    /// Apply it to every pixel after multiscale expansion, not only to the
+<a href=#480 id=480 data-nosnippet>480</a>    /// component centre. PB support is not the CLEAN mask.
+<a href=#481 id=481 data-nosnippet>481</a>    ///
+<a href=#482 id=482 data-nosnippet>482</a>    /// # Errors
+<a href=#483 id=483 data-nosnippet>483</a>    ///
+<a href=#484 id=484 data-nosnippet>484</a>    /// Unit-response normalization, or non-finite arithmetic.
+<a href=#485 id=485 data-nosnippet>485</a>    </span><span class="kw">pub fn </span>apparent_to_physical(
+<a href=#486 id=486 data-nosnippet>486</a>        <span class="self">self</span>,
+<a href=#487 id=487 data-nosnippet>487</a>        value: f64,
+<a href=#488 id=488 data-nosnippet>488</a>        index: usize,
+<a href=#489 id=489 data-nosnippet>489</a>        normalization: ProductNormalization,
+<a href=#490 id=490 data-nosnippet>490</a>        policy: PrimaryBeamValidityPolicy,
+<a href=#491 id=491 data-nosnippet>491</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;f64, ProductsError&gt; {
+<a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">match </span>normalization {
+<a href=#493 id=493 data-nosnippet>493</a>            ProductNormalization::FlatNoise =&gt; {
+<a href=#494 id=494 data-nosnippet>494</a>                <span class="kw">let </span>pb = <span class="self">self</span>.model_primary_beam_at(index)<span class="question-mark">?</span>;
+<a href=#495 id=495 data-nosnippet>495</a>                <span class="kw">if </span><span class="self">Self</span>::supported(pb, policy) {
+<a href=#496 id=496 data-nosnippet>496</a>                    <span class="self">Self</span>::finite(value / pb)
+<a href=#497 id=497 data-nosnippet>497</a>                } <span class="kw">else </span>{
+<a href=#498 id=498 data-nosnippet>498</a>                    <span class="prelude-val">Ok</span>(<span class="number">0.0</span>)
+<a href=#499 id=499 data-nosnippet>499</a>                }
+<a href=#500 id=500 data-nosnippet>500</a>            }
+<a href=#501 id=501 data-nosnippet>501</a>            ProductNormalization::PbSquare =&gt; {
+<a href=#502 id=502 data-nosnippet>502</a>                <span class="kw">let </span>square = <span class="self">self</span>.model_primary_beam_squared_at(index)<span class="question-mark">?</span>;
+<a href=#503 id=503 data-nosnippet>503</a>                <span class="kw">if </span><span class="self">Self</span>::supported(square, policy) {
+<a href=#504 id=504 data-nosnippet>504</a>                    <span class="self">Self</span>::finite(value / square)
+<a href=#505 id=505 data-nosnippet>505</a>                } <span class="kw">else </span>{
+<a href=#506 id=506 data-nosnippet>506</a>                    <span class="prelude-val">Ok</span>(<span class="number">0.0</span>)
+<a href=#507 id=507 data-nosnippet>507</a>                }
+<a href=#508 id=508 data-nosnippet>508</a>            }
+<a href=#509 id=509 data-nosnippet>509</a>            ProductNormalization::FlatSky =&gt; <span class="self">Self</span>::finite(value),
+<a href=#510 id=510 data-nosnippet>510</a>            ProductNormalization::UnitResponse =&gt; <span class="prelude-val">Err</span>(ProductsError::UnsupportedNormalization),
+<a href=#511 id=511 data-nosnippet>511</a>        }
+<a href=#512 id=512 data-nosnippet>512</a>    }
+<a href=#513 id=513 data-nosnippet>513</a>
+<a href=#514 id=514 data-nosnippet>514</a>    <span class="doccomment">/// PB-correct a normalized plane inside the PB support and zero it
+<a href=#515 id=515 data-nosnippet>515</a>    /// outside.
+<a href=#516 id=516 data-nosnippet>516</a>    ///
+<a href=#517 id=517 data-nosnippet>517</a>    /// # Errors
+<a href=#518 id=518 data-nosnippet>518</a>    ///
+<a href=#519 id=519 data-nosnippet>519</a>    /// A non-finite result.
+<a href=#520 id=520 data-nosnippet>520</a>    ///
+<a href=#521 id=521 data-nosnippet>521</a>    /// # Panics
+<a href=#522 id=522 data-nosnippet>522</a>    ///
+<a href=#523 id=523 data-nosnippet>523</a>    /// If `values` is not one value per sensitivity pixel.
+<a href=#524 id=524 data-nosnippet>524</a>    </span><span class="kw">pub fn </span>correct_primary_beam(
+<a href=#525 id=525 data-nosnippet>525</a>        <span class="self">self</span>,
+<a href=#526 id=526 data-nosnippet>526</a>        values: <span class="kw-2">&amp;</span>[f32],
+<a href=#527 id=527 data-nosnippet>527</a>        policy: PrimaryBeamValidityPolicy,
+<a href=#528 id=528 data-nosnippet>528</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f32&gt;, ProductsError&gt; {
+<a href=#529 id=529 data-nosnippet>529</a>        <span class="macro">assert_eq!</span>(
+<a href=#530 id=530 data-nosnippet>530</a>            values.len(),
+<a href=#531 id=531 data-nosnippet>531</a>            <span class="self">self</span>.values.len(),
+<a href=#532 id=532 data-nosnippet>532</a>            <span class="string">"a plane and its sensitivity have one shape"
+<a href=#533 id=533 data-nosnippet>533</a>        </span>);
+<a href=#534 id=534 data-nosnippet>534</a>        values
+<a href=#535 id=535 data-nosnippet>535</a>            .iter()
+<a href=#536 id=536 data-nosnippet>536</a>            .enumerate()
+<a href=#537 id=537 data-nosnippet>537</a>            .map(|(index, value)| {
+<a href=#538 id=538 data-nosnippet>538</a>                <span class="kw">let </span>pb = <span class="self">self</span>.primary_beam_at(index);
+<a href=#539 id=539 data-nosnippet>539</a>                <span class="kw">let </span>corrected = <span class="kw">if </span><span class="self">Self</span>::supported(pb, policy) {
+<a href=#540 id=540 data-nosnippet>540</a>                    f64::from(<span class="kw-2">*</span>value) / pb
+<a href=#541 id=541 data-nosnippet>541</a>                } <span class="kw">else </span>{
+<a href=#542 id=542 data-nosnippet>542</a>                    <span class="number">0.0
+<a href=#543 id=543 data-nosnippet>543</a>                </span>} <span class="kw">as </span>f32;
+<a href=#544 id=544 data-nosnippet>544</a>                corrected
+<a href=#545 id=545 data-nosnippet>545</a>                    .is_finite()
+<a href=#546 id=546 data-nosnippet>546</a>                    .then_some(corrected)
+<a href=#547 id=547 data-nosnippet>547</a>                    .ok_or(ProductsError::GeneratedNonfinite)
+<a href=#548 id=548 data-nosnippet>548</a>            })
+<a href=#549 id=549 data-nosnippet>549</a>            .collect()
+<a href=#550 id=550 data-nosnippet>550</a>    }
+<a href=#551 id=551 data-nosnippet>551</a>}
+<a href=#552 id=552 data-nosnippet>552</a>
+<a href=#553 id=553 data-nosnippet>553</a><span class="attr">#[cfg(test)]
+<a href=#554 id=554 data-nosnippet>554</a></span><span class="kw">mod </span>tests {
+<a href=#555 id=555 data-nosnippet>555</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#556 id=556 data-nosnippet>556</a>    <span class="kw">use </span>casa_imaging_model::ProductBlankingPolicy;
+<a href=#557 id=557 data-nosnippet>557</a>
+<a href=#558 id=558 data-nosnippet>558</a>    <span class="kw">fn </span>policy(cutoff: f32) -&gt; PrimaryBeamValidityPolicy {
+<a href=#559 id=559 data-nosnippet>559</a>        PrimaryBeamValidityPolicy::new(
+<a href=#560 id=560 data-nosnippet>560</a>            cutoff,
+<a href=#561 id=561 data-nosnippet>561</a>            ProductSupportComparison::StrictlyGreater,
+<a href=#562 id=562 data-nosnippet>562</a>            ProductBlankingPolicy::Zero,
+<a href=#563 id=563 data-nosnippet>563</a>        )
+<a href=#564 id=564 data-nosnippet>564</a>        .expect(<span class="string">"PB policy"</span>)
+<a href=#565 id=565 data-nosnippet>565</a>    }
+<a href=#566 id=566 data-nosnippet>566</a>
+<a href=#567 id=567 data-nosnippet>567</a>    <span class="attr">#[test]
+<a href=#568 id=568 data-nosnippet>568</a>    </span><span class="kw">fn </span>psf_normalization_is_exact_and_preserves_coupled_signed_terms() {
+<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">for </span>amplitude <span class="kw">in </span>[f32::MIN_POSITIVE, <span class="number">1.000_000_7</span>, <span class="number">12345.67</span>] {
+<a href=#570 id=570 data-nosnippet>570</a>            <span class="kw">let </span>principal = [-<span class="number">0.25 </span>* amplitude, amplitude, <span class="number">0.5 </span>* amplitude];
+<a href=#571 id=571 data-nosnippet>571</a>            <span class="kw">let </span>peak = psf_peak(principal.into_iter()).unwrap();
+<a href=#572 id=572 data-nosnippet>572</a>            <span class="macro">assert_eq!</span>(peak, amplitude);
+<a href=#573 id=573 data-nosnippet>573</a>            <span class="macro">assert_eq!</span>(
+<a href=#574 id=574 data-nosnippet>574</a>                principal.map(|value| normalized_psf_value(value, peak)),
+<a href=#575 id=575 data-nosnippet>575</a>                [-<span class="number">0.25</span>, <span class="number">1.0</span>, <span class="number">0.5</span>]
+<a href=#576 id=576 data-nosnippet>576</a>            );
+<a href=#577 id=577 data-nosnippet>577</a>            <span class="kw">let </span>coupled = [-<span class="number">0.5 </span>* amplitude, <span class="number">0.25 </span>* amplitude];
+<a href=#578 id=578 data-nosnippet>578</a>            <span class="macro">assert_eq!</span>(
+<a href=#579 id=579 data-nosnippet>579</a>                coupled.map(|value| normalized_psf_value(value, peak)),
+<a href=#580 id=580 data-nosnippet>580</a>                [-<span class="number">0.5</span>, <span class="number">0.25</span>]
+<a href=#581 id=581 data-nosnippet>581</a>            );
+<a href=#582 id=582 data-nosnippet>582</a>        }
+<a href=#583 id=583 data-nosnippet>583</a>        <span class="kw">let </span>peak = psf_peak([<span class="number">0.0</span>; <span class="number">3</span>].into_iter()).unwrap();
+<a href=#584 id=584 data-nosnippet>584</a>        <span class="macro">assert_eq!</span>(normalized_psf_value(<span class="number">0.0</span>, peak), <span class="number">0.0</span>);
+<a href=#585 id=585 data-nosnippet>585</a>        <span class="kw">for </span>nonfinite <span class="kw">in </span>[f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+<a href=#586 id=586 data-nosnippet>586</a>            <span class="macro">assert!</span>(psf_peak([<span class="number">1.0</span>, nonfinite].into_iter()).is_err());
+<a href=#587 id=587 data-nosnippet>587</a>        }
+<a href=#588 id=588 data-nosnippet>588</a>    }
+<a href=#589 id=589 data-nosnippet>589</a>
+<a href=#590 id=590 data-nosnippet>590</a>    <span class="doccomment">/// CASA's `pbsquare` (`SIImageStore::divideResidualByWeight`,
+<a href=#591 id=591 data-nosnippet>591</a>    /// `divideModelByWeight`, `multiplyModelByWeight`): the residual divided
+<a href=#592 id=592 data-nosnippet>592</a>    /// by the PB peak squared everywhere, with no cutoff, and the model
+<a href=#593 id=593 data-nosnippet>593</a>    /// taken to and from apparent units through PB², zero where PB² is not
+<a href=#594 id=594 data-nosnippet>594</a>    /// above |pblimit|.
+<a href=#595 id=595 data-nosnippet>595</a>    </span><span class="attr">#[test]
+<a href=#596 id=596 data-nosnippet>596</a>    </span><span class="kw">fn </span>pbsquare_divides_the_residual_by_the_peak_and_the_model_by_pb_squared() {
+<a href=#597 id=597 data-nosnippet>597</a>        <span class="comment">// The weight is the sensitivity over a sum of weights of 1, so
+<a href=#598 id=598 data-nosnippet>598</a>        // PBScale = √(4 / 1) = 2 and PBScale² = 4: PB² = |weight| / 4 = 1,
+<a href=#599 id=599 data-nosnippet>599</a>        // 0.25, 0.09, 0.01 and, for the negative weight, 0.01 again.
+<a href=#600 id=600 data-nosnippet>600</a>        </span><span class="kw">let </span>sensitivity = [<span class="number">4.0</span>, <span class="number">1.0</span>, <span class="number">0.36</span>, <span class="number">0.04</span>, -<span class="number">0.04</span>];
+<a href=#601 id=601 data-nosnippet>601</a>        <span class="kw">let </span>response = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity)
+<a href=#602 id=602 data-nosnippet>602</a>            .unwrap()
+<a href=#603 id=603 data-nosnippet>603</a>            .with_normal_sum_weight(<span class="number">1.0</span>)
+<a href=#604 id=604 data-nosnippet>604</a>            .unwrap();
+<a href=#605 id=605 data-nosnippet>605</a>        <span class="kw">let </span>pb = policy(<span class="number">0.2</span>);
+<a href=#606 id=606 data-nosnippet>606</a>        <span class="kw">let </span>residual = [<span class="number">8.0</span>, <span class="number">4.0</span>, <span class="number">2.0</span>, <span class="number">1.0</span>, <span class="number">1.0</span>];
+<a href=#607 id=607 data-nosnippet>607</a>        <span class="kw">let </span>raw = response
+<a href=#608 id=608 data-nosnippet>608</a>            .normalize(
+<a href=#609 id=609 data-nosnippet>609</a>                <span class="kw-2">&amp;</span>residual.map(|value| value <span class="kw">as </span>f32),
+<a href=#610 id=610 data-nosnippet>610</a>                ProductNormalization::PbSquare,
+<a href=#611 id=611 data-nosnippet>611</a>                pb,
+<a href=#612 id=612 data-nosnippet>612</a>            )
+<a href=#613 id=613 data-nosnippet>613</a>            .unwrap();
+<a href=#614 id=614 data-nosnippet>614</a>        <span class="comment">// ÷ the peak 4, everywhere.
+<a href=#615 id=615 data-nosnippet>615</a>        </span><span class="macro">assert_eq!</span>(raw, [<span class="number">2.0</span>, <span class="number">1.0</span>, <span class="number">0.5</span>, <span class="number">0.25</span>, <span class="number">0.25</span>]);
+<a href=#616 id=616 data-nosnippet>616</a>        <span class="kw">for </span>family <span class="kw">in </span>[ResidualFamily::Single, ResidualFamily::Taylor] {
+<a href=#617 id=617 data-nosnippet>617</a>            <span class="kw">let </span>weighted = (<span class="number">0</span>..sensitivity.len())
+<a href=#618 id=618 data-nosnippet>618</a>                .map(|index| {
+<a href=#619 id=619 data-nosnippet>619</a>                    response
+<a href=#620 id=620 data-nosnippet>620</a>                        .normalize_weighted_residual_sample(
+<a href=#621 id=621 data-nosnippet>621</a>                            residual[index],
+<a href=#622 id=622 data-nosnippet>622</a>                            index,
+<a href=#623 id=623 data-nosnippet>623</a>                            ProductNormalization::PbSquare,
+<a href=#624 id=624 data-nosnippet>624</a>                            family,
+<a href=#625 id=625 data-nosnippet>625</a>                            <span class="number">2.0</span>,
+<a href=#626 id=626 data-nosnippet>626</a>                            pb,
+<a href=#627 id=627 data-nosnippet>627</a>                        )
+<a href=#628 id=628 data-nosnippet>628</a>                        .unwrap()
+<a href=#629 id=629 data-nosnippet>629</a>                })
+<a href=#630 id=630 data-nosnippet>630</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#631 id=631 data-nosnippet>631</a>            <span class="comment">// ÷ sumwt 2, then ÷ PBScale² = 4, everywhere.
+<a href=#632 id=632 data-nosnippet>632</a>            </span><span class="macro">assert_eq!</span>(weighted, [<span class="number">1.0</span>, <span class="number">0.5</span>, <span class="number">0.25</span>, <span class="number">0.125</span>, <span class="number">0.125</span>], <span class="string">"{family:?}"</span>);
+<a href=#633 id=633 data-nosnippet>633</a>        }
+<a href=#634 id=634 data-nosnippet>634</a>        <span class="kw">let </span>convert = |cutoff: f32, to_apparent: bool| {
+<a href=#635 id=635 data-nosnippet>635</a>            (<span class="number">0</span>..sensitivity.len())
+<a href=#636 id=636 data-nosnippet>636</a>                .map(|index| {
+<a href=#637 id=637 data-nosnippet>637</a>                    <span class="kw">if </span>to_apparent {
+<a href=#638 id=638 data-nosnippet>638</a>                        response.physical_to_apparent(
+<a href=#639 id=639 data-nosnippet>639</a>                            <span class="number">1.0</span>,
+<a href=#640 id=640 data-nosnippet>640</a>                            index,
+<a href=#641 id=641 data-nosnippet>641</a>                            ProductNormalization::PbSquare,
+<a href=#642 id=642 data-nosnippet>642</a>                            policy(cutoff),
+<a href=#643 id=643 data-nosnippet>643</a>                        )
+<a href=#644 id=644 data-nosnippet>644</a>                    } <span class="kw">else </span>{
+<a href=#645 id=645 data-nosnippet>645</a>                        response.apparent_to_physical(
+<a href=#646 id=646 data-nosnippet>646</a>                            <span class="number">0.25</span>,
+<a href=#647 id=647 data-nosnippet>647</a>                            index,
+<a href=#648 id=648 data-nosnippet>648</a>                            ProductNormalization::PbSquare,
+<a href=#649 id=649 data-nosnippet>649</a>                            policy(cutoff),
+<a href=#650 id=650 data-nosnippet>650</a>                        )
+<a href=#651 id=651 data-nosnippet>651</a>                    }
+<a href=#652 id=652 data-nosnippet>652</a>                    .unwrap()
+<a href=#653 id=653 data-nosnippet>653</a>                })
+<a href=#654 id=654 data-nosnippet>654</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#655 id=655 data-nosnippet>655</a>        };
+<a href=#656 id=656 data-nosnippet>656</a>        <span class="macro">assert_eq!</span>(convert(<span class="number">0.2</span>, <span class="bool-val">true</span>), [<span class="number">1.0</span>, <span class="number">0.25</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]);
+<a href=#657 id=657 data-nosnippet>657</a>        <span class="macro">assert_eq!</span>(convert(<span class="number">0.2</span>, <span class="bool-val">false</span>), [<span class="number">0.25</span>, <span class="number">1.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]);
+<a href=#658 id=658 data-nosnippet>658</a>        <span class="comment">// Below a cutoff of 0.005 the negative weight converts as its
+<a href=#659 id=659 data-nosnippet>659</a>        // absolute value does (CASA's `abs(wt)`).
+<a href=#660 id=660 data-nosnippet>660</a>        </span><span class="kw">let </span>square = f64::from(<span class="number">0.04_f32 </span>/ <span class="number">4.0</span>);
+<a href=#661 id=661 data-nosnippet>661</a>        <span class="kw">let </span>apparent = convert(<span class="number">0.005</span>, <span class="bool-val">true</span>);
+<a href=#662 id=662 data-nosnippet>662</a>        <span class="macro">assert_eq!</span>(apparent[<span class="number">3</span>..], [square, square]);
+<a href=#663 id=663 data-nosnippet>663</a>        <span class="kw">let </span>physical = convert(<span class="number">0.005</span>, <span class="bool-val">false</span>);
+<a href=#664 id=664 data-nosnippet>664</a>        <span class="macro">assert_eq!</span>(physical[<span class="number">3</span>..], [<span class="number">0.25 </span>/ square, <span class="number">0.25 </span>/ square]);
+<a href=#665 id=665 data-nosnippet>665</a>    }
+<a href=#666 id=666 data-nosnippet>666</a>
+<a href=#667 id=667 data-nosnippet>667</a>    <span class="attr">#[test]
+<a href=#668 id=668 data-nosnippet>668</a>    </span><span class="kw">fn </span>response_support_is_separate_from_model_values_and_normalization() {
+<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">let </span>response = MosaicSensitivity::new(<span class="kw-2">&amp;</span>[<span class="number">4.0</span>, <span class="number">1.0</span>, <span class="number">0.04</span>, <span class="number">0.0</span>, -<span class="number">0.04</span>]).unwrap();
+<a href=#670 id=670 data-nosnippet>670</a>        <span class="kw">let </span>pb = policy(<span class="number">0.2</span>);
+<a href=#671 id=671 data-nosnippet>671</a>        <span class="macro">assert_eq!</span>(response.validity(pb), [<span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>]);
+<a href=#672 id=672 data-nosnippet>672</a>        <span class="macro">assert_eq!</span>(response.primary_beam(), [<span class="number">1.0</span>, <span class="number">0.5</span>, <span class="number">0.1</span>, <span class="number">0.0</span>, <span class="number">0.1</span>]);
+<a href=#673 id=673 data-nosnippet>673</a>        <span class="macro">assert_eq!</span>(
+<a href=#674 id=674 data-nosnippet>674</a>            response
+<a href=#675 id=675 data-nosnippet>675</a>                .normalize(
+<a href=#676 id=676 data-nosnippet>676</a>                    <span class="kw-2">&amp;</span>[<span class="number">8.0</span>, <span class="number">4.0</span>, <span class="number">0.8</span>, <span class="number">1.0</span>, <span class="number">1.0</span>],
+<a href=#677 id=677 data-nosnippet>677</a>                    ProductNormalization::FlatNoise,
+<a href=#678 id=678 data-nosnippet>678</a>                    pb
+<a href=#679 id=679 data-nosnippet>679</a>                )
+<a href=#680 id=680 data-nosnippet>680</a>                .unwrap(),
+<a href=#681 id=681 data-nosnippet>681</a>            [<span class="number">2.0</span>, <span class="number">2.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]
+<a href=#682 id=682 data-nosnippet>682</a>        );
+<a href=#683 id=683 data-nosnippet>683</a>        <span class="macro">assert_eq!</span>(
+<a href=#684 id=684 data-nosnippet>684</a>            response
+<a href=#685 id=685 data-nosnippet>685</a>                .physical_to_apparent(<span class="number">4.0</span>, <span class="number">1</span>, ProductNormalization::FlatNoise, pb)
+<a href=#686 id=686 data-nosnippet>686</a>                .unwrap(),
+<a href=#687 id=687 data-nosnippet>687</a>            <span class="number">2.0
+<a href=#688 id=688 data-nosnippet>688</a>        </span>);
+<a href=#689 id=689 data-nosnippet>689</a>        <span class="macro">assert_eq!</span>(
+<a href=#690 id=690 data-nosnippet>690</a>            response
+<a href=#691 id=691 data-nosnippet>691</a>                .apparent_to_physical(<span class="number">2.0</span>, <span class="number">1</span>, ProductNormalization::FlatNoise, pb)
+<a href=#692 id=692 data-nosnippet>692</a>                .unwrap(),
+<a href=#693 id=693 data-nosnippet>693</a>            <span class="number">4.0
+<a href=#694 id=694 data-nosnippet>694</a>        </span>);
+<a href=#695 id=695 data-nosnippet>695</a>        <span class="macro">assert_eq!</span>(
+<a href=#696 id=696 data-nosnippet>696</a>            response
+<a href=#697 id=697 data-nosnippet>697</a>                .apparent_to_physical(<span class="number">2.0</span>, <span class="number">2</span>, ProductNormalization::FlatNoise, pb)
+<a href=#698 id=698 data-nosnippet>698</a>                .unwrap(),
+<a href=#699 id=699 data-nosnippet>699</a>            <span class="number">0.0
+<a href=#700 id=700 data-nosnippet>700</a>        </span>);
+<a href=#701 id=701 data-nosnippet>701</a>        <span class="macro">assert_eq!</span>(
+<a href=#702 id=702 data-nosnippet>702</a>            response
+<a href=#703 id=703 data-nosnippet>703</a>                .apparent_to_physical(<span class="number">2.0</span>, <span class="number">2</span>, ProductNormalization::FlatSky, pb)
+<a href=#704 id=704 data-nosnippet>704</a>                .unwrap(),
+<a href=#705 id=705 data-nosnippet>705</a>            <span class="number">2.0
+<a href=#706 id=706 data-nosnippet>706</a>        </span>);
+<a href=#707 id=707 data-nosnippet>707</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#708 id=708 data-nosnippet>708</a>            MinorCycleImageResponse::new(ProductNormalization::UnitResponse, pb),
+<a href=#709 id=709 data-nosnippet>709</a>            <span class="prelude-val">Err</span>(ProductsError::UnsupportedNormalization)
+<a href=#710 id=710 data-nosnippet>710</a>        ));
+<a href=#711 id=711 data-nosnippet>711</a>    }
+<a href=#712 id=712 data-nosnippet>712</a>
+<a href=#713 id=713 data-nosnippet>713</a>    <span class="doccomment">/// `SIImageStore::divideResidualByWeight`'s cutoffs, pblimit·pbmax² on
+<a href=#714 id=714 data-nosnippet>714</a>    /// pbmax·√|weight| for flat noise and pblimit²·pbmax² on the weight for
+<a href=#715 id=715 data-nosnippet>715</a>    /// flat sky, are both PB &gt; pblimit where the weight is positive.
+<a href=#716 id=716 data-nosnippet>716</a>    </span><span class="attr">#[test]
+<a href=#717 id=717 data-nosnippet>717</a>    </span><span class="kw">fn </span>flat_noise_and_flat_sky_residuals_keep_casa_support() {
+<a href=#718 id=718 data-nosnippet>718</a>        <span class="kw">let </span>sensitivity = [<span class="number">4.0</span>, <span class="number">0.2</span>, <span class="number">0.4</span>, <span class="number">0.5</span>, -<span class="number">0.5</span>, <span class="number">0.15</span>, <span class="number">0.17</span>];
+<a href=#719 id=719 data-nosnippet>719</a>        <span class="kw">let </span>response = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity).unwrap();
+<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">let </span>limit = policy(<span class="number">0.2</span>);
+<a href=#721 id=721 data-nosnippet>721</a>        <span class="comment">// PB = sqrt(|sensitivity| / 4): 1, 0.224, 0.316, 0.354, 0.354, 0.194, 0.206.
+<a href=#722 id=722 data-nosnippet>722</a>        </span><span class="kw">let </span>support = response.validity(limit);
+<a href=#723 id=723 data-nosnippet>723</a>        <span class="macro">assert_eq!</span>(support, [<span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>]);
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="kw">for </span>(normalization, expected) <span class="kw">in </span>[
+<a href=#725 id=725 data-nosnippet>725</a>            (ProductNormalization::FlatNoise, support.clone()),
+<a href=#726 id=726 data-nosnippet>726</a>            (
+<a href=#727 id=727 data-nosnippet>727</a>                ProductNormalization::FlatSky,
+<a href=#728 id=728 data-nosnippet>728</a>                <span class="macro">vec!</span>[<span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>],
+<a href=#729 id=729 data-nosnippet>729</a>            ),
+<a href=#730 id=730 data-nosnippet>730</a>        ] {
+<a href=#731 id=731 data-nosnippet>731</a>            <span class="kw">let </span>staged = (<span class="number">0</span>..sensitivity.len())
+<a href=#732 id=732 data-nosnippet>732</a>                .map(|index| {
+<a href=#733 id=733 data-nosnippet>733</a>                    response
+<a href=#734 id=734 data-nosnippet>734</a>                        .normalize_weighted_residual_sample(
+<a href=#735 id=735 data-nosnippet>735</a>                            <span class="number">2.0</span>,
+<a href=#736 id=736 data-nosnippet>736</a>                            index,
+<a href=#737 id=737 data-nosnippet>737</a>                            normalization,
+<a href=#738 id=738 data-nosnippet>738</a>                            ResidualFamily::Single,
+<a href=#739 id=739 data-nosnippet>739</a>                            <span class="number">2.0</span>,
+<a href=#740 id=740 data-nosnippet>740</a>                            limit,
+<a href=#741 id=741 data-nosnippet>741</a>                        )
+<a href=#742 id=742 data-nosnippet>742</a>                        .unwrap()
+<a href=#743 id=743 data-nosnippet>743</a>                })
+<a href=#744 id=744 data-nosnippet>744</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#745 id=745 data-nosnippet>745</a>            <span class="kw">let </span>raw = response.normalize(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>; <span class="number">7</span>], normalization, limit).unwrap();
+<a href=#746 id=746 data-nosnippet>746</a>            <span class="kw">for </span>(index, valid) <span class="kw">in </span>expected.iter().enumerate() {
+<a href=#747 id=747 data-nosnippet>747</a>                <span class="macro">assert_eq!</span>(
+<a href=#748 id=748 data-nosnippet>748</a>                    staged[index] != <span class="number">0.0</span>,
+<a href=#749 id=749 data-nosnippet>749</a>                    <span class="kw-2">*</span>valid,
+<a href=#750 id=750 data-nosnippet>750</a>                    <span class="string">"{normalization:?} staged {index}"
+<a href=#751 id=751 data-nosnippet>751</a>                </span>);
+<a href=#752 id=752 data-nosnippet>752</a>                <span class="macro">assert_eq!</span>(raw[index] != <span class="number">0.0</span>, <span class="kw-2">*</span>valid, <span class="string">"{normalization:?} raw {index}"</span>);
+<a href=#753 id=753 data-nosnippet>753</a>                <span class="macro">assert!</span>(
+<a href=#754 id=754 data-nosnippet>754</a>                    (staged[index] - f64::from(raw[index])).abs() &lt;= <span class="number">1.0e-6 </span>* staged[index].abs(),
+<a href=#755 id=755 data-nosnippet>755</a>                    <span class="string">"{normalization:?} {index}: {} != {}"</span>,
+<a href=#756 id=756 data-nosnippet>756</a>                    staged[index],
+<a href=#757 id=757 data-nosnippet>757</a>                    raw[index]
+<a href=#758 id=758 data-nosnippet>758</a>                );
+<a href=#759 id=759 data-nosnippet>759</a>            }
+<a href=#760 id=760 data-nosnippet>760</a>        }
+<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span>flat_sky = (<span class="number">0</span>..<span class="number">5</span>)
+<a href=#762 id=762 data-nosnippet>762</a>            .map(|index| {
+<a href=#763 id=763 data-nosnippet>763</a>                response
+<a href=#764 id=764 data-nosnippet>764</a>                    .normalize_weighted_residual_sample(
+<a href=#765 id=765 data-nosnippet>765</a>                        <span class="number">2.0</span>,
+<a href=#766 id=766 data-nosnippet>766</a>                        index,
+<a href=#767 id=767 data-nosnippet>767</a>                        ProductNormalization::FlatSky,
+<a href=#768 id=768 data-nosnippet>768</a>                        ResidualFamily::Single,
+<a href=#769 id=769 data-nosnippet>769</a>                        <span class="number">2.0</span>,
+<a href=#770 id=770 data-nosnippet>770</a>                        limit,
+<a href=#771 id=771 data-nosnippet>771</a>                    )
+<a href=#772 id=772 data-nosnippet>772</a>                    .unwrap()
+<a href=#773 id=773 data-nosnippet>773</a>            })
+<a href=#774 id=774 data-nosnippet>774</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#775 id=775 data-nosnippet>775</a>        <span class="macro">assert_eq!</span>(flat_sky, [<span class="number">0.25</span>, <span class="number">5.0</span>, <span class="number">2.5</span>, <span class="number">2.0</span>, <span class="number">0.0</span>]);
+<a href=#776 id=776 data-nosnippet>776</a>    }
+<a href=#777 id=777 data-nosnippet>777</a>
+<a href=#778 id=778 data-nosnippet>778</a>    <span class="doccomment">/// `SIImageStoreMultiTerm::divideResidualByWeight` keeps
+<a href=#779 id=779 data-nosnippet>779</a>    /// |pblimit|·pbmax² for flat sky: a Taylor family's flat-sky residual is
+<a href=#780 id=780 data-nosnippet>780</a>    /// zero where pblimit &lt; PB ≤ √pblimit, which one term keeps. Flat noise
+<a href=#781 id=781 data-nosnippet>781</a>    /// is the same for both.
+<a href=#782 id=782 data-nosnippet>782</a>    </span><span class="attr">#[test]
+<a href=#783 id=783 data-nosnippet>783</a>    </span><span class="kw">fn </span>a_taylor_flat_sky_residual_keeps_casas_multi_term_cutoff() {
+<a href=#784 id=784 data-nosnippet>784</a>        <span class="kw">let </span>sensitivity = [<span class="number">4.0</span>, <span class="number">0.2</span>, <span class="number">0.4</span>, <span class="number">0.5</span>, -<span class="number">0.5</span>, <span class="number">0.15</span>, <span class="number">0.17</span>, <span class="number">0.9</span>];
+<a href=#785 id=785 data-nosnippet>785</a>        <span class="kw">let </span>response = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity).unwrap();
+<a href=#786 id=786 data-nosnippet>786</a>        <span class="kw">let </span>limit = policy(<span class="number">0.2</span>);
+<a href=#787 id=787 data-nosnippet>787</a>        <span class="comment">// weight / pbmax² = 1, 0.05, 0.1, 0.125, -0.125, 0.0375, 0.0425,
+<a href=#788 id=788 data-nosnippet>788</a>        // 0.225: only the first and last exceed pblimit.
+<a href=#789 id=789 data-nosnippet>789</a>        </span><span class="kw">let </span>sample = |normalization, family| {
+<a href=#790 id=790 data-nosnippet>790</a>            (<span class="number">0</span>..sensitivity.len())
+<a href=#791 id=791 data-nosnippet>791</a>                .map(|index| {
+<a href=#792 id=792 data-nosnippet>792</a>                    response
+<a href=#793 id=793 data-nosnippet>793</a>                        .normalize_weighted_residual_sample(
+<a href=#794 id=794 data-nosnippet>794</a>                            <span class="number">2.0</span>,
+<a href=#795 id=795 data-nosnippet>795</a>                            index,
+<a href=#796 id=796 data-nosnippet>796</a>                            normalization,
+<a href=#797 id=797 data-nosnippet>797</a>                            family,
+<a href=#798 id=798 data-nosnippet>798</a>                            <span class="number">2.0</span>,
+<a href=#799 id=799 data-nosnippet>799</a>                            limit,
+<a href=#800 id=800 data-nosnippet>800</a>                        )
+<a href=#801 id=801 data-nosnippet>801</a>                        .unwrap()
+<a href=#802 id=802 data-nosnippet>802</a>                })
+<a href=#803 id=803 data-nosnippet>803</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#804 id=804 data-nosnippet>804</a>        };
+<a href=#805 id=805 data-nosnippet>805</a>        <span class="kw">let </span>taylor = sample(ProductNormalization::FlatSky, ResidualFamily::Taylor);
+<a href=#806 id=806 data-nosnippet>806</a>        <span class="macro">assert_eq!</span>(
+<a href=#807 id=807 data-nosnippet>807</a>            taylor.iter().map(|value| <span class="kw-2">*</span>value != <span class="number">0.0</span>).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#808 id=808 data-nosnippet>808</a>            [<span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>]
+<a href=#809 id=809 data-nosnippet>809</a>        );
+<a href=#810 id=810 data-nosnippet>810</a>        <span class="kw">let </span>single = sample(ProductNormalization::FlatSky, ResidualFamily::Single);
+<a href=#811 id=811 data-nosnippet>811</a>        <span class="kw">for </span>index <span class="kw">in </span>[<span class="number">0</span>, <span class="number">7</span>] {
+<a href=#812 id=812 data-nosnippet>812</a>            <span class="macro">assert_eq!</span>(
+<a href=#813 id=813 data-nosnippet>813</a>                taylor[index], single[index],
+<a href=#814 id=814 data-nosnippet>814</a>                <span class="string">"same value where both keep it"
+<a href=#815 id=815 data-nosnippet>815</a>            </span>);
+<a href=#816 id=816 data-nosnippet>816</a>        }
+<a href=#817 id=817 data-nosnippet>817</a>        <span class="macro">assert_eq!</span>(
+<a href=#818 id=818 data-nosnippet>818</a>            sample(ProductNormalization::FlatNoise, ResidualFamily::Taylor),
+<a href=#819 id=819 data-nosnippet>819</a>            sample(ProductNormalization::FlatNoise, ResidualFamily::Single)
+<a href=#820 id=820 data-nosnippet>820</a>        );
+<a href=#821 id=821 data-nosnippet>821</a>    }
+<a href=#822 id=822 data-nosnippet>822</a>
+<a href=#823 id=823 data-nosnippet>823</a>    <span class="attr">#[test]
+<a href=#824 id=824 data-nosnippet>824</a>    </span><span class="kw">fn </span>weighted_residual_support_is_not_the_published_pb_mask() {
+<a href=#825 id=825 data-nosnippet>825</a>        <span class="kw">let </span>response = MosaicSensitivity::new(<span class="kw-2">&amp;</span>[<span class="number">4.0</span>, <span class="number">0.2</span>, <span class="number">0.4</span>, <span class="number">0.5</span>, -<span class="number">0.5</span>]).unwrap();
+<a href=#826 id=826 data-nosnippet>826</a>        <span class="kw">let </span>pb = policy(<span class="number">0.1</span>);
+<a href=#827 id=827 data-nosnippet>827</a>        <span class="macro">assert!</span>(
+<a href=#828 id=828 data-nosnippet>828</a>            response
+<a href=#829 id=829 data-nosnippet>829</a>                .weighted_primary_beam(pb)
+<a href=#830 id=830 data-nosnippet>830</a>                .unwrap()
+<a href=#831 id=831 data-nosnippet>831</a>                .iter()
+<a href=#832 id=832 data-nosnippet>832</a>                .all(|value| <span class="kw-2">*</span>value &gt; <span class="number">0.0</span>)
+<a href=#833 id=833 data-nosnippet>833</a>        );
+<a href=#834 id=834 data-nosnippet>834</a>        <span class="kw">let </span>flat_noise = response
+<a href=#835 id=835 data-nosnippet>835</a>            .normalize_weighted_residual_sample(
+<a href=#836 id=836 data-nosnippet>836</a>                <span class="number">2.0</span>,
+<a href=#837 id=837 data-nosnippet>837</a>                <span class="number">4</span>,
+<a href=#838 id=838 data-nosnippet>838</a>                ProductNormalization::FlatNoise,
+<a href=#839 id=839 data-nosnippet>839</a>                ResidualFamily::Single,
+<a href=#840 id=840 data-nosnippet>840</a>                <span class="number">2.0</span>,
+<a href=#841 id=841 data-nosnippet>841</a>                pb,
+<a href=#842 id=842 data-nosnippet>842</a>            )
+<a href=#843 id=843 data-nosnippet>843</a>            .unwrap();
+<a href=#844 id=844 data-nosnippet>844</a>        <span class="macro">assert!</span>((flat_noise - <span class="number">1.0 </span>/ <span class="number">2.0_f64</span>.sqrt()).abs() &lt; <span class="number">1.0e-7</span>);
+<a href=#845 id=845 data-nosnippet>845</a>        <span class="macro">assert_eq!</span>(
+<a href=#846 id=846 data-nosnippet>846</a>            MosaicSensitivity::new(<span class="kw-2">&amp;</span>[<span class="number">1.0</span>])
+<a href=#847 id=847 data-nosnippet>847</a>                .unwrap()
+<a href=#848 id=848 data-nosnippet>848</a>                .normalize_weighted_residual_sample(
+<a href=#849 id=849 data-nosnippet>849</a>                    <span class="number">1.0</span>,
+<a href=#850 id=850 data-nosnippet>850</a>                    <span class="number">0</span>,
+<a href=#851 id=851 data-nosnippet>851</a>                    ProductNormalization::FlatNoise,
+<a href=#852 id=852 data-nosnippet>852</a>                    ResidualFamily::Single,
+<a href=#853 id=853 data-nosnippet>853</a>                    f64::from(<span class="number">1.0e-7_f32</span>),
+<a href=#854 id=854 data-nosnippet>854</a>                    pb
+<a href=#855 id=855 data-nosnippet>855</a>                )
+<a href=#856 id=856 data-nosnippet>856</a>                .unwrap(),
+<a href=#857 id=857 data-nosnippet>857</a>            <span class="number">10_000_000.0
+<a href=#858 id=858 data-nosnippet>858</a>        </span>);
+<a href=#859 id=859 data-nosnippet>859</a>    }
+<a href=#860 id=860 data-nosnippet>860</a>}
 </code></pre></div></section></main></body></html>
