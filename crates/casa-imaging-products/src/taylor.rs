@@ -134,11 +134,7 @@ struct TaylorFamily {
 }
 
 impl TaylorFamily {
-    /// Polarization `polarization`'s family. An empty family, a Stokes
-    /// plane no correlation feeds (zero `sumwt`, as Q and U of parallel
-    /// hands), keeps its PSF moments unnormalized, which publication divides
-    /// by the zeroth's peak as `SIImageStore::normPSF` does, and has zero
-    /// residuals, as the single-term planes do.
+    /// Polarization `polarization`'s family.
     fn read(
         inputs: &ContinuumProductInputs<'_>,
         (state, polarization): (&FinalNormalStateWindow<'_>, usize),
@@ -146,17 +142,10 @@ impl TaylorFamily {
         directional: Option<MosaicSensitivity<'_>>,
         residual_sum_weight: f64,
     ) -> Result<Self, ProductsError> {
-        let empty = empty_family(state, polarization);
-        let mosaic = primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity);
-        let cells = state.shape()[0] * state.shape()[1];
-        let principal_sum_weight = if empty {
-            1.0
-        } else {
-            state
-                .normal_moment(0, polarization)
-                .expect("the zeroth normal moment")
-                .sum_weight()
-        };
+        let principal_sum_weight = state
+            .normal_moment(0, polarization)
+            .expect("the zeroth normal moment")
+            .sum_weight();
         let moments = state.normal_moment_count();
         let mut psf = Vec::with_capacity(moments);
         let mut weight = Vec::with_capacity(moments);
@@ -184,22 +173,20 @@ impl TaylorFamily {
             // `docs/CASA (C++) bugs.md`). CASA's values on
             // `refim_alma_mosaic` agree: weight.ttN / sumwt.ttN is 0.6913
             // for N = 0, 1 and 2.
-            let scale = if moment == 0 && mosaic {
+            let scale = if moment == 0
+                && primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
+            {
                 principal_sum_weight
             } else {
                 1.0
             };
-            // CASA publishes an empty plane's weight as zeros
-            // (`SIImageStore::divideImageByWeightVal`).
-            weight.push(if empty && mosaic {
-                vec![0.0; cells]
-            } else {
+            weight.push(
                 source
                     .sensitivity()
                     .iter()
                     .map(|value| (*value / scale) as f32)
-                    .collect()
-            });
+                    .collect(),
+            );
             if !published.is_finite() {
                 return Err(ProductsError::GeneratedNonfinite);
             }
@@ -210,9 +197,6 @@ impl TaylorFamily {
             (products.normalization(), products.validity().primary_beam());
         let residual = (0..state.coefficient_term_count())
             .map(|term| {
-                if empty {
-                    return Ok(vec![0.0; cells]);
-                }
                 let residual = state
                     .coefficient_term(term, polarization)
                     .expect("every coefficient term")
@@ -516,24 +500,20 @@ impl<'a> SolvedFamily<'a> {
         let residual_sum_weight = state
             .published_sum_weight(0, polarization)
             .expect("the zeroth published sum of weights");
-        let empty = empty_family(state, polarization);
-        if !empty {
-            for sum_weight in [principal_sum_weight, residual_sum_weight] {
-                if !(sum_weight.is_finite() && sum_weight > 0.0) {
-                    return Err(ProductsError::PrincipalSumWeight { sum_weight });
-                }
+        // Every Stokes plane of a Taylor term has the first correlation's
+        // sum of weights (`MultiTermFTNew`), so a family with none has no
+        // data at all.
+        for sum_weight in [principal_sum_weight, residual_sum_weight] {
+            if !(sum_weight.is_finite() && sum_weight > 0.0) {
+                return Err(ProductsError::PrincipalSumWeight { sum_weight });
             }
         }
-        let directional = if empty {
-            None
-        } else {
-            directional_response(
-                inputs,
-                primary_beam_model,
-                principal_normal.sensitivity(),
-                principal_sum_weight,
-            )?
-        };
+        let directional = directional_response(
+            inputs,
+            primary_beam_model,
+            principal_normal.sensitivity(),
+            principal_sum_weight,
+        )?;
         let family = TaylorFamily::read(
             inputs,
             (state, polarization),
@@ -546,29 +526,24 @@ impl<'a> SolvedFamily<'a> {
             .iter()
             .map(|value| *value as f32)
             .collect::<Vec<_>>();
-        // A family with no PSF (`normPSF` zeroes it) has no beam, and its
-        // zero residuals solve to zero.
-        let has_psf = crate::plane::psf_normalizes(psf_peak(family.psf[0].iter().copied())?);
-        let (inverse, principal_residual) = if has_psf {
-            principal_residuals(&family.psf, &family.residual)?
-        } else {
-            let terms = family.residual.len();
-            (vec![0.0; terms * terms], family.residual.clone())
-        };
+        let (inverse, principal_residual) = principal_residuals(&family.psf, &family.residual)?;
         let list = inputs.problem().product_list();
-        let fitted_beam = (has_psf
-            && list.publication().members().iter().any(|id| {
+        let fitted_beam = list
+            .publication()
+            .members()
+            .iter()
+            .any(|id| {
                 list.entries()[id.ordinal()].beam() != casa_imaging_model::ProductBeamRule::None
-            }))
-        .then(|| {
-            fit_restoring_beam(
-                &family.psf[0],
-                state.shape(),
-                inputs.cell_size_rad_for_domain(domain_role(state)),
-                psf_cutoff,
-            )
-        })
-        .transpose()?;
+            })
+            .then(|| {
+                fit_restoring_beam(
+                    &family.psf[0],
+                    state.shape(),
+                    inputs.cell_size_rad_for_domain(domain_role(state)),
+                    psf_cutoff,
+                )
+            })
+            .transpose()?;
         Ok(Self {
             polarization,
             family,
@@ -614,25 +589,14 @@ impl<'a> SolvedFamily<'a> {
             None => vec![vec![0.0; cells]; terms],
         };
 
-        // An empty family's weights are zero: a beam formed from them has
-        // no support, as its other products have no values. An analytic beam
-        // is the telescope's, whatever the plane.
-        let weight_beam = matches!(
+        let pb0 = principal_primary_beam(
+            inputs,
+            domain_role,
+            shape,
             primary_beam_model,
-            None | Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
-        );
-        let pb0 = if weight_beam && empty_family(state, polarization) {
-            vec![0.0; cells]
-        } else {
-            principal_primary_beam(
-                inputs,
-                domain_role,
-                shape,
-                primary_beam_model,
-                directional,
-                &family.weight[0],
-            )?
-        };
+            directional,
+            &family.weight[0],
+        )?;
         let (primary_beam_validity, pb_corrected) =
             primary_beam_corrected(inputs.problem().products().validity(), &pb0, &restored)?;
         let mut primary_beam = vec![vec![0.0; cells]; terms];
@@ -695,13 +659,6 @@ impl<'a> SolvedFamily<'a> {
             restoring_beam,
         })
     }
-}
-
-/// Whether `polarization`'s family is empty: a Stokes plane no correlation
-/// feeds, whose sums of weights are zero.
-fn empty_family(state: &FinalNormalStateWindow<'_>, polarization: usize) -> bool {
-    state.support_validity(polarization)
-        != Some(casa_imaging_deconvolution::SpectralChannelValidity::Valid)
 }
 
 /// The role of a Taylor run's one image domain.

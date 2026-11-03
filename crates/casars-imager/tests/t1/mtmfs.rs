@@ -237,10 +237,13 @@ fn stokes_plane(values: &ndarray::ArrayD<f32>, stokes: usize) -> ndarray::ArrayD
 /// of its own (`SDAlgorithmMSMFS` loops over polarization planes;
 /// `test_stokes_mtmfs_Q`, `test_stokes_weighting`). Of parallel-hand data,
 /// `stokes='IQUV'` images Stokes I's family as an I-only run does, to
-/// rounding, in every term; Q and U are empty families of zero `sumwt` and
-/// V a family of its own; every plane is restored with its own PSF's beam
-/// (all Stokes I's here, as CASA's test checks); and no spectral index is
-/// written, as for anything but Stokes I alone (`calculateAlphaBeta` needs
+/// rounding, in every term; Q and U have no data, and V is a family of its
+/// own. Every Stokes plane of a Taylor term has the first correlation's
+/// sum of weights (`MultiTermFTNew` calls `ToStokesSumWt` without
+/// coordinates), so Q and U have Stokes I's where a single term's have
+/// none. Every plane is restored with its own PSF's beam (all Stokes I's
+/// here, as CASA's test checks), and no spectral index is written, as for
+/// anything but Stokes I alone (`calculateAlphaBeta` needs
 /// `isOnlyStokesI`).
 #[test]
 fn full_stokes_taylor_families_image_each_stokes_plane_on_its_own() {
@@ -267,7 +270,7 @@ fn full_stokes_taylor_families_image_each_stokes_plane_on_its_own() {
         let sumwt = full.get(term).channel_values();
         assert_eq!(sumwt.len(), 4, "{term}");
         assert_ne!(sumwt[0], 0.0, "{term}");
-        assert_eq!(sumwt, [sumwt[0], 0.0, 0.0, sumwt[0]], "{term}");
+        assert_eq!(sumwt, [sumwt[0]; 4], "{term}");
         assert_eq!(sumwt[0], i_only.get(term).channel_values()[0], "{term}");
     }
     for suffix in [
@@ -312,9 +315,8 @@ fn full_stokes_taylor_families_image_each_stokes_plane_on_its_own() {
         .expect("image info")
         .beam_set;
     assert_eq!(beams.n_stokes(), 4);
-    // Q and U fit the unnormalized PSF CASA's conversion gives them, Stokes
-    // I's, where I and V fit theirs over the sum of weights: the same beam
-    // to rounding.
+    // Q and U fit the PSF CASA's conversion gives them, Stokes I's: the
+    // same beam to rounding.
     let i_beam = i_only.get(".image.tt0").restoring_beam();
     let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * b.abs().max(1e-12);
     for stokes in 0..4 {

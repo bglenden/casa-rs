@@ -190,13 +190,16 @@ pub(super) fn specification(
 
 /// The beam the products restore with: none without restoration, else the
 /// request's, `mtmfs`'s one plane restoring with its fitted beam as one
-/// common beam.
+/// common beam. A Taylor family per Stokes plane restores each with its
+/// own, as `SDAlgorithmMSMFS::restore` records a beam per plane.
 fn restoring_beam(request: &ImagingRequest) -> RestoringBeamPolicy {
     match request.restoringbeam {
         _ if !request.restoration || !crate::restart::has_residual(request) => {
             RestoringBeamPolicy::None
         }
-        RestoringBeamPolicy::PerPlane if request.deconvolver == Deconvolver::Mtmfs => {
+        RestoringBeamPolicy::PerPlane
+            if request.deconvolver == Deconvolver::Mtmfs && request.stokes.len() == 1 =>
+        {
             RestoringBeamPolicy::Common
         }
         policy => policy,
@@ -900,7 +903,8 @@ mod tests {
     }
 
     /// `mtmfs` restores its one plane with its fitted beam as one common
-    /// beam, unless the request gives a beam; a given beam couples no planes.
+    /// beam, and each Stokes plane's family with its own, unless the request
+    /// gives a beam; a given beam couples no planes.
     #[test]
     fn the_restoring_beam_follows_the_request() {
         let policy = |overrides| restoring_beam(&crate::request::tests::request(overrides));
@@ -908,6 +912,10 @@ mod tests {
         assert_eq!(
             policy(serde_json::json!({ "deconvolver": "mtmfs", "nterms": 2 })),
             RestoringBeamPolicy::Common
+        );
+        assert_eq!(
+            policy(serde_json::json!({ "deconvolver": "mtmfs", "nterms": 2, "stokes": "IQUV" })),
+            RestoringBeamPolicy::PerPlane
         );
         for overrides in [
             serde_json::json!({ "restoringbeam": ["2arcsec", "1arcsec", "10deg"] }),

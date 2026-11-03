@@ -9,6 +9,7 @@ CASA behaviours casa-rs follows for parity:
 [MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
 [exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels),
 [multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
+[a Taylor term's sum of weights per Stokes plane](#a-taylor-term-gives-every-stokes-plane-the-first-correlations-sum-of-weights),
 [the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio),
 [the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit),
 [the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans),
@@ -433,6 +434,28 @@ term's raw `getWeightImage` moment, so `.weight.tt1` and `.weight.tt2` stay
 the raw Σ W·s^N while `.weight.tt0` is normalized. CASA 6.7.6.14 on
 `refim_alma_mosaic` (mosaic, `nterms=2`) agrees: `weight.ttN / sumwt.ttN` is
 0.6913 for N = 0, 1 and 2. casa-rs publishes the same.
+
+## A Taylor term gives every Stokes plane the first correlation's sum of weights
+
+- Date noted: 2026-11-03
+- Status: deliberate CASA shortcut; casa-rs follows it for parity (#1065)
+- Affected code: `synthesis/TransformMachines2/MultiTermFTNew.cc`
+  (`finalizeToSkyNew`, `finalizeToWeightImage`),
+  `synthesis/TransformMachines/StokesImageUtil.cc` (`ToStokesSumWt`)
+
+A single-term gridder (`FTMachine::finalizeToSkyNew`) forms each Stokes
+plane's `.sumwt` with `ToStokesSumWt`'s coordinate form, from the
+correlations the plane is made of: `min(RR, LL)` for I and V, `min(RL, LR)`
+for Q and U. `MultiTermFTNew` calls the two-argument form instead, which
+"picks the value from the first correlation plane, and fills it into all
+stokes planes", as its comment says, valid when every correlation has the
+same weights. So a Taylor term's `.sumwt.ttN` holds the first gridded
+correlation's sum on every Stokes plane: of parallel-hand data imaged as
+`IQUV`, Q and U have Stokes I's sum where a single term's have zero, and
+the residual of every plane is normalized by that sum. CASA 6.7.6.14's
+`test_stokes_weighting` (call 8, `mtmfs` of `refim_twochan.ms`) writes
+`[143360.94] × 4` in every `.sumwt.ttN`. casa-rs forms a Taylor term's sums
+the same way.
 
 ## The analytic PB ignores a failed `toPixel`
 
