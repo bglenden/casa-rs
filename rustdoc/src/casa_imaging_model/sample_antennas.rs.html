@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging-model/src/sample_antennas.rs`."><title>sample_antennas.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging_model" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_model/</div>sample_antennas.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-2"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging-model/src/sample_antennas.rs`."><title>sample_antennas.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging_model" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_model/</div>sample_antennas.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a>
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! Per-sample antenna quantities of the batch geometry: each antenna's
 <a href=#4 id=4 data-nosnippet>4</a>//! pointing direction and aperture response class.
@@ -33,59 +33,236 @@
 <a href=#33 id=33 data-nosnippet>33</a>    /// `SynthesisImagerVi2::createMosFTMachine` builds it for
 <a href=#34 id=34 data-nosnippet>34</a>    /// `PBMath::EVLA` (`PBMathInterface::COMMONPB`).
 <a href=#35 id=35 data-nosnippet>35</a>    </span>CasaEvla,
-<a href=#36 id=36 data-nosnippet>36</a>}
-<a href=#37 id=37 data-nosnippet>37</a>
-<a href=#38 id=38 data-nosnippet>38</a><span class="kw">impl </span>AntennaResponseClass {
-<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// Whether CASA treats `telescope` as ALMA or ACA, whose dishes it
-<a href=#40 id=40 data-nosnippet>40</a>    /// classes by [`Self::casa_alma_aca`].
-<a href=#41 id=41 data-nosnippet>41</a>    </span><span class="attr">#[must_use]
-<a href=#42 id=42 data-nosnippet>42</a>    </span><span class="kw">pub fn </span>casa_alma_aca_telescope(telescope: <span class="kw-2">&amp;</span>str) -&gt; bool {
-<a href=#43 id=43 data-nosnippet>43</a>        <span class="macro">matches!</span>(telescope.trim(), <span class="string">"ALMA" </span>| <span class="string">"ACA"</span>)
-<a href=#44 id=44 data-nosnippet>44</a>    }
-<a href=#45 id=45 data-nosnippet>45</a>
-<a href=#46 id=46 data-nosnippet>46</a>    <span class="doccomment">/// Whether CASA's mosaic gives `telescope` the common EVLA beam
-<a href=#47 id=47 data-nosnippet>47</a>    /// ([`Self::CasaEvla`]): `PBMath::enumerateCommonPB` names it
-<a href=#48 id=48 data-nosnippet>48</a>    /// `EVLA`, exactly.
-<a href=#49 id=49 data-nosnippet>49</a>    </span><span class="attr">#[must_use]
-<a href=#50 id=50 data-nosnippet>50</a>    </span><span class="kw">pub fn </span>casa_evla_telescope(telescope: <span class="kw-2">&amp;</span>str) -&gt; bool {
-<a href=#51 id=51 data-nosnippet>51</a>        telescope.trim() == <span class="string">"EVLA"
-<a href=#52 id=52 data-nosnippet>52</a>    </span>}
+<a href=#36 id=36 data-nosnippet>36</a>    <span class="doccomment">/// A dish of a telescope CASA's voltage-pattern manager has no beam
+<a href=#37 id=37 data-nosnippet>37</a>    /// for ([`Self::casa_airy_telescope`]): the Airy disk of the dish itself
+<a href=#38 id=38 data-nosnippet>38</a>    /// that `HetArrayConvFunc::findAntennaSizes` forms for
+<a href=#39 id=39 data-nosnippet>39</a>    /// `PBMathInterface::AIRY`, one per dish diameter.
+<a href=#40 id=40 data-nosnippet>40</a>    ///
+<a href=#41 id=41 data-nosnippet>41</a>    /// The class is the exact diameter. CASA keys a dish by its diameter's
+<a href=#42 id=42 data-nosnippet>42</a>    /// text, `String::toString(Double)` to six significant digits, and
+<a href=#43 id=43 data-nosnippet>43</a>    /// gives the class the diameter of the first antenna with that text, so
+<a href=#44 id=44 data-nosnippet>44</a>    /// casa-rs may split dishes CASA merges (diameters that differ beyond
+<a href=#45 id=45 data-nosnippet>45</a>    /// the sixth digit, whose beams then differ by less than a part in
+<a href=#46 id=46 data-nosnippet>46</a>    /// 10⁵), but never merges dishes CASA splits.
+<a href=#47 id=47 data-nosnippet>47</a>    </span>CasaAiry {
+<a href=#48 id=48 data-nosnippet>48</a>        <span class="doccomment">/// The bits of the ANTENNA table's `DISH_DIAMETER` in metres, a
+<a href=#49 id=49 data-nosnippet>49</a>        /// positive finite `f64`, whose bit order is its numeric order.
+<a href=#50 id=50 data-nosnippet>50</a>        </span>dish_diameter_m_bits: u64,
+<a href=#51 id=51 data-nosnippet>51</a>    },
+<a href=#52 id=52 data-nosnippet>52</a>}
 <a href=#53 id=53 data-nosnippet>53</a>
-<a href=#54 id=54 data-nosnippet>54</a>    <span class="doccomment">/// CASA's class of an ALMA or ACA dish `diameter_m` across: 12 m
-<a href=#55 id=55 data-nosnippet>55</a>    /// within 0.5 m, 7 m within 1 m; `None` for another dish.
-<a href=#56 id=56 data-nosnippet>56</a>    </span><span class="attr">#[must_use]
-<a href=#57 id=57 data-nosnippet>57</a>    </span><span class="kw">pub fn </span>casa_alma_aca(diameter_m: f64) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
-<a href=#58 id=58 data-nosnippet>58</a>        <span class="kw">if </span>(diameter_m - <span class="number">12.0</span>).abs() &lt; <span class="number">0.5 </span>{
-<a href=#59 id=59 data-nosnippet>59</a>            <span class="prelude-val">Some</span>(<span class="self">Self</span>::CasaAlma12m)
-<a href=#60 id=60 data-nosnippet>60</a>        } <span class="kw">else if </span>(diameter_m - <span class="number">7.0</span>).abs() &lt; <span class="number">1.0 </span>{
-<a href=#61 id=61 data-nosnippet>61</a>            <span class="prelude-val">Some</span>(<span class="self">Self</span>::CasaAca7m)
-<a href=#62 id=62 data-nosnippet>62</a>        } <span class="kw">else </span>{
-<a href=#63 id=63 data-nosnippet>63</a>            <span class="prelude-val">None
-<a href=#64 id=64 data-nosnippet>64</a>        </span>}
-<a href=#65 id=65 data-nosnippet>65</a>    }
-<a href=#66 id=66 data-nosnippet>66</a>
-<a href=#67 id=67 data-nosnippet>67</a>    <span class="doccomment">/// The largest response of an antenna family whose dishes are
-<a href=#68 id=68 data-nosnippet>68</a>    /// `classes`: the family envelope CASA's heterogeneous mosaic sizes its
-<a href=#69 id=69 data-nosnippet>69</a>    /// kernels by.
-<a href=#70 id=70 data-nosnippet>70</a>    </span><span class="attr">#[must_use]
-<a href=#71 id=71 data-nosnippet>71</a>    </span><span class="kw">pub fn </span>family_envelope(classes: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt;]) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
-<a href=#72 id=72 data-nosnippet>72</a>        [<span class="self">Self</span>::CasaAlma12m, <span class="self">Self</span>::CasaAca7m, <span class="self">Self</span>::CasaEvla]
-<a href=#73 id=73 data-nosnippet>73</a>            .into_iter()
-<a href=#74 id=74 data-nosnippet>74</a>            .find(|class| classes.contains(<span class="kw-2">&amp;</span><span class="prelude-val">Some</span>(<span class="kw-2">*</span>class)))
-<a href=#75 id=75 data-nosnippet>75</a>    }
-<a href=#76 id=76 data-nosnippet>76</a>}
-<a href=#77 id=77 data-nosnippet>77</a>
-<a href=#78 id=78 data-nosnippet>78</a><span class="doccomment">/// Ordered response classes for one selected interferometric baseline.
-<a href=#79 id=79 data-nosnippet>79</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">pub struct </span>SelectedAntennaResponses {
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// Response class of MAIN `ANTENNA1`.
-<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="kw">pub </span>antenna1: AntennaResponseClass,
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="doccomment">/// Response class of MAIN `ANTENNA2`.
-<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="kw">pub </span>antenna2: AntennaResponseClass,
-<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// Largest response class present in this MeasurementSet response family.
-<a href=#86 id=86 data-nosnippet>86</a>    ///
-<a href=#87 id=87 data-nosnippet>87</a>    /// CASA crops every heterogeneous convolution plane to one family-wide
-<a href=#88 id=88 data-nosnippet>88</a>    /// extent so resampling has the same boundary domain for every pair.
-<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">pub </span>family_envelope: AntennaResponseClass,
-<a href=#90 id=90 data-nosnippet>90</a>}
+<a href=#54 id=54 data-nosnippet>54</a><span class="kw">impl </span>AntennaResponseClass {
+<a href=#55 id=55 data-nosnippet>55</a>    <span class="doccomment">/// Whether CASA treats `telescope` as ALMA or ACA, whose dishes it
+<a href=#56 id=56 data-nosnippet>56</a>    /// classes by [`Self::casa_alma_aca`].
+<a href=#57 id=57 data-nosnippet>57</a>    </span><span class="attr">#[must_use]
+<a href=#58 id=58 data-nosnippet>58</a>    </span><span class="kw">pub fn </span>casa_alma_aca_telescope(telescope: <span class="kw-2">&amp;</span>str) -&gt; bool {
+<a href=#59 id=59 data-nosnippet>59</a>        <span class="macro">matches!</span>(telescope.trim(), <span class="string">"ALMA" </span>| <span class="string">"ACA"</span>)
+<a href=#60 id=60 data-nosnippet>60</a>    }
+<a href=#61 id=61 data-nosnippet>61</a>
+<a href=#62 id=62 data-nosnippet>62</a>    <span class="doccomment">/// Whether CASA's mosaic gives `telescope` the common EVLA beam
+<a href=#63 id=63 data-nosnippet>63</a>    /// ([`Self::CasaEvla`]): `PBMath::enumerateCommonPB` names it
+<a href=#64 id=64 data-nosnippet>64</a>    /// `EVLA`, exactly.
+<a href=#65 id=65 data-nosnippet>65</a>    </span><span class="attr">#[must_use]
+<a href=#66 id=66 data-nosnippet>66</a>    </span><span class="kw">pub fn </span>casa_evla_telescope(telescope: <span class="kw-2">&amp;</span>str) -&gt; bool {
+<a href=#67 id=67 data-nosnippet>67</a>        telescope.trim() == <span class="string">"EVLA"
+<a href=#68 id=68 data-nosnippet>68</a>    </span>}
+<a href=#69 id=69 data-nosnippet>69</a>
+<a href=#70 id=70 data-nosnippet>70</a>    <span class="doccomment">/// Whether CASA's mosaic forms an Airy disk of each dish of
+<a href=#71 id=71 data-nosnippet>71</a>    /// `telescope` ([`Self::CasaAiry`]): `SynthesisImager::getVPRecord`
+<a href=#72 id=72 data-nosnippet>72</a>    /// finds no default voltage pattern under the name (`VPManager` lists
+<a href=#73 id=73 data-nosnippet>73</a>    /// those of `PBMath::nameCommonPB` and the observatories with antenna
+<a href=#74 id=74 data-nosnippet>74</a>    /// responses, and matches the name exactly), so it leaves
+<a href=#75 id=75 data-nosnippet>75</a>    /// `PBMath::UNKNOWN`, for which `SynthesisImagerVi2::createMosFTMachine`
+<a href=#76 id=76 data-nosnippet>76</a>    /// gives `HetArrayConvFunc` its `PBMathInterface::AIRY` class.
+<a href=#77 id=77 data-nosnippet>77</a>    /// `NGVLA1`, an ngVLA simulation's name, is one; `NGVLA`, whose common
+<a href=#78 id=78 data-nosnippet>78</a>    /// beam the mosaic applies instead, is not. Nor are `UNKNOWN` and
+<a href=#79 id=79 data-nosnippet>79</a>    /// `OSF`, which have default records but no common beam the mosaic
+<a href=#80 id=80 data-nosnippet>80</a>    /// can form.
+<a href=#81 id=81 data-nosnippet>81</a>    ///
+<a href=#82 id=82 data-nosnippet>82</a>    /// `BIMA` and `NRAO140FT` are Airy telescopes too, although
+<a href=#83 id=83 data-nosnippet>83</a>    /// `PBMath::enumerateCommonPB` knows them (as `HATCREEK` and
+<a href=#84 id=84 data-nosnippet>84</a>    /// `NRAO140FT`): `VPManager` has no default under either name, so
+<a href=#85 id=85 data-nosnippet>85</a>    /// `getVPRecord` resets its `PBMath::UNKNOWN` for the empty record
+<a href=#86 id=86 data-nosnippet>86</a>    /// (SynthesisImager.cc, `rec.empty()`). CASA 6.7.6's tclean of
+<a href=#87 id=87 data-nosnippet>87</a>    /// refim_sim_hetarray_ngvla.ms renamed to either logs "vpmanager does
+<a href=#88 id=88 data-nosnippet>88</a>    /// not have a beam for antenna" and "Overriding PB with Airy of
+<a href=#89 id=89 data-nosnippet>89</a>    /// diam,blockage=18 m,1.125 m"; renamed to `HATCREEK`, neither.
+<a href=#90 id=90 data-nosnippet>90</a>    ///
+<a href=#91 id=91 data-nosnippet>91</a>    /// The name is matched as given. casa-rs's compiler gives it trimmed
+<a href=#92 id=92 data-nosnippet>92</a>    /// of surrounding blanks, as every telescope name it reads; CASA
+<a href=#93 id=93 data-nosnippet>93</a>    /// matches the stored name as it is, so a padded `NGVLA ` is an Airy
+<a href=#94 id=94 data-nosnippet>94</a>    /// telescope to CASA and the common ngVLA beam's name, refused, to
+<a href=#95 id=95 data-nosnippet>95</a>    /// casa-rs.
+<a href=#96 id=96 data-nosnippet>96</a>    </span><span class="attr">#[must_use]
+<a href=#97 id=97 data-nosnippet>97</a>    </span><span class="kw">pub fn </span>casa_airy_telescope(telescope: <span class="kw-2">&amp;</span>str) -&gt; bool {
+<a href=#98 id=98 data-nosnippet>98</a>        !CASA_DEFAULT_VOLTAGE_PATTERNS.contains(<span class="kw-2">&amp;</span>telescope)
+<a href=#99 id=99 data-nosnippet>99</a>    }
+<a href=#100 id=100 data-nosnippet>100</a>
+<a href=#101 id=101 data-nosnippet>101</a>    <span class="doccomment">/// CASA's class of a dish `diameter_m` across of a telescope without a
+<a href=#102 id=102 data-nosnippet>102</a>    /// default voltage pattern ([`Self::casa_airy_telescope`]); `None` for a
+<a href=#103 id=103 data-nosnippet>103</a>    /// diameter that is not positive and finite (`findAntennaSizes` gives
+<a href=#104 id=104 data-nosnippet>104</a>    /// no dish to one that is not positive).
+<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="attr">#[must_use]
+<a href=#106 id=106 data-nosnippet>106</a>    </span><span class="kw">pub fn </span>casa_airy(diameter_m: f64) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
+<a href=#107 id=107 data-nosnippet>107</a>        (diameter_m.is_finite() &amp;&amp; diameter_m &gt; <span class="number">0.0</span>).then_some(<span class="self">Self</span>::CasaAiry {
+<a href=#108 id=108 data-nosnippet>108</a>            dish_diameter_m_bits: diameter_m.to_bits(),
+<a href=#109 id=109 data-nosnippet>109</a>        })
+<a href=#110 id=110 data-nosnippet>110</a>    }
+<a href=#111 id=111 data-nosnippet>111</a>
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// The dish diameter of a [`Self::CasaAiry`] class, in metres; `None`
+<a href=#113 id=113 data-nosnippet>113</a>    /// for the other classes, whose apertures CASA fixes.
+<a href=#114 id=114 data-nosnippet>114</a>    </span><span class="attr">#[must_use]
+<a href=#115 id=115 data-nosnippet>115</a>    </span><span class="kw">pub fn </span>airy_dish_diameter_m(<span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;f64&gt; {
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#117 id=117 data-nosnippet>117</a>            <span class="self">Self</span>::CasaAiry {
+<a href=#118 id=118 data-nosnippet>118</a>                dish_diameter_m_bits,
+<a href=#119 id=119 data-nosnippet>119</a>            } =&gt; <span class="prelude-val">Some</span>(f64::from_bits(dish_diameter_m_bits)),
+<a href=#120 id=120 data-nosnippet>120</a>            <span class="self">Self</span>::CasaAlma12m | <span class="self">Self</span>::CasaAca7m | <span class="self">Self</span>::CasaEvla =&gt; <span class="prelude-val">None</span>,
+<a href=#121 id=121 data-nosnippet>121</a>        }
+<a href=#122 id=122 data-nosnippet>122</a>    }
+<a href=#123 id=123 data-nosnippet>123</a>
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="doccomment">/// CASA's class of an ALMA or ACA dish `diameter_m` across: 12 m
+<a href=#125 id=125 data-nosnippet>125</a>    /// within 0.5 m, 7 m within 1 m; `None` for another dish.
+<a href=#126 id=126 data-nosnippet>126</a>    </span><span class="attr">#[must_use]
+<a href=#127 id=127 data-nosnippet>127</a>    </span><span class="kw">pub fn </span>casa_alma_aca(diameter_m: f64) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
+<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">if </span>(diameter_m - <span class="number">12.0</span>).abs() &lt; <span class="number">0.5 </span>{
+<a href=#129 id=129 data-nosnippet>129</a>            <span class="prelude-val">Some</span>(<span class="self">Self</span>::CasaAlma12m)
+<a href=#130 id=130 data-nosnippet>130</a>        } <span class="kw">else if </span>(diameter_m - <span class="number">7.0</span>).abs() &lt; <span class="number">1.0 </span>{
+<a href=#131 id=131 data-nosnippet>131</a>            <span class="prelude-val">Some</span>(<span class="self">Self</span>::CasaAca7m)
+<a href=#132 id=132 data-nosnippet>132</a>        } <span class="kw">else </span>{
+<a href=#133 id=133 data-nosnippet>133</a>            <span class="prelude-val">None
+<a href=#134 id=134 data-nosnippet>134</a>        </span>}
+<a href=#135 id=135 data-nosnippet>135</a>    }
+<a href=#136 id=136 data-nosnippet>136</a>
+<a href=#137 id=137 data-nosnippet>137</a>    <span class="doccomment">/// The largest response of an antenna family whose dishes are
+<a href=#138 id=138 data-nosnippet>138</a>    /// `classes`: the family envelope CASA's heterogeneous mosaic sizes its
+<a href=#139 id=139 data-nosnippet>139</a>    /// kernels by; of Airy dishes, the widest.
+<a href=#140 id=140 data-nosnippet>140</a>    </span><span class="attr">#[must_use]
+<a href=#141 id=141 data-nosnippet>141</a>    </span><span class="kw">pub fn </span>family_envelope(classes: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt;]) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt; {
+<a href=#142 id=142 data-nosnippet>142</a>        [<span class="self">Self</span>::CasaAlma12m, <span class="self">Self</span>::CasaAca7m, <span class="self">Self</span>::CasaEvla]
+<a href=#143 id=143 data-nosnippet>143</a>            .into_iter()
+<a href=#144 id=144 data-nosnippet>144</a>            .find(|class| classes.contains(<span class="kw-2">&amp;</span><span class="prelude-val">Some</span>(<span class="kw-2">*</span>class)))
+<a href=#145 id=145 data-nosnippet>145</a>            .or_else(|| {
+<a href=#146 id=146 data-nosnippet>146</a>                classes
+<a href=#147 id=147 data-nosnippet>147</a>                    .iter()
+<a href=#148 id=148 data-nosnippet>148</a>                    .flatten()
+<a href=#149 id=149 data-nosnippet>149</a>                    .copied()
+<a href=#150 id=150 data-nosnippet>150</a>                    .filter(|class| class.airy_dish_diameter_m().is_some())
+<a href=#151 id=151 data-nosnippet>151</a>                    .max()
+<a href=#152 id=152 data-nosnippet>152</a>            })
+<a href=#153 id=153 data-nosnippet>153</a>    }
+<a href=#154 id=154 data-nosnippet>154</a>}
+<a href=#155 id=155 data-nosnippet>155</a>
+<a href=#156 id=156 data-nosnippet>156</a><span class="doccomment">/// The telescope names CASA's `VPManager::reset` gives a default voltage
+<a href=#157 id=157 data-nosnippet>157</a>/// pattern (CASA 6.7.6): `PBMath::nameCommonPB` of every common beam from
+<a href=#158 id=158 data-nosnippet>158</a>/// `ATCA_L1` to `NGVLA` (`NRAO140FT`'s name is `UNKNOWN`), and the
+<a href=#159 id=159 data-nosnippet>159</a>/// observatories whose antenna responses the Observatories table names
+<a href=#160 id=160 data-nosnippet>160</a>/// (`ALMA`, `ACA` and `OSF` in casarundata 2026.10.27). CASA's
+<a href=#161 id=161 data-nosnippet>161</a>/// `vpmanager.getvp` returns an empty record for every other name,
+<a href=#162 id=162 data-nosnippet>162</a>/// `NGVLA1`, `BIMA` and `NRAO140FT` among them.
+<a href=#163 id=163 data-nosnippet>163</a></span><span class="kw">const </span>CASA_DEFAULT_VOLTAGE_PATTERNS: [<span class="kw-2">&amp;</span>str; <span class="number">42</span>] = [
+<a href=#164 id=164 data-nosnippet>164</a>    <span class="string">"ATCA_L1"</span>,
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="string">"ATCA_L2"</span>,
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="string">"ATCA_L3"</span>,
+<a href=#167 id=167 data-nosnippet>167</a>    <span class="string">"ATCA_S"</span>,
+<a href=#168 id=168 data-nosnippet>168</a>    <span class="string">"ATCA_C"</span>,
+<a href=#169 id=169 data-nosnippet>169</a>    <span class="string">"ATCA_X"</span>,
+<a href=#170 id=170 data-nosnippet>170</a>    <span class="string">"GBT"</span>,
+<a href=#171 id=171 data-nosnippet>171</a>    <span class="string">"GMRT"</span>,
+<a href=#172 id=172 data-nosnippet>172</a>    <span class="string">"HATCREEK"</span>,
+<a href=#173 id=173 data-nosnippet>173</a>    <span class="string">"NRAO12M"</span>,
+<a href=#174 id=174 data-nosnippet>174</a>    <span class="string">"UNKNOWN"</span>,
+<a href=#175 id=175 data-nosnippet>175</a>    <span class="string">"OVRO"</span>,
+<a href=#176 id=176 data-nosnippet>176</a>    <span class="string">"VLA"</span>,
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="string">"VLA_INVERSE"</span>,
+<a href=#178 id=178 data-nosnippet>178</a>    <span class="string">"VLA_NVSS"</span>,
+<a href=#179 id=179 data-nosnippet>179</a>    <span class="string">"VLA_2NULL"</span>,
+<a href=#180 id=180 data-nosnippet>180</a>    <span class="string">"VLA_4"</span>,
+<a href=#181 id=181 data-nosnippet>181</a>    <span class="string">"VLA_P"</span>,
+<a href=#182 id=182 data-nosnippet>182</a>    <span class="string">"VLA_L"</span>,
+<a href=#183 id=183 data-nosnippet>183</a>    <span class="string">"VLA_C"</span>,
+<a href=#184 id=184 data-nosnippet>184</a>    <span class="string">"VLA_X"</span>,
+<a href=#185 id=185 data-nosnippet>185</a>    <span class="string">"VLA_U"</span>,
+<a href=#186 id=186 data-nosnippet>186</a>    <span class="string">"VLA_K"</span>,
+<a href=#187 id=187 data-nosnippet>187</a>    <span class="string">"VLA_Q"</span>,
+<a href=#188 id=188 data-nosnippet>188</a>    <span class="string">"WSRT"</span>,
+<a href=#189 id=189 data-nosnippet>189</a>    <span class="string">"WSRT_LOW"</span>,
+<a href=#190 id=190 data-nosnippet>190</a>    <span class="string">"ALMA"</span>,
+<a href=#191 id=191 data-nosnippet>191</a>    <span class="string">"ALMASD"</span>,
+<a href=#192 id=192 data-nosnippet>192</a>    <span class="string">"ACA"</span>,
+<a href=#193 id=193 data-nosnippet>193</a>    <span class="string">"IRAMPDB"</span>,
+<a href=#194 id=194 data-nosnippet>194</a>    <span class="string">"IRAM30M"</span>,
+<a href=#195 id=195 data-nosnippet>195</a>    <span class="string">"SMA"</span>,
+<a href=#196 id=196 data-nosnippet>196</a>    <span class="string">"ATA"</span>,
+<a href=#197 id=197 data-nosnippet>197</a>    <span class="string">"ATCA_C_RI"</span>,
+<a href=#198 id=198 data-nosnippet>198</a>    <span class="string">"ATCA"</span>,
+<a href=#199 id=199 data-nosnippet>199</a>    <span class="string">"ATCA_16"</span>,
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="string">"ATCA_K"</span>,
+<a href=#201 id=201 data-nosnippet>201</a>    <span class="string">"ATCA_Q"</span>,
+<a href=#202 id=202 data-nosnippet>202</a>    <span class="string">"ATCA_W"</span>,
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="string">"EVLA"</span>,
+<a href=#204 id=204 data-nosnippet>204</a>    <span class="string">"NGVLA"</span>,
+<a href=#205 id=205 data-nosnippet>205</a>    <span class="string">"OSF"</span>,
+<a href=#206 id=206 data-nosnippet>206</a>];
+<a href=#207 id=207 data-nosnippet>207</a>
+<a href=#208 id=208 data-nosnippet>208</a><span class="doccomment">/// Ordered response classes for one selected interferometric baseline.
+<a href=#209 id=209 data-nosnippet>209</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+<a href=#210 id=210 data-nosnippet>210</a></span><span class="kw">pub struct </span>SelectedAntennaResponses {
+<a href=#211 id=211 data-nosnippet>211</a>    <span class="doccomment">/// Response class of MAIN `ANTENNA1`.
+<a href=#212 id=212 data-nosnippet>212</a>    </span><span class="kw">pub </span>antenna1: AntennaResponseClass,
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="doccomment">/// Response class of MAIN `ANTENNA2`.
+<a href=#214 id=214 data-nosnippet>214</a>    </span><span class="kw">pub </span>antenna2: AntennaResponseClass,
+<a href=#215 id=215 data-nosnippet>215</a>    <span class="doccomment">/// Largest response class present in this MeasurementSet response family.
+<a href=#216 id=216 data-nosnippet>216</a>    ///
+<a href=#217 id=217 data-nosnippet>217</a>    /// CASA crops every heterogeneous convolution plane to one family-wide
+<a href=#218 id=218 data-nosnippet>218</a>    /// extent so resampling has the same boundary domain for every pair.
+<a href=#219 id=219 data-nosnippet>219</a>    </span><span class="kw">pub </span>family_envelope: AntennaResponseClass,
+<a href=#220 id=220 data-nosnippet>220</a>}
+<a href=#221 id=221 data-nosnippet>221</a>
+<a href=#222 id=222 data-nosnippet>222</a><span class="attr">#[cfg(test)]
+<a href=#223 id=223 data-nosnippet>223</a></span><span class="kw">mod </span>tests {
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#225 id=225 data-nosnippet>225</a>
+<a href=#226 id=226 data-nosnippet>226</a>    <span class="doccomment">/// `HetArrayConvFunc::findAntennaSizes` gives every positive dish
+<a href=#227 id=227 data-nosnippet>227</a>    /// diameter its own Airy disk and none to a dish that is not positive;
+<a href=#228 id=228 data-nosnippet>228</a>    /// the widest is the family's envelope.
+<a href=#229 id=229 data-nosnippet>229</a>    </span><span class="attr">#[test]
+<a href=#230 id=230 data-nosnippet>230</a>    </span><span class="kw">fn </span>airy_dishes_are_classed_by_their_diameter() {
+<a href=#231 id=231 data-nosnippet>231</a>        <span class="kw">let </span>[eighteen, six] = [<span class="number">18.0</span>, <span class="number">6.0</span>]
+<a href=#232 id=232 data-nosnippet>232</a>            .map(|diameter| AntennaResponseClass::casa_airy(diameter).expect(<span class="string">"a positive dish"</span>));
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="macro">assert_eq!</span>(
+<a href=#234 id=234 data-nosnippet>234</a>            eighteen,
+<a href=#235 id=235 data-nosnippet>235</a>            AntennaResponseClass::CasaAiry {
+<a href=#236 id=236 data-nosnippet>236</a>                dish_diameter_m_bits: <span class="number">18.0_f64</span>.to_bits()
+<a href=#237 id=237 data-nosnippet>237</a>            }
+<a href=#238 id=238 data-nosnippet>238</a>        );
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="comment">// Diameters CASA's six-digit text merges stay apart.
+<a href=#240 id=240 data-nosnippet>240</a>        </span><span class="macro">assert_ne!</span>(
+<a href=#241 id=241 data-nosnippet>241</a>            AntennaResponseClass::casa_airy(<span class="number">18.000_000_1</span>),
+<a href=#242 id=242 data-nosnippet>242</a>            <span class="prelude-val">Some</span>(eighteen)
+<a href=#243 id=243 data-nosnippet>243</a>        );
+<a href=#244 id=244 data-nosnippet>244</a>        <span class="macro">assert_eq!</span>(eighteen.airy_dish_diameter_m(), <span class="prelude-val">Some</span>(<span class="number">18.0</span>));
+<a href=#245 id=245 data-nosnippet>245</a>        <span class="macro">assert_eq!</span>(six.airy_dish_diameter_m(), <span class="prelude-val">Some</span>(<span class="number">6.0</span>));
+<a href=#246 id=246 data-nosnippet>246</a>        <span class="macro">assert_eq!</span>(
+<a href=#247 id=247 data-nosnippet>247</a>            AntennaResponseClass::CasaAlma12m.airy_dish_diameter_m(),
+<a href=#248 id=248 data-nosnippet>248</a>            <span class="prelude-val">None
+<a href=#249 id=249 data-nosnippet>249</a>        </span>);
+<a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">for </span>absent <span class="kw">in </span>[<span class="number">0.0</span>, -<span class="number">6.0</span>, f64::NAN, f64::INFINITY] {
+<a href=#251 id=251 data-nosnippet>251</a>            <span class="macro">assert_eq!</span>(AntennaResponseClass::casa_airy(absent), <span class="prelude-val">None</span>, <span class="string">"{absent}"</span>);
+<a href=#252 id=252 data-nosnippet>252</a>        }
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="macro">assert_eq!</span>(
+<a href=#254 id=254 data-nosnippet>254</a>            AntennaResponseClass::family_envelope(<span class="kw-2">&amp;</span>[<span class="prelude-val">Some</span>(six), <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(eighteen), <span class="prelude-val">Some</span>(six)]),
+<a href=#255 id=255 data-nosnippet>255</a>            <span class="prelude-val">Some</span>(eighteen)
+<a href=#256 id=256 data-nosnippet>256</a>        );
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">for </span>airy <span class="kw">in </span>[<span class="string">"NGVLA1"</span>, <span class="string">"BIMA"</span>, <span class="string">"NRAO140FT"</span>] {
+<a href=#258 id=258 data-nosnippet>258</a>            <span class="macro">assert!</span>(AntennaResponseClass::casa_airy_telescope(airy), <span class="string">"{airy}"</span>);
+<a href=#259 id=259 data-nosnippet>259</a>        }
+<a href=#260 id=260 data-nosnippet>260</a>        <span class="kw">for </span>common <span class="kw">in </span>[<span class="string">"NGVLA"</span>, <span class="string">"HATCREEK"</span>, <span class="string">"ALMA"</span>, <span class="string">"UNKNOWN"</span>, <span class="string">"OSF"</span>] {
+<a href=#261 id=261 data-nosnippet>261</a>            <span class="macro">assert!</span>(
+<a href=#262 id=262 data-nosnippet>262</a>                !AntennaResponseClass::casa_airy_telescope(common),
+<a href=#263 id=263 data-nosnippet>263</a>                <span class="string">"{common}"
+<a href=#264 id=264 data-nosnippet>264</a>            </span>);
+<a href=#265 id=265 data-nosnippet>265</a>        }
+<a href=#266 id=266 data-nosnippet>266</a>    }
+<a href=#267 id=267 data-nosnippet>267</a>}
 </code></pre></div></section></main></body></html>

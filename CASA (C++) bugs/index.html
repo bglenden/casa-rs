@@ -1412,6 +1412,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-mosaics-weight-image-is-transformed-in-single-precision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A mosaic's weight image is transformed in single precision
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#smpredict-phases-a-moved-observemany-pointing-on-its-field" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2407,6 +2418,7 @@ CASA behaviours casa-rs does not follow:
 <a href="#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite">continuum <code>briggsabs</code> at robust 0 and noise 0</a>,
 <a href="#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask"><code>nsigma</code> with <code>fastnoise=False</code> and no mask</a>,
 <a href="#multitermftnew-forms-taylor-imaging-weights-in-single-precision">single-precision Taylor weights</a>,
+<a href="#a-mosaics-weight-image-is-transformed-in-single-precision">a mosaic's single-precision weight image</a>,
 <a href="#facets-of-an-image-size-that-does-not-divide">facets of an image size that does not divide</a>,
 <a href="#an-unflagged-non-finite-sample-turns-the-image-to-nan">an unflagged non-finite sample</a>,
 <a href="#tbgetcol-refuses-a-column-of-int64"><code>tb.getcol</code> of an <code>int64</code> column</a>,
@@ -3525,6 +3537,35 @@ support) only the first pass's screen size differs: every product agrees to
 it first, the first pass grids the 7 m rows with the 7 m support alone, and
 the products differ by up to 5.4e-4; each MeasurementSet imaged alone
 agrees to 7e-7.</p>
+<h2 id="a-mosaics-weight-image-is-transformed-in-single-precision">A mosaic's weight image is transformed in single precision<a class="headerlink" href="#a-mosaics-weight-image-is-transformed-in-single-precision" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: casa-rs diverges (#980); its weight image is transformed in
+  double precision, so a <code>.pb</code> pixel within single-precision rounding of
+  <code>pblimit</code> can fall on the other side of CASA's mask</li>
+<li>Affected code: <code>synthesis/TransformMachines2/MosaicFT.cc</code>
+  (<code>finalizeToSky</code>: <code>convertArray(griddedWeight, griddedWeight2)</code>, then
+  <code>ft_p.c2cFFT(*weightLattice)</code> on the <code>Complex</code> grid)</li>
+</ul>
+<p><code>MosaicFT</code> accumulates the gridded weights in <code>DComplex</code> but converts them
+to <code>Complex</code> before their inverse transform, so the weight image, and the
+<code>.pb</code> (<code>sqrt(weight / max)</code>) and pixel mask <code>SIImageStore::makePBFromWeight</code>
+form from it, carry single-precision rounding: about 1e-8 of the peak,
+which is a few 1e-6 of the weight where the beam meets a <code>pblimit</code> of
+0.05. Pixels the image's symmetry makes equal show it: on
+<code>refim_sim_hetarray_alma.ms</code> (<code>test_het_antenna_mosaic_cube_alma.3</code>,
+channel 2), four mirror pixels have CASA beams 0.0500000405, 0.0500001221,
+0.0499998446 and 0.0499997467, whose mean, 0.04999993, is casa-rs's
+0.0499999261–0.0499999285 at all four. CASA keeps the first two and masks
+the others; casa-rs masks all four. At double grid precision casa-rs
+grids and transforms the weights in double precision, rounding each pixel
+to single only as it publishes it, and does not add CASA's rounding.</p>
+<p>Every other pixel agrees: the cube mosaics of that MeasurementSet's cross
+baselines (<code>.3</code>) and of all its antennas (<code>.4</code>) differ from CASA in 2 and 1
+<code>.pb</code> mask pixels of channel 2, each within 1.3e-7 of <code>pblimit</code>, and in no
+pixel of their other channels or of the 12 m, 7 m and two-field cubes
+(<code>.1</code>, <code>.2</code>, <code>.5</code>); their products agree to 4e-5 normalized RMS. Such
+pixels cannot measure parity.</p>
 <h2 id="smpredict-phases-a-moved-observemany-pointing-on-its-field"><code>sm.predict</code> phases a moved <code>observemany</code> pointing on its field<a class="headerlink" href="#smpredict-phases-a-moved-observemany-pointing-on-its-field" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>
