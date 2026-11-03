@@ -4,7 +4,9 @@
 //! direction coordinate, product coordinate system and clean mask.
 
 use std::collections::BTreeSet;
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use casa_coordinates::{
     CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, ProjectionType,
@@ -52,6 +54,9 @@ pub(super) enum DomainMask {
     },
     /// CASA auto-multithresh support from the current normal state.
     AutoMultithresh(AutoMultithreshControls),
+    /// Inclusive pixel boxes `[x0, y0, x1, y1]`, each on its channels: a
+    /// CRTF region limited to a spectral range over part of a cube.
+    ChannelBoxes(Vec<([i64; 4], RangeInclusive<usize>)>),
 }
 
 /// One image domain of the run.
@@ -216,46 +221,74 @@ fn request_mask(
         (UseMask::User, None) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
             DomainMask::FullPlane
         }
-        (UseMask::User, None) => {
-            DomainMask::Boxes(user_boxes(&request.mask_box, spectral, channels)?)
-        }
+        (UseMask::User, None) => user_boxes(&request.mask_box, spectral, channels)?,
     })
 }
 
 /// The user mask's boxes on an image of `channels` channels on `spectral`:
 /// a box limited to a spectral range masks the channels casacore's
-/// `AnnRegion` extension gives it ([`range_channels`]). A box whose range
-/// misses every channel is left out, as CASA leaves its region out. A box
-/// over part of a cube's channels is refused until masks hold a plane per
-/// channel.
+/// `AnnRegion` extension gives it ([`range_channels`]), and a box whose
+/// range misses every channel is left out, as CASA leaves its region out.
+/// Boxes over every channel are plain boxes; a box over part of a cube
+/// makes the mask one of a plane per channel ([`DomainMask::ChannelBoxes`]).
 fn user_boxes(
     boxes: &[UserMaskBox],
     spectral: &ImageSpectralCoordinate,
     channels: usize,
-) -> Result<Vec<[i64; 4]>, PrepareError> {
+) -> Result<DomainMask, PrepareError> {
+    let every = 0..=channels.saturating_sub(1);
     let mut kept = Vec::with_capacity(boxes.len());
     for user in boxes {
-        let Some(range) = user.range else {
-            kept.push(user.corners);
+        let span = match user.range {
+            None => every.clone(),
+            Some(range) => match range_channels(range, spectral, channels)? {
+                Some((first, last)) => first..=last,
+                None => {
+                    tracing::warn!(
+                        "the mask region of box {:?} lies outside the image's channels, so \
+                         it is left out, as CASA leaves it out",
+                        user.corners
+                    );
+                    continue;
+                }
+            },
+        };
+        kept.push((user.corners, span));
+    }
+    Ok(if kept.iter().all(|(_, span)| *span == every) {
+        DomainMask::Boxes(kept.into_iter().map(|(corners, _)| corners).collect())
+    } else {
+        DomainMask::ChannelBoxes(kept)
+    })
+}
+
+/// The support of `boxes`, each on its channels, over an image of
+/// `[nx, ny]` pixels and `channels` channels: plane after plane, each
+/// x-major (pixel `(x, y)` at `x · ny + y`). A box's corners are inclusive
+/// and clipped to the image, as a [`MaskBox`]'s are.
+fn channel_box_support(
+    boxes: &[([i64; 4], RangeInclusive<usize>)],
+    [nx, ny]: [usize; 2],
+    channels: usize,
+) -> Arc<[bool]> {
+    let plane = nx * ny;
+    let mut support = vec![false; plane * channels];
+    let clip = |a: i64, b: i64, extent: usize| {
+        let (low, high) = (a.min(b).max(0), a.max(b).min(extent as i64 - 1));
+        (low <= high).then_some(low as usize..=high as usize)
+    };
+    for ([x0, y0, x1, y1], span) in boxes {
+        let (Some(xs), Some(ys)) = (clip(*x0, *x1, nx), clip(*y0, *y1, ny)) else {
             continue;
         };
-        match range_channels(range, spectral, channels)? {
-            None => tracing::warn!(
-                "the mask region of box {:?} lies outside the image's channels, so it is \
-                 left out, as CASA leaves it out",
-                user.corners
-            ),
-            Some((0, last)) if last + 1 == channels => kept.push(user.corners),
-            Some((first, last)) => {
-                return Err(PrepareError::MaskChannelRange {
-                    first,
-                    last,
-                    channels,
-                });
+        for channel in span.clone().filter(|channel| *channel < channels) {
+            for x in xs.clone() {
+                let row = channel * plane + x * ny;
+                support[row + ys.start()..=row + ys.end()].fill(true);
             }
         }
     }
-    Ok(kept)
+    support.into()
 }
 
 /// The channels `first..=last` a spectral range masks on an image of
@@ -384,6 +417,27 @@ fn mask_plan(
             ReconstructionMaskPlan::Reprojected {
                 coordinate,
                 planes,
+                support,
+            }
+        }
+        DomainMask::ChannelBoxes(boxes) => {
+            // The support is the plan's for the whole run, charged as a mask
+            // image's is.
+            let bytes = (image_size[0] * image_size[1] * channels) as u64;
+            let mut charge = admit(
+                &context.host,
+                &context.policy,
+                &Demand {
+                    phase: "clean mask regions",
+                    memory: bytes,
+                },
+            )?;
+            charge.retain(bytes);
+            let support = channel_box_support(&boxes, image_size, channels);
+            resident.join(charge);
+            ReconstructionMaskPlan::Reprojected {
+                coordinate,
+                planes: MaskPlanes::new(channels, 1)?,
                 support,
             }
         }
@@ -622,7 +676,7 @@ mod tests {
 
     /// A ranged box over every channel, or a one-channel image's only
     /// channel, is a plain box; one whose range misses the image is left
-    /// out; one over part of a cube is refused until masks hold a plane per
+    /// out; one over part of a cube masks only its channels, a plane per
     /// channel. CASA's MFS image of `refim_point.ms` is one channel at about
     /// 1.5 GHz, 1 GHz wide: `range=[1.1GHz,1.2GHz]` and `[0.1GHz,0.2GHz]`
     /// mask it, `[3GHz,3.2GHz]` does not (stop code 7).
@@ -645,31 +699,51 @@ mod tests {
             (3.0, 3.2, false),
         ] {
             let boxes = user_boxes(&[plain, ranged(low, high)], &mfs, 1).unwrap();
-            let expected: &[[i64; 4]] = if kept {
-                &[[1, 2, 3, 4], [5, 6, 7, 8]]
+            let expected = if kept {
+                vec![[1, 2, 3, 4], [5, 6, 7, 8]]
             } else {
-                &[[1, 2, 3, 4]]
+                vec![[1, 2, 3, 4]]
             };
-            assert_eq!(boxes, expected, "{low}~{high} GHz");
+            assert_eq!(boxes, DomainMask::Boxes(expected), "{low}~{high} GHz");
         }
         let cube = refim_point_axis();
         assert_eq!(
             user_boxes(&[ranged(0.9, 2.1)], &cube, 20).unwrap(),
-            [[5, 6, 7, 8]]
+            DomainMask::Boxes(vec![[5, 6, 7, 8]])
         );
-        assert!(
-            user_boxes(&[ranged(2.1, 2.3)], &cube, 20)
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            user_boxes(&[ranged(2.1, 2.3)], &cube, 20).unwrap(),
+            DomainMask::Boxes(Vec::new())
         );
-        assert!(matches!(
-            user_boxes(&[ranged(1.1, 1.5)], &cube, 20),
-            Err(PrepareError::MaskChannelRange {
-                first: 2,
-                last: 10,
-                channels: 20
-            })
-        ));
+        // test_mask_2's region on the cube: its channels 2 to 10, and a plain
+        // box beside it on every channel.
+        assert_eq!(
+            user_boxes(&[ranged(1.1, 1.5), plain], &cube, 20).unwrap(),
+            DomainMask::ChannelBoxes(vec![([5, 6, 7, 8], 2..=10), ([1, 2, 3, 4], 0..=19)])
+        );
+    }
+
+    /// The per-channel support holds each box, inclusive and clipped to the
+    /// image, on its channels only, plane after plane, each x-major.
+    #[test]
+    fn channel_boxes_hold_their_pixels_on_their_channels() {
+        let [nx, ny, channels] = [6_usize, 4, 3];
+        let support = channel_box_support(
+            &[([4, 1, 9, 2], 1..=1), ([-3, -3, 0, 0], 0..=2)],
+            [nx, ny],
+            channels,
+        );
+        assert_eq!(support.len(), nx * ny * channels);
+        let set = |channel: usize, x: usize, y: usize| support[channel * nx * ny + x * ny + y];
+        for channel in 0..channels {
+            for x in 0..nx {
+                for y in 0..ny {
+                    let first = channel == 1 && (4..=5).contains(&x) && (1..=2).contains(&y);
+                    let corner = x == 0 && y == 0;
+                    assert_eq!(set(channel, x, y), first || corner, "{channel} {x} {y}");
+                }
+            }
+        }
     }
 
     #[test]

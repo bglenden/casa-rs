@@ -196,20 +196,16 @@ pub enum PrepareError {
         /// The requested channel.
         channel: usize,
     },
-    /// A CRTF region limited to part of a cube's channels: the user mask
-    /// holds one plane for every channel until per-channel masks are native.
+    /// A source-frame cube with a per-channel density: CASA pads its
+    /// density axis by the swing it estimates in the source's frame
+    /// (`BriggsCubeWeightor::estimateSwingChanPad` with the ephemeris),
+    /// which casa-rs does not yet.
     #[error(
-        "mask: a region limited to channels {first}~{last} of the cube's {channels} is not \
-         implemented by casa-rs yet (#980)"
+        "a per-channel density weighting (perchanweightdensity=True with uniform or Briggs \
+         weighting) of a source-frame cube (specmode cubesource) is not implemented by casa-rs \
+         yet (#980)"
     )]
-    MaskChannelRange {
-        /// The first channel the region masks.
-        first: usize,
-        /// The last.
-        last: usize,
-        /// The cube's channels.
-        channels: usize,
-    },
+    SourceFrameCubeDensity,
     /// A CRTF region's spectral range has an end that is not a finite pixel
     /// on the image's spectral axis.
     #[error("mask: the spectral range {range:?} has no finite pixel on the image's axis")]
