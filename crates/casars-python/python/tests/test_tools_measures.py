@@ -13,13 +13,17 @@ and are checked loosely.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
 import casars
+from casars.data import Table
 from casars.tools import measures
 
 from _casa_tools import (
@@ -35,8 +39,8 @@ CASA = casa_signatures("measures")
 
 IMPLEMENTED = {
     "direction", "dirshow", "doframe", "done", "epoch", "framenow", "frequency", "getref",
-    "gettype", "getvalue", "ismeasure", "listcodes", "measure", "observatory", "posangle",
-    "position", "separation", "show", "source", "type",
+    "gettype", "getvalue", "ismeasure", "linelist", "listcodes", "measure", "observatory", "obslist",
+    "posangle", "position", "separation", "show", "source", "sourcelist", "type",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 
@@ -281,6 +285,24 @@ def test_observatories_are_the_measures_datas() -> None:
                                            6372960.257723439), rel=1e-14)
 
 
+#: CASA 6.7.6.14's me.observatory for every observatory, with its table row
+#: (tools/casa-compat/observatories_oracle.py).
+OBSERVATORIES = json.loads(
+    (Path(__file__).resolve().parent / "data" / "casa_observatories.json").read_text(encoding="utf-8")
+)["observatories"]
+
+
+@needs_measures_data
+@pytest.mark.parametrize("name", sorted(OBSERVATORIES))
+def test_every_observatory_is_where_casa_places_it(name: str) -> None:
+    # casacore reads Long, Lat and Height for an ITRF entry too, Height its
+    # radius, and never X, Y and Z, which disagree for ten entries (#1106).
+    expected = OBSERVATORIES[name]["position"]
+    close(measures().observatory(name),
+          position(expected["refer"], *(expected[key]["value"] for key in ("m0", "m1", "m2"))),
+          rel=1e-14, abs_=1e-15)
+
+
 @needs_measures_data
 def test_unknown_names_log_and_return_an_empty_record(caplog: pytest.LogCaptureFixture) -> None:
     me = measures()
@@ -369,3 +391,39 @@ def test_unimplemented_methods_raise_not_implemented(method: str) -> None:
     required = [entry for entry in CASA["methods"][method] if entry["default"] is None]
     with pytest.raises(NotImplementedError, match=rf"^measures\.{method} is not yet implemented in casa-rs \(#1053\)$"):
         getattr(measures(), method)(*[{} for _ in required])
+
+
+#: CASA 6.7.6.14's me.obslist, me.sourcelist and me.linelist on its own
+#: measures data (tools/casa-compat/measures_lists_oracle.py).
+LISTS = json.loads((Path(__file__).resolve().parent / "data" / "casa_measures_lists.json").read_text(encoding="utf-8"))
+
+
+@needs_measures_data
+def test_observatories_and_lines_are_listed_as_casa_lists_them(caplog: pytest.LogCaptureFixture) -> None:
+    me = measures()
+    # Their tables are the same in casa-rs's and CASA's data: the lists are
+    # CASA's to the character.
+    found = me.obslist()
+    assert isinstance(found, list) and all(type(name) is str for name in found)
+    assert found == LISTS["obslist"]
+    with caplog.at_level(logging.WARNING, logger="casars.tools.measures"):
+        assert me.linelist() == LISTS["linelist"]
+    assert caplog.messages == [
+        "DEPRECATED. The linelist method has been deprecated and will be removed in the near future. "
+        "Please use the spectral line (sl) tool and/or related tasks instead"
+    ]
+
+
+@needs_measures_data
+def test_sources_are_listed_as_casa_lists_them() -> None:
+    # CASA lists its Sources table's names in order, joined by spaces. The
+    # table differs between data versions (1139 rows in CASA's, more in
+    # casa-rs's snapshot), so casa-rs's list is checked against its own.
+    assert LISTS["sourcelist_is_the_table_joined"] and LISTS["obslist_is_the_table"]
+    found = measures().sourcelist()
+    assert type(found) is str and "  " not in found
+    root = os.environ.get("CASA_RS_MEASURESPATH")
+    if root:
+        table = Table.open(Path(root) / "ephemerides" / "Sources")
+        assert found == " ".join(table.get_column("Name"))
+    assert len(found.split(" ")) >= 1000

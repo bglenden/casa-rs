@@ -1114,6 +1114,11 @@ pub enum ProductNormalization {
     FlatNoise,
     /// Flat-sky normalization using sensitivity state.
     FlatSky,
+    /// CASA's `pbsquare` normalization using sensitivity state: the
+    /// residual divided by the sensitivity's peak, an image of optimal
+    /// signal to noise whose sky is weighted by the beam squared, and the
+    /// model taken to and from it through the beam squared.
+    PbSquare,
 }
 
 /// Comparison used to decide whether a product pixel has valid support.
@@ -1703,6 +1708,8 @@ pub enum RequiredCapability {
     FlatNoiseNormalization,
     /// Flat-sky product normalization.
     FlatSkyNormalization,
+    /// CASA's `pbsquare` product normalization.
+    PbSquareNormalization,
     /// Formation of a particular logical product.
     Product(ProductKind),
 }
@@ -1741,6 +1748,7 @@ impl RequiredCapability {
             Self::UnitResponseNormalization,
             Self::FlatNoiseNormalization,
             Self::FlatSkyNormalization,
+            Self::PbSquareNormalization,
         ];
         capabilities.extend(Self::polarization_catalog());
         capabilities.extend(ProductKind::ALL.into_iter().map(Self::Product));
@@ -1788,6 +1796,7 @@ impl RequiredCapability {
             Self::UnitResponseNormalization => "unit_response_normalization".to_string(),
             Self::FlatNoiseNormalization => "flat_noise_normalization".to_string(),
             Self::FlatSkyNormalization => "flat_sky_normalization".to_string(),
+            Self::PbSquareNormalization => "pb_square_normalization".to_string(),
             Self::Product(product) => format!("product.{}", product.catalog_id()),
         }
     }
@@ -2413,6 +2422,7 @@ fn derive_capabilities(
         ProductNormalization::UnitResponse => RequiredCapability::UnitResponseNormalization,
         ProductNormalization::FlatNoise => RequiredCapability::FlatNoiseNormalization,
         ProductNormalization::FlatSky => RequiredCapability::FlatSkyNormalization,
+        ProductNormalization::PbSquare => RequiredCapability::PbSquareNormalization,
     });
     capabilities.extend(
         products

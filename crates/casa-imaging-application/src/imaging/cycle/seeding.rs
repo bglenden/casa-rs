@@ -5,9 +5,10 @@
 //! A start model is the model's first generation, in the units a run
 //! publishes its `.model` in. Under a direction-independent response, or
 //! flat sky, those are the physical units the pass predicts from, and the
-//! initial pass grids the residual of the start model. Under flat noise (a
-//! mosaic's or AW kernel set's `normtype`), `.model` is the physical model
-//! times the PB, and CASA divides a model by the weights' PB just before it
+//! initial pass grids the residual of the start model. Under flat noise or
+//! pbsquare (a mosaic's or AW kernel set's `normtype`), `.model` is the
+//! physical model times the PB (flat noise) or PB² (pbsquare), and CASA
+//! divides a model through the PB or PB² of the weights just before it
 //! predicts (`SIImageStore::divideModelByWeight`), once `makePSF` has
 //! formed them. Such a run takes CASA's order: the initial pass forms the
 //! PSF, weights and sums with no model, and the start model, made physical
@@ -28,15 +29,19 @@ use crate::compile::StartModel;
 use crate::imaging::ImagingError;
 
 /// The response a start model is made physical with before the first
-/// major cycle predicts it: a flat-noise one; `None` without a start
-/// model, or when its units are physical already.
+/// major cycle predicts it: a flat-noise or pbsquare one, through the PB
+/// (flat noise) or PB² (pbsquare); `None` without a start model, or when
+/// its units are physical already.
 pub(super) fn reseed_response(
     start_model: Option<&StartModel>,
     response: Option<MinorCycleImageResponse>,
 ) -> Option<MinorCycleImageResponse> {
-    start_model
-        .and(response)
-        .filter(|response| response.normalization() == ProductNormalization::FlatNoise)
+    start_model.and(response).filter(|response| {
+        matches!(
+            response.normalization(),
+            ProductNormalization::FlatNoise | ProductNormalization::PbSquare
+        )
+    })
 }
 
 impl Run<'_> {
@@ -142,10 +147,10 @@ impl Run<'_> {
         Ok(major)
     }
 
-    /// The first generation from `start`, its flat-noise samples divided by
-    /// the PB of `normal`'s weights where the PB supports them and zero
-    /// elsewhere (`divideModelByWeight`), as the minor cycle maps solved
-    /// values to the physical model.
+    /// The first generation from `start`, its apparent samples divided
+    /// through the PB (flat noise) or PB² (pbsquare) of `normal`'s weights
+    /// where that supports them and zero elsewhere (`divideModelByWeight`),
+    /// as the minor cycle maps solved values to the physical model.
     fn physical_generation(
         &self,
         start: &StartModel,

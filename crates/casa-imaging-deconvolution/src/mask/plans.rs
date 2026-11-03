@@ -276,6 +276,14 @@ impl ImageDomainReconstructionMaskPlans {
         self.plans.is_empty()
     }
 
+    /// Major cycles completed before the boundary these plans are for: zero
+    /// at a run's first boundary, before any minor cycle (CASA's `iterdone`
+    /// of 0).
+    #[must_use]
+    pub const fn completed_major_cycles(&self) -> usize {
+        self.completed_major_cycles
+    }
+
     /// Borrow the primary-domain plan.
     #[must_use]
     pub const fn primary(&self) -> &ReconstructionMaskPlan {

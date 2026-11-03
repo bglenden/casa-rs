@@ -5,7 +5,6 @@
 //! The inputs borrow one whole Major-Cycle completion, so the final normal
 //! state and model they carry come from the same reconciliation.
 
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use casa_imaging_deconvolution::{
@@ -15,6 +14,9 @@ use casa_imaging_deconvolution::{
 use casa_imaging_model::{
     CompiledImageDomain, CompiledProblem, ImageDomainRole, ReconstructionBasis,
 };
+
+use crate::AnalyticPrimaryBeamModel;
+use crate::analytic_beam::AnalyticPrimaryBeam;
 
 /// Where an analytic primary beam is centred on each image domain: the
 /// pixel position `[x, y]` of every selected field's phase direction.
@@ -225,18 +227,15 @@ impl<'a> ContinuumProductInputs<'a> {
         self
     }
 
-    /// The pixel positions an analytic primary beam is centred on in the
-    /// domain `role`, whose reference pixel is `reference_pixel`: borrowed
-    /// from the bound pointings, so a plane holds no copy of them.
-    pub(crate) fn primary_beam_centres(
+    /// The run's analytic primary beam of `model`, centred on the bound
+    /// pointings; `None` for the mosaic's, which is each plane's weight
+    /// image. Planning checked its frequencies
+    /// ([`crate::ContinuumProductControls::validate_for_problem`]).
+    pub(crate) fn analytic_primary_beam(
         &self,
-        role: &ImageDomainRole,
-        reference_pixel: [f64; 2],
-    ) -> Cow<'a, [[f64; 2]]> {
-        self.primary_beam_centres.map_or_else(
-            || Cow::Owned(vec![reference_pixel]),
-            |centres| Cow::Borrowed(centres[role].as_slice()),
-        )
+        model: AnalyticPrimaryBeamModel,
+    ) -> Option<AnalyticPrimaryBeam<'a>> {
+        AnalyticPrimaryBeam::bind(self.problem, model, self.primary_beam_centres)
     }
 
     /// Borrow the exact compiled problem behind these payloads.

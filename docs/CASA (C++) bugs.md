@@ -2132,6 +2132,73 @@ The efficiencies are unchanged. `tools/simulation/simutil_oracle.py` records
 both cases, and `tests/simutil_casa.rs` checks that casa-rs departs exactly
 there.
 
+## `simutil.xyz2long` subtracts the x offset from y
+
+- Date noted: 2026-11-03
+- Status: CASA bug; casa-rs does not follow it (#1053)
+- Affected code: `casatasks/src/private/simutil.py` (`xyz2long`,
+  `lon = pl.arctan2(y-dx, x-dx)`)
+
+`xyz2long` converts Earth-centred x, y, z on a datum to longitude, latitude
+and height, first removing the datum's offsets. Its distance from the polar
+axis uses `(x-dx, y-dy)` and its latitude `z-dz`, but its longitude is
+`atan2(y-dx, x-dx)`: it subtracts the x offset from y. For a datum whose x
+and y offsets differ, the longitude is wrong: `long2xyz` then `xyz2long` on
+NAD27 at ALMA returns a longitude 2.2 arcseconds from the one given (CASA
+6.7.6.14). casa-rs subtracts `dy` (`readantenna::geodesy::xyz_to_geodetic`),
+so `xyz2long` inverts `long2xyz`; for WGS 84, the datum `readantenna` uses,
+the two agree.
+
+## `simutil.xyz2long_old` subtracts the x offset from z
+
+- Date noted: 2026-11-03
+- Status: CASA bug; casa-rs does not follow it (#1053)
+- Affected code: `casatasks/src/private/simutil.py` (`xyz2long_old`,
+  `c = (z-dx)**2 / er**2`)
+
+`xyz2long_old`, CASA's older iteration for the same conversion, removes the
+datum's offsets as `(x-dx, y-dy, z-dz)` everywhere but in its second term,
+`c = (z-dx)**2 / er**2`, which subtracts the x offset from z. Its latitude
+is then slightly wrong for a datum whose x and z offsets differ. casa-rs
+subtracts `dz` (`readantenna::geodesy::xyz_to_geodetic_old`); its longitude
+and, for WGS 84, its latitude are CASA's.
+
+## Ten ITRF observatories' tabulated positions disagree with themselves
+
+- Date noted: 2026-11-03
+- Status: measures data defect; casa-rs reads the table as casacore does
+  (#1106)
+- Affected data: the `geodetic/Observatories` table of the measures data
+  (casarundata 2026.02.19 and 2026.10.27); casacore
+  `measures/Measures/MeasTable.cc` (`doInitObservatories`)
+
+Each row of `Observatories` gives a position twice: `Long`, `Lat` and
+`Height`, and `X`, `Y` and `Z`. casacore builds every observatory from the
+first three alone, for an `ITRF` row as a spherical vector whose length is
+`Height`, and never reads `X`, `Y`, `Z`. For 10 of the 20 `ITRF` rows the two
+descriptions are different places:
+
+| Observatory | distance between them | what is wrong |
+|---|---:|---|
+| OVRO_MMA | 6,370,350 m | `Height` is a geodetic height: casacore places it 1.2 km from the Earth's centre |
+| LOFAR | 6,364,570 m | the same: 49 m from the centre |
+| SAO SMA | 4,983,940 m | `Y` has the wrong sign; `Long`, `Lat`, `Height` are SMA's |
+| NRO | 19,983 m | unknown |
+| SMA | 13,844 m | `Lat` appears to be geodetic beside a geocentric radius |
+| e-MERLIN, MERLIN2 | 6,366 m | unknown |
+| SUNRISE | 743 m | a placeholder: `X`, `Y`, `Z` are zero |
+| EVLA | 34.5 m | rounded `Long`, `Lat` and `Height` |
+| ATF | 24.2 m | unknown |
+
+CASA 6.7.6.14's `me.observatory` returns the `Long`, `Lat`, `Height`
+position for each, so its simulations, `itrf2locname` and frame conversions
+use it. casa-rs reads the table as casacore does
+(`ObservatoryEntry::position` in `casa-measures-data`), so the two place
+every observatory alike, including the three that casacore puts inside the
+Earth. Choosing the other column per row would need knowing which one was
+meant, and would make casa-rs and CASA disagree about the same data; the
+correction belongs in the table.
+
 ## `direction_splitter` cannot split a direction without an epoch
 
 - Date noted: 2026-10-26

@@ -2,14 +2,12 @@
 
 //! Product-local completion of one released MT-MFS normal family.
 
-use std::borrow::Cow;
-
 use casa_imaging_deconvolution::FinalNormalStateWindow;
 use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
     ProductTerm, ProductValidityRule, TaylorSupportReference,
 };
-use casa_numerics::{EvlaBand, EvlaPowerPattern, VlaBand, solve_symmetric_ldlt_casacore_dynamic};
+use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 
 use crate::AnalyticPrimaryBeamModel;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
@@ -19,7 +17,6 @@ use crate::normalization::{
 };
 use crate::restore::{fft_convolve, gaussian_beam_image, rescale_residual_to_beam};
 use crate::source::ContinuumProductInputs;
-use casa_numerics::AnnularApertureVoltageTable;
 
 /// The products of a Taylor reconstruction: one family per polarization,
 /// in the reconstruction's order. CASA cleans and restores each Stokes
@@ -229,7 +226,8 @@ impl TaylorFamily {
         let mut model = (0..state.coefficient_term_count())
             .map(|term| model_term(inputs, (term, polarization), state.shape()))
             .collect::<Result<Vec<_>, _>>()?;
-        // CASA restores and publishes the flat-noise model in apparent units
+        // CASA restores and publishes the flat-noise and pbsquare model in
+        // apparent units, through the PB (flat noise) or PB² (pbsquare)
         // (`SynthesisNormalizer::multiplyModelByWeight`).
         if let Some(response) = directional {
             for plane in &mut model {
@@ -350,7 +348,9 @@ fn directional_response<'a>(
     let directional = primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
         && matches!(
             inputs.problem().products().normalization(),
-            ProductNormalization::FlatNoise | ProductNormalization::FlatSky
+            ProductNormalization::FlatNoise
+                | ProductNormalization::FlatSky
+                | ProductNormalization::PbSquare
         );
     directional
         .then(|| {
@@ -431,25 +431,15 @@ fn publishes(inputs: &ContinuumProductInputs<'_>, role: impl Fn(ProductRole) -> 
 fn principal_primary_beam(
     inputs: &ContinuumProductInputs<'_>,
     domain_role: &casa_imaging_model::ImageDomainRole,
-    shape: [usize; 2],
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     directional: Option<MosaicSensitivity<'_>>,
     weight0: &[f32],
 ) -> Result<Vec<f32>, ProductsError> {
+    if let Some(beam) = primary_beam_model.and_then(|model| inputs.analytic_primary_beam(model)) {
+        return beam.plane(domain_role, 0);
+    }
     Ok(match primary_beam_model {
-        Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
-            analytic_evla_primary_beam(inputs, domain_role, shape, 0)?
-        }
-        Some(AnalyticPrimaryBeamModel::CasaVlaBand) => {
-            analytic_vla_primary_beam(inputs, domain_role, shape, 0)?
-        }
-        Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => {
-            analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, CasaAlmaAiry::ALMA_12M)?
-        }
-        Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => {
-            analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, CasaAlmaAiry::ACA_7M)?
-        }
-        Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => match directional {
+        Some(_) => match directional {
             Some(response) => response
                 .weighted_primary_beam(inputs.problem().products().validity().primary_beam())?,
             None => MosaicSensitivity::primary_beam_from_weight(weight0)?,
@@ -593,7 +583,6 @@ impl<'a> SolvedFamily<'a> {
         let pb0 = principal_primary_beam(
             inputs,
             domain_role,
-            shape,
             primary_beam_model,
             directional,
             &family.weight[0],
@@ -860,253 +849,6 @@ fn taylor_alpha_products(
     (alpha, alpha_error, validity)
 }
 
-/// The beam centres (pixels), cell increments (radians) and frequency of
-/// one domain's plane.
-struct BeamGeometry<'a> {
-    centres: Cow<'a, [[f64; 2]]>,
-    increment_rad: [f64; 2],
-    frequency_hz: f64,
-}
-
-fn beam_geometry<'a>(
-    inputs: &ContinuumProductInputs<'a>,
-    domain_role: &casa_imaging_model::ImageDomainRole,
-    output_channel: usize,
-) -> Result<BeamGeometry<'a>, ProductsError> {
-    let domain = inputs
-        .problem()
-        .geometry()
-        .domains()
-        .iter()
-        .find(|domain| domain.role() == domain_role)
-        .ok_or(ProductsError::UnsupportedProblem)?;
-    let direction = domain.direction();
-    let frequency_hz = inputs
-        .problem()
-        .geometry()
-        .spectral()
-        .channel_centre_hz(output_channel)
-        .ok_or(ProductsError::UnsupportedProblem)?;
-    Ok(BeamGeometry {
-        centres: inputs.primary_beam_centres(domain_role, direction.reference_pixel()),
-        increment_rad: direction.increment_rad(),
-        frequency_hz,
-    })
-}
-
-/// CASA's analytic PB on one plane of `shape`: a beam centred on each
-/// pointing, summed (`SIMapper::addPB`), and divided by its peak where that
-/// exceeds one (`SIImageStore::makePBImage`). With no pointing it is zero.
-/// `add_beam` adds one pointing's beam into the plane, which is the only
-/// allocation whatever the number of pointings.
-fn summed_beams(
-    shape: [usize; 2],
-    centres: &[[f64; 2]],
-    add_beam: impl Fn(&mut [f32], [f64; 2]),
-) -> Vec<f32> {
-    let mut sum = vec![0.0; shape[0] * shape[1]];
-    for centre in centres {
-        add_beam(&mut sum, *centre);
-    }
-    let peak = sum.iter().fold(0.0_f32, |peak, value| peak.max(*value));
-    if peak > 1.0 {
-        for value in &mut sum {
-            *value /= peak;
-        }
-    }
-    sum
-}
-
-pub(crate) fn analytic_evla_primary_beam(
-    inputs: &ContinuumProductInputs<'_>,
-    domain_role: &casa_imaging_model::ImageDomainRole,
-    shape: [usize; 2],
-    output_channel: usize,
-) -> Result<Vec<f32>, ProductsError> {
-    let BeamGeometry {
-        centres,
-        increment_rad,
-        frequency_hz,
-    } = beam_geometry(inputs, domain_role, output_channel)?;
-    let pattern = evla_common_pattern(frequency_hz).ok_or(ProductsError::UnsupportedProblem)?;
-    Ok(summed_beams(shape, &centres, |plane, centre| {
-        add_evla_common_power(plane, shape, centre, increment_rad, frequency_hz, pattern);
-    }))
-}
-
-/// Add the EVLA common beam centred on pixel `centre` into `values`.
-fn add_evla_common_power(
-    values: &mut [f32],
-    shape: [usize; 2],
-    centre: [f64; 2],
-    increment_rad: [f64; 2],
-    frequency_hz: f64,
-    pattern: EvlaPowerPattern,
-) {
-    let increment_deg = increment_rad.map(f64::to_degrees);
-    let frequency_factor = 60.0 * frequency_hz / 1.0e9;
-    for x in 0..shape[0] {
-        let rx2 = ((x as f64 - centre[0]) * increment_deg[0]).powi(2) as f32;
-        for y in 0..shape[1] {
-            let ry2 = ((y as f64 - centre[1]) * increment_deg[1]).powi(2) as f32;
-            // PBMath1D::apply stores squared degree offsets and scaled radius
-            // as Float. Rounding before the table lookup matters at bin edges.
-            let radius_arcmin_ghz = (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32;
-            values[x * shape[1] + y] += pattern.power(f64::from(radius_arcmin_ghz));
-        }
-    }
-}
-
-pub(crate) fn analytic_vla_primary_beam(
-    inputs: &ContinuumProductInputs<'_>,
-    domain_role: &casa_imaging_model::ImageDomainRole,
-    shape: [usize; 2],
-    output_channel: usize,
-) -> Result<Vec<f32>, ProductsError> {
-    let BeamGeometry {
-        centres,
-        increment_rad,
-        frequency_hz,
-    } = beam_geometry(inputs, domain_role, output_channel)?;
-    // CASA's SynthesisImager::makePBImage chooses the legacy VLA aperture
-    // once, from output channel zero. PBMath1D then scales that same aperture
-    // by each plane's frequency, even when the cube crosses a band boundary.
-    let first_frequency_hz = inputs
-        .problem()
-        .geometry()
-        .spectral()
-        .channel_centre_hz(0)
-        .ok_or(ProductsError::UnsupportedProblem)?;
-    let table = vla_band_voltage_table(first_frequency_hz)?;
-    Ok(summed_beams(shape, &centres, |plane, centre| {
-        add_annular_aperture_power(plane, shape, centre, increment_rad, frequency_hz, &table);
-    }))
-}
-
-/// One of CASA's common Airy beams of ALMA's dishes (`PBMath::initByTelescope`
-/// for `PBMath::ALMA` and `PBMath::ACA`): the effective aperture, with a
-/// 0.75 m blockage, and the radius at 1 GHz to which `PBMath1DAiry` tables
-/// it in 10000 samples, which sets the table's sampling.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct CasaAlmaAiry {
-    effective_diameter_m: f64,
-    maximum_radius_deg: f64,
-}
-
-impl CasaAlmaAiry {
-    /// ALMA's 12 m dish: a 10.7 m aperture to 1.784°.
-    pub(crate) const ALMA_12M: Self = Self {
-        effective_diameter_m: 10.7,
-        maximum_radius_deg: 1.784,
-    };
-    /// ACA's 7 m dish: a 6.25 m aperture to 3.568°.
-    pub(crate) const ACA_7M: Self = Self {
-        effective_diameter_m: 6.25,
-        maximum_radius_deg: 3.568,
-    };
-
-    /// The beam's voltage table, its radius in arcmin at 1 GHz.
-    fn table(self) -> AnnularApertureVoltageTable {
-        AnnularApertureVoltageTable::new(
-            self.effective_diameter_m,
-            0.75,
-            self.maximum_radius_deg * 60.0,
-        )
-    }
-}
-
-pub(crate) fn analytic_alma_airy_primary_beam(
-    inputs: &ContinuumProductInputs<'_>,
-    domain_role: &casa_imaging_model::ImageDomainRole,
-    shape: [usize; 2],
-    output_channel: usize,
-    beam: CasaAlmaAiry,
-) -> Result<Vec<f32>, ProductsError> {
-    let BeamGeometry {
-        centres,
-        increment_rad,
-        frequency_hz,
-    } = beam_geometry(inputs, domain_role, output_channel)?;
-    let table = beam.table();
-    Ok(summed_beams(shape, &centres, |plane, centre| {
-        add_annular_aperture_power(plane, shape, centre, increment_rad, frequency_hz, &table);
-    }))
-}
-
-/// Add the annular-aperture beam power centred on pixel `centre` into
-/// `values`.
-fn add_annular_aperture_power(
-    values: &mut [f32],
-    shape: [usize; 2],
-    centre: [f64; 2],
-    increment_rad: [f64; 2],
-    frequency_hz: f64,
-    table: &AnnularApertureVoltageTable,
-) {
-    let increment_deg = increment_rad.map(f64::to_degrees);
-    let frequency_factor = 60.0 * frequency_hz / 1.0e9;
-    for x in 0..shape[0] {
-        let pixel_x = x as f64 - centre[0];
-        let rx2 = (pixel_x * increment_deg[0]).powi(2) as f32;
-        for y in 0..shape[1] {
-            let pixel_y = y as f64 - centre[1];
-            let ry2 = (pixel_y * increment_deg[1]).powi(2) as f32;
-            let radius_arcmin_ghz =
-                (f64::from((rx2 + ry2).sqrt()) * frequency_factor) as f32 as f64;
-            let voltage = table.evaluate(radius_arcmin_ghz);
-            values[x * shape[1] + y] += voltage * voltage;
-        }
-    }
-}
-
-fn vla_band_voltage_table(frequency_hz: f64) -> Result<AnnularApertureVoltageTable, ProductsError> {
-    if !vla_band_supported(frequency_hz) {
-        return Err(ProductsError::UnsupportedProblem);
-    }
-    // PBMath::whichCommonPBtoUse selects VLA_NVSS outside the named open
-    // intervals. All named bands share one aperture; SIMapper::addPB applies
-    // BeamSquint::NONE, so their different squint parameters do not enter here.
-    let (diameter_m, obstruction_m) = if VlaBand::of(frequency_hz).is_some() {
-        (25.0, 2.36)
-    } else {
-        (24.5, 0.0)
-    };
-    Ok(AnnularApertureVoltageTable::new(
-        diameter_m,
-        obstruction_m,
-        0.8564 * 60.0,
-    ))
-}
-
-fn vla_band_supported(frequency_hz: f64) -> bool {
-    frequency_hz.is_finite() && frequency_hz > 0.0
-}
-
-pub(crate) fn primary_beam_frequency_supported(
-    model: AnalyticPrimaryBeamModel,
-    frequency_hz: f64,
-) -> bool {
-    match model {
-        AnalyticPrimaryBeamModel::CasaVlaBand => vla_band_supported(frequency_hz),
-        AnalyticPrimaryBeamModel::CasaEvlaCommon => evla_common_pattern(frequency_hz).is_some(),
-        AnalyticPrimaryBeamModel::CasaAlma12mAiry
-        | AnalyticPrimaryBeamModel::CasaAca7mAiry
-        | AnalyticPrimaryBeamModel::MosaicSensitivity => true,
-    }
-}
-
-/// The EVLA common beam CASA applies at `frequency_hz`
-/// ([`EvlaPowerPattern::at`]) in the bands imaging supports, L, S and C
-/// ([`EvlaBand::of`], with CASA's precedence where they overlap). Other
-/// frequencies fail closed instead of borrowing another band's beam.
-fn evla_common_pattern(frequency_hz: f64) -> Option<EvlaPowerPattern> {
-    matches!(
-        EvlaBand::of(frequency_hz),
-        Some(EvlaBand::L | EvlaBand::S | EvlaBand::C)
-    )
-    .then(|| EvlaPowerPattern::at(frequency_hz))
-}
-
 /// Model term `coefficient` of polarization `polarization`, x-major. A
 /// Taylor run images one domain (the availability gate and the inputs'
 /// binding).
@@ -1134,73 +876,6 @@ mod tests {
     use super::ResidualFamily;
 
     #[test]
-    fn evla_common_beams_cover_the_l_s_and_c_bands_only() {
-        // casa-numerics holds CASA's fits and their nearest-frequency rule;
-        // imaging fails closed outside L, S and C.
-        for (frequency_hz, supported) in [
-            (850.0e6, false),
-            (1.4e9, true),
-            (2.0e9, true),
-            (3.0e9, true),
-            (6.0e9, true),
-            (8.4e9, false),
-            (0.3e9, false),
-        ] {
-            assert_eq!(
-                super::evla_common_pattern(frequency_hz).is_some(),
-                supported,
-                "{frequency_hz} Hz"
-            );
-        }
-    }
-
-    #[test]
-    fn vla_pb_channel_455_edge_matches_casa_support() {
-        let table = super::vla_band_voltage_table(44.91e9).expect("VLA Q-band table");
-        let mut plane = vec![0.0; 3 * 43];
-        super::add_annular_aperture_power(
-            &mut plane,
-            [3, 43],
-            [512.0, 512.0],
-            [-2.908_882_086_657_215_7e-7, 2.908_882_086_657_215_7e-7],
-            44.91e9,
-            &table,
-        );
-        let edge = plane[2 * 43 + 42];
-        assert!((edge - 0.200_095_06).abs() < 1e-6, "edge PB={edge}");
-        assert!(edge > 0.2, "CASA keeps this channel-455 PB pixel");
-    }
-
-    #[test]
-    fn beam_coverage_includes_vla_nvss_and_keeps_evla_band_limits() {
-        use crate::AnalyticPrimaryBeamModel::{CasaEvlaCommon, CasaVlaBand};
-        for (model, frequency_hz, supported) in [
-            (CasaVlaBand, 1.0e9, true),
-            (CasaVlaBand, 1.4e9, true),
-            (CasaVlaBand, 2.0e9, true),
-            (CasaVlaBand, 8.0e9, true),
-            (CasaVlaBand, 35.0e9, true),
-            (CasaVlaBand, 44.0e9, true),
-            (CasaVlaBand, 45.022e9, true),
-            (CasaVlaBand, 54.880e9, true),
-            (CasaVlaBand, 55.0e9, true),
-            (CasaVlaBand, 55.008e9, true),
-            (CasaEvlaCommon, 0.9e9, false),
-            (CasaEvlaCommon, 1.4e9, true),
-            (CasaEvlaCommon, 3.0e9, true),
-            (CasaEvlaCommon, 6.0e9, true),
-            (CasaEvlaCommon, 8.001e9, false),
-            (CasaEvlaCommon, 44.0e9, false),
-        ] {
-            assert_eq!(
-                super::primary_beam_frequency_supported(model, frequency_hz),
-                supported,
-                "{model:?} at {frequency_hz}"
-            );
-        }
-    }
-
-    #[test]
     fn mosaic_primary_beam_takes_casa_abs_of_the_weight() {
         // `SIImageStore::makePBFromWeight`: sqrt(abs(weight)) / pbmax.
         let beam = super::MosaicSensitivity::primary_beam_from_weight(&[-0.25, 0.0, 1.0, 0.25])
@@ -1226,6 +901,8 @@ mod tests {
         for (normalization, expected) in [
             (ProductNormalization::FlatNoise, [4.0, 4.0, 4.0, 0.0]),
             (ProductNormalization::FlatSky, [4.0, 8.0, 16.0, 0.0]),
+            // Every pixel ÷ PBScale² = 16 / 8 = 2, with no cutoff.
+            (ProductNormalization::PbSquare, [4.0, 2.0, 1.0, 0.5]),
         ] {
             let normalized = raw
                 .iter()
@@ -1294,144 +971,5 @@ mod tests {
         assert!(validity.iter().all(|valid| !valid));
         assert!(alpha.iter().all(|value| *value == 0.0));
         assert!(alpha_error.iter().all(|value| *value == 0.0));
-    }
-
-    #[test]
-    fn evla_common_s_band_uses_casa_sampled_power_lookup() {
-        let frequency_hz = 2.091_980_123e9_f64;
-        let pattern =
-            super::evla_common_pattern(frequency_hz).expect("T44 frequency is in EVLA S band");
-        assert_eq!(
-            pattern.coefficients(),
-            &[1.000, -1.429e-3, 7.52e-7, -1.47e-10]
-        );
-        let sample_index = 2_210.0_f64;
-        let inverse_increment = 9_999.0_f64 / 58.0;
-        let sampled_radius_arcmin_ghz = sample_index / inverse_increment;
-        let radius_arcmin_ghz = sampled_radius_arcmin_ghz + 0.75 / inverse_increment;
-        let x2 = sampled_radius_arcmin_ghz * sampled_radius_arcmin_ghz;
-        let expected_power = 1.0 - 1.429e-3 * x2 + 7.52e-7 * x2.powi(2) - 1.47e-10 * x2.powi(3);
-        let actual = pattern.power(radius_arcmin_ghz);
-        assert!((actual - expected_power as f32).abs() < 1.0e-7);
-        assert!(super::evla_common_pattern(850.0e6).is_none());
-    }
-
-    #[test]
-    fn evla_radial_bin_edges_use_casa_float_rounding_and_voltage_squared() {
-        let coefficients = super::evla_common_pattern(6.0e9).unwrap();
-        let cell = (0.05_f64 / 3600.0).to_radians();
-        // Measured CASA PBMath1D pixels (8,693), (8,890), (29,59) on the
-        // 4096-square 6-GHz pilot. Double-radius lookup picks adjacent bins.
-        for (offset, expected) in [
-            ([2040.0, 1355.0], 0.800_096_45_f32),
-            ([2040.0, 1158.0], 0.815_362_93_f32),
-            ([2019.0, 1989.0], 0.739_581_9_f32),
-        ] {
-            let mut actual = [0.0];
-            super::add_evla_common_power(
-                &mut actual,
-                [1, 1],
-                offset,
-                [-cell, cell],
-                6.0e9,
-                coefficients,
-            );
-            assert_eq!(actual, [expected]);
-        }
-    }
-
-    #[test]
-    fn vla_named_bands_share_the_casa_annular_airy_lookup() {
-        let frequency_hz = 45_469_370_205.156_37;
-        let table = super::vla_band_voltage_table(frequency_hz)
-            .expect("issue #607 representative frequency is in VLA Q band");
-        assert_eq!(table.maximum_radius(), 0.8564 * 60.0);
-
-        let voltage = table.evaluate(29.919_033_706_45);
-        assert_eq!((voltage * voltage).to_bits(), 0x3e6d_1a6e);
-
-        for ghz in [0.05, 0.3, 1.5, 5.0, 9.0, 15.0, 25.0, 45.0] {
-            let band = super::vla_band_voltage_table(ghz * 1e9).expect("named VLA band");
-            assert_eq!(band.maximum_radius(), table.maximum_radius());
-            for radius in [0.0, 10.0, 29.919_033_706_45, 50.0, 52.0] {
-                assert_eq!(band.evaluate(radius), table.evaluate(radius));
-            }
-        }
-    }
-
-    /// ALMA's 12 m beam is CASA's `PBMath1DAiry(10.7 m, 0.75 m, 1.784°,
-    /// 1 GHz)`: its `.pb` along a row of a 345 GHz MFS image of
-    /// 2.0886e-7 rad cells, centred between pixels at (960.5, 960.5), as
-    /// CASA 6.7.6.14's tclean wrote it for simanalyze's call on a casa-rs
-    /// simobserve MeasurementSet (2026-11-03). The radius of ACA's 3.568°,
-    /// which casa-rs used for both, samples the table half as finely and
-    /// moves the beam by up to 2e-4, flipping the `pblimit` mask's edge
-    /// pixels.
-    #[test]
-    fn the_alma_12m_beam_is_the_one_casa_writes() {
-        let increment_deg = 2.088_624_122_740_107_8e-7_f64.to_degrees();
-        let frequency_factor = 60.0 * 345.0e9 / 1.0e9;
-        let table = super::CasaAlmaAiry::ALMA_12M.table();
-        // Pixel x of row 960, CASA's value there.
-        let casa = [
-            (1010, 0.9713292_f32),
-            (1060, 0.85777074),
-            (1110, 0.69328696),
-            (1160, 0.5072244),
-            (1210, 0.3295922),
-            (1240, 0.23725419),
-        ];
-        for (x, expected) in casa {
-            let [dx, dy] = [f64::from(x) - 960.5, 960.0 - 960.5];
-            let r2 = ((dx * increment_deg).powi(2) + (dy * increment_deg).powi(2)) as f32;
-            let radius = (f64::from(r2.sqrt()) * frequency_factor) as f32 as f64;
-            let power = table.evaluate(radius).powi(2);
-            assert!(
-                (power - expected).abs() <= 2.0e-6,
-                "pixel {x}: {power} against CASA's {expected}"
-            );
-        }
-    }
-
-    #[test]
-    fn vla_unassigned_intervals_and_exact_band_edges_select_nvss() {
-        let nvss = super::AnnularApertureVoltageTable::new(24.5, 0.0, 0.8564 * 60.0);
-        let named = super::vla_band_voltage_table(1.5e9).unwrap();
-        assert_ne!(nvss.evaluate(30.0), named.evaluate(30.0));
-        for ghz in [
-            0.1,
-            0.15,
-            0.2,
-            0.4,
-            0.999_981_059_496_862_4,
-            1.0,
-            2.0,
-            3.0,
-            4.0,
-            7.0,
-            11.0,
-            19.0,
-            35.0,
-            55.0,
-            55.008,
-            100.0,
-        ] {
-            let table = super::vla_band_voltage_table(ghz * 1e9).expect("VLA NVSS");
-            assert_eq!(table.maximum_radius(), nvss.maximum_radius());
-            for radius in [0.0, 10.0, 30.0, 50.0, 52.0] {
-                assert_eq!(table.evaluate(radius), nvss.evaluate(radius), "{ghz} GHz");
-            }
-        }
-    }
-
-    #[test]
-    fn vla_invalid_frequencies_fail_closed() {
-        for unsupported_hz in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
-            assert!(!super::primary_beam_frequency_supported(
-                crate::AnalyticPrimaryBeamModel::CasaVlaBand,
-                unsupported_hz,
-            ));
-            assert!(super::vla_band_voltage_table(unsupported_hz).is_err());
-        }
     }
 }

@@ -1423,6 +1423,7 @@ fn normalization<'de, D: Deserializer<'de>>(
     match choice(deserializer)?.as_str() {
         "flatnoise" => Ok(ProductNormalization::FlatNoise),
         "flatsky" => Ok(ProductNormalization::FlatSky),
+        "pbsquare" => Ok(ProductNormalization::PbSquare),
         other => Err(D::Error::custom(format!("normtype {other:?}"))),
     }
 }

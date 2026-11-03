@@ -445,9 +445,6 @@ class Refusals:
             and planes < 1
         ):
             self.add("wprojplanes below 1 (other than -1)", CASA_RS)
-        normtype = self.text("normtype")
-        if gridder in ("mosaic", "awproject") and normtype == "pbsquare":
-            self.add("normtype='pbsquare'", NOT_YET, 1061)
         if gridder == "awproject":
             # `AwProjection::validate`: CASA's `AWConvFunc` refuses both
             # terms off; deriving the planes waits for #980.

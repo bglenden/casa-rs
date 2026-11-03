@@ -3,20 +3,20 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "f051e3b71b2d8e890a33ea4607cea5ca1c01b683",
+  "casa_rs_revision": "5de92adaf53eb500f3c8b11b48b6e69f77e58a02",
   "parameter_surfaces_sha256": "75971d01b533264891d340a3f21f3f125e901c85093d52fe1129814972b3c506",
   "parameter_catalog_sha256": "2feb237df1620d8b3ef76fd219fd27a252ca8e54621238aa91f0ce93b5acf5b9",
-  "tclean_rs_sha256": "a34db3ef9cf5691e81a3fd2b5fea9471a5b38c08e9dbe712c8d6e669859673c0",
+  "tclean_rs_sha256": "0eee1d49035aca9f8901150391aab56b9089bc1e9dd68e5f605e979b6b83ebd6",
   "tclean_contract_version": 38
  },
  "totals": {
   "resolved_cases": 354,
   "cases_where_casa_expects_an_error": 4,
   "cases_counted": 350,
-  "cases_with_no_refusal": 247,
-  "cases_with_a_gap": 101,
+  "cases_with_no_refusal": 248,
+  "cases_with_a_gap": 100,
   "cases_with_only_refusals_casa_shares": 2,
-  "single_call_cases_with_no_refusal": 204
+  "single_call_cases_with_no_refusal": 205
  },
  "gaps": [
   {
@@ -272,16 +272,6 @@
    "sole_blocker": 0,
    "examples": [
     "test_modelvis.test_modelvis_8.1+2"
-   ]
-  },
-  {
-   "reason": "normtype='pbsquare'",
-   "source": "tclean.rs not_yet",
-   "issue": 1061,
-   "cases": 1,
-   "sole_blocker": 1,
-   "examples": [
-    "test_widefield.test_widefield_mosaicft_mtmfs_pbsquare.1"
    ]
   },
   {
@@ -1722,15 +1712,8 @@
    "refusals": []
   },
   "test_widefield.test_widefield_mosaicft_mtmfs_pbsquare.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "normtype='pbsquare'",
-     "source": "tclean.rs not_yet",
-     "issue": 1061,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_widefield.test_widefield_mosaicft_cube.1": {
    "runs_without_refusal": true,

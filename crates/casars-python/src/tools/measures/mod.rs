@@ -407,14 +407,31 @@ impl PyMeasures {
         stub("getoffset")
     }
 
-    /// Not yet implemented in casa-rs.
-    fn linelist(&self) -> PyResult<Py<PyAny>> {
-        stub("linelist")
+    /// The rest lines of the measures data, their names joined by spaces
+    /// in the table's order, as CASA gives them. CASA deprecates the method
+    /// and says so; so does casa-rs.
+    fn linelist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, lines| {
+            lines.push(LogLine::warning(
+                "DEPRECATED. The linelist method has been deprecated and will be removed in the \
+                 near future. Please use the spectral line (sl) tool and/or related tasks instead",
+            ));
+            let measures = state.measures().map_err(no_measures)?;
+            let names = measures.spectral_line_names().map_err(no_measures)?;
+            Ok(CasaValue::Text(names.join(" ")))
+        })
     }
 
-    /// Not yet implemented in casa-rs.
-    fn obslist(&self) -> PyResult<Py<PyAny>> {
-        stub("obslist")
+    /// The observatories of the measures data, by name, in the table's
+    /// order: a list of `str`, as CASA gives them.
+    fn obslist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, _| {
+            let measures = state.measures().map_err(no_measures)?;
+            let names = measures.observatory_names().map_err(no_measures)?;
+            Ok(CasaValue::List(
+                names.into_iter().map(CasaValue::Text).collect(),
+            ))
+        })
     }
 
     /// Not yet implemented in casa-rs.
@@ -474,9 +491,14 @@ impl PyMeasures {
         stub("showframe")
     }
 
-    /// Not yet implemented in casa-rs.
-    fn sourcelist(&self) -> PyResult<Py<PyAny>> {
-        stub("sourcelist")
+    /// The sources of the measures data, their names joined by spaces in
+    /// the table's order, as CASA gives them.
+    fn sourcelist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, _| {
+            let measures = state.measures().map_err(no_measures)?;
+            let names = measures.source_names().map_err(no_measures)?;
+            Ok(CasaValue::Text(names.join(" ")))
+        })
     }
 
     /// Not yet implemented in casa-rs.
