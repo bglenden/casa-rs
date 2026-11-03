@@ -3209,6 +3209,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#msg-verbose-single-post-proposed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        msg-verbose-single-post: Proposed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#is4d-leaves-image-open-proposed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        is4d-leaves-image-open: Proposed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3319,6 +3341,17 @@
     <span class="md-ellipsis">
       
         geodesy-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helpers-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        helpers-casa
       
     </span>
   </a>
@@ -6421,6 +6454,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#msg-verbose-single-post-proposed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        msg-verbose-single-post: Proposed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#is4d-leaves-image-open-proposed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        is4d-leaves-image-open: Proposed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6531,6 +6586,17 @@
     <span class="md-ellipsis">
       
         geodesy-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helpers-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        helpers-casa
       
     </span>
   </a>
@@ -9099,9 +9165,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.simutil</code></td>
 <td style="text-align: right;">57</td>
 <td>yes</td>
-<td style="text-align: right;">31</td>
+<td style="text-align: right;">39</td>
 <td style="text-align: right;">2</td>
-<td style="text-align: right;">24</td>
+<td style="text-align: right;">16</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -11575,7 +11641,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="simutil">simutil<a class="headerlink" href="#simutil" title="Permanent link">&para;</a></h3>
 <h4 id="simutil-method-implementation">simutil method implementation<a class="headerlink" href="#simutil-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 31, Partial: 2, Not implemented: 24, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 39, Partial: 2, Not implemented: 16, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -11639,9 +11705,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>closereport</code></td>
 <td></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Closes self.report; AttributeError when none was opened, as in CASA.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-helpers-casa">helpers-casa</a></td>
 </tr>
 <tr>
 <td><code>convimage</code></td>
@@ -11660,9 +11726,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>dir_s2m</code></td>
 <td><code>direction=None</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>CASA's direction measure for a string (J2000 when it names no frame, degrees for bare numbers), a list's mean, or self.direction; the verbose J2000 message.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-helpers-casa">helpers-casa</a></td>
 </tr>
 <tr>
 <td><code>direction_splitter</code></td>
@@ -11744,9 +11810,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>is4d</code></td>
 <td><code>image</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Whether a CASA image or FITS file has direction, Stokes and spectral axes in CASA's order; casa-rs leaves no image open (recorded deviation).</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-helpers-casa">helpers-casa</a></td>
 </tr>
 <tr>
 <td><code>isdirection</code></td>
@@ -11779,9 +11845,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>isreport</code></td>
 <td></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Whether self.report is the file self.reportfile names; true after closereport, as in CASA.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-helpers-casa">helpers-casa</a></td>
 </tr>
 <tr>
 <td><code>itrf2loc</code></td>
@@ -11828,9 +11894,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>msg</code></td>
 <td><code>s, origin=None, priority=None</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Logs at the level CASA's log shows (INFO, WARNING, DEBUG) on casars.<origin>; priority='error' raises RuntimeError with the message; with verbose, writes the open report as CASA does and logs once at INFO (recorded deviation).</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-helpers-casa">helpers-casa</a></td>
 </tr>
 <tr>
 <td><code>needsFiller</code></td>
@@ -11863,9 +11929,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>openreport</code></td>
 <td></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Opens self.reportfile as self.report, a Python file object, appending to one that exists; CASA's refusal when reportfile is not set.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-helpers-casa">helpers-casa</a></td>
 </tr>
 <tr>
 <td><code>plotants</code></td>
@@ -11905,9 +11971,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>setcfg</code></td>
 <td><code>mysm, telescope, x, y, z, diam, padnames, posobs, mounttype=None</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Calls the simulator's setconfig as CASA does (global coordinates, CASA's mount guess, diam.tolist()), returns the mount; a refused configuration closes the simulator and raises ValueError.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-helpers-casa">helpers-casa</a></td>
 </tr>
 <tr>
 <td><code>sfBeam1d</code></td>
@@ -11919,9 +11985,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>spectral</code></td>
 <td><code>image</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>(nchan as a one-element int64 array, width as CASA's string) or 0.0 without a spectral axis, for CASA images and FITS files.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-helpers-casa">helpers-casa</a></td>
 </tr>
 <tr>
 <td><code>statim</code></td>
@@ -12120,6 +12186,26 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.</li>
 <li>Evidence: <a href="#simutil-evidence-geodesy-casa">geodesy-casa</a>.</li>
 </ul>
+<h5 id="msg-verbose-single-post-proposed">msg-verbose-single-post: Proposed<a class="headerlink" href="#msg-verbose-single-post-proposed" title="Permanent link">&para;</a></h5>
+<ul>
+<li>Inputs: simutil(verbose=True).msg(s, origin=..., priority=...)</li>
+<li>CASA: Posts the message twice to its log: once with ANSI colour codes around [origin], WARNING and ERROR, once with WARNING and ERROR coloured; both at INFO.</li>
+<li>casa-rs: Logs it once at INFO on casars.<origin>, without colour codes; the report file is written as CASA writes it.</li>
+<li>Rationale: Colour codes in a log record are terminal noise, and Python logging shows the message once to every handler.</li>
+<li>User impact: A script that counts or parses CASA's duplicated, coloured lines sees one plain line.</li>
+<li>Owner decision: Pending; not an accepted deviation.</li>
+<li>Evidence: <a href="#simutil-evidence-helpers-casa">helpers-casa</a>.</li>
+</ul>
+<h5 id="is4d-leaves-image-open-proposed">is4d-leaves-image-open: Proposed<a class="headerlink" href="#is4d-leaves-image-open-proposed" title="Permanent link">&para;</a></h5>
+<ul>
+<li>Inputs: simutil.is4d on an image that is not CASA's 4-D order.</li>
+<li>CASA: Returns False before ia.done(), leaving the shared image tool open; the next ia.open warns 'Another image is already open, closing first'.</li>
+<li>casa-rs: Opens nothing that outlives the call; no warning follows.</li>
+<li>Rationale: The warning reports CASA's leaked state, not anything about the image.</li>
+<li>User impact: None on results.</li>
+<li>Owner decision: Pending; not an accepted deviation.</li>
+<li>Evidence: <a href="#simutil-evidence-helpers-casa">helpers-casa</a>.</li>
+</ul>
 <h4 id="simutil-evidence">simutil evidence<a class="headerlink" href="#simutil-evidence" title="Permanent link">&para;</a></h4>
 <p>Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.</p>
 <p><a id="simutil-evidence-signature"></a></p>
@@ -12194,6 +12280,12 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><a id="simutil-evidence-geodesy-casa"></a></p>
 <h5 id="geodesy-casa">geodesy-casa<a class="headerlink" href="#geodesy-casa" title="Permanent link">&para;</a></h5>
 <p><strong>CASA-recorded values — measured.</strong> Recorded from CASA 6.7.6-14 by simutil_geodesy_oracle.py: getdatum of all 24 datums and an unknown one, tconpc and tmgeod of three ellipsoids and five UTM points, the UTM and geodetic conversions on four datums, locxyz2itrf about three points and itrf2locname about five observatories. The Python tests agree to 1e-12 (positions to 1e-6 m), and where CASA slips on a datum's offsets casa-rs inverts long2xyz instead. The geodesy helpers.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_simutil.py">crates/casars-python/python/tests/test_simutil.py</a></li>
+</ul>
+<p><a id="simutil-evidence-helpers-casa"></a></p>
+<h5 id="helpers-casa">helpers-casa<a class="headerlink" href="#helpers-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> Recorded from CASA 6.7.6-14 by simutil_helpers_oracle.py: is4d and spectral on the 22 sky-model input images, dir_s2m on 13 directions, msg at 9 priorities with and without verbose and an origin, the report helpers through a task's sequence and the report file they write, and setcfg on 8 telescopes with a stand-in simulator. The Python tests agree on every return value, raised error, log level and the report's text, and on the arguments setcfg passes. msg, isreport, openreport, closereport, dir_s2m, is4d, spectral and setcfg.</p>
 <ul>
 <li><a href="https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_simutil.py">crates/casars-python/python/tests/test_simutil.py</a></li>
 </ul>

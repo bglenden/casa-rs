@@ -1786,6 +1786,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#simutilmsg-posts-a-verbose-message-twice-in-colour" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simutil.msg posts a verbose message twice, in colour
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#simutilis4d-leaves-the-image-tool-open" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simutil.is4d leaves the image tool open
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#mdirectionfrom_source_name-trims-a-source-name" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4539,6 +4561,28 @@ every observatory alike, including the three that casacore puts inside the
 Earth. Choosing the other column per row would need knowing which one was
 meant, and would make casa-rs and CASA disagree about the same data; the
 correction belongs in the table.</p>
+<h2 id="simutilmsg-posts-a-verbose-message-twice-in-colour"><code>simutil.msg</code> posts a verbose message twice, in colour<a class="headerlink" href="#simutilmsg-posts-a-verbose-message-twice-in-colour" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: casa-rs posts it once (#1053)</li>
+<li>Affected code: <code>casatasks/src/private/simutil.py</code> (<code>msg</code>)</li>
+</ul>
+<p>With <code>verbose=True</code>, CASA's <code>msg</code> posts each message to its log twice at
+INFO: once with ANSI colour codes around <code>[origin]</code> and the words <code>WARNING</code>
+and <code>ERROR</code>, once with those words still coloured. casa-rs logs it once,
+plain, at INFO on <code>casars.&lt;origin&gt;</code>, and writes the open report as CASA
+does. Without <code>verbose</code> the two log alike (CASA 6.7.6.14,
+<code>tools/simulation/simutil_helpers_oracle.py</code>).</p>
+<h2 id="simutilis4d-leaves-the-image-tool-open"><code>simutil.is4d</code> leaves the image tool open<a class="headerlink" href="#simutilis4d-leaves-the-image-tool-open" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA defect; casa-rs does not follow it (#1053)</li>
+<li>Affected code: <code>casatasks/src/private/simutil.py</code> (<code>is4d</code>)</li>
+</ul>
+<p><code>is4d</code> returns <code>False</code> before <code>ia.done()</code> for an image without CASA's four
+axes in order, so the module's shared image tool stays open and the next
+<code>ia.open</code> warns "Another image is already open, closing first". casa-rs
+opens nothing that outlives the call.</p>
 <h2 id="mdirectionfrom_source_name-trims-a-source-name"><code>MDirection::from_source_name</code> trims a source name<a class="headerlink" href="#mdirectionfrom_source_name-trims-a-source-name" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-03</li>

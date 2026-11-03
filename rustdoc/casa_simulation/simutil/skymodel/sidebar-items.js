@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ModelValue","SkyModelError"],"fn":["add_components","flat_image","modify_model"],"struct":["ComponentModel","ModelOverrides","ModelSummary"]};
+window.SIDEBAR_ITEMS = {"enum":["ModelValue","SkyModelError"],"fn":["add_components","flat_image","is_4d","modify_model","spectral_size"],"struct":["ComponentModel","ModelOverrides","ModelSummary","SpectralSize"]};
