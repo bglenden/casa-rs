@@ -1668,6 +1668,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#projections-20261103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        projections-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#mtmfs-nterms1-polarized-20261103" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4946,6 +4957,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#projections-20261103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        projections-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#mtmfs-nterms1-polarized-20261103" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6986,7 +7008,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">92</td>
 <td style="text-align: right;">92</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">7</td>
+<td style="text-align: right;">6</td>
 <td style="text-align: right;">22</td>
 <td style="text-align: right;">0</td>
 </tr>
@@ -7826,7 +7848,6 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Accepted only at CASA's default until #980: <code>vptable</code>, <code>interactive</code></li>
 <li>Accepted only at CASA's default until #1061: <code>pbmask</code></li>
 <li>Accepted only at CASA's default until #1062: <code>psfphasecenter</code></li>
-<li>Accepted only at CASA's default until #1064: <code>projection</code></li>
 <li>Accepted only at CASA's default until #1070: <code>computepastep</code>, <code>rotatepastep</code></li>
 <li>casa-rs parameters CASA lacks: <code>ddid</code>, <code>channel_start</code>, <code>channel_count</code>, <code>hogbom_iteration_mode</code>, <code>write_pb</code>, <code>fitspw</code>, <code>fitorder</code>, <code>save_continuum_residual</code>, <code>backend</code>, <code>gridprecision</code>, <code>aw_cf_source</code>, <code>cf_resident_mb</code>, <code>native_cf_cache</code>, <code>evla_surface</code>, <code>native_cf_policy</code>, <code>native_cf_working_size</code>, <code>native_cf_oversampling</code>, <code>native_cf_cache_bytes</code>, <code>native_cf_maximum_cells</code>, <code>stage_timing</code>, <code>metal_stage_timing</code>, <code>science_trace</code></li>
 <li>Shared parameters: 92, in CASA's order: yes</li>
@@ -7834,7 +7855,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <h4 id="tclean-parameter-implementation">tclean parameter implementation<a class="headerlink" href="#tclean-parameter-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.</p>
-<p>Audit baseline: <code>c64f13cb09054b080fe8b228a5f2c02c99bfd486</code>. Status counts: Default only: 7, Implemented: 43, Not implemented: 0, Partial: 42, Unassessed: 0.</p>
+<p>Audit baseline: <code>c64f13cb09054b080fe8b228a5f2c02c99bfd486</code>. Status counts: Default only: 6, Implemented: 43, Not implemented: 0, Partial: 42, Unassessed: 1.</p>
 <p>Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.</p>
 <table>
 <thead>
@@ -7980,9 +8001,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>projection</code></td>
 <td><code>'SIN'</code></td>
 <td><code>'SIN'</code>; <code>projection</code> → <code>projection</code></td>
-<td>Default only</td>
-<td>Read and ignored; non-default is catalog-refused (issue 980). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>string</code>; Non-default refused when always (#1064)</td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
+<td>Unassessed</td>
+<td>SIN (default), NCP (written as SIN with [0, cot dec0], as CASA writes it), TAN, ARC, STG, ZEA, CAR, SFL, MER and AIT: the image's direction coordinate records the projection and every placement on the image (mosaic and A-projection pointings, analytic primary beams, mask images, facet centres) converts through it; the gridded pixels do not depend on it, as in CASA. A name casacore does not know is refused as CASA refuses it; casacore's other projections are refused (issue 1101), and NCP centred on the celestial equator, where CASA writes an infinite slant, is refused. <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>string</code></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-projections-20261103">projections-20261103</a></td>
 </tr>
 <tr>
 <td><code>startmodel</code></td>
@@ -9125,6 +9146,19 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>cf872db418c7988c0e919b2fca5a973da94702f6</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
 <li>Command: <code>tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with resources/casa-compat/tclean-pb-masks-cases.json, and with tclean-casa-test-cases.json --case test_widefield.test_widefield_mosaicft_mtmfs_pbsquare.1 and four test_widefield mosaic cases</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-pbsquare-20261103.json</code>.</li>
+</ul>
+<p><a id="tclean-evidence-projections-20261103"></a></p>
+<h5 id="projections-20261103">projections-20261103<a class="headerlink" href="#projections-20261103" title="Permanent link">&para;</a></h5>
+<p><strong>CASA tclean test-case matrix, casa-rs's own projection cases, CASA world coordinates, T1 laws — passed.</strong> tclean projection (#1064). test_onefield_projections.1-4 (SIN, NCP, TAN, ARC) and casa-rs's own cases (refim_twochan cleaned in each of SIN, NCP, TAN, ARC, STG, ZEA, CAR, SFL, MER and AIT; refim_mawproject's mosaic in NCP, TAN and CAR) pass every product, the direction coordinate's projection and parameters included, worst NRMS 7.1e-6. CASA's world coordinates of each projection's image, north and south of the equator, agree with casa-rs's direction coordinate to 1e-12 rad (each_projection_places_pixels_as_casa_does).</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/8587bae2dc419fd9bb56d90007d7daa2ae217d3b/resources/casa-compat/evidence/tclean-projections-20261103.json">resources/casa-compat/evidence/tclean-projections-20261103.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/8587bae2dc419fd9bb56d90007d7daa2ae217d3b/resources/casa-compat/tclean-projection-cases.json">resources/casa-compat/tclean-projection-cases.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/8587bae2dc419fd9bb56d90007d7daa2ae217d3b/crates/casa-imaging-application/tests/data/projections-casa-6.7.6.14.json">crates/casa-imaging-application/tests/data/projections-casa-6.7.6.14.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/8587bae2dc419fd9bb56d90007d7daa2ae217d3b/crates/casa-imaging-model/src/sky_projection.rs">crates/casa-imaging-model/src/sky_projection.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/8587bae2dc419fd9bb56d90007d7daa2ae217d3b/crates/casars-imager/tests/t1/projection.rs">crates/casars-imager/tests/t1/projection.rs</a></li>
+<li>Revision: <code>6dab1256ccbb9f982ac55a25b0821452f4dbc524</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with tclean-casa-test-cases.json (test_onefield_projections.1-4) and tclean-projection-cases.json; tools/casa-compat/probe_tclean_projections.py</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-projections-20261103.json</code>.</li>
 </ul>
 <p><a id="tclean-evidence-mtmfs-nterms1-polarized-20261103"></a></p>
 <h5 id="mtmfs-nterms1-polarized-20261103">mtmfs-nterms1-polarized-20261103<a class="headerlink" href="#mtmfs-nterms1-polarized-20261103" title="Permanent link">&para;</a></h5>

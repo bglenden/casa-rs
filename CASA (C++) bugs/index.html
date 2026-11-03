@@ -1038,7 +1038,9 @@ CASA behaviours casa-rs does not follow:
 <a href="#tbputcell-with-several-rows-writes-those-before-a-missing-one"><code>tb.putcell</code> with several rows</a>,
 <a href="#tbaddrows-with-a-negative-count-removes-rows"><code>tb.addrows</code> with a negative count</a>,
 <a href="#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails"><code>tb.removerows</code> and <code>tb.addcols</code> that fail part way</a>,
-<a href="#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row"><code>MSIter</code>'s receptor angles for a window without its own <code>FEED</code> row</a>.
+<a href="#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row"><code>MSIter</code>'s receptor angles for a window without its own <code>FEED</code> row</a>,
+<a href="#tclean-refuses-a-projection-name-with-spaces-round-it">a projection name with spaces</a>,
+<a href="#ncp-on-the-celestial-equator-places-every-pixel-at-nan">NCP on the celestial equator</a>.
 Simulator behaviours casa-rs does not follow:
 <a href="#the-simulator-stores-tai-as-utc">TIME as TAI</a>,
 <a href="#the-simulator-charges-shadowing-to-the-antenna-in-front">shadowing the front antenna</a>,
@@ -4316,6 +4318,39 @@ CASA works in arcseconds; the common beams agree within one of the algorithm's
 The two searches can stop at different enclosing beams. For four nearly
 equal channel beams (axis ratio 1.17, the simulation round trip's cube,
 2026-11-03), the axes differ by 2.2e-4 and the position angle by 0.036°.</p>
+<h2 id="tclean-refuses-a-projection-name-with-spaces-round-it"><code>tclean</code> refuses a projection name with spaces round it<a class="headerlink" href="#tclean-refuses-a-projection-name-with-spaces-round-it" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: a casa-rs choice (#1064)</li>
+<li>Affected code: casatools <code>synthesis/ImagerObjects/SynthesisUtilMethods.cc</code>
+  (<code>SynthesisParamsImage::fromRecord</code>, reading <code>projection</code>)</li>
+</ul>
+<p>CASA 6.7.6.14's tclean refuses <code>projection=' TAN'</code> with "Invalid projection
+code :  TAN", as it refuses <code>'tan'</code> and <code>'XYZ'</code>: casacore's
+<code>Projection::type</code> reads the name exactly. casa-rs's parameter catalog trims
+every string parameter before tclean reads it (<code>projection</code>'s normalization
+is <code>trim</code>), so casa-rs images <code>' TAN'</code> in TAN. A name of the wrong case or
+one casacore does not know is refused as CASA refuses it. No result of
+CASA's depends on the refusal, and following it would make <code>projection</code> the
+one string parameter the catalog does not trim. Evidence: CASA's refusals in
+<code>crates/casa-imaging-application/tests/data/projections-casa-6.7.6.14.json</code>,
+and the <code>tclean_tests</code> rows <code>casa_values_become_the_request_casa_rs_runs</code>
+and <code>values_casa_rs_cannot_honour_are_refused</code>.</p>
+<h2 id="ncp-on-the-celestial-equator-places-every-pixel-at-nan">NCP on the celestial equator places every pixel at NaN<a class="headerlink" href="#ncp-on-the-celestial-equator-places-every-pixel-at-nan" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA defect casa-rs corrects by refusing (#1064)</li>
+<li>Affected code: casatools <code>synthesis/ImagerObjects/SynthesisUtilMethods.cc</code>
+  (<code>SynthesisParamsImage::buildCoordinateSystem</code>)</li>
+</ul>
+<p>CASA writes <code>projection='NCP'</code> as SIN slanted by <code>[0, cot δ₀]</code>, with no
+guard for an image centred on the celestial equator, where <code>cot δ₀</code> is
+infinite: the image records <code>[0, inf]</code> and every pixel's world direction is
+NaN, so no pointing, beam or mask can be placed on it. casa-rs refuses
+such a run before imaging, with an error that says why
+(<code>PrepareError::NcpAtEquator</code>, the law
+<code>ncp_on_the_celestial_equator_is_refused</code>). Any other declination, however
+close to 0, is imaged as CASA images it.</p>
 <h2 id="cubic-spectral-interpolation-reads-past-a-short-axis-and-fits-flagged-values">Cubic spectral interpolation reads past a short axis and fits flagged values<a class="headerlink" href="#cubic-spectral-interpolation-reads-past-a-short-axis-and-fits-flagged-values" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-03</li>
