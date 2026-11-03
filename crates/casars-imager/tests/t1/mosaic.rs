@@ -190,6 +190,31 @@ pub(super) fn mosaic_run(cube: bool) -> (Observation, serde_json::Value) {
     (observation, controls)
 }
 
+/// A mosaic's start model on a channel no sample reaches stays as it is:
+/// `SIImageStore::divideModelByWeight` skips a plane whose PB's peak is zero
+/// (#1067). The channel with data is converted as ever.
+#[test]
+fn a_mosaic_start_model_on_a_blank_channel_is_kept_as_it_is() {
+    let (observation, mut controls) = mosaic_run(true);
+    let (_, deep) = observation.image("mosaic-blank-deep", controls.clone());
+    controls["niter"] = json!(0);
+    controls["pbcor"] = json!(true);
+    controls["spw"] = json!("0:1");
+    controls["start"] = json!(0);
+    controls["nchan"] = json!(2);
+    controls["startmodel"] = json!(observation.scratch("mosaic-blank-deep.model"));
+    let (_, started) = observation.image("mosaic-blank-started", controls);
+    assert_eq!(started.get(".sumwt").channel_values()[0], 0.0);
+    let (model, seeded) = (deep.get(".model").plane(0), started.get(".model").plane(0));
+    assert!(model.iter().any(|value| *value != 0.0));
+    assert_eq!(
+        seeded, model,
+        "the blank channel's model is the start model"
+    );
+    let restored = started.get(".image").plane(0);
+    assert!(restored.iter().any(|value| *value != 0.0));
+}
+
 /// Under `usepointing` each row's pointing comes from the POINTING table
 /// (#932 step 3b).
 #[test]

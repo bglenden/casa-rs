@@ -186,9 +186,13 @@ impl Run<'_> {
                     (weights.read_sensitivity()?, weights.sum_weight())
                 }
             };
-            let bound = MosaicSensitivity::new(&sensitivity)
-                .and_then(|bound| bound.with_normal_sum_weight(sum_weight))
-                .map_err(units)?;
+            // `SIImageStore::divideModelByWeight` skips a plane whose PB's
+            // peak is zero: no sample reached it, and its model stays as it is.
+            let Some(bound) = MosaicSensitivity::try_new(&sensitivity).map_err(units)? else {
+                physical.extend_from_slice(samples);
+                continue;
+            };
+            let bound = bound.with_normal_sum_weight(sum_weight).map_err(units)?;
             for y in 0..ny {
                 for x in 0..nx {
                     let value = bound

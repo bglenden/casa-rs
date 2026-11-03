@@ -28,6 +28,8 @@ use casa_types::quanta::{Quantity, Unit};
 use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::Value;
 
+use uv_taper::uv_taper;
+
 /// One imaging run's parameters, as the catalog resolved them.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct ImagingRequest {
@@ -224,10 +226,12 @@ pub struct ImagingRequest {
     /// A CASA image whose non-zero pixels may be cleaned.
     #[serde(deserialize_with = "optional")]
     pub mask_image: Option<PathBuf>,
-    /// CASA's `startmodel`: an image in Jy/pixel that the model starts from
-    /// (`SIImageStore::setModelImageOne`).
-    #[serde(deserialize_with = "optional")]
-    pub startmodel: Option<PathBuf>,
+    /// CASA's `startmodel`: the images in Jy/pixel that the model starts
+    /// from (`SIImageStore::setModelImageOne`), one, or one per Taylor term
+    /// (`SIImageStoreMultiTerm::setModelImage`), `None` for an empty entry,
+    /// whose term starts from zero. Empty without a start model.
+    #[serde(deserialize_with = "start_models")]
+    pub startmodel: Vec<Option<PathBuf>>,
     /// Visibility weighting.
     pub weighting: Weighting,
     /// Briggs robustness.
@@ -715,17 +719,27 @@ impl ImagingRequest {
         if self.nsigma < 0.0 || self.scales.iter().any(|scale| *scale < 0.0) {
             return invalid("nsigma, scales", "must not be negative");
         }
-        if self.startmodel.is_some() && self.deconvolver == Deconvolver::Mtmfs {
+        // CASA's image stores refuse more images than terms
+        // (`SIImageStore::setModelImage`, `SIImageStoreMultiTerm`).
+        let terms = match self.deconvolver {
+            Deconvolver::Mtmfs => self.nterms,
+            _ => 1,
+        };
+        if self.startmodel.len() > terms {
             return invalid(
-                "startmodel, deconvolver",
-                "an mtmfs start model is one image per Taylor term, which is not supported yet",
+                "startmodel",
+                if self.deconvolver == Deconvolver::Mtmfs {
+                    "We currently cannot support more than nterms images as the starting model."
+                } else {
+                    "Only one startmodel image is allowed."
+                },
             );
         }
-        if self.startmodel.is_some() && self.outlierfile.is_some() {
+        if self.has_start_model() && self.outlierfile.is_some() {
             return invalid(
                 "startmodel, outlierfile",
-                "a start model with outlier fields is not supported yet: an outlier would own the \
-                 main field's overlap with no start model of its own",
+                "a start model with outlier fields is not supported yet (#1105): an outlier \
+                 would own the main field's overlap with no start model of its own",
             );
         }
         // CASA's `mtmfs` takes one Taylor term or more; every other
@@ -749,7 +763,7 @@ impl ImagingRequest {
         // `predictModel` does for `niter=0, calcres=False`.
         if self.savemodel != SaveModel::None
             && !self.solves()
-            && self.startmodel.is_none()
+            && !self.has_start_model()
             && !self.tclean_restart
         {
             return invalid(
@@ -848,7 +862,13 @@ impl ImagingRequest {
     /// continuation reads (#944).
     #[must_use]
     pub fn starts_from_model(&self) -> bool {
-        self.startmodel.is_some() || self.continued_model
+        self.has_start_model() || self.continued_model
+    }
+
+    /// Whether `startmodel` names an image for some term.
+    #[must_use]
+    pub fn has_start_model(&self) -> bool {
+        self.startmodel.iter().any(Option::is_some)
     }
 
     /// Total minor-cycle iterations.
@@ -945,6 +965,26 @@ const NONE: &str = "none";
 /// blank optional parameter always has.
 fn unset(text: &str) -> bool {
     text == NONE || text.trim().is_empty()
+}
+
+/// `startmodel`: one path, or a list with an entry per Taylor term, an
+/// empty entry `None`; empty or unset is no start model.
+fn start_models<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Option<PathBuf>>, D::Error> {
+    let entry = |value: &Value| match value {
+        Value::String(text) if text.trim().is_empty() => Ok(None),
+        Value::String(text) => Ok(Some(PathBuf::from(text.trim()))),
+        value => Err(unexpected(value, "a path")),
+    };
+    match Value::deserialize(deserializer)? {
+        Value::String(text) if unset(&text) => Ok(Vec::new()),
+        Value::Array(items) if items.len() == 1 && items[0].as_str().is_some_and(unset) => {
+            Ok(Vec::new())
+        }
+        Value::Array(items) => items.iter().map(entry).collect(),
+        value => entry(&value).map(|path| vec![path]),
+    }
 }
 
 /// A selector's exact text, `None` only when it is exactly empty.
@@ -1048,85 +1088,6 @@ fn cell_pair_arcsec<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[f64; 
     let [x, y] = pair(deserializer)?;
     let arcsec = |value: &Value| quantity(value, "arcsec").map_err(D::Error::custom);
     Ok([arcsec(&x)?, arcsec(&y)?])
-}
-
-/// CASA's `uvtaper` (`synthesisimager::setweighting`, then
-/// `VisImagingWeight::setFilter`): `[bmaj]`, `[bmaj, bmin]` or
-/// `[bmaj, bmin, bpa]`, with `bmin = bmaj` and `bpa = 0` when not given,
-/// and no taper when the list or its first entry is empty. In wavelengths
-/// (`lambda`, `klambda`, …) the axes are the taper's uv-plane HWHM; as
-/// angles they are its image-plane FWHM θ, whose uv-plane HWHM is
-/// 2 ln 2 / (π θ). CASA reads an axis with no unit as radians and tapers
-/// every weight to zero; casa-rs refuses it (`docs/CASA (C++) bugs.md`).
-fn uv_taper<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<UvTaper>, D::Error> {
-    let entries = match Value::deserialize(deserializer)? {
-        Value::Array(items) => items,
-        value => vec![value],
-    };
-    let texts = entries
-        .iter()
-        .map(|entry| {
-            entry
-                .as_str()
-                .map(str::trim)
-                .ok_or_else(|| unexpected(entry, "a quantity"))
-        })
-        .collect::<Result<Vec<_>, D::Error>>()?;
-    let taper = match texts.as_slice() {
-        [] | ["", ..] => return Ok(None),
-        [bmaj] => uv_taper_axes(bmaj, bmaj, None),
-        [bmaj, bmin] => uv_taper_axes(bmaj, bmin, None),
-        [bmaj, bmin, bpa] => uv_taper_axes(bmaj, bmin, Some(bpa)),
-        _ => Err("uvtaper takes at most [bmaj, bmin, bpa]".to_string()),
-    };
-    taper.map(Some).map_err(D::Error::custom)
-}
-
-/// One `uvtaper` axis: its uv-plane HWHM in wavelengths, and whether it was
-/// given as an angle.
-fn uv_taper_axis(text: &str) -> Result<(f64, bool), String> {
-    let refused = || {
-        format!(
-            "uvtaper {text:?}: give an angle (the image-plane FWHM) or wavelengths (the uv-plane \
-             HWHM, lambda or klambda)"
-        )
-    };
-    let quantity: Quantity = text.parse().map_err(|_| refused())?;
-    let unit = |name: &str| Unit::from_str(name).expect("a casacore unit");
-    let hwhm = if let Ok(wavelengths) = quantity.get_value_in(&unit("lambda")) {
-        (wavelengths, false)
-    } else if let Ok(fwhm) = quantity.get_value_in(&unit("rad")) {
-        (
-            2.0 * std::f64::consts::LN_2 / (std::f64::consts::PI * fwhm),
-            true,
-        )
-    } else {
-        return Err(refused());
-    };
-    if quantity.unit().name().is_empty() || !(hwhm.0.is_finite() && hwhm.0 > 0.0) {
-        return Err(refused());
-    }
-    Ok(hwhm)
-}
-
-fn uv_taper_axes(bmaj: &str, bmin: &str, bpa: Option<&str>) -> Result<UvTaper, String> {
-    let (major, major_angle) = uv_taper_axis(bmaj)?;
-    let (minor, minor_angle) = uv_taper_axis(bmin)?;
-    if major_angle != minor_angle {
-        return Err(format!(
-            "uvtaper {bmaj:?}, {bmin:?}: give both axes as angles or both in wavelengths"
-        ));
-    }
-    let position_angle_rad = match bpa {
-        None => 0.0,
-        Some(text) => text
-            .parse::<Quantity>()
-            .ok()
-            .filter(|angle| !angle.unit().name().is_empty())
-            .and_then(|angle| angle.get_value_in(&Unit::from_str("rad").ok()?).ok())
-            .ok_or_else(|| format!("uvtaper position angle {text:?} needs an angle unit"))?,
-    };
-    Ok(UvTaper::new(major, minor, position_angle_rad))
 }
 
 fn threshold_jy<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
@@ -1469,6 +1430,8 @@ fn grid_precision<'de, D: Deserializer<'de>>(
         other => Err(D::Error::custom(format!("gridprecision {other:?}"))),
     }
 }
+
+mod uv_taper;
 
 #[cfg(test)]
 pub(crate) mod tests;

@@ -1,0 +1,509 @@
+{
+ "schema": "tclean-evidence-receipt/1",
+ "title": "tclean start-model lists per Taylor term and the spectral regrid of a start model",
+ "work_issue": 1067,
+ "date": "2026-11-03",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14",
+  "host": "macOS-27.0.1-arm64-arm-64bit (laptop)"
+ },
+ "native_revision": "65b3a18bf0d135fe1f63bc5a6667c0c67ff3b77f",
+ "builds": "release casars-imager and casars wheel of the committed revision in a private target directory, on the laptop, with the NEON FFTW",
+ "backend": "cpu",
+ "precision": "f64",
+ "driver": "tools/casa-compat/tclean_case_matrix.py, each case's CASA calls in a CASA process of their own, on a data root staged from the NAS casatestdata with its XSym links resolved",
+ "limits": "exact image-product inventory and masks; NRMS <= 1e-3; the scalars and counts as the driver states them",
+ "outcome": "casa-rs's own cases 3 of 3: CASA and casa-rs refuse a cube start model of an MFS image and two images with a single-term deconvolver, and agree on a start model with pbcor on channels no sample reaches. CASA's test_startmodel, test_modelvis and uvsub cases 38 of 39. The exception is test_cube_continuum_subtract_uvsub, which CASA's suite skips: its first call, MT-MFS with no start model, differs on main too (#1113), and its start-model call passes. test_cube, for the restored image's validity rule, at c89b015ffc: 53 of 55, its two the recorded test_cube_5 floor-width tie and test_cube_13's refusal (#1096).",
+ "runs": {
+  "own": {
+   "native_revision": "65b3a18bf0d135fe1f63bc5a6667c0c67ff3b77f",
+   "binary_sha256": "337ad8ef36ee712c86e79d4a1bb76cf414429bece8a6ac759d3982c111ffe228",
+   "case_file_sha256": "9864f3aab0ddc41133c053ce09a6000c2c820d09165f71845c3e9aea7c8ab4ba",
+   "host": "macOS-27.2-arm64-arm-64bit",
+   "summary": {
+    "passed": 3,
+    "total": 3
+   },
+   "cases": {
+    "startmodel_cube_onto_mfs.1+2": {
+     "passed": true,
+     "worst_nrms": 2.670775131213591e-07,
+     "refused": [
+      {
+       "call": 2,
+       "casa": "RuntimeError",
+       "native": "tclean failed: imaging application preparation failed: startmodel tst1.model: invalid metadata: regrid: any axis not being regridded must have the same input an"
+      }
+     ]
+    },
+    "startmodel_two_images_hogbom.1+2": {
+     "passed": true,
+     "worst_nrms": 3.1414451781708875e-07,
+     "refused": [
+      {
+       "call": 2,
+       "casa": "RuntimeError",
+       "native": "tclean failed: invalid imaging request (startmodel): Only one startmodel image is allowed."
+      }
+     ]
+    },
+    "startmodel_blank_channel_pbcor.1+2": {
+     "passed": true,
+     "worst_nrms": 6.623266289879253e-06
+    }
+   }
+  },
+  "casa": {
+   "native_revision": "65b3a18bf0d135fe1f63bc5a6667c0c67ff3b77f",
+   "binary_sha256": "337ad8ef36ee712c86e79d4a1bb76cf414429bece8a6ac759d3982c111ffe228",
+   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
+   "host": "macOS-27.2-arm64-arm-64bit",
+   "summary": {
+    "passed": 38,
+    "total": 39
+   },
+   "cases": {
+    "test_cube.test_cube_continuum_subtract_uvsub.1+2": {
+     "passed": false,
+     "worst_nrms": 0.001858456607841069,
+     "failed_products": {
+      "tst.alpha": {
+       "nrms": 0.0012451468852188014,
+       "mask_mismatch": 3
+      },
+      "tst.alpha.error": {
+       "nrms": 0.0014818751666125175,
+       "mask_mismatch": 3
+      },
+      "tst.residual.tt0": {
+       "nrms": 0.0017844684629825115,
+       "mask_mismatch": 0
+      },
+      "tst.residual.tt1": {
+       "nrms": 0.001858456607841069,
+       "mask_mismatch": 0
+      }
+     }
+    },
+    "test_modelvis.test_modelvis_1.1": {
+     "passed": true,
+     "worst_nrms": 2.5786605973710466e-07
+    },
+    "test_modelvis.test_modelvis_2.1+2": {
+     "passed": true,
+     "worst_nrms": 2.5786605973710466e-07
+    },
+    "test_modelvis.test_modelvis_3.1+2": {
+     "passed": true,
+     "worst_nrms": 2.5786605973710466e-07
+    },
+    "test_modelvis.test_modelvis_4.1": {
+     "passed": true,
+     "worst_nrms": 1.3616359506751668e-06
+    },
+    "test_modelvis.test_modelvis_5.1+2": {
+     "passed": true,
+     "worst_nrms": 1.3616359506751668e-06
+    },
+    "test_modelvis.test_modelvis_6.1+2": {
+     "passed": true,
+     "worst_nrms": 1.3616359506751668e-06
+    },
+    "test_modelvis.test_modelvis_7.1+2": {
+     "passed": true,
+     "worst_nrms": 2.6820982622690673e-07
+    },
+    "test_modelvis.test_modelvis_8.1+2": {
+     "passed": true,
+     "worst_nrms": 2.938009754218444e-07
+    },
+    "test_modelvis.test_modelvis_9.1+2+3": {
+     "passed": true,
+     "worst_nrms": 2.980258162875109e-07
+    },
+    "test_modelvis.test_modelvis_10.1+2+3": {
+     "passed": true,
+     "worst_nrms": 5.092807979752304e-07
+    },
+    "test_modelvis.test_modelvis_11.1+2+3": {
+     "passed": true,
+     "worst_nrms": 1.52280756412301e-07
+    },
+    "test_modelvis.test_modelvis_12.1": {
+     "passed": true,
+     "worst_nrms": 2.5786605973710466e-07
+    },
+    "test_modelvis.test_modelvis_13.1": {
+     "passed": true,
+     "worst_nrms": 2.5786605973710466e-07
+    },
+    "test_modelvis.test_modelvis_14.1": {
+     "passed": true,
+     "worst_nrms": 2.5786605973710466e-07
+    },
+    "test_modelvis.test_modelvis_15.1": {
+     "passed": true,
+     "worst_nrms": 2.5786605973710466e-07
+    },
+    "test_modelvis.test_modelvis_16.1": {
+     "passed": true,
+     "worst_nrms": 2.758532301211013e-07
+    },
+    "test_modelvis.test_modelvis_17.1": {
+     "passed": true,
+     "worst_nrms": 2.758532301211013e-07
+    },
+    "test_modelvis.test_modelvis_18.1": {
+     "passed": true,
+     "worst_nrms": 3.135206048393883e-07
+    },
+    "test_modelvis.test_modelvis_19.1": {
+     "passed": true,
+     "worst_nrms": 3.135206048393883e-07
+    },
+    "test_modelvis.test_modelvis_20.1+2": {
+     "passed": true,
+     "worst_nrms": 2.5786605973710466e-07
+    },
+    "test_modelvis.test_modelvis_21.1+2": {
+     "passed": true,
+     "worst_nrms": 2.5786605973710466e-07
+    },
+    "test_modelvis.test_modelvis_22.1+2": {
+     "passed": true,
+     "worst_nrms": 2.5786605973710466e-07
+    },
+    "test_modelvis.test_modelvis_23.1+2": {
+     "passed": true,
+     "worst_nrms": 2.5786605973710466e-07
+    },
+    "test_modelvis.test_modelvis_24.1+2": {
+     "passed": true,
+     "worst_nrms": 2.758532301211013e-07
+    },
+    "test_modelvis.test_modelvis_25.1+2": {
+     "passed": true,
+     "worst_nrms": 2.758532301211013e-07
+    },
+    "test_modelvis.test_modelvis_26.1+2": {
+     "passed": true,
+     "worst_nrms": 3.135206048393883e-07
+    },
+    "test_modelvis.test_modelvis_27.1+2": {
+     "passed": true,
+     "worst_nrms": 3.135206048393883e-07
+    },
+    "test_modelvis.test_modelvis_28.1": {
+     "passed": true,
+     "worst_nrms": 1.4244171916623102e-07
+    },
+    "test_modelvis.test_modelvis_29.1": {
+     "passed": true,
+     "worst_nrms": 3.2653102824614335e-07
+    },
+    "test_startmodel.test_startmodel_regrid_mfs.1+2": {
+     "passed": true,
+     "worst_nrms": 1.4579288597540133e-06
+    },
+    "test_startmodel.test_startmodel_regrid_cube.1+2": {
+     "passed": true,
+     "worst_nrms": 3.153601067844113e-07
+    },
+    "test_startmodel.test_startmodel_mfs_continue.1+2": {
+     "passed": true,
+     "worst_nrms": 3.5718245361493393e-07
+    },
+    "test_startmodel.test_startmodel_mfs_restart.1+2": {
+     "passed": true,
+     "worst_nrms": 3.5718245361493393e-07
+    },
+    "test_startmodel.test_startmodel_mfs_changeshape_1.1+2": {
+     "passed": true,
+     "worst_nrms": 2.5786605973710466e-07,
+     "refused": [
+      {
+       "call": 2,
+       "casa": "RuntimeError",
+       "native": "tclean failed: imaging application preparation failed: cannot restart from \"/Volumes/GLENDENNING/casa-rs-evidence/tclean-1067/65b3a18bf0/casa/cases/test_startmo"
+      }
+     ]
+    },
+    "test_startmodel.test_startmodel_mfs_changeshape_2.1+2": {
+     "passed": true,
+     "worst_nrms": 3.1409411825270565e-07
+    },
+    "test_startmodel.test_startmodel_mtmfs_restart.1+2+3+4": {
+     "passed": true,
+     "worst_nrms": 2.3060535469933885e-06
+    },
+    "test_startmodel.test_startmodel_with_mask_mfs.1": {
+     "passed": true,
+     "worst_nrms": 6.739601871407217e-05
+    },
+    "test_startmodel.test_startmodel_with_mask_mtmfs.1": {
+     "passed": true,
+     "worst_nrms": 6.0187814314485917e-05
+    }
+   }
+  },
+  "test_cube_regression": {
+   "native_revision": "c89b015ffc1a9aedf98fed63bbb924f0a0180b40",
+   "binary_sha256": "4d4650a7fb953cca8ee435a3d251afac2b426cf12690e17023ed16eabf1897f1",
+   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
+   "host": "macOS-27.2-arm64-arm-64bit",
+   "summary": {
+    "passed": 53,
+    "total": 55
+   },
+   "cases": {
+    "test_cube.test_cube_0.1": {
+     "passed": true,
+     "worst_nrms": 3.2150276887140796e-07
+    },
+    "test_cube.test_cube_1.1": {
+     "passed": true,
+     "worst_nrms": 3.2150276887140796e-07
+    },
+    "test_cube.test_cube_2.1": {
+     "passed": true,
+     "worst_nrms": 2.673670481072628e-07
+    },
+    "test_cube.test_cube_3.1": {
+     "passed": true,
+     "worst_nrms": 2.7676030160248895e-07
+    },
+    "test_cube.test_cube_4.1": {
+     "passed": true,
+     "worst_nrms": 2.869705506897853e-07
+    },
+    "test_cube.test_cube_5.1": {
+     "passed": false,
+     "worst_nrms": 0.0017154257798661222,
+     "failed_products": {
+      "tstCubetest_freqdefstwd2.sumwt": {
+       "nrms": 0.0017154257798661222,
+       "mask_mismatch": 0
+      }
+     }
+    },
+    "test_cube.test_cube_6.1": {
+     "passed": true,
+     "worst_nrms": 3.508507977022297e-07
+    },
+    "test_cube.test_cube_7.1": {
+     "passed": true,
+     "worst_nrms": 3.639736119043927e-07
+    },
+    "test_cube.test_cube_8.1": {
+     "passed": true,
+     "worst_nrms": 3.1406769845742534e-07
+    },
+    "test_cube.test_cube_9.1": {
+     "passed": true,
+     "worst_nrms": 2.618430056478533e-07
+    },
+    "test_cube.test_cube_10.1": {
+     "passed": true,
+     "worst_nrms": 2.622479553151006e-07
+    },
+    "test_cube.test_cube_11.1": {
+     "passed": true,
+     "worst_nrms": 3.436868720429208e-07
+    },
+    "test_cube.test_cube_12.1": {
+     "passed": true,
+     "worst_nrms": 3.324999890111408e-07
+    },
+    "test_cube.test_cube_13.1": {
+     "passed": false,
+     "failed_products": {
+      "inventory": {
+       "casa": [
+        "tstCubetest_optvelst19wdlsrk.image",
+        "tstCubetest_optvelst19wdlsrk.mask",
+        "tstCubetest_optvelst19wdlsrk.model",
+        "tstCubetest_optvelst19wdlsrk.pb",
+        "tstCubetest_optvelst19wdlsrk.psf",
+        "tstCubetest_optvelst19wdlsrk.residual",
+        "tstCubetest_optvelst19wdlsrk.sumwt"
+       ],
+       "native": []
+      }
+     },
+     "refused": [
+      {
+       "call": 1,
+       "casa": null,
+       "native": "tclean refused its parameters (parameter 'veltype'): veltype='optical' with a velocity start or width, whose channels CASA tabulates is not implemented by casa-"
+      }
+     ]
+    },
+    "test_cube.test_cube_21.1": {
+     "passed": true,
+     "worst_nrms": 3.471610436157657e-07
+    },
+    "test_cube.test_cube_22.1": {
+     "passed": true,
+     "worst_nrms": 3.242489124192742e-07
+    },
+    "test_cube.test_cube_23.1": {
+     "passed": true,
+     "worst_nrms": 3.4886803119680893e-07
+    },
+    "test_cube.test_cube_descendF1.1": {
+     "passed": true,
+     "worst_nrms": 3.52793542863146e-07
+    },
+    "test_cube.test_cube_descendF2.1": {
+     "passed": true,
+     "worst_nrms": 3.0007709278938194e-07
+    },
+    "test_cube.test_cube_descendF3.1": {
+     "passed": true,
+     "worst_nrms": 3.0007709278938194e-07
+    },
+    "test_cube.test_cube_descendF4.1": {
+     "passed": true,
+     "worst_nrms": 3.528823099353293e-07
+    },
+    "test_cube.test_cube_descendF5.1": {
+     "passed": true,
+     "worst_nrms": 3.519040359172105e-07
+    },
+    "test_cube.test_cube_descendF6.1": {
+     "passed": true,
+     "worst_nrms": 3.528587825188012e-07
+    },
+    "test_cube.test_cube_descendF7.1": {
+     "passed": true,
+     "worst_nrms": 2.1419344762688935e-07
+    },
+    "test_cube.test_cube_descendF8.1": {
+     "passed": true,
+     "worst_nrms": 4.0064109807900094e-07
+    },
+    "test_cube.test_cube_descendF9.1": {
+     "passed": true,
+     "worst_nrms": 4.006507525140377e-07
+    },
+    "test_cube.test_cube_descendF10.1": {
+     "passed": true,
+     "worst_nrms": 2.995560909794172e-07
+    },
+    "test_cube.test_cube_descendF11.1": {
+     "passed": true,
+     "worst_nrms": 3.000203150044477e-07
+    },
+    "test_cube.test_cube_descendF12.1": {
+     "passed": true,
+     "worst_nrms": 3.4546919626995774e-07
+    },
+    "test_cube.test_cube_descendF13.1": {
+     "passed": true,
+     "worst_nrms": 3.115995393759188e-07
+    },
+    "test_cube.test_cube_descendF14.1": {
+     "passed": true,
+     "worst_nrms": 3.1206679399201627e-07
+    },
+    "test_cube.test_cube_D1.1": {
+     "passed": true,
+     "worst_nrms": 1.839041219569791e-07
+    },
+    "test_cube.test_cubedata_briggs.1": {
+     "passed": true,
+     "worst_nrms": 5.148997535020438e-07
+    },
+    "test_cube.test_cube_D2.1": {
+     "passed": true,
+     "worst_nrms": 1.7281903363480267e-07
+    },
+    "test_cube.test_cube_perchanweight_briggs.1": {
+     "passed": true,
+     "worst_nrms": 1.014539925687666e-07
+    },
+    "test_cube.test_cube_perchanweight_briggs.2": {
+     "passed": true,
+     "worst_nrms": 1.1435055264769776e-07
+    },
+    "test_cube.test_cube_perchanweight_briggs.3": {
+     "passed": true,
+     "worst_nrms": 1.0247501119632098e-07
+    },
+    "test_cube.test_cube_perchanweight_briggs.4": {
+     "passed": true,
+     "worst_nrms": 1.3087245510112924e-07
+    },
+    "test_cube.test_cube_weighting_taper.1": {
+     "passed": true,
+     "worst_nrms": 2.896931470674911e-07
+    },
+    "test_cube.test_cube_weighting_taper.2": {
+     "passed": true,
+     "worst_nrms": 1.9909586835513357e-07
+    },
+    "test_cube.test_cube_weighting_taper.3": {
+     "passed": true,
+     "worst_nrms": 5.190637291680435e-06
+    },
+    "test_cube.test_cube_weighting_taper.4": {
+     "passed": true,
+     "worst_nrms": 2.8230233343575353e-07
+    },
+    "test_cube.test_cube_weighting_taper_cas13260.1": {
+     "passed": true,
+     "worst_nrms": 5.476607584876864e-07
+    },
+    "test_cube.test_cube_weighting_taper_cas13260.2": {
+     "passed": true,
+     "worst_nrms": 5.604518564035039e-07
+    },
+    "test_cube.test_cube_weighting_taper_cas13260.3": {
+     "passed": true,
+     "worst_nrms": 1.179010985445684e-06
+    },
+    "test_cube.test_cube_weighting_taper_cas13260.4": {
+     "passed": true,
+     "worst_nrms": 1.256499766887035e-06
+    },
+    "test_cube.test_cube_badchannel_restoringbeam.1": {
+     "passed": true,
+     "worst_nrms": 3.085688865024911e-07
+    },
+    "test_cube.test_cube_badchannel_restoringbeam.2": {
+     "passed": true,
+     "worst_nrms": 3.085688865024911e-07
+    },
+    "test_cube.test_cube_common_restoringbeam.1+2": {
+     "passed": true,
+     "worst_nrms": 3.1065315801750194e-07
+    },
+    "test_cube.test_cube_chanchunks_auto.1": {
+     "passed": true,
+     "worst_nrms": 3.085688865024911e-07
+    },
+    "test_cube.test_cube_chanchunks_savemodel.1": {
+     "passed": true,
+     "worst_nrms": 3.08568886631292e-07
+    },
+    "test_cube.test_cube_twoMS_startfreq.1": {
+     "passed": true,
+     "worst_nrms": 3.868022578720819e-07
+    },
+    "test_cube.test_cube_twoMS_startfreq.2": {
+     "passed": true,
+     "worst_nrms": 3.868022578720819e-07
+    },
+    "test_cube.test_cube_twoMS_startvel.1": {
+     "passed": true,
+     "worst_nrms": 3.95964403564781e-07
+    },
+    "test_cube.test_cube_twoMS_startvel.2": {
+     "passed": true,
+     "worst_nrms": 3.95964403564781e-07
+    }
+   }
+  }
+ }
+}

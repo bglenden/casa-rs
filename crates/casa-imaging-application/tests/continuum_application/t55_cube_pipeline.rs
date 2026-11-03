@@ -448,9 +448,16 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
                 )
                 .expect("signed PB cube");
                 assert!(outcome.major_cycle_count > 1);
-                for role in [
-                    ProductRole::Residual(ProductTerm::Single),
-                    ProductRole::RestoredImage(ProductTerm::Single),
+                // The restored image restores every plane, as CASA's does.
+                for (role, rule) in [
+                    (
+                        ProductRole::Residual(ProductTerm::Single),
+                        ProductValidityRule::FinalNormalState,
+                    ),
+                    (
+                        ProductRole::RestoredImage(ProductTerm::Single),
+                        ProductValidityRule::All,
+                    ),
                 ] {
                     assert_eq!(
                         outcome
@@ -460,7 +467,7 @@ fn t55_signed_primary_beam_limit_separates_pixels_search_support_and_stored_mask
                             .find(|member| member.role() == role)
                             .expect("uncorrected image product")
                             .validity(),
-                        ProductValidityRule::FinalNormalState,
+                        rule,
                         "PB cutoff must not zero uncorrected image pixels"
                     );
                 }
