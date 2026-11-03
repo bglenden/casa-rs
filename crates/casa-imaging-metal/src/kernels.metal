@@ -66,20 +66,21 @@ struct Params {
 };
 
 #define NO_CELL 0xffffffffu
+#define STENCIL 4u          // points of a cubic spectral interpolation
 
-// The model at one native cell from a batch of predictions (`NativeTerm`).
+// The model at one native cell from a batch of predictions (`NativeTerm`):
+// Σ factors · predicted[points], NO_CELL points skipped.
 struct NativeTerm {
     uint cell;
-    uint low;
-    uint high;
-    float fraction;
+    uint points[STENCIL];
+    float factors[STENCIL];
     uint flags;             // bit vpol: flagged, the model stays zero
 };
 
-// A sample's native endpoints (`NativeSource`).
+// A sample's native points (`NativeSource`).
 struct NativeSource {
-    uint2 cells;
-    float2 factors;
+    uint cells[STENCIL];
+    float factors[STENCIL];
     float2 scale;           // W·e^{iφ}
 };
 
@@ -429,11 +430,10 @@ kernel void spread(device const Sample *samples [[buffer(0)]],
         NativeSource source = sources[index];
         for (uint vpol = 0; vpol < p.npol; ++vpol) {
             float2 model = float2(0.0f);
-            for (uint end = 0; end < 2; ++end) {
-                uint cell = end == 0 ? source.cells.x : source.cells.y;
+            for (uint point = 0; point < STENCIL; ++point) {
+                uint cell = source.cells[point];
                 if (cell != NO_CELL) {
-                    float factor = end == 0 ? source.factors.x : source.factors.y;
-                    model += native_model[ulong(cell) * p.npol + vpol] * factor;
+                    model += native_model[ulong(cell) * p.npol + vpol] * source.factors[point];
                 }
             }
             spread[vpol] -= cmul(source.scale, model);
@@ -456,13 +456,10 @@ kernel void native_model(device const NativeTerm *terms [[buffer(0)]],
     for (uint vpol = 0; vpol < p.npol; ++vpol) {
         float2 m = float2(0.0f);
         if (((t.flags >> vpol) & 1u) == 0u) {
-            float2 a = t.low == NO_CELL ? float2(0.0f) : predicted[ulong(t.low) * p.npol + vpol];
-            if (t.low == t.high) {
-                m = a;
-            } else {
-                float2 b = t.high == NO_CELL ? float2(0.0f)
-                                             : predicted[ulong(t.high) * p.npol + vpol];
-                m = a + (b - a) * t.fraction;
+            for (uint point = 0; point < STENCIL; ++point) {
+                if (t.points[point] != NO_CELL) {
+                    m += predicted[ulong(t.points[point]) * p.npol + vpol] * t.factors[point];
+                }
             }
         }
         ulong at = ulong(t.cell) * p.npol + vpol;

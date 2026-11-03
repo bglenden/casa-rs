@@ -347,11 +347,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
         (json!({ "usemask": "pb" }), "usemask", "#1061"),
         (
-            json!({ "specmode": "cube", "interpolation": "cubic" }),
-            "interpolation",
-            "#1066",
-        ),
-        (
             json!({ "specmode": "cube", "outframe": "GALACTO" }),
             "outframe",
             "#980",
@@ -360,6 +355,17 @@ fn values_casa_rs_cannot_honour_are_refused() {
             json!({ "specmode": "cube", "veltype": "ratio" }),
             "veltype",
             "#980",
+        ),
+        (
+            json!({ "specmode": "cube", "veltype": "optical", "width": "20000km/s" }),
+            "veltype",
+            "#1096",
+        ),
+        // A dimensionless start is a Doppler value, a velocity grid too.
+        (
+            json!({ "specmode": "cube", "veltype": "z", "start": "0.01" }),
+            "veltype",
+            "#1096",
         ),
         // A source-frame cube's per-channel density, mosaic or not.
         (
@@ -389,25 +395,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
                     "wprojplanes": 32, "facets": 2 }),
             "facets",
             "#1070",
-        ),
-        // Astra's #1015 F1: CASA derives a cube's extent from the selected
-        // channels, the start and the width (probed: spw='0:2~4' gives three
-        // channels from the third; width=2 four of 2 MHz from the first
-        // pair's centre); casa-rs's takes the window's channel count.
-        (
-            json!({ "specmode": "cubedata", "spw": "0:2~4" }),
-            "nchan",
-            "#1066",
-        ),
-        (
-            json!({ "specmode": "cubedata", "width": "2" }),
-            "nchan",
-            "#1066",
-        ),
-        (
-            json!({ "specmode": "cube", "start": "1.4GHz" }),
-            "nchan",
-            "#1066",
         ),
         (json!({ "projection": "AZP" }), "projection", "#1101"),
         (json!({ "projection": "HPX" }), "projection", "#1101"),

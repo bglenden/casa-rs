@@ -562,38 +562,6 @@ impl<'a> Tclean<'a> {
         Ok(())
     }
 
-    /// Refuse the cube extents CASA derives from the channels `spw` selects,
-    /// which casa-rs does not yet (#980). CASA's `getImFreq` passes
-    /// `nchan=-1` and its `start` and `width` to
-    /// `MSTransformRegridder::calcChanFreqs`, which counts the selected
-    /// channels from `start` in steps of `width`; casa-rs counts them only
-    /// for a channel grid from the selected windows' first channel in steps
-    /// of one. (Where an unset `start` begins, the first selected channel,
-    /// casa-rs follows.)
-    fn refuse_derived_extent(
-        &mut self,
-        nchan: i64,
-        counted: bool,
-        start: &str,
-        width: &str,
-    ) -> Result<(), TcleanRefusal> {
-        // A channel selection in any MeasurementSet's spw.
-        let channels_selected = self
-            .per_measurement_set("spw", None)?
-            .iter()
-            .any(|spw| spw.as_str().is_some_and(|text| text.contains(':')));
-        let wide = !matches!(width, "" | "1");
-        if nchan == -1 && !counted && (channels_selected || wide || !start.is_empty()) {
-            return Err(TcleanRefusal::not_yet(
-                "nchan",
-                "-1 with a channel selection in spw, a start or a width, whose extent CASA \
-                 derives from the selected channels; give nchan",
-                1066,
-            ));
-        }
-        Ok(())
-    }
-
     fn spectral(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
         // CASA reads reffreq in every mode; a cube ignores it after reading.
         self.copy(&["reffreq"])?;
@@ -654,14 +622,20 @@ impl<'a> Tclean<'a> {
             }
             return Ok(());
         }
-        self.refuse_derived_extent(nchan, counted, start, width)?;
+        let convention = velocity_convention(veltype)?;
+        // An optical-velocity grid is equal in optical velocity, not in
+        // frequency, and CASA tabulates its axis (#1096).
+        if convention == "OPTICAL" && (is_velocity(start) || is_velocity(width)) {
+            return Err(TcleanRefusal::not_yet(
+                "veltype",
+                "'optical' with a velocity start or width, whose channels CASA tabulates",
+                1096,
+            ));
+        }
         self.set("start", start);
         self.set("width", width);
         self.set("outframe", frame);
-        self.set("veltype", velocity_convention(veltype)?);
-        if interpolation == "cubic" {
-            return Err(TcleanRefusal::not_yet("interpolation", "'cubic'", 1066));
-        }
+        self.set("veltype", convention);
         self.set("interpolation", interpolation);
         Ok(())
     }
@@ -1046,6 +1020,22 @@ fn output_frame(text: &str) -> Result<String, TcleanRefusal> {
         "LSRK" | "BARY" | "TOPO" | "REST" => Ok(frame),
         _ => Err(TcleanRefusal::not_yet("outframe", format!("{text:?}"), 980)),
     }
+}
+
+/// Whether a cube's `start` or `width` text makes its axis a velocity
+/// grid (`SynthesisParamsImage::findSpecMode`): a velocity, or a
+/// dimensionless Doppler value, which the axis builder takes as the
+/// velocity it stands for (`CubeAxisValue::parse`). A whole number is a
+/// channel.
+fn is_velocity(text: &str) -> bool {
+    let text = text.trim();
+    if text.parse::<i32>().is_ok() {
+        return false;
+    }
+    let velocity = Unit::new("m/s").expect("built-in velocity unit");
+    Quantity::from_str(text).is_ok_and(|quantity| {
+        quantity.unit().conformant(&velocity) || quantity.unit().conformant(&Unit::dimensionless())
+    })
 }
 
 /// A cube's velocity convention, in casacore's spelling: `z` is optical and

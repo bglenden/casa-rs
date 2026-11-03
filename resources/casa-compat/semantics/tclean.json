@@ -246,10 +246,11 @@
     },
     "nchan": {
       "status": "Partial",
-      "scope": "In cube, positive value supplies output count; -1 uses casa-rs channel_count. MFS ignores this count. Derived CASA extent cases are refused (issue 980).",
+      "scope": "In cube, a positive value supplies the output count; -1 takes CASA's count (MSTransformRegridder::regridChanBounds with nchan<0): from start, or the first selected channel when start is unset, as many channels of the output width as fit to the band's far edge, in channel, frequency and radio-velocity grids (issue 1066). MFS ignores this count.",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "cube-axes-20261103"
       ],
       "behaviors": [
         "spectral"
@@ -258,10 +259,11 @@
     },
     "start": {
       "status": "Partial",
-      "scope": "MFS ignores it; cube copies text. A channel-subset spw without explicit start is refused; some nchan=-1 derived extents are refused (issue 980).",
+      "scope": "MFS ignores it; cube copies text. With nchan=-1 the axis runs from it to the band's far edge (issue 1066). A velocity start with veltype='optical' is refused: CASA tabulates that axis (issue 1096).",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "cube-axes-20261103"
       ],
       "behaviors": [
         "spectral"
@@ -269,10 +271,11 @@
     },
     "width": {
       "status": "Partial",
-      "scope": "MFS ignores it; cube copies text. Some nchan=-1 derived extents are refused (issue 980).",
+      "scope": "MFS ignores it; cube copies text. With nchan=-1 the band is filled in whole channels of this width (issue 1066). A velocity width with veltype='optical' is refused (issue 1096).",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "cube-axes-20261103"
       ],
       "behaviors": [
         "spectral"
@@ -291,10 +294,11 @@
     },
     "veltype": {
       "status": "Partial",
-      "scope": "MFS ignores it; cube maps radio->RADIO, optical/z->OPTICAL, beta/relativistic/true->BETA; other values refused (issue 980).",
+      "scope": "MFS ignores it; cube maps radio->RADIO, optical/z->OPTICAL, beta/relativistic/true->BETA; other values refused (issue 980). An optical-velocity grid (a velocity start or width with veltype='optical') is refused until CASA's tabular axis is ported (issue 1096).",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "cube-axes-20261103"
       ],
       "behaviors": [
         "spectral"
@@ -314,10 +318,11 @@
     },
     "interpolation": {
       "status": "Partial",
-      "scope": "MFS ignores it; cube forwards it except cubic, which is refused (issue 823).",
+      "scope": "MFS ignores it; cube forwards nearest, linear and cubic. Cubic fits casacore InterpolateArray1D's polynomial through four channels when gridding and four output points when predicting, the halo four native widths (issue 1066); a short axis and flagged non-finite values are corrected (docs/CASA (C++) bugs.md).",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "cube-axes-20261103"
       ],
       "behaviors": [
         "spectral"
@@ -1099,14 +1104,15 @@
       "title": "Cube axes, reference frequencies and moving sources",
       "status": "Partial",
       "scope": "specmode, spw, start, width, nchan, reffreq, restfreq, outframe, veltype, interpolation and perchanweightdensity.",
-      "gap": "Cube channel-count mapping exists, but selected-channel-derived defaults are refused; a cube over several selected windows lays its axis over their channels merged as CASA's MSTransformRegridder::combineSpwsCore merges them, grids every window's rows onto it, and with nchan=-1 counts a channel grid's planes over the merged band as regridChanBounds does (#980); MFS outframe (LSRK/BARY/TOPO, header only, gridding stays LSRK as in CASA) and restfreq lists (first active, the others listed in the header) are read; MFS REST outframe, blank restfreq entries and cubic interpolation remain restricted. Moving-source cubesource needs its own representative oracle (#714). MVC removal is a separate prior owner decision, not a passing moving-source comparison. The moving-MFS spectral envelope now uses CASA FIELD-origin direction semantics; six fixed/moving CPU64/CPU32/GPU32 comparisons pass recorded WCS values, and the previous 3.5 Hz increment mismatch is repaired at its unchanged tolerance. This does not complete moving-PB or cubesource acceptance. The ordinary MFS default SOURCE rest-frequency label is now repaired; five fresh mosaic/AW weight families and small restart metadata checks match. DOPPLER-backed SOURCE lookup and multiple SOURCE key groups with stored wildcards are explicitly unfinished, not approved deviations. The MFS header's first visibility field is the least (ARRAY_ID, DATA_DESC_ID, FIELD_ID) of the selected samples, CASA's buffer order: the MSv2 adapter states each partition's array and the survey reads the rows' arrays for a partition holding several (3bdf6fa, after Astra's review found the merge had dropped ARRAY_ID); a T1 run with opposing arrays records CASA's choice. An MSv4 has no arrays. The moving-MFS increment oracle on the catalogue path gives CASA's 125020996.11132812 Hz exactly (8b0fe44).",
+      "gap": "nchan=-1 takes CASA's count from the start or the first selected channel to the band's far edge in channel, frequency and radio-velocity grids, and interpolation='cubic' fits casacore's four-point cubic (#1066); an optical-velocity grid, which CASA tabulates, is refused (#1096); a cube over several selected windows lays its axis over their channels merged as CASA's MSTransformRegridder::combineSpwsCore merges them, grids every window's rows onto it, and with nchan=-1 counts a channel grid's planes over the merged band as regridChanBounds does (#980); MFS outframe (LSRK/BARY/TOPO, header only, gridding stays LSRK as in CASA) and restfreq lists (first active, the others listed in the header) are read; MFS REST outframe and blank restfreq entries remain restricted. Moving-source cubesource needs its own representative oracle (#714). MVC removal is a separate prior owner decision, not a passing moving-source comparison. The moving-MFS spectral envelope now uses CASA FIELD-origin direction semantics; six fixed/moving CPU64/CPU32/GPU32 comparisons pass recorded WCS values, and the previous 3.5 Hz increment mismatch is repaired at its unchanged tolerance. This does not complete moving-PB or cubesource acceptance. The ordinary MFS default SOURCE rest-frequency label is now repaired; five fresh mosaic/AW weight families and small restart metadata checks match. DOPPLER-backed SOURCE lookup and multiple SOURCE key groups with stored wildcards are explicitly unfinished, not approved deviations. The MFS header's first visibility field is the least (ARRAY_ID, DATA_DESC_ID, FIELD_ID) of the selected samples, CASA's buffer order: the MSv2 adapter states each partition's array and the survey reads the rows' arrays for a partition holding several (3bdf6fa, after Astra's review found the merge had dropped ARRAY_ID); a T1 run with opposing arrays records CASA's choice. An MSv4 has no arrays. The moving-MFS increment oracle on the catalogue path gives CASA's 125020996.11132812 Hz exactly (8b0fe44).",
       "evidence": [
         "reader",
         "representative",
         "mvc-decision",
         "taylor-pb-mfs",
         "approved-comparisons-restart",
-        "cloud-continuation"
+        "cloud-continuation",
+        "cube-axes-20261103"
       ]
     },
     {
@@ -1803,6 +1809,24 @@
         "crates/casa-imaging-operator/tests/density_fields.rs",
         "crates/casars-imager/tests/t1/mosaic.rs",
         "crates/casa-imaging-runtime/tests/pass_memory.rs",
+        "tools/casa-compat/tclean_case_matrix.py"
+      ]
+    },
+    "cube-axes-20261103": {
+      "kind": "CASA tclean test-case matrix, ad hoc derived cube axes and cubic cubes, test_cube sweep, T0/T1 laws",
+      "state": "measured: 18/18 cube-axes cases pass (worst NRMS 8.8e-7), cubic beside a flagged channel included; test_cube 53/55 with test_cube_22 passing and test_cube_13 refused naming #1096; a linear cube's time and peak memory unchanged within noise on CPU and Metal",
+      "source_revision": "e98d832cf216a4deafaedec6698057dc57177854",
+      "revision": "04c94a900a97478c32a33c2871900c213ba58346",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with resources/casa-compat/tclean-cube-axes-cases.json (16 cases), and with tclean-casa-test-cases.json --case-prefix test_cube.",
+      "receipt": "resources/casa-compat/evidence/tclean-cube-axes-20261103.json",
+      "scope": "tclean's nchan=-1 with a channel selection, start or width (MSTransformRegridder::regridChanBounds with nchan<0, in channel, frequency and radio-velocity grids), strided channel selections and interpolation='cubic' (casacore InterpolateArray1D's four-point cubic when gridding and predicting). Every product of the 18 cases agrees with CASA to 8.8e-7 NRMS with exact iteration counts and scalars, cubic with natural and per-channel Briggs weights and beside a flagged channel included, and CASA's failure for width=-2 with no start is a refusal on both sides. CASA's test_cube sweep is unchanged but for test_cube_13, whose optical-velocity grid CASA tabulates (#1096). Native: casa-ms regrid laws pinned to CASA's nchan=-1 axes, operator laws for the cubic stencil, gridding, flags, weights, prediction and halo, the Metal-against-CPU laws over four-point native records, and T1 cubes (nchan=-1, cubic).",
+      "links": [
+        "resources/casa-compat/evidence/tclean-cube-axes-20261103.json",
+        "resources/casa-compat/tclean-cube-axes-cases.json",
+        "crates/casa-ms/src/spectral_selection/regrid_tests.rs",
+        "crates/casa-imaging-operator/tests/cubic.rs",
+        "crates/casars-imager/tests/t1/cube.rs",
         "tools/casa-compat/tclean_case_matrix.py"
       ]
     },

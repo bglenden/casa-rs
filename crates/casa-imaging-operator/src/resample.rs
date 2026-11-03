@@ -6,10 +6,14 @@
 //! channel to the output channel its rounded spectral pixel names
 //! (`matchChannel`); `linear` interpolates adjacent native visibilities onto
 //! CASA's fine frequency grid, keeps the nearer channel's weight and ORs the
-//! flags (`interpolateFrequencyTogrid`), except that a one-channel image or
-//! a one-channel row bypasses interpolation and maps like `nearest`.
+//! flags (`interpolateFrequencyTogrid`), and `cubic` interpolates the four
+//! native channels about each fine-grid point
+//! ([`stencil`](self::stencil::Stencil)) and ORs the flags of the two it
+//! lies between, except that a one-channel image or a one-channel row
+//! bypasses interpolation and maps like `nearest`.
 
 mod prediction;
+mod stencil;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -20,7 +24,7 @@ use crate::accumulator::PlaneRange;
 use crate::convolution::{CellHold, ConvolutionFunctionSet, GridEdge, RowContext};
 use crate::error::OperatorError;
 use crate::geometry::{CellLocation, GridGeometry};
-use crate::native::{NO_CELL, NativeSource};
+use crate::native::{NO_CELL, NativeSource, STENCIL};
 use crate::operator::{Basis, MeasurementOperator};
 use crate::sample::{CfKey, Placement, SampleBuffer};
 use crate::weighting::{
@@ -101,6 +105,9 @@ pub enum SpectralKernel {
     Nearest,
     /// Linear interpolation onto CASA's fine frequency grid.
     Linear,
+    /// Cubic interpolation onto CASA's fine frequency grid: the polynomial
+    /// through the four native channels about each point.
+    Cubic,
 }
 
 /// The uniform output spectral axis of a channel-local basis: first channel
@@ -206,18 +213,19 @@ impl SpectralAxis {
         (pixel >= 0.0 && pixel < f64::from(self.channels)).then_some(pixel as u32)
     }
 
-    /// `FTMachine::matchChannel` under linear interpolation: a native
-    /// channel off the axis is still predicted (`chanMap = −2`) within half a
-    /// native width inside, or two widths outside, the world frequency of
-    /// pixel 0 or of pixel `channels` (one past the last centre, as CASA
+    /// `FTMachine::matchChannel` under interpolation: a native channel off
+    /// the axis is still predicted (`chanMap = −2`) within half a native
+    /// width inside, or `order.halo()` widths outside, the world frequency
+    /// of pixel 0 or of pixel `channels` (one past the last centre, as CASA
     /// takes it); `native_width_hz` is the row's first native spacing.
-    fn in_linear_halo(self, frequency_hz: f64, native_width_hz: f64) -> bool {
+    fn in_halo(self, frequency_hz: f64, native_width_hz: f64, order: Order) -> bool {
         let first = self.first_hz;
         let beyond = self.first_hz + f64::from(self.channels) * self.increment_hz;
         let (low, high) = (first.min(beyond), first.max(beyond));
         let width = native_width_hz.abs();
-        (frequency_hz < high + 2.0 * width && frequency_hz > high - 0.5 * width)
-            || (frequency_hz < low + 0.5 * width && frequency_hz > low - 2.0 * width)
+        let limit = order.halo() * width;
+        (frequency_hz < high + limit && frequency_hz > high - 0.5 * width)
+            || (frequency_hz < low + 0.5 * width && frequency_hz > low - limit)
     }
 }
 
@@ -318,14 +326,54 @@ fn linear_samples(increment_hz: f64, channels: usize, spectrum: RowSpectrum) -> 
 enum Sampling {
     Direct,
     Nearest(SpectralAxis),
-    Linear(SpectralAxis),
+    Interpolated(SpectralAxis, Order),
+}
+
+/// The polynomial an interpolating resampler fits in frequency.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Order {
+    Linear,
+    Cubic,
+}
+
+impl Order {
+    /// `FTMachine::matchChannel`'s `limit`: native widths beyond the axis
+    /// a channel is still predicted at.
+    const fn halo(self) -> f64 {
+        match self {
+            Self::Linear => 2.0,
+            Self::Cubic => 4.0,
+        }
+    }
 }
 
 /// One spectral sample of a row: its native source.
 #[derive(Clone, Copy, Debug)]
 enum Source {
     Channel(usize),
-    Pair { left: usize, right_factor: f64 },
+    Pair {
+        left: usize,
+        right_factor: f64,
+    },
+    /// A cubic sample between channels `left` and `left + 1`, whose flags
+    /// it takes, at `right_factor` from `left`.
+    Cubic {
+        stencil: stencil::Stencil,
+        left: usize,
+        right_factor: f64,
+    },
+}
+
+/// The cubic sample of `native` at `frequency_hz`, between channels `left`
+/// and `left + 1` at `right_factor` from `left`: casacore's bracket is the
+/// channel at the frequency, or the first beyond it.
+fn cubic_source(native: &[f64], left: usize, right_factor: f64, frequency_hz: f64) -> Source {
+    let bracket = if right_factor <= 0.0 { left } else { left + 1 };
+    Source::Cubic {
+        stencil: stencil::Stencil::cubic(native.len(), bracket, frequency_hz, |i| native[i]),
+        left,
+        right_factor,
+    }
 }
 
 /// The native endpoints of a sample from `source`, the row's cells numbered
@@ -333,21 +381,32 @@ enum Source {
 /// them: one endpoint where the value takes one channel's.
 fn native_source(source: Source, first_cell: u32, scale: Complex32) -> NativeSource {
     let cell = |channel: usize| first_cell + channel as u32;
-    let one = |channel: usize| NativeSource {
-        cells: [cell(channel), NO_CELL],
-        factors: [1.0, 0.0],
+    let mut native = NativeSource {
+        cells: [NO_CELL; STENCIL],
+        factors: [0.0; STENCIL],
         scale,
     };
+    let mut set = |slot: usize, channel: usize, factor: f64| {
+        native.cells[slot] = cell(channel);
+        native.factors[slot] = factor as f32;
+    };
     match source {
-        Source::Channel(channel) => one(channel),
-        Source::Pair { left, right_factor } if right_factor <= f64::EPSILON => one(left),
-        Source::Pair { left, right_factor } if right_factor >= 1.0 - f64::EPSILON => one(left + 1),
-        Source::Pair { left, right_factor } => NativeSource {
-            cells: [cell(left), cell(left + 1)],
-            factors: [(1.0 - right_factor) as f32, right_factor as f32],
-            scale,
-        },
+        Source::Channel(channel) => set(0, channel, 1.0),
+        Source::Pair { left, right_factor } if right_factor <= f64::EPSILON => set(0, left, 1.0),
+        Source::Pair { left, right_factor } if right_factor >= 1.0 - f64::EPSILON => {
+            set(0, left + 1, 1.0);
+        }
+        Source::Pair { left, right_factor } => {
+            set(0, left, 1.0 - right_factor);
+            set(1, left + 1, right_factor);
+        }
+        Source::Cubic { stencil, .. } => {
+            for (slot, (channel, factor)) in stencil.terms().enumerate() {
+                set(slot, channel, factor);
+            }
+        }
     }
+    native
 }
 
 /// CASA's flag of a sample: the row flag, then any selected correlation of
@@ -367,7 +426,9 @@ fn sample_flagged(row: &NativeRow<'_>, npol: usize, source: Source) -> bool {
             Source::Pair { left, right_factor } if right_factor >= 1.0 - f64::EPSILON => {
                 flagged(left + 1)
             }
-            Source::Pair { left, .. } => flagged(left) || flagged(left + 1),
+            Source::Pair { left, .. } | Source::Cubic { left, .. } => {
+                flagged(left) || flagged(left + 1)
+            }
         }
 }
 
@@ -401,16 +462,44 @@ fn hand_flagged(row: &NativeRow<'_>, npol: usize, source: Source, pol: usize) ->
             Source::Pair { left, right_factor } if right_factor >= 1.0 - f64::EPSILON => {
                 flagged(left + 1)
             }
-            Source::Pair { left, .. } => flagged(left) || flagged(left + 1),
+            Source::Pair { left, .. } | Source::Cubic { left, .. } => {
+                flagged(left) || flagged(left + 1)
+            }
         }
 }
 
+/// Whether any selected correlation of `channel` of `row` is flagged.
+fn channel_flagged(row: &NativeRow<'_>, npol: usize, channel: usize) -> bool {
+    row.flags[channel * npol..(channel + 1) * npol]
+        .iter()
+        .any(|flag| *flag)
+}
+
+/// `Σ factor · weight(channel)` over a cubic stencil, where a flagged
+/// channel weighs nothing: CASA interpolates the imaging weights
+/// `VisImagingWeight` gave each channel, zero where it is flagged
+/// (`weightNatural` and its kin).
+fn cubic_weight(
+    row: &NativeRow<'_>,
+    npol: usize,
+    stencil: stencil::Stencil,
+    weight: impl Fn(usize) -> f32,
+) -> f32 {
+    stencil
+        .terms()
+        .filter(|(channel, _)| !channel_flagged(row, npol, *channel))
+        .map(|(channel, factor)| f64::from(weight(channel)) * factor)
+        .sum::<f64>() as f32
+}
+
 /// The unpolarized input weight of a density sample whose flags were
-/// tested: its channel's, or for an interpolated pair the linear
-/// interpolation of the two channels', taking one end's own at that end.
+/// tested: its channel's, for an interpolated pair the linear
+/// interpolation of the two channels', taking one end's own at that end,
+/// and for a cubic sample the cubic of its stencil's ([`cubic_weight`]).
 fn unflagged_weight(row: &NativeRow<'_>, npol: usize, source: Source) -> Option<f32> {
     let weight = |channel| unpolarized_weight(row, npol, channel);
     let weight = match source {
+        Source::Cubic { stencil, .. } => cubic_weight(row, npol, stencil, weight),
         Source::Channel(channel) => weight(channel),
         Source::Pair { left, right_factor } if right_factor <= f64::EPSILON => weight(left),
         Source::Pair { left, right_factor } if right_factor >= 1.0 - f64::EPSILON => {
@@ -485,9 +574,13 @@ fn sample_weight(
         weighting.imaging_weight(&native, DensityUv::casa(uvw_m, frequency_hz), input)
     };
     match source {
-        Source::Pair { left, right_factor } if density_axis.is_some() => {
+        Source::Pair { left, right_factor }
+        | Source::Cubic {
+            left, right_factor, ..
+        } if density_axis.is_some() => {
             channel_weight(if right_factor > 0.5 { left + 1 } else { left })
         }
+        Source::Cubic { stencil, .. } => cubic_weight(row, npol, stencil, channel_weight),
         Source::Pair { left, right_factor } => {
             if right_factor <= f64::EPSILON {
                 channel_weight(left)
@@ -653,7 +746,8 @@ impl SpectralResampler {
         Self {
             sampling: match kernel {
                 SpectralKernel::Nearest => Sampling::Nearest(output),
-                SpectralKernel::Linear => Sampling::Linear(output),
+                SpectralKernel::Linear => Sampling::Interpolated(output, Order::Linear),
+                SpectralKernel::Cubic => Sampling::Interpolated(output, Order::Cubic),
             },
             basis: Basis::ChannelLocal {
                 planes: output.channels,
@@ -699,7 +793,7 @@ impl SpectralResampler {
     }
 
     /// Whether a residual pass forms its residual at native channels:
-    /// linear interpolation onto more than one output channel. CASA
+    /// interpolation onto more than one output channel. CASA
     /// subtracts the model's native-channel predictions from the data
     /// (`SIMapperCollection::grid`, after `interpolateFrequencyFromgrid`) and
     /// interpolates the difference onto the image grid, which is not the
@@ -708,7 +802,7 @@ impl SpectralResampler {
     /// so their residual is gridded in one sweep (`Work::ResidualGrid`).
     #[must_use]
     pub const fn forms_native_residuals(&self) -> bool {
-        matches!(self.sampling, Sampling::Linear(axis) if axis.channels > 1)
+        matches!(self.sampling, Sampling::Interpolated(axis, _) if axis.channels > 1)
     }
 
     /// Output planes on each side of a wave whose model a residual pass over
@@ -716,24 +810,33 @@ impl SpectralResampler {
     ///
     /// When residuals are formed at native channels, a sample on plane `p`
     /// lies within half an output width `Δ` of `p`'s centre; the natives it
-    /// interpolates lie within the native spacing `s` of it; each of their
-    /// predictions interpolates output-channel values on CASA's fine grid
-    /// within one output width of the native
-    /// (`interpolateFrequencyFromgrid`). So every model plane a wave's
-    /// samples reach lies within `⌈1.5 + s/|Δ|⌉` planes of the wave. Direct
-    /// and nearest sampling predict a native on its own plane: no halo.
+    /// interpolates lie within the native spacing `s` of it, and a cubic's
+    /// within `3s`, its four-point window moved inwards at either end of a
+    /// row; each of their predictions interpolates output-channel values on
+    /// CASA's fine grid within one output width of the native (two for a
+    /// cubic) (`interpolateFrequencyFromgrid`). So every model plane a
+    /// wave's samples reach lies within `⌈1.5 + s/|Δ|⌉` planes of the wave
+    /// (`⌈2.5 + 3s/|Δ|⌉` for a cubic). Direct and nearest sampling predict
+    /// a native on its own plane: no halo.
     #[must_use]
     pub fn model_halo(&self, native_spacing_hz: f64) -> u32 {
         match self.sampling {
-            Sampling::Linear(axis) if axis.channels > 1 => {
-                let planes = (1.5 + native_spacing_hz.abs() / axis.increment_hz.abs()).ceil();
+            Sampling::Interpolated(axis, order) if axis.channels > 1 => {
+                let (prediction, natives) = match order {
+                    Order::Linear => (1.0, 1.0),
+                    Order::Cubic => (2.0, 3.0),
+                };
+                let planes = (prediction
+                    + 0.5
+                    + natives * native_spacing_hz.abs() / axis.increment_hz.abs())
+                .ceil();
                 if planes.is_finite() && planes < f64::from(axis.channels) {
                     planes as u32
                 } else {
                     axis.channels
                 }
             }
-            Sampling::Direct | Sampling::Nearest(_) | Sampling::Linear(_) => 0,
+            Sampling::Direct | Sampling::Nearest(_) | Sampling::Interpolated(..) => 0,
         }
     }
 
@@ -754,7 +857,7 @@ impl SpectralResampler {
     /// The output axis padded by `padding` density planes on each side.
     fn density_axis(&self, padding: u32) -> Result<SpectralAxis, OperatorError> {
         match self.sampling {
-            Sampling::Nearest(axis) | Sampling::Linear(axis) => axis.padded(padding),
+            Sampling::Nearest(axis) | Sampling::Interpolated(axis, _) => axis.padded(padding),
             Sampling::Direct => Err(OperatorError::SpectralAxis {
                 reason: "a per-channel density generation needs a channel-local resampler",
             }),
@@ -766,7 +869,7 @@ impl SpectralResampler {
         let axis = self.density_axis(padding)?;
         Ok(Self {
             sampling: match self.sampling {
-                Sampling::Linear(_) => Sampling::Linear(axis),
+                Sampling::Interpolated(_, order) => Sampling::Interpolated(axis, order),
                 Sampling::Direct | Sampling::Nearest(_) => Sampling::Nearest(axis),
             },
             basis: Basis::ChannelLocal {
@@ -952,12 +1055,12 @@ impl SpectralResampler {
 
     /// The most samples [`Self::place`] places for one native row of
     /// `spectrum`. Direct and nearest sampling place at most one per
-    /// channel; linear interpolation as `linear_samples` bounds it.
+    /// channel; interpolation as `linear_samples` bounds it.
     #[must_use]
     pub fn samples_per_row(&self, spectrum: RowSpectrum) -> usize {
         match self.sampling {
             Sampling::Direct | Sampling::Nearest(_) => spectrum.channels,
-            Sampling::Linear(axis) => {
+            Sampling::Interpolated(axis, _) => {
                 linear_samples(axis.increment_hz, axis.channels as usize, spectrum)
             }
         }
@@ -974,7 +1077,7 @@ impl SpectralResampler {
         spectrum: RowSpectrum,
     ) -> usize {
         match (shape.rule, self.sampling) {
-            (DensityCellRule::Cube, Sampling::Linear(axis)) => {
+            (DensityCellRule::Cube, Sampling::Interpolated(axis, _)) => {
                 linear_samples(axis.increment_hz, shape.planes, spectrum)
             }
             _ => spectrum.channels,
@@ -1106,10 +1209,10 @@ impl SpectralResampler {
             }
             Sampling::Nearest(axis) => nearest(axis, &mut visit),
             // CASA bypasses interpolation for a one-channel image or row.
-            Sampling::Linear(axis) if axis.channels == 1 || native.len() == 1 => {
+            Sampling::Interpolated(axis, _) if axis.channels == 1 || native.len() == 1 => {
                 nearest(axis, &mut visit);
             }
-            Sampling::Linear(axis) => {
+            Sampling::Interpolated(axis, order) => {
                 let Some(grid) = FineGrid::compile(axis, native[1] - native[0]) else {
                     return;
                 };
@@ -1140,11 +1243,11 @@ impl SpectralResampler {
                             break;
                         }
                         let right_factor = ((frequency_hz - left_hz) / span).clamp(0.0, 1.0);
-                        visit(
-                            grid.output_channel(next),
-                            frequency_hz,
-                            Source::Pair { left, right_factor },
-                        );
+                        let source = match order {
+                            Order::Linear => Source::Pair { left, right_factor },
+                            Order::Cubic => cubic_source(native, left, right_factor, frequency_hz),
+                        };
+                        visit(grid.output_channel(next), frequency_hz, source);
                         next += 1;
                     }
                 }
@@ -1219,6 +1322,15 @@ impl SpectralResampler {
                 let left_factor = (1.0 - right_factor) as f32;
                 left_value * left_factor + right_value * right_factor as f32
             }
+            // casacore fits every point, flagged or not; a non-finite
+            // flagged value, which would make the sample NaN, counts zero.
+            Source::Cubic { stencil, .. } => stencil
+                .terms()
+                .map(|(channel, factor)| (row.values[channel * npol + pol], factor))
+                .filter(|(value, _)| value.re.is_finite() && value.im.is_finite())
+                .fold(Complex32::default(), |sum, (value, factor)| {
+                    sum + value * factor as f32
+                }),
         }
     }
 }

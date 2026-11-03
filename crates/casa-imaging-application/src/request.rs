@@ -1291,8 +1291,9 @@ fn interpolation<'de, D: Deserializer<'de>>(
     match choice(deserializer)?.as_str() {
         "nearest" => Ok(CubeInterpolation::Nearest),
         "linear" => Ok(CubeInterpolation::Linear),
+        "cubic" => Ok(CubeInterpolation::Cubic),
         other => Err(D::Error::custom(format!(
-            "interpolation {other:?} is neither nearest nor linear"
+            "interpolation {other:?} is none of nearest, linear and cubic"
         ))),
     }
 }
