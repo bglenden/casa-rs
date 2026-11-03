@@ -44,8 +44,8 @@ the cycle runs and after it (<a href="struct.MinorLayout.html#method.mask_bytes"
 materializes, what it records of every plane, and on each of the planes
 loaded at once on <code>workers</code>, the load and its measurement (the robust
 noise’s two copies under <code>nsigma</code>, the PSF fit’s single-precision copies
-for a plane not yet in <code>cache</code>). The PSF summaries it adds to <code>cache</code>
-are the run’s (<a href="fn.psf_cache_bytes.html" title="fn casa_imaging_runtime::psf_cache_bytes"><code>psf_cache_bytes</code></a>).</dd><dt><a class="fn" href="fn.prepare_bytes_for.html" title="fn casa_imaging_runtime::prepare_bytes_for">prepare_<wbr>bytes_<wbr>for</a></dt><dd><a href="fn.prepare_bytes.html" title="fn casa_imaging_runtime::prepare_bytes"><code>prepare_bytes</code></a> for a state of <code>layout</code>, with <code>fits</code> when some plane’s
+for a plane not yet in <code>cache</code>, and its <code>.pb</code> support). The PSF
+summaries it adds to <code>cache</code> are the run’s (<a href="fn.psf_cache_bytes.html" title="fn casa_imaging_runtime::psf_cache_bytes"><code>psf_cache_bytes</code></a>).</dd><dt><a class="fn" href="fn.prepare_bytes_for.html" title="fn casa_imaging_runtime::prepare_bytes_for">prepare_<wbr>bytes_<wbr>for</a></dt><dd><a href="fn.prepare_bytes.html" title="fn casa_imaging_runtime::prepare_bytes"><code>prepare_bytes</code></a> for a state of <code>layout</code>, with <code>fits</code> when some plane’s
 PSF is not yet measured, as before the first minor cycle.</dd><dt><a class="fn" href="fn.prepare_minor_cycle.html" title="fn casa_imaging_runtime::prepare_minor_cycle">prepare_<wbr>minor_<wbr>cycle</a></dt><dd>Form the masks of <code>completion</code> and measure every plane: its peak
 residual, noise and PSF sidelobe (CASA’s <code>initminorcycle</code>).</dd><dt><a class="fn" href="fn.process_cache_bytes.html" title="fn casa_imaging_runtime::process_cache_bytes">process_<wbr>cache_<wbr>bytes</a></dt><dd>Bytes the process-wide caches hold at most: the table-read cache, with a
 MeasurementSet’s tiles, and FFTW’s plan cache, which every imaging run

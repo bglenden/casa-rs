@@ -62,7 +62,8 @@ complex image; callers needing scratch storage must allocate it explicitly.</dd>
 is made: the residual it reads and a copy for its
 statistics and a smoothed plane (<code>f64</code> each); region pruning’s
 component list and queue, grown by pushes (<code>usize</code> each, twice); and
-its twelve <code>bool</code> planes, the valid pixels and new support among them.</dd><dt><a class="constant" href="constant.CASA_MAD_TO_RMS.html" title="constant casa_imaging_deconvolution::CASA_MAD_TO_RMS">CASA_<wbr>MAD_<wbr>TO_<wbr>RMS</a></dt><dd>CASA’s factor from the median absolute deviation to a Gaussian RMS
+its thirteen <code>bool</code> planes, the valid pixels, the pixels its noise is
+measured on and new support among them.</dd><dt><a class="constant" href="constant.CASA_MAD_TO_RMS.html" title="constant casa_imaging_deconvolution::CASA_MAD_TO_RMS">CASA_<wbr>MAD_<wbr>TO_<wbr>RMS</a></dt><dd>CASA’s factor from the median absolute deviation to a Gaussian RMS
 (<code>mads*1.4826</code> in <code>SDMaskHandler</code> and <code>SIImageStore::calcRobustRMS</code>).</dd><dt><a class="constant" href="constant.DEFAULT_PSF_FIT_CUTOFF.html" title="constant casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF">DEFAULT_<wbr>PSF_<wbr>FIT_<wbr>CUTOFF</a></dt><dd>CASA’s default main-lobe cutoff used by both restoring-beam fitting and
 the fitted-Gaussian PSF sidelobe measurement.</dd><dt><a class="constant" href="constant.EMPTY_PLANE_SUM_WEIGHT.html" title="constant casa_imaging_deconvolution::EMPTY_PLANE_SUM_WEIGHT">EMPTY_<wbr>PLANE_<wbr>SUM_<wbr>WEIGHT</a></dt><dd>CASA’s empty-plane bound on a plane’s published <code>.sumwt</code>:
 <code>SIImageStore::divideImageByWeightVal</code> divides a plane by its <code>Float</code>

@@ -1753,6 +1753,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#simutilxyz2long-subtracts-the-x-offset-from-y" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simutil.xyz2long subtracts the x offset from y
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#simutilxyz2long_old-subtracts-the-x-offset-from-z" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simutil.xyz2long_old subtracts the x offset from z
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#direction_splitter-cannot-split-a-direction-without-an-epoch" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4388,6 +4410,35 @@ pointings are then those of the beam <code>spacing × 1.13 × √3</code>.</p>
 <p>The efficiencies are unchanged. <code>tools/simulation/simutil_oracle.py</code> records
 both cases, and <code>tests/simutil_casa.rs</code> checks that casa-rs departs exactly
 there.</p>
+<h2 id="simutilxyz2long-subtracts-the-x-offset-from-y"><code>simutil.xyz2long</code> subtracts the x offset from y<a class="headerlink" href="#simutilxyz2long-subtracts-the-x-offset-from-y" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA bug; casa-rs does not follow it (#1053)</li>
+<li>Affected code: <code>casatasks/src/private/simutil.py</code> (<code>xyz2long</code>,
+  <code>lon = pl.arctan2(y-dx, x-dx)</code>)</li>
+</ul>
+<p><code>xyz2long</code> converts Earth-centred x, y, z on a datum to longitude, latitude
+and height, first removing the datum's offsets. Its distance from the polar
+axis uses <code>(x-dx, y-dy)</code> and its latitude <code>z-dz</code>, but its longitude is
+<code>atan2(y-dx, x-dx)</code>: it subtracts the x offset from y. For a datum whose x
+and y offsets differ, the longitude is wrong: <code>long2xyz</code> then <code>xyz2long</code> on
+NAD27 at ALMA returns a longitude 2.2 arcseconds from the one given (CASA
+6.7.6.14). casa-rs subtracts <code>dy</code> (<code>readantenna::geodesy::xyz_to_geodetic</code>),
+so <code>xyz2long</code> inverts <code>long2xyz</code>; for WGS 84, the datum <code>readantenna</code> uses,
+the two agree.</p>
+<h2 id="simutilxyz2long_old-subtracts-the-x-offset-from-z"><code>simutil.xyz2long_old</code> subtracts the x offset from z<a class="headerlink" href="#simutilxyz2long_old-subtracts-the-x-offset-from-z" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA bug; casa-rs does not follow it (#1053)</li>
+<li>Affected code: <code>casatasks/src/private/simutil.py</code> (<code>xyz2long_old</code>,
+  <code>c = (z-dx)**2 / er**2</code>)</li>
+</ul>
+<p><code>xyz2long_old</code>, CASA's older iteration for the same conversion, removes the
+datum's offsets as <code>(x-dx, y-dy, z-dz)</code> everywhere but in its second term,
+<code>c = (z-dx)**2 / er**2</code>, which subtracts the x offset from z. Its latitude
+is then slightly wrong for a datum whose x and z offsets differ. casa-rs
+subtracts <code>dz</code> (<code>readantenna::geodesy::xyz_to_geodetic_old</code>); its longitude
+and, for WGS 84, its latitude are CASA's.</p>
 <h2 id="direction_splitter-cannot-split-a-direction-without-an-epoch"><code>direction_splitter</code> cannot split a direction without an epoch<a class="headerlink" href="#direction_splitter-cannot-split-a-direction-without-an-epoch" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-26</li>
