@@ -27,3 +27,5 @@ autoresearch-results
 # Claude Code session state
 .claude/worktrees/
 .claude/settings.local.json
+# Private build trees, one per worktree (AGENTS.md "Storage").
+/target-*/

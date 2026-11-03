@@ -123,10 +123,11 @@ extend it; a session reads them when it starts.
     line (`base64 -i KEY | tr -d '\n'` on macOS). `CASA_RS_MAC_USER` overrides
     the login name (default `brianglendenning`).
   - Copies live in `~/ext/SoftwareProjects/casa-rs-cloud/src/<branch>/` on
-    the mini (the top of the `~/ext` volume is owned by root) and share one
-    `target/` beside `src/`; `CASA_RS_MAC_ROOT` overrides the location.
-    Remove a branch's copy with `scripts/mac-run.sh --clean` once its work is
-    merged or pushed.
+    the mini (the top of the `~/ext` volume is owned by root), each building
+    in its own `targets/<branch>/` beside `src/`, since copies sharing one
+    target would link each other's crates; `CASA_RS_MAC_ROOT` overrides the
+    location. Remove a branch's copy and target with
+    `scripts/mac-run.sh --clean` once its work is merged or pushed.
   - Commands run in a login shell, which reads `~/.zprofile` and `~/.zshenv`
     but not `~/.zshrc`; settings the tests need, such as
     `CASA_RS_MEASURESPATH`, belong in the former. `~/.zshenv` must print
