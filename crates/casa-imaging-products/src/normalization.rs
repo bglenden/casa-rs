@@ -384,6 +384,23 @@ impl<'a> MosaicSensitivity<'a> {
             .collect()
     }
 
+    /// Whether pixel `index` of [`Self::weighted_primary_beam`] is positive:
+    /// its Float PB exceeds the cutoff (`SIImageStore::makePBFromWeight`
+    /// keeps `sqrt(|weight|) / pbmax` above `|pblimit|` and zeroes the
+    /// rest), the pixels `SIImageStore::calcRobustRMS` measures the noise
+    /// on at tclean's `pbmask` of 0 (`pb > pbmasklevel`).
+    ///
+    /// # Errors
+    ///
+    /// A non-finite PB value.
+    pub fn weighted_primary_beam_positive_at(
+        self,
+        index: usize,
+        policy: PrimaryBeamValidityPolicy,
+    ) -> Result<bool, ProductsError> {
+        Ok(Self::supported(self.model_primary_beam_at(index)?, policy))
+    }
+
     /// Return PB support, independent of the CLEAN mask and model.
     #[must_use]
     pub fn validity(self, policy: PrimaryBeamValidityPolicy) -> Vec<bool> {

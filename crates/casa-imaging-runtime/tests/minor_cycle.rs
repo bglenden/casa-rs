@@ -430,6 +430,67 @@ fn a_mosaic_cube_normalises_each_channel_by_its_own_weight_image() {
     }
 }
 
+/// `SIImageStore::calcRobustRMS` measures a plane's `nsigma` noise where its
+/// primary beam exceeds tclean's `pbmask` of 0, and a mosaic's beam
+/// (`makePBFromWeight`) is zero outside `pblimit`. A beam over a 4×4 block
+/// of an 8×8 plane holds the residuals 0.01 to 0.16 Jy, whose median is
+/// 0.085 and median absolute deviation 0.04: three sigma is
+/// 3 · 1.4826 · 0.04 Jy. Over the whole plane, three quarters of it zero
+/// outside the beam, the deviation would be zero and so the threshold.
+#[test]
+fn a_mosaic_measures_its_noise_inside_its_primary_beam() {
+    let problem = problem(
+        8,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Hogbom,
+    );
+    let scene = Scene::new(&problem);
+    let psf = scene.unit_psf();
+    let inside = |index: usize| (2..6).contains(&(index % 8)) && (2..6).contains(&(index / 8));
+    let completion = completion(&problem, &scene, |images| {
+        images.sum_weights = vec![1.0];
+        images.published_sum_weights = vec![1.0];
+        images.weight = Some(
+            (0..psf.len())
+                .map(|index| if inside(index) { 1.0 } else { 0.0 })
+                .collect(),
+        );
+        let mut next = 0.0_f32;
+        images.residual = (0..psf.len())
+            .map(|index| {
+                if inside(index) {
+                    next += 0.01;
+                    next
+                } else {
+                    // Outside the beam the normalized residual is zero.
+                    0.5
+                }
+            })
+            .collect();
+        images.psf = Some(psf.iter().map(|value| *value as f32).collect());
+    });
+    let response =
+        MinorCycleImageResponse::new(ProductNormalization::FlatNoise, validity().primary_beam())
+            .expect("response");
+    let mut setup = setup(&problem, Some(response));
+    setup.nsigma = 3.0;
+    let team = WorkerTeam::new(1).expect("team");
+    let prepared = prepare_minor_cycle(
+        &completion,
+        &full_plane(&problem),
+        &setup,
+        &mut PsfCache::default(),
+        &team,
+    )
+    .expect("prepare");
+    let expected = 3.0 * 1.4826 * 0.04;
+    let threshold = prepared.statistics.nsigma_threshold;
+    assert!(
+        (threshold - expected).abs() < 1e-6,
+        "{threshold}, expected {expected}"
+    );
+}
+
 /// A channel no sample reached (CASA's `test_cube_flagged_mosaic_hogbom`)
 /// is skipped; the other channels still clean with their own weights.
 #[test]
