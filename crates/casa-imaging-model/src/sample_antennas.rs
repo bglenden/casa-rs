@@ -85,11 +85,10 @@ impl AntennaResponseClass {
     #[must_use]
     pub fn casa_airy(diameter_m: f64) -> Option<Self> {
         let micrometres = (diameter_m * 1.0e6).round();
-        (diameter_m.is_finite() && micrometres >= 1.0 && micrometres <= f64::from(u32::MAX)).then(
-            || Self::CasaAiry {
-                dish_diameter_um: micrometres as u32,
-            },
-        )
+        let fits = (1.0..=f64::from(u32::MAX)).contains(&micrometres);
+        (diameter_m.is_finite() && fits).then_some(Self::CasaAiry {
+            dish_diameter_um: micrometres as u32,
+        })
     }
 
     /// The dish diameter of a [`Self::CasaAiry`] class, in metres; `None`
