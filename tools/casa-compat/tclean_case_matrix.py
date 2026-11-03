@@ -25,6 +25,11 @@ the test; the case is skipped unless `--include-skipped`), `casa_environment`
 Both CASA's `casatasks.tclean` and casa-rs's public Python `casars.tasks.tclean`
 (in the `--casars-python` interpreter, `CASARS_IMAGER_BIN` naming the binary)
 run every step with the same keyword arguments in their own working directory.
+Each case's CASA steps run, in order, in a fresh CASA Python process of their
+own (`--casa-steps`, its log beside the case): CASA keeps state between calls
+in one process, and a case run before another changed CASA's results for it
+(test_iterbot_cube_restart_updatedmask before test_modelvis_16: 120 iterations
+against 170).
 A step CASA refuses must be one its test expects to fail (`expect_error`,
 `tolerates_error`; any other refusal fails the case) and must be refused by
 casa-rs too, and an image name only refused steps wrote is not compared;
@@ -42,6 +47,7 @@ import json
 import os
 import platform
 import shutil
+import subprocess
 import sys
 import time
 import traceback
@@ -114,6 +120,47 @@ def run_casa(casatasks, values, folder, environment):
             reply = {"result": plain(record)}
     reply["driver_elapsed_seconds"] = time.monotonic() - started
     return reply
+
+
+def run_casa_steps(steps_values, folder, environment, log):
+    """One case's CASA calls, in order, in a fresh CASA Python process: the
+    replies of `run_casa`, one per call."""
+    request = folder.parent / "casa-steps.json"
+    reply = folder.parent / "casa-steps-reply.json"
+    request.write_text(json.dumps({
+        "steps": steps_values,
+        "folder": str(folder),
+        "environment": environment,
+        "log": str(log),
+    }))
+    result = subprocess.run(
+        [sys.executable, "-I", str(Path(__file__).resolve()), "--casa-steps", str(request)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0 or not reply.exists():
+        raise RuntimeError(
+            f"the CASA worker exited {result.returncode}: {result.stderr[-2000:]}"
+        )
+    return json.loads(reply.read_text())
+
+
+def casa_worker(request_path):
+    """`--casa-steps`: run the CASA calls a request file names, in this
+    process, and write their replies beside it."""
+    request = json.loads(Path(request_path).read_text())
+    import casatasks
+
+    casatasks.casalog.setlogfile(request["log"])
+    folder = Path(request["folder"])
+    replies = [
+        run_casa(casatasks, values, folder, request["environment"])
+        for values in request["steps"]
+    ]
+    (Path(request_path).parent / "casa-steps-reply.json").write_text(json.dumps(replies))
+    return 0
 
 
 def steps(case):
@@ -203,16 +250,22 @@ def compare_products(imagename, casa_folder, native_folder, tools):
     return row
 
 
-def run_case(args, name, case, common, staged, casatasks, tools):
+def run_case(args, name, case, common, staged, tools):
     folder = args.output / "cases" / name.replace("/", "_")
     casa_folder, native_folder = folder / "casa", folder / "native"
     casa_paths = prepare(casa_folder, case, staged)
     native_paths = prepare(native_folder, case, staged)
     environment = case.get("casa_environment") or {}
     row = {"note": case.get("note"), "steps": []}
-    for index, step in enumerate(steps(case)):
+    case_steps = steps(case)
+    casa_replies = run_casa_steps(
+        [call_values(common, step, casa_paths) for step in case_steps],
+        casa_folder,
+        environment,
+        folder / "casa.log",
+    )
+    for index, (step, casa) in enumerate(zip(case_steps, casa_replies)):
         values = call_values(common, step, casa_paths)
-        casa = run_casa(casatasks, values, casa_folder, environment)
         native_values = call_values(common, step, native_paths)
         native_values.update(backend=args.backend, gridprecision=args.precision)
         native = run_native(args.casars_python, args.imager_binary, native_values, native_folder,
@@ -302,7 +355,7 @@ def main():
 
     for name, case in cases.items():
         try:
-            row = run_case(args, name, case, matrix.get("common", {}), staged, casatasks, tools)
+            row = run_case(args, name, case, matrix.get("common", {}), staged, tools)
         except Exception as error:  # a driver failure on one case must not stop the matrix
             row = {
                 "passed": False,
@@ -321,4 +374,6 @@ def main():
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--casa-steps":
+        raise SystemExit(casa_worker(sys.argv[2]))
     raise SystemExit(main())
