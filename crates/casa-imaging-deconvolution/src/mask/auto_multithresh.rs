@@ -179,7 +179,7 @@ pub const AUTO_MULTITHRESH_BYTES_PER_CELL: u64 =
     4 * size_of::<f64>() as u64 + 4 * size_of::<usize>() as u64 + 12;
 
 /// Heap bytes [`auto_multithresh`] holds at most for one plane of `shape`
-/// (`[width, height]`): [`AUTO_MULTITHRESH_BYTES_PER_CELL`] per pixel and
+/// (`[width, height]`): `AUTO_MULTITHRESH_BYTES_PER_CELL` per pixel and
 /// one row of its smoothing kernel, which holds at most one value per
 /// offset along the plane's longer axis (`2 * extent - 1`, `f64` each).
 #[must_use]
