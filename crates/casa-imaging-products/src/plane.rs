@@ -379,14 +379,14 @@ fn primary_beam_plane(
             domain_role,
             plane.shape(),
             plane.output_channel(),
-            10.7,
+            crate::taylor::CasaAlmaAiry::ALMA_12M,
         ),
         Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => analytic_alma_airy_primary_beam(
             inputs,
             domain_role,
             plane.shape(),
             plane.output_channel(),
-            6.25,
+            crate::taylor::CasaAlmaAiry::ACA_7M,
         ),
         Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
             let shape = plane.shape();

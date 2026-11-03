@@ -421,10 +421,10 @@ fn principal_primary_beam(
             analytic_vla_primary_beam(inputs, domain_role, shape, 0)?
         }
         Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => {
-            analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 10.7)?
+            analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, CasaAlmaAiry::ALMA_12M)?
         }
         Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => {
-            analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 6.25)?
+            analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, CasaAlmaAiry::ACA_7M)?
         }
         Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => match directional {
             Some(response) => response
@@ -797,19 +797,51 @@ pub(crate) fn analytic_vla_primary_beam(
     }))
 }
 
+/// One of CASA's common Airy beams of ALMA's dishes (`PBMath::initByTelescope`
+/// for `PBMath::ALMA` and `PBMath::ACA`): the effective aperture, with a
+/// 0.75 m blockage, and the radius at 1 GHz to which `PBMath1DAiry` tables
+/// it in 10000 samples, which sets the table's sampling.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CasaAlmaAiry {
+    effective_diameter_m: f64,
+    maximum_radius_deg: f64,
+}
+
+impl CasaAlmaAiry {
+    /// ALMA's 12 m dish: a 10.7 m aperture to 1.784°.
+    pub(crate) const ALMA_12M: Self = Self {
+        effective_diameter_m: 10.7,
+        maximum_radius_deg: 1.784,
+    };
+    /// ACA's 7 m dish: a 6.25 m aperture to 3.568°.
+    pub(crate) const ACA_7M: Self = Self {
+        effective_diameter_m: 6.25,
+        maximum_radius_deg: 3.568,
+    };
+
+    /// The beam's voltage table, its radius in arcmin at 1 GHz.
+    fn table(self) -> AnnularApertureVoltageTable {
+        AnnularApertureVoltageTable::new(
+            self.effective_diameter_m,
+            0.75,
+            self.maximum_radius_deg * 60.0,
+        )
+    }
+}
+
 pub(crate) fn analytic_alma_airy_primary_beam(
     inputs: &ContinuumProductInputs<'_>,
     domain_role: &casa_imaging_model::ImageDomainRole,
     shape: [usize; 2],
     output_channel: usize,
-    effective_diameter_m: f64,
+    beam: CasaAlmaAiry,
 ) -> Result<Vec<f32>, ProductsError> {
     let BeamGeometry {
         centres,
         increment_rad,
         frequency_hz,
     } = beam_geometry(inputs, domain_role, output_channel)?;
-    let table = AnnularApertureVoltageTable::new(effective_diameter_m, 0.75, 3.568 * 60.0);
+    let table = beam.table();
     Ok(summed_beams(shape, &centres, |plane, centre| {
         add_annular_aperture_power(plane, shape, centre, increment_rad, frequency_hz, &table);
     }))
@@ -1135,6 +1167,40 @@ mod tests {
             for radius in [0.0, 10.0, 29.919_033_706_45, 50.0, 52.0] {
                 assert_eq!(band.evaluate(radius), table.evaluate(radius));
             }
+        }
+    }
+
+    /// ALMA's 12 m beam is CASA's `PBMath1DAiry(10.7 m, 0.75 m, 1.784°,
+    /// 1 GHz)`: its `.pb` along a row of a 345 GHz MFS image of
+    /// 2.0886e-7 rad cells, centred between pixels at (960.5, 960.5), as
+    /// CASA 6.7.6.14's tclean wrote it for simanalyze's call on a casa-rs
+    /// simobserve MeasurementSet (2026-11-03). The radius of ACA's 3.568°,
+    /// which casa-rs used for both, samples the table half as finely and
+    /// moves the beam by up to 2e-4, flipping the `pblimit` mask's edge
+    /// pixels.
+    #[test]
+    fn the_alma_12m_beam_is_the_one_casa_writes() {
+        let increment_deg = 2.088_624_122_740_107_8e-7_f64.to_degrees();
+        let frequency_factor = 60.0 * 345.0e9 / 1.0e9;
+        let table = super::CasaAlmaAiry::ALMA_12M.table();
+        // Pixel x of row 960, CASA's value there.
+        let casa = [
+            (1010, 0.9713292_f32),
+            (1060, 0.85777074),
+            (1110, 0.69328696),
+            (1160, 0.5072244),
+            (1210, 0.3295922),
+            (1240, 0.23725419),
+        ];
+        for (x, expected) in casa {
+            let [dx, dy] = [f64::from(x) - 960.5, 960.0 - 960.5];
+            let r2 = ((dx * increment_deg).powi(2) + (dy * increment_deg).powi(2)) as f32;
+            let radius = (f64::from(r2.sqrt()) * frequency_factor) as f32 as f64;
+            let power = table.evaluate(radius).powi(2);
+            assert!(
+                (power - expected).abs() <= 2.0e-6,
+                "pixel {x}: {power} against CASA's {expected}"
+            );
         }
     }
 
