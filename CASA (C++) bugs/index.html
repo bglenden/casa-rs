@@ -2379,6 +2379,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#tclean-checks-a-vis-list-for-repeats-of-its-first-entry-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        tclean checks a vis list for repeats of its first entry only
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5309,6 +5320,22 @@ makes an empty mask and stops at code 7 without cleaning. The same regions
 as a list, or as lines of a region file, mask both regions. casa-rs reads
 every line of the text as a region of the mask, as the list and the file
 read.</p>
+<h2 id="tclean-checks-a-vis-list-for-repeats-of-its-first-entry-only"><code>tclean</code> checks a <code>vis</code> list for repeats of its first entry only<a class="headerlink" href="#tclean-checks-a-vis-list-for-repeats-of-its-first-entry-only" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA bug casa-rs corrects (#980)</li>
+<li>Affected code: casatasks <code>private/mslisthelper.py</code> (<code>check_mslist</code>), called
+  by <code>ImagerParameters.checkAndFixSelectionPars</code></li>
+</ul>
+<p>CASA 6.7.6.14's tclean refuses <code>vis=['a.ms', 'a.ms']</code> with "a.ms is contained
+in the list more than once." (ValueError, before any imaging). The check
+compares each later entry with the first one only, after the list is sorted by
+time, and as text. So <code>['a.ms', 'b.ms', 'b.ms']</code> and <code>['a.ms', './a.ms']</code> pass
+it, and their samples are read twice. The message states the evident intent:
+no MeasurementSet twice. casa-rs refuses any repeat, comparing canonical paths,
+with CASA's message. Evidence: CASA's refusal of <code>[refim_point.ms,
+refim_point.ms]</code> on the oracle host, 2026-11-03, and the T1 law
+<code>vis_list::a_measurement_set_named_twice_is_refused</code>.</p>
 
 
 
