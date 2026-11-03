@@ -124,6 +124,11 @@
       "mosaic_cube_dirty_natural": "niter 0, natural weighting: every product within 1e-6; one .pb mask pixel per channel, where CASA's pb is 0.200000137 against pblimit 0.2 (CASA's single-precision mosaic weight image, as hetarray alma .3/.4, #1077)"
     },
     "common_beam": "with the PSFs equal to 1.2e-7 and the four channel beams equal to every printed digit, CASA's common beam is 1.143576 x 0.978783 arcsec at 89.7815 deg and casa-rs's 1.143326 x 0.978741 at 89.8177 deg: axes within 2.2e-4 (inside the comparison's 1e-3), angle 0.036 deg (outside its 0.01). Both enclose the channel beams; they differ within one 0.1% growth step of the search ('A common beam's circular case is the reciprocal of its axis' records casa-rs searching in radians where CASA searches in arcseconds)",
-    "pbcor_beam": "CASA writes the common beam on .image.pbcor; casa-rs wrote the per-channel restoring beams there. Fixed by lead/pbcor-common-beam (#1090): rerunning single_cube_field_centre with that branch's binary, casa-rs's .image.pbcor carries one beam, its .image's (the branch predates #1087, so its pb differs by 1.8e-4 as before that fix)"
+    "pbcor_beam": "CASA writes the common beam on .image.pbcor; casa-rs wrote the per-channel restoring beams there. Fixed by lead/pbcor-common-beam (#1090): rerunning single_cube_field_centre with that branch's binary, casa-rs's .image.pbcor carries one beam, its .image's (the branch predates #1087, so its pb differs by 1.8e-4 as before that fix)",
+    "archive": {
+      "nas": "/Volumes/home/casa-rs/tclean/20261103/tclean-cube-frames-and-pbcor-check.tar",
+      "sha256": "e061d84914c7a6e5624f95bb1be071d066cd5dc00f3300bed5444d218e4862c9",
+      "members": "the probes' case files, receipts and logs, the pbcor recheck, and the probe scripts (field direction, beams, mask edges, CASA's simobserve pointing)"
+    }
   }
 }
