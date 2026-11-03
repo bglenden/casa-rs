@@ -309,6 +309,7 @@ impl<'a, 'inputs> MemberWindows<'a, 'inputs> {
             return Ok(reconstruction_support_plane(
                 self.inputs,
                 self.member.axes().domain(),
+                (channel, polarization),
                 width * height,
             ));
         }

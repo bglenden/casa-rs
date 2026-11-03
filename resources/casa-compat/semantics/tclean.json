@@ -806,7 +806,7 @@
     },
     "usemask": {
       "status": "Partial",
-      "scope": "user and auto-multithresh pass; pb refused (issue 823); controls whether user mask is read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold on one plane: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube or more than one Stokes plane, which CASA masks plane by plane, is refused when cleaning (issue 980).",
+      "scope": "user and auto-multithresh pass; pb refused (issue 823); controls whether user mask is read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold plane by plane, every channel and Stokes plane of its own: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube is masked in tclean's serial channel blocks, each smoothed by the common beam of its planes' PSF beams, every plane thresholded by the image's PSF sidelobe level, and a channel's planes stop together (skipChannels); a plane with no data keeps its mask. CASA takes the automatic mask's statistics and peak inside pb > pblimit where the image has a primary beam (SDMaskHandler::autoMask); casa-rs takes them over every valid pixel, so an image reaching below that response can differ at a mask's edge (issue 980).",
       "evidence": [
         "signature",
         "reader"
@@ -817,7 +817,7 @@
     },
     "mask": {
       "status": "Partial",
-      "scope": "One mask image, or CRTF pixel boxes and circles, inline or in a region file, each optionally limited to a spectral range=[...] in frequency or pixels (CASA's channel rounding; a region whose range misses the image is left out). A range over part of a cube's channels is refused until masks hold a plane per channel (#980). Bounds clip to the image and outside/empty-region unions mean zero support, not full-plane support. 38 small paired rows pass across CPU64/CPU32/Metal32 and public Python; explicit empty-file + fresh numbering preserves old products and adds no components. Absent masks still permit normal cleaning. Fractional/world/general CRTF, multiple images, new masks on occupied default-restart outputs and broader mask/mode combinations remain unfinished.",
+      "scope": "One mask image, or CRTF pixel boxes and circles, inline or in a region file, each optionally limited to a spectral range=[...] in frequency or pixels (CASA's channel rounding; a region whose range misses the image is left out). A range over part of a cube's channels is refused until masks hold a plane per channel (#980). Bounds clip to the image and outside/empty-region unions mean zero support, not full-plane support. 38 small paired rows pass across CPU64/CPU32/Metal32 and public Python; explicit empty-file + fresh numbering preserves old products and adds no components. Absent masks still permit normal cleaning. A mask image is expanded to the image's planes as SDMaskHandler::expandMask does (a continuum Stokes I mask to every plane, a continuum mask of the image's Stokes planes to every channel, a cube Stokes I mask to every Stokes plane) and refused where CASA refuses; regridding a mask along frequency or Stokes (copyMask) is refused (issue 980). Fractional/world/general CRTF, multiple images, new masks on occupied default-restart outputs and broader mask/mode combinations remain unfinished.",
       "evidence": [
         "signature",
         "reader",
@@ -973,7 +973,7 @@
       ]
     },
     "restart": {
-      "scope": "Contract 36: True continues on an earlier run's products at imagename on the same grid, as SIImageStore opens them: the model (every Taylor term, cube channel and Stokes plane; a mosaic's flat-noise model made physical with the weights the run forms, every Taylor term with term 0's) starts the solve, an existing binary CLEAN mask whose planes agree is reused when no mask is given, and calcpsf/calcres=False read the PSF, sums of weights and residual. False keeps contract32's single-main numbering. Refused (#944, #980): outlier fields, another deconvolver family's products, a new user mask or auto-multithresh over an existing CLEAN mask when cleaning, a mask whose planes differ, embedded model/mask pixel masks and tabulated spectral axes. Preserving prior image histories remains the owner-agreed deviation.",
+      "scope": "Contract 36: True continues on an earlier run's products at imagename on the same grid, as SIImageStore opens them: the model (every Taylor term, cube channel and Stokes plane; a mosaic's flat-noise model made physical with the weights the run forms, every Taylor term with term 0's) starts the solve, an existing binary CLEAN mask is reused plane by plane when no mask is given, and calcpsf/calcres=False read the PSF, sums of weights and residual. False keeps contract32's single-main numbering. Refused (#944, #980): outlier fields, another deconvolver family's products, a new user mask or auto-multithresh over an existing CLEAN mask when cleaning, embedded model/mask pixel masks and tabulated spectral axes. Preserving prior image histories remains the owner-agreed deviation.",
       "evidence": [
         "signature",
         "reader",

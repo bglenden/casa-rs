@@ -19,6 +19,8 @@ mod error;
 mod frequency_bands;
 mod instrument;
 mod intents;
+mod mask_image;
+pub(crate) use mask_image::{MaskImage, open_onto_itself as open_mask_image_onto_itself};
 mod native_aw;
 mod opening;
 mod outliers;
@@ -252,6 +254,9 @@ pub(crate) fn prepare(
         }
         SaveModel::None | SaveModel::ModelColumn => Vec::new(),
     };
+    let (masks, mut mask_resident) =
+        domains::mask_plans(&domains, spectral.output_channels, context)?;
+    mask_resident.join(continuation.mask_resident);
     let (snapshot, stores, survey_charge) =
         snapshot_input(stores, &channels, &spectral.frequency_bands)?;
     Ok(Prepared {
@@ -261,8 +266,8 @@ pub(crate) fn prepare(
             ModelBounds::new(model_samples, model_samples, f64::MAX, f64::MAX)?,
             NumericPrecision::F64,
         ),
-        masks: domains::mask_plans(&domains)?,
-        mask_resident: continuation.mask_resident,
+        masks,
+        mask_resident,
         start_model,
         existing: continuation.existing,
         minor_cycle_image_response: match &request.gridder {

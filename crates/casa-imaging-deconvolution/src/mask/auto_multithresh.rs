@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! CASA's automatic multi-threshold mask
-//! (`SDMaskHandler::autoMask` and `autoMaskByMultiThreshold`, CASA 6.7).
+//! CASA's automatic multi-threshold mask of one plane
+//! (`SDMaskHandler::autoMask` and the per-plane loop of
+//! `autoMaskByMultiThreshold`, CASA 6.7).
 //!
 //! At each major-cycle boundary the plane's thresholds come from its
 //! residual: the larger of the PSF sidelobe level times `sidelobethreshold`
@@ -18,21 +19,22 @@
 //! * with `negativethreshold`, the regions below the negative threshold,
 //!   smoothed and cut but never pruned.
 //!
-//! A plane whose threshold is the noise's stops evolving
-//! (`SDMaskHandler::skipChannels`) once its mask is empty, or once the
-//! cycle threshold has reached the global threshold and the mask changed
-//! by less than `minpercentchange` percent.
+//! A channel whose first polarization's threshold is the noise's stops
+//! evolving (`SDMaskHandler::skipChannels`) once its mask is empty, or once
+//! the cycle threshold has reached the global threshold and the mask
+//! changed by less than `minpercentchange` percent ([`skip_channel`]).
+//! Which planes are masked together, and with which beam, is
+//! [`super::auto_planes`]'s.
 
 use std::collections::VecDeque;
 
-use casa_imaging_model::DirectionCoordinateSpec;
-
-use super::{MaskError, ReconstructionMask, offset_mask_pixel};
+use super::auto_planes::AutoMaskPlane;
+use super::{MaskError, offset_mask_pixel};
+use crate::RobustNoise;
 use crate::noise::{NoiseEstimate, plane_noise};
-use crate::{FinalNormalState, NormalBasis, RobustNoise};
 
-/// The primary PSF's fitted main lobe (pixels) and sidelobe level, measured
-/// once per PSF by the minor cycle, as the automatic mask needs them.
+/// The beam a plane's mask is smoothed and pruned by, in pixels, and the
+/// image's PSF sidelobe level.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AutoMaskBeam {
     major_fwhm_pixels: f64,
@@ -90,7 +92,7 @@ pub struct AutoMultithreshControls {
     /// Whether the grown mask is pruned as the threshold mask is
     /// (`dogrowprune`).
     pub grow_prune: bool,
-    /// Percent change below which a plane's mask stops evolving once the
+    /// Percent change below which a channel's mask stops evolving once the
     /// global threshold is reached; negative never stops on change
     /// (`minpercentchange`).
     pub minimum_percent_change: f64,
@@ -120,8 +122,8 @@ impl AutoMaskThreshold {
     }
 }
 
-/// Inspectable evidence for one auto-multithreshold generation: the
-/// quantities of a row of CASA's automask summary.
+/// Inspectable evidence for one plane's auto-multithreshold generation:
+/// the quantities of its row of CASA's automask summary.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AutoMultithreshEvidence {
     /// Robust residual median; zero for a stopped plane under the robust
@@ -154,7 +156,7 @@ pub struct AutoMultithreshEvidence {
     pub negative_pixels: usize,
     /// Number of support pixels that changed.
     pub changed_pixels: usize,
-    /// Whether later cycles should stop evolving this plane.
+    /// Whether later cycles should stop evolving the plane's channel.
     pub channel_stopped: bool,
 }
 
@@ -166,22 +168,23 @@ pub struct AutoMaskCycle {
     pub completed_major_cycles: usize,
     /// Whether the previous minor cycle's threshold was the global one.
     pub threshold_reached: bool,
-    /// Whether an earlier boundary stopped the plane's evolution.
+    /// Whether an earlier boundary stopped the plane's channel.
     pub stopped: bool,
 }
 
-/// Heap bytes per pixel [`auto_multithresh`] holds at most: the normalised
-/// residual and the PSF it is divided by, a copy for its statistics and a
-/// smoothed plane (`f64` each); region pruning's component list and
-/// queue, grown by pushes (`usize` each, twice); and its twelve `bool`
-/// planes.
+/// Heap bytes per pixel one plane's automatic mask holds at most while it
+/// is made: the residual it reads and a copy for its
+/// statistics and a smoothed plane (`f64` each); region pruning's
+/// component list and queue, grown by pushes (`usize` each, twice); and
+/// its twelve `bool` planes, the valid pixels and new support among them.
 pub const AUTO_MULTITHRESH_BYTES_PER_CELL: u64 =
-    4 * size_of::<f64>() as u64 + 4 * size_of::<usize>() as u64 + 12;
+    3 * size_of::<f64>() as u64 + 4 * size_of::<usize>() as u64 + 12;
 
-/// Heap bytes [`auto_multithresh`] holds at most for one plane of `shape`
-/// (`[width, height]`): `AUTO_MULTITHRESH_BYTES_PER_CELL` per pixel and
-/// one row of its smoothing kernel, which holds at most one value per
-/// offset along the plane's longer axis (`2 * extent - 1`, `f64` each).
+/// Heap bytes one plane's automatic mask ([`auto_multithresh`]) holds at
+/// most for a plane of `shape` (`[width, height]`):
+/// [`AUTO_MULTITHRESH_BYTES_PER_CELL`] per pixel and one row of its
+/// smoothing kernel, which holds at most one value per offset along the
+/// plane's longer axis (`2 * extent - 1`, `f64` each).
 #[must_use]
 pub fn auto_multithresh_bytes(shape: [usize; 2]) -> u64 {
     let cells = (shape[0] as u64).saturating_mul(shape[1] as u64);
@@ -228,36 +231,113 @@ impl Thresholds {
     }
 }
 
-/// Generate the next auto-multithreshold mask of the primary plane of
-/// `normal` from the mask it inherits, `previous`; `valid_support` is the
-/// plane's valid pixels (the residual's pixel mask) in canonical x-major
-/// order, and `beam` the PSF's fitted main lobe and sidelobe level.
+/// Everything one plane's automatic mask is made from at a boundary.
+pub(super) struct PlaneInputs<'a> {
+    /// The plane's residual and valid pixels; `None` for a plane with no
+    /// data, whose CASA residual is zero.
+    pub(super) plane: Option<&'a AutoMaskPlane>,
+    /// The mask the plane inherits, x-major.
+    pub(super) inherited: &'a [bool],
+    pub(super) shape: [usize; 2],
+    /// Whether the inherited mask covers the whole first plane of the
+    /// plane's channel block, so that its robust noise ignores the mask
+    /// (`calcRobustImageStatistics`).
+    pub(super) first_plane_full: bool,
+    pub(super) cycle: AutoMaskCycle,
+    pub(super) controls: &'a AutoMultithreshControls,
+    /// The block's beam; `None` only where no plane of the block has data.
+    pub(super) beam: Option<AutoMaskBeam>,
+}
+
+/// One plane's mask at a boundary, before its channel's stop rule.
+pub(super) struct PlaneMask {
+    /// The new support, x-major.
+    pub(super) support: Vec<bool>,
+    pub(super) evidence: AutoMultithreshEvidence,
+    /// Whether the boundary added a positive (emission) region: CASA's
+    /// positive mask of the plane at the first boundary.
+    pub(super) positive: bool,
+}
+
+/// The next auto-multithreshold mask of one plane of `shape` pixels from
+/// `plane`'s residual and valid pixels and the mask it inherits,
+/// `inherited` (x-major), smoothed and pruned by `beam`: the plane's step
+/// of `SDMaskHandler::autoMaskByMultiThreshold`, the plane its own channel
+/// block. Its new support (x-major) and its row of CASA's automask summary;
+/// the channel stop rule (`skipChannels`) and which planes share a beam
+/// are [`ImageDomainReconstructionMaskPlans::materialize`]'s.
+///
+/// It holds at most [`auto_multithresh_bytes`] while it runs.
 ///
 /// # Errors
 ///
-/// The state is not one channel of one plane, shapes disagree, the
-/// residual is not finite, or the controls or beam are invalid.
+/// Shapes disagree, the residual is not finite, or the controls or beam
+/// are invalid.
+///
+/// [`ImageDomainReconstructionMaskPlans::materialize`]:
+///     super::ImageDomainReconstructionMaskPlans::materialize
 pub fn auto_multithresh(
-    coordinate: DirectionCoordinateSpec,
-    normal: &FinalNormalState,
-    previous: Option<&ReconstructionMask>,
-    valid_support: &[bool],
+    plane: &AutoMaskPlane,
+    inherited: &[bool],
+    shape: [usize; 2],
     cycle: AutoMaskCycle,
-    controls: AutoMultithreshControls,
+    controls: &AutoMultithreshControls,
     beam: AutoMaskBeam,
-) -> Result<(ReconstructionMask, AutoMultithreshEvidence), MaskError> {
-    validate_auto_controls(controls, beam.area_pixels)?;
-    let residual = primary_residual(normal)?;
-    let shape = normal.shape();
-    if valid_support.len() != shape[0] * shape[1]
-        || previous.is_some_and(|mask| mask.shape != shape || mask.coordinate != coordinate)
-    {
+) -> Result<(Vec<bool>, AutoMultithreshEvidence), MaskError> {
+    validate_auto_controls(controls)?;
+    validate_beam(&beam)?;
+    let made = plane_mask(&PlaneInputs {
+        plane: Some(plane),
+        inherited,
+        shape,
+        first_plane_full: inherited.iter().all(|set| *set),
+        cycle,
+        controls,
+        beam: Some(beam),
+    })?;
+    Ok((made.support, made.evidence))
+}
+
+/// The next auto-multithreshold mask of one plane from the mask it
+/// inherits.
+///
+/// # Errors
+///
+/// Shapes disagree, the residual is not finite, or the plane has data and
+/// no beam.
+pub(super) fn plane_mask(inputs: &PlaneInputs<'_>) -> Result<PlaneMask, MaskError> {
+    let PlaneInputs {
+        plane,
+        inherited,
+        shape,
+        first_plane_full,
+        cycle,
+        controls,
+        beam,
+    } = *inputs;
+    let cells = shape[0] * shape[1];
+    if inherited.len() != cells {
         return Err(MaskError::ShapeMismatch);
     }
-    let inherited =
-        previous.map_or_else(|| vec![false; residual.len()], |mask| mask.support.to_vec());
-    let (noise, peak) = statistics(&residual, valid_support, &inherited, cycle, controls);
-    let thresholds = Thresholds::new(noise, peak, beam.sidelobe_fraction, &controls);
+    let Some(plane) = plane else {
+        return Ok(empty_plane(inherited, cycle, controls));
+    };
+    if plane.residual.len() != cells || plane.valid.len() != cells {
+        return Err(MaskError::ShapeMismatch);
+    }
+    if plane.residual.iter().any(|value| !value.is_finite()) {
+        return Err(MaskError::NonfiniteResidual);
+    }
+    let beam = beam.ok_or(MaskError::InvalidBeamArea)?;
+    let (noise, peak) = statistics(
+        &plane.residual,
+        &plane.valid,
+        inherited,
+        first_plane_full,
+        cycle,
+        controls,
+    );
+    let thresholds = Thresholds::new(noise, peak, beam.sidelobe_fraction, controls);
     let mut evidence = AutoMultithreshEvidence {
         median: noise.median,
         robust_rms: noise.rms,
@@ -275,112 +355,84 @@ pub fn auto_multithresh(
         changed_pixels: 0,
         channel_stopped: cycle.stopped,
     };
-    if cycle.completed_major_cycles == 0 && controls.cut_threshold >= 0.2 {
-        tracing::warn!(
-            "Faint regions may not be included in the final mask. Consider decreasing \
-             cutthreshold."
-        );
-    }
-    let added = if cycle.stopped {
-        vec![false; residual.len()]
+    let (added, positive) = if cycle.stopped {
+        (vec![false; cells], false)
     } else {
-        let plane = Plane {
-            residual: &residual,
-            valid: valid_support,
+        let masking = Plane {
+            residual: &plane.residual,
+            valid: &plane.valid,
             shape,
             beam,
-            controls: &controls,
+            controls,
         };
-        plane.additions(&inherited, &thresholds, cycle, &mut evidence)
+        masking.additions(inherited, &thresholds, cycle, &mut evidence)
     };
     let support = inherited
         .iter()
         .zip(&added)
-        .zip(valid_support)
+        .zip(&plane.valid)
         .map(|((kept, added), valid)| *valid && (*kept || *added))
         .collect::<Vec<_>>();
-    evidence.changed_pixels = support
-        .iter()
-        .zip(&inherited)
-        .filter(|(now, before)| now != before)
-        .count();
-    evidence.channel_stopped = skip_channel(&inherited, &support, &thresholds, cycle, &controls);
-    if controls.verbose {
-        log_summary(normal.slab().core_range().start, &evidence);
-    }
-    Ok((
-        ReconstructionMask::new(coordinate, shape, support),
+    evidence.changed_pixels = changed(inherited, &support);
+    Ok(PlaneMask {
+        support,
         evidence,
-    ))
+        positive,
+    })
 }
 
-/// The primary plane's residual, divided by its PSF peak as the minor
-/// cycle divides it: the first polarization of a one-channel state, or
-/// the zeroth Taylor term.
-fn primary_residual(normal: &FinalNormalState) -> Result<Vec<f64>, MaskError> {
-    if normal.channel_count() != 1 {
-        return Err(MaskError::ShapeMismatch);
+/// A plane with no data: CASA's residual is zero there, so its statistics
+/// and thresholds are zero, the zero thresholds tie to the sidelobe's and
+/// nothing is added.
+fn empty_plane(
+    inherited: &[bool],
+    cycle: AutoMaskCycle,
+    controls: &AutoMultithreshControls,
+) -> PlaneMask {
+    PlaneMask {
+        support: inherited.to_vec(),
+        evidence: AutoMultithreshEvidence {
+            median: 0.0,
+            robust_rms: 0.0,
+            peak: 0.0,
+            positive_threshold: 0.0,
+            low_noise_threshold: 0.0,
+            negative_threshold: (controls.negative_factor > 0.0).then_some(0.0),
+            threshold: AutoMaskThreshold::Sidelobe,
+            masked: !cycle.stopped,
+            regions: 0,
+            pruned_regions: 0,
+            grow_regions: 0,
+            grow_pruned_regions: 0,
+            negative_pixels: 0,
+            changed_pixels: 0,
+            channel_stopped: cycle.stopped,
+        },
+        positive: false,
     }
-    let window = normal.read_window(normal.slab().core_range())?;
-    let cells = normal.shape()[0] * normal.shape()[1];
-    let (residual, psf) = if window.basis() == NormalBasis::Taylor {
-        (
-            window
-                .coefficient_term(0)
-                .ok_or(MaskError::ShapeMismatch)?
-                .residual()
-                .iter()
-                .map(|value| value.re)
-                .collect::<Vec<_>>(),
-            window
-                .normal_moment(0)
-                .ok_or(MaskError::ShapeMismatch)?
-                .normal_approximation()
-                .iter()
-                .map(|value| value.re)
-                .collect::<Vec<_>>(),
-        )
-    } else {
-        let plane = |values: crate::NormalValues<'_>| {
-            values
-                .slice(0..cells)
-                .map(|values| values.iter().map(|value| value.re).collect::<Vec<_>>())
-                .ok_or(MaskError::ShapeMismatch)
-        };
-        (
-            plane(window.residual())?,
-            plane(window.normal_approximation())?,
-        )
-    };
-    // `FinalNormalState` retains the unnormalised normal-equation planes.
-    // CASA derives automask thresholds from the displayed residual in model
-    // units, so remove the accumulated normalisation before applying
-    // Jy-valued controls.
-    let psf_peak = psf.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    if !psf_peak.is_finite() || psf_peak <= 0.0 {
-        return Err(MaskError::InvalidBeamArea);
-    }
-    let residual = residual
-        .into_iter()
-        .map(|value| value / psf_peak)
-        .collect::<Vec<_>>();
-    if residual.len() != cells || residual.iter().any(|value| !value.is_finite()) {
-        return Err(MaskError::NonfiniteResidual);
-    }
-    Ok(residual)
+}
+
+fn changed(before: &[bool], after: &[bool]) -> usize {
+    before
+        .iter()
+        .zip(after)
+        .filter(|(before, after)| before != after)
+        .count()
 }
 
 /// The plane's noise and signed absolute peak over its valid pixels
 /// (`SDMaskHandler::autoMask`). The fast estimate is the classical
 /// statistics of every valid pixel; the robust one excludes the inherited
-/// mask, and is zero for a stopped plane, as
-/// `calcRobustImageStatistics` records a flagged channel.
+/// mask, unless the mask covers the block's whole first plane, and is zero
+/// for a stopped plane, as `calcRobustImageStatistics` records a flagged
+/// channel.
 fn statistics(
     residual: &[f64],
     valid: &[bool],
     inherited: &[bool],
+    first_plane_full: bool,
     cycle: AutoMaskCycle,
-    controls: AutoMultithreshControls,
+    controls: &AutoMultithreshControls,
 ) -> (RobustNoise, f64) {
     let peak = residual
         .iter()
@@ -401,8 +453,14 @@ fn statistics(
     let noise = if controls.noise == NoiseEstimate::Robust && cycle.stopped {
         zero
     } else {
-        let full = inherited.iter().all(|set| *set);
-        plane_noise(residual, valid, controls.noise, Some(inherited), full).unwrap_or(zero)
+        plane_noise(
+            residual,
+            valid,
+            controls.noise,
+            Some(inherited),
+            first_plane_full,
+        )
+        .unwrap_or(zero)
     };
     (noise, peak)
 }
@@ -418,14 +476,15 @@ struct Plane<'a> {
 
 impl Plane<'_> {
     /// What one boundary adds to the inherited mask: the threshold mask,
-    /// the grown mask and the negative mask, each smoothed and cut.
+    /// the grown mask and the negative mask, each smoothed and cut; and
+    /// whether it added a positive (emission) region.
     fn additions(
         &self,
         inherited: &[bool],
         thresholds: &Thresholds,
         cycle: AutoMaskCycle,
         evidence: &mut AutoMultithreshEvidence,
-    ) -> Vec<bool> {
+    ) -> (Vec<bool>, bool) {
         let controls = self.controls;
         let prunes = controls.minimum_beam_fraction > 0.0;
         let prune_size = controls.minimum_beam_fraction * self.beam.area_pixels;
@@ -453,13 +512,7 @@ impl Plane<'_> {
                 *set |= grown;
             }
         }
-        if cycle.completed_major_cycles == 0 && !added.iter().any(|set| *set) {
-            tracing::warn!(
-                "No regions found by automasking: used the {} threshold to mask, but no \
-                 emission was found.",
-                thresholds.kind.name()
-            );
-        }
+        let positive = added.iter().any(|set| *set);
         if controls.negative_factor > 0.0 {
             let negative = self.smooth(&threshold_mask(self.residual, thresholds.negative));
             evidence.negative_pixels = negative.iter().filter(|set| **set).count();
@@ -470,7 +523,7 @@ impl Plane<'_> {
                 *set |= negative;
             }
         }
-        added
+        (added, positive)
     }
 
     /// `convolveMask` by `smoothfactor` beams, then CASA's cut of the
@@ -496,21 +549,22 @@ fn threshold_mask(residual: &[f64], threshold: f64) -> Vec<bool> {
     }
 }
 
-/// `SDMaskHandler::skipChannels`: a noise-thresholded plane stops evolving
-/// once its mask is empty, or once the global threshold is reached and its
-/// mask changed by nothing or by less than `minpercentchange` percent.
-fn skip_channel(
-    inherited: &[bool],
-    current: &[bool],
-    thresholds: &Thresholds,
+/// `SDMaskHandler::skipChannels`: a channel whose first polarization's
+/// threshold is the noise's stops evolving once its mask is empty, or once
+/// the global threshold is reached and its mask changed by nothing or by
+/// less than `minpercentchange` percent. `before` and `now` count the
+/// channel's mask over every polarization.
+pub(super) fn skip_channel(
+    before: usize,
+    now: usize,
+    first: AutoMaskThreshold,
     cycle: AutoMaskCycle,
     controls: &AutoMultithreshControls,
 ) -> bool {
-    if cycle.stopped || thresholds.kind != AutoMaskThreshold::Noise {
+    if cycle.stopped || first != AutoMaskThreshold::Noise {
         return cycle.stopped;
     }
-    let count = |mask: &[bool]| mask.iter().filter(|set| **set).count() as f64;
-    let (before, now) = (count(inherited), count(current));
+    let (before, now) = (before as f64, now as f64);
     let fraction = controls.minimum_percent_change / 100.0;
     let change = (now - before).abs();
     now == 0.0
@@ -519,47 +573,14 @@ fn skip_channel(
             && (change == 0.0 || change < fraction * before))
 }
 
-/// CASA's `printAutomaskSummary` row of one plane, through `tracing`.
-fn log_summary(channel: usize, evidence: &AutoMultithreshEvidence) {
-    let masked = !evidence.channel_stopped;
-    let (median, rms, threshold) = if masked {
-        (
-            evidence.median.to_string(),
-            evidence.robust_rms.to_string(),
-            evidence.positive_threshold.to_string(),
-        )
-    } else {
-        ("--".to_string(), "--".to_string(), "--".to_string())
-    };
-    tracing::info!("========== automask summary ==========");
-    tracing::info!(
-        "chan masking? median   RMS         peak   thresh_type   thresh_value   N_reg N_pruned \
-         N_grow N_grow_pruned N_neg_pix"
-    );
-    tracing::info!(
-        "[C{channel}] {}        {median}  {rms}  {}  {}  {threshold}        {}  {}  {}  {}  {}",
-        if masked { "T" } else { "F" },
-        evidence.peak,
-        evidence.threshold.name(),
-        evidence.regions,
-        evidence.pruned_regions,
-        evidence.grow_regions,
-        evidence.grow_pruned_regions,
-        evidence.negative_pixels,
-    );
-    tracing::info!("========== END of automask summary ==========");
-}
-
-fn validate_auto_controls(
-    controls: AutoMultithreshControls,
-    beam_area_pixels: f64,
-) -> Result<(), MaskError> {
+/// Whether tclean's automask controls are usable: finite, the thresholds
+/// non-negative and the smoothing positive.
+pub(super) fn validate_auto_controls(controls: &AutoMultithreshControls) -> Result<(), MaskError> {
     let nonnegative = [
         controls.sidelobe_factor,
         controls.noise_factor,
         controls.low_noise_factor,
         controls.negative_factor,
-        beam_area_pixels,
     ];
     if nonnegative
         .iter()
@@ -572,11 +593,19 @@ fn validate_auto_controls(
         .iter()
         .any(|value| !value.is_finite())
         || !(controls.smooth_factor.is_finite() && controls.smooth_factor > 0.0)
-        || beam_area_pixels == 0.0
     {
         Err(MaskError::InvalidAutoControls)
     } else {
         Ok(())
+    }
+}
+
+/// Whether a block's beam is usable: a finite positive area.
+pub(super) fn validate_beam(beam: &AutoMaskBeam) -> Result<(), MaskError> {
+    if beam.area_pixels.is_finite() && beam.area_pixels > 0.0 {
+        Ok(())
+    } else {
+        Err(MaskError::InvalidBeamArea)
     }
 }
 
@@ -785,7 +814,9 @@ mod tests {
             changed_pixels: 0,
             channel_stopped: false,
         };
-        let added = plane.additions(&[false; 256], &thresholds, cycle, &mut evidence);
+        let (added, positive) = plane.additions(&[false; 256], &thresholds, cycle, &mut evidence);
+        // The emission was pruned: only the absorption was added.
+        assert!(!positive);
         let masked = added
             .iter()
             .enumerate()
@@ -880,7 +911,7 @@ mod tests {
         };
         let residual = [-41.1, -1.3, 128.9, -500.0];
         let valid = [true, true, true, false];
-        let (_, peak) = statistics(&residual, &valid, &[false; 4], cycle, controls);
+        let (_, peak) = statistics(&residual, &valid, &[false; 4], false, cycle, &controls);
         // Neither recentred by the median nor read from an invalid pixel.
         assert_eq!(peak, 128.9);
         let mut robust = controls;
@@ -889,10 +920,44 @@ mod tests {
             stopped: true,
             ..cycle
         };
-        let (noise, _) = statistics(&residual, &valid, &[false; 4], stopped, robust);
+        let (noise, _) = statistics(&residual, &valid, &[false; 4], false, stopped, &robust);
         assert_eq!((noise.median, noise.rms), (0.0, 0.0));
-        let (noise, _) = statistics(&residual, &valid, &[false; 4], stopped, controls);
+        let (noise, _) = statistics(&residual, &valid, &[false; 4], false, stopped, &controls);
         assert_eq!(noise.median, -1.3);
+    }
+
+    /// The robust noise leaves the inherited mask out of a plane's
+    /// statistics, unless the mask covers the whole first plane of the
+    /// channel block: then every plane of the block takes Chauvenet
+    /// statistics over all its valid pixels (`calcRobustImageStatistics`).
+    #[test]
+    fn a_full_first_plane_turns_every_plane_to_chauvenet() {
+        let controls = AutoMultithreshControls {
+            sidelobe_factor: 3.0,
+            noise_factor: 5.0,
+            low_noise_factor: 1.5,
+            negative_factor: 0.0,
+            minimum_beam_fraction: 0.3,
+            smooth_factor: 1.0,
+            cut_threshold: 0.01,
+            grow_iterations: 75,
+            grow_prune: true,
+            minimum_percent_change: -1.0,
+            noise: NoiseEstimate::Robust,
+            verbose: false,
+        };
+        let cycle = AutoMaskCycle {
+            completed_major_cycles: 1,
+            threshold_reached: false,
+            stopped: false,
+        };
+        let residual = [1.0, 2.0, 3.0, 40.0, 50.0];
+        let valid = [true; 5];
+        let inherited = [false, false, false, true, true];
+        let (outside, _) = statistics(&residual, &valid, &inherited, false, cycle, &controls);
+        assert_eq!(outside.median, 2.0);
+        let (whole, _) = statistics(&residual, &valid, &inherited, true, cycle, &controls);
+        assert_eq!(whole, crate::chauvenet_noise(residual.to_vec()).unwrap());
     }
 
     #[test]
@@ -977,47 +1042,30 @@ mod tests {
             noise: NoiseEstimate::Fast,
             verbose: false,
         };
-        let thresholds = |kind| Thresholds {
-            positive: 1.0,
-            low: 0.5,
-            negative: -1.0,
-            kind,
-        };
         let cycle = |threshold_reached| AutoMaskCycle {
             completed_major_cycles: 2,
             threshold_reached,
             stopped: false,
         };
-        let empty = [false; 10];
-        let mut five = [false; 10];
-        five[..5].fill(true);
-        let mut six = five;
-        six[5] = true;
-        let noise = thresholds(AutoMaskThreshold::Noise);
-        let sidelobe = thresholds(AutoMaskThreshold::Sidelobe);
-        // An empty mask stops a noise-thresholded plane only.
-        assert!(skip_channel(
-            &empty,
-            &empty,
-            &noise,
-            cycle(false),
-            &controls
-        ));
-        assert!(!skip_channel(
-            &empty,
-            &empty,
-            &sidelobe,
-            cycle(false),
-            &controls
-        ));
+        let noise = AutoMaskThreshold::Noise;
+        let sidelobe = AutoMaskThreshold::Sidelobe;
+        // An empty mask stops a noise-thresholded channel only.
+        assert!(skip_channel(0, 0, noise, cycle(false), &controls));
+        assert!(!skip_channel(0, 0, sidelobe, cycle(false), &controls));
         // A one-pixel change of five is 20%, not less than 20%: only an
         // unchanged mask stops it, and only once the threshold is reached.
-        assert!(!skip_channel(&five, &six, &noise, cycle(true), &controls));
-        assert!(skip_channel(&five, &five, &noise, cycle(true), &controls));
-        assert!(!skip_channel(&five, &five, &noise, cycle(false), &controls));
+        assert!(!skip_channel(5, 6, noise, cycle(true), &controls));
+        assert!(skip_channel(5, 5, noise, cycle(true), &controls));
+        assert!(!skip_channel(5, 5, noise, cycle(false), &controls));
         let mut never = controls;
         never.minimum_percent_change = -1.0;
-        assert!(!skip_channel(&five, &five, &noise, cycle(true), &never));
+        assert!(!skip_channel(5, 5, noise, cycle(true), &never));
+        // A stopped channel stays stopped.
+        let stopped = AutoMaskCycle {
+            stopped: true,
+            ..cycle(false)
+        };
+        assert!(skip_channel(5, 9, sidelobe, stopped, &controls));
     }
 
     /// A beam far wider than the image smooths by the same sums as the

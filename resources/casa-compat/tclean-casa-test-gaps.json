@@ -3,10 +3,10 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "3dc8d701bc4e84a2f80ab6aa33052c8ce1466024",
-  "parameter_surfaces_sha256": "b189c2cef9ff5195aec7bbaad31ad77cc9947a96234a57965bf737cf90e95b66",
-  "parameter_catalog_sha256": "cd8b35948c5298d59bb42e45ec9a3170a7d4062847e5be0076b16c8fa2d007ea",
-  "tclean_rs_sha256": "59053205d5ba9dca26c2c6e527aa73f7174770e2d5ac9be5655211e5438daa7b",
+  "casa_rs_revision": "6d006e5f9ded04b5cdfcb62a7962dcf1cbf7c79f",
+  "parameter_surfaces_sha256": "ccb7861fc6fdf72bcf868ebe75929970281308a10c6a82b017cbfffefc6c24fb",
+  "parameter_catalog_sha256": "2feb237df1620d8b3ef76fd219fd27a252ca8e54621238aa91f0ce93b5acf5b9",
+  "tclean_rs_sha256": "b1b620be2573dec68049f449282bb67cf1b3bd31acd06c62dd2ebcfa7b4184fe",
   "tclean_contract_version": 38
  },
  "totals": {
@@ -22,7 +22,7 @@
   {
    "reason": "gridder='awp2'",
    "source": "tclean.rs not_yet",
-   "issue": 980,
+   "issue": 1071,
    "cases": 21,
    "sole_blocker": 18,
    "examples": [
@@ -92,7 +92,7 @@
   {
    "reason": "specmode='mvc'",
    "source": "tclean.rs not_yet",
-   "issue": 823,
+   "issue": 1069,
    "cases": 9,
    "sole_blocker": 5,
    "examples": [
@@ -147,7 +147,7 @@
   {
    "reason": "gridder='awphpg'",
    "source": "tclean.rs not_yet",
-   "issue": 980,
+   "issue": 1071,
    "cases": 4,
    "sole_blocker": 3,
    "examples": [
@@ -173,7 +173,7 @@
   {
    "reason": "nterms=1 with deconvolver='mtmfs'",
    "source": "tclean.rs not_yet",
-   "issue": 980,
+   "issue": 1065,
    "cases": 4,
    "sole_blocker": 4,
    "examples": [
@@ -211,7 +211,7 @@
   {
    "reason": "projection: only the default \"SIN\" is implemented",
    "source": "surface: unimplemented (default only)",
-   "issue": 980,
+   "issue": 1064,
    "cases": 3,
    "sole_blocker": 3,
    "examples": [
@@ -223,7 +223,7 @@
   {
    "reason": "computepastep: only the default 360.0 is implemented (where gridder is awproject/awphpg/awprojectft/awp2)",
    "source": "surface: unimplemented (default only)",
-   "issue": 980,
+   "issue": 1070,
    "cases": 2,
    "sole_blocker": 0,
    "examples": [
@@ -234,7 +234,7 @@
   {
    "reason": "psfphasecenter: only the default \"\" is implemented (where gridder is mosaic/mosaicft/ftmosaic)",
    "source": "surface: unimplemented (default only)",
-   "issue": 980,
+   "issue": 1062,
    "cases": 2,
    "sole_blocker": 1,
    "examples": [
@@ -289,7 +289,7 @@
   {
    "reason": "deconvolver='mem'",
    "source": "tclean.rs not_yet",
-   "issue": 823,
+   "issue": 1060,
    "cases": 1,
    "sole_blocker": 1,
    "examples": [
@@ -309,7 +309,7 @@
   {
    "reason": "facets>1 with gridder='wproject'",
    "source": "tclean.rs not_yet",
-   "issue": 980,
+   "issue": 1063,
    "cases": 1,
    "sole_blocker": 1,
    "examples": [
@@ -319,7 +319,7 @@
   {
    "reason": "nchan=-1 with a channel selection, start or width (derived cube extent)",
    "source": "tclean.rs not_yet",
-   "issue": 980,
+   "issue": 1066,
    "cases": 1,
    "sole_blocker": 0,
    "examples": [
@@ -329,7 +329,7 @@
   {
    "reason": "normtype='pbsquare'",
    "source": "tclean.rs not_yet",
-   "issue": 823,
+   "issue": 1061,
    "cases": 1,
    "sole_blocker": 1,
    "examples": [
@@ -339,7 +339,7 @@
   {
    "reason": "pbmask: only the default 0.0 is implemented",
    "source": "surface: unimplemented (default only)",
-   "issue": 980,
+   "issue": 1061,
    "cases": 1,
    "sole_blocker": 0,
    "examples": [
@@ -359,7 +359,7 @@
   {
    "reason": "usemask='pb'",
    "source": "tclean.rs not_yet",
-   "issue": 823,
+   "issue": 1061,
    "cases": 1,
    "sole_blocker": 0,
    "examples": [
@@ -412,7 +412,7 @@
     {
      "reason": "deconvolver='mem'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1060,
      "call": 1
     }
    ]
@@ -639,7 +639,7 @@
     {
      "reason": "nterms=1 with deconvolver='mtmfs'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1065,
      "call": 1
     }
    ]
@@ -650,7 +650,7 @@
     {
      "reason": "nterms=1 with deconvolver='mtmfs'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1065,
      "call": 1
     }
    ]
@@ -699,7 +699,7 @@
     {
      "reason": "projection: only the default \"SIN\" is implemented",
      "source": "surface: unimplemented (default only)",
-     "issue": 980,
+     "issue": 1064,
      "call": 2
     }
    ]
@@ -710,7 +710,7 @@
     {
      "reason": "projection: only the default \"SIN\" is implemented",
      "source": "surface: unimplemented (default only)",
-     "issue": 980,
+     "issue": 1064,
      "call": 3
     }
    ]
@@ -721,7 +721,7 @@
     {
      "reason": "projection: only the default \"SIN\" is implemented",
      "source": "surface: unimplemented (default only)",
-     "issue": 980,
+     "issue": 1064,
      "call": 4
     }
    ]
@@ -958,13 +958,13 @@
     {
      "reason": "pbmask: only the default 0.0 is implemented",
      "source": "surface: unimplemented (default only)",
-     "issue": 980,
+     "issue": 1061,
      "call": 1
     },
     {
      "reason": "usemask='pb'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1061,
      "call": 1
     },
     {
@@ -976,13 +976,13 @@
     {
      "reason": "pbmask: only the default 0.0 is implemented",
      "source": "surface: unimplemented (default only)",
-     "issue": 980,
+     "issue": 1061,
      "call": 2
     },
     {
      "reason": "usemask='pb'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1061,
      "call": 2
     },
     {
@@ -1056,7 +1056,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1067,7 +1067,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1078,7 +1078,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1089,7 +1089,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1100,7 +1100,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1111,7 +1111,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1122,7 +1122,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1133,7 +1133,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1144,7 +1144,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1155,7 +1155,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1166,7 +1166,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1177,7 +1177,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1188,7 +1188,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1199,7 +1199,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1456,7 +1456,7 @@
     {
      "reason": "nterms=1 with deconvolver='mtmfs'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1065,
      "call": 1
     }
    ]
@@ -1467,7 +1467,7 @@
     {
      "reason": "nterms=1 with deconvolver='mtmfs'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1065,
      "call": 1
     }
    ]
@@ -1588,7 +1588,7 @@
     {
      "reason": "facets>1 with gridder='wproject'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1063,
      "call": 1
     }
    ]
@@ -1610,7 +1610,7 @@
     {
      "reason": "gridder='awphpg'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1621,7 +1621,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1632,13 +1632,13 @@
     {
      "reason": "computepastep: only the default 360.0 is implemented (where gridder is awproject/awphpg/awprojectft/awp2)",
      "source": "surface: unimplemented (default only)",
-     "issue": 980,
+     "issue": 1070,
      "call": 1
     },
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1660,7 +1660,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1671,19 +1671,19 @@
     {
      "reason": "computepastep: only the default 360.0 is implemented (where gridder is awproject/awphpg/awprojectft/awp2)",
      "source": "surface: unimplemented (default only)",
-     "issue": 980,
+     "issue": 1070,
      "call": 1
     },
     {
      "reason": "specmode='mvc'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1069,
      "call": 1
     },
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1694,7 +1694,7 @@
     {
      "reason": "gridder='awphpg'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1722,7 +1722,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1733,7 +1733,7 @@
     {
      "reason": "gridder='awphpg'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1777,7 +1777,7 @@
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1788,13 +1788,13 @@
     {
      "reason": "specmode='mvc'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1069,
      "call": 1
     },
     {
      "reason": "gridder='awphpg'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -1829,7 +1829,7 @@
     {
      "reason": "normtype='pbsquare'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1061,
      "call": 1
     }
    ]
@@ -1844,7 +1844,7 @@
     {
      "reason": "psfphasecenter: only the default \"\" is implemented (where gridder is mosaic/mosaicft/ftmosaic)",
      "source": "surface: unimplemented (default only)",
-     "issue": 980,
+     "issue": 1062,
      "call": 1
     }
    ]
@@ -1855,7 +1855,7 @@
     {
      "reason": "psfphasecenter: only the default \"\" is implemented (where gridder is mosaic/mosaicft/ftmosaic)",
      "source": "surface: unimplemented (default only)",
-     "issue": 980,
+     "issue": 1062,
      "call": 1
     },
     {
@@ -1939,7 +1939,7 @@
     {
      "reason": "nchan=-1 with a channel selection, start or width (derived cube extent)",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1066,
      "call": 1
     },
     {
@@ -2385,7 +2385,7 @@
     {
      "reason": "specmode='mvc'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1069,
      "call": 1
     }
    ]
@@ -2396,7 +2396,7 @@
     {
      "reason": "specmode='mvc'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1069,
      "call": 1
     }
    ]
@@ -2407,7 +2407,7 @@
     {
      "reason": "specmode='mvc'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1069,
      "call": 1
     }
    ]
@@ -2418,7 +2418,7 @@
     {
      "reason": "specmode='mvc'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1069,
      "call": 1
     },
     {
@@ -2441,13 +2441,13 @@
     {
      "reason": "specmode='mvc'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1069,
      "call": 1
     },
     {
      "reason": "gridder='awp2'",
      "source": "tclean.rs not_yet",
-     "issue": 980,
+     "issue": 1071,
      "call": 1
     }
    ]
@@ -2458,7 +2458,7 @@
     {
      "reason": "specmode='mvc'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1069,
      "call": 1
     }
    ]
@@ -2473,7 +2473,7 @@
     {
      "reason": "specmode='mvc'",
      "source": "tclean.rs not_yet",
-     "issue": 823,
+     "issue": 1069,
      "call": 2
     }
    ]
