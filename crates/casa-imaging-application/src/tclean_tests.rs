@@ -35,6 +35,8 @@ fn modes() -> Vec<Value> {
         }),
         json!({ "deconvolver": "mtmfs", "nterms": 2, "scales": [0, 3] }),
         json!({ "usemask": "auto-multithresh" }),
+        json!({ "usemask": "auto-multithresh", "pbmask": 0.2 }),
+        json!({ "usemask": "pb", "pbmask": 0.3 }),
         json!({ "weighting": "superuniform" }),
         json!({ "weighting": "radial", "specmode": "cube", "nchan": 4 }),
         json!({ "weighting": "briggsabs", "specmode": "cube", "nchan": 4 }),
@@ -162,8 +164,6 @@ fn the_catalog_refuses_what_casa_reads_in_every_mode() {
     for (overrides, issue) in [
         // CASA projects with any projection in every mode.
         (json!({ "projection": "NCP" }), "#1064"),
-        // CASA masks within the primary beam with pbmask in every mask mode.
-        (json!({ "pbmask": 0.5 }), "#1061"),
         // CASA reads psfphasecenter for every gridder named for a mosaic.
         (
             json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" }),
@@ -317,7 +317,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "specmode": "mvc" }), "specmode", "#1069"),
         (json!({ "deconvolver": "mem" }), "deconvolver", "#1060"),
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
-        (json!({ "usemask": "pb" }), "usemask", "#1061"),
         (
             json!({ "specmode": "cube", "interpolation": "cubic" }),
             "interpolation",
@@ -843,6 +842,30 @@ fn automask_controls_and_the_noise_estimate_are_read() {
         assert_eq!(
             request(json!({ "niter": 10, "smoothfactor": factor })).smoothfactor,
             factor
+        );
+    }
+}
+
+/// tclean reads `usemask='pb'` and `pbmask` into the request in every mask
+/// mode, and refuses a `pbmask` outside `[0, 1)` with CASA's messages
+/// (`SynthesisParamsDeconv::verify`).
+#[test]
+fn pbmask_is_read_in_every_mask_mode_and_bounded_as_casa_bounds_it() {
+    let pb = request(json!({ "usemask": "pb" }));
+    assert_eq!((pb.usemask, pb.pbmask), (crate::UseMask::Pb, 0.0));
+    for usemask in ["user", "pb", "auto-multithresh"] {
+        let read = request(json!({ "usemask": usemask, "pbmask": 0.25 }));
+        assert_eq!(read.pbmask, 0.25, "{usemask}");
+        read.validate().expect("a valid pbmask");
+    }
+    for (pbmask, message) in [
+        (1.0, "pbmask must be < 1.0"),
+        (-0.1, "pbmask must be a positive value"),
+    ] {
+        let refused = refusal(json!({ "usemask": "pb", "pbmask": pbmask }));
+        assert_eq!(
+            (refused.parameter.as_str(), refused.message.as_str()),
+            ("pbmask", message)
         );
     }
 }

@@ -389,9 +389,6 @@ impl<'a> Tclean<'a> {
         }
         self.set("weighting", weighting);
         let usemask = self.text("usemask")?;
-        if usemask == "pb" {
-            return Err(TcleanRefusal::not_yet("usemask", "'pb'", 1061));
-        }
         self.set("usemask", usemask);
         Ok(Modes {
             cube: specmode != "mfs",
@@ -958,7 +955,21 @@ impl<'a> Tclean<'a> {
             ));
         }
         self.set("smoothfactor", smoothfactor);
-        self.ignore(&["pbmask"])?;
+        // CASA bounds pbmask in every mask mode (`SynthesisParamsDeconv::verify`).
+        let pbmask = self.value("pbmask")?.clone();
+        match pbmask.as_f64() {
+            Some(level) if level >= 1.0 => {
+                return Err(TcleanRefusal::new("pbmask", "pbmask must be < 1.0"));
+            }
+            Some(level) if level < 0.0 => {
+                return Err(TcleanRefusal::new(
+                    "pbmask",
+                    "pbmask must be a positive value",
+                ));
+            }
+            _ => {}
+        }
+        self.set("pbmask", pbmask);
         let entries = self.texts("mask")?;
         // CASA reads `mask` with usemask='user' only.
         let (boxes, image) = if modes.user_mask {

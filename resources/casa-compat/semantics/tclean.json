@@ -716,7 +716,7 @@
     },
     "nsigma": {
       "status": "Implemented",
-      "scope": "Copied; request requires non-negative value. The noise is SIImageStore::calcRobustRMS's: of the pixels where the .pb exceeds pbmask (0), so inside the primary beam above |pblimit| (the weight image's under a response, the telescope's analytic beam otherwise, #1078), or of every valid pixel of a plane the beam leaves none of (CAS-13318). Under auto-multithresh the threshold takes the automatic mask's median and noise. A run without a .pb (casa-rs's write_pb=False and pbcor=False) measures every valid pixel.",
+      "scope": "Copied; request requires non-negative value. The noise is SIImageStore::calcRobustRMS's: of the pixels where the .pb exceeds pbmask, so at pbmask 0 inside the primary beam above |pblimit| (the weight image's under a response, the telescope's analytic beam otherwise, #1078), or of every valid pixel of an image the beam leaves none of above pbmask (CAS-13318). Under auto-multithresh the threshold takes the automatic mask's median and noise. A run without a .pb (casa-rs's write_pb=False and pbcor=False) measures every valid pixel.",
       "evidence": [
         "signature",
         "reader",
@@ -809,8 +809,8 @@
       ]
     },
     "usemask": {
-      "status": "Partial",
-      "scope": "user and auto-multithresh pass; pb refused (issue 823); controls whether user mask is read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold plane by plane, every channel and Stokes plane of its own: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube is masked in tclean's serial channel blocks, each smoothed by the common beam of its planes' PSF beams, every plane thresholded by the image's PSF sidelobe level, and a channel's planes stop together (skipChannels); a plane with no data keeps its mask. Its statistics, peak, pruned regions and support read only the pixels the residual's pixel mask keeps, the .pb's above pblimit where pblimit is not negative (SDMaskHandler::autoMask, #1079), for every gridder: the weight image's beam under a response, the telescope's analytic beam otherwise. At the first boundary of a run with nsigma its median and noise are calcRobustRMS's, inside the .pb above pbmask.",
+      "status": "Implemented",
+      "scope": "user, pb and auto-multithresh pass; controls whether user mask is read. usemask='pb' keeps, in every channel and polarization, the pixels whose .pb exceeds pbmask (SDMaskHandler::makePBMask), formed once at the first boundary from the weight image's beam under a response and the telescope's analytic beam otherwise; mask is not read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold plane by plane, every channel and Stokes plane of its own: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube is masked in tclean's serial channel blocks, each smoothed by the common beam of its planes' PSF beams, every plane thresholded by the image's PSF sidelobe level, and a channel's planes stop together (skipChannels); a plane with no data keeps its mask. Its statistics, peak, pruned regions and support read only the pixels the residual's pixel mask keeps, the .pb's above pblimit where pblimit is not negative (SDMaskHandler::autoMask, #1079), for every gridder: the weight image's beam under a response, the telescope's analytic beam otherwise. At the first boundary of a run with nsigma its median and noise are calcRobustRMS's, inside the .pb above pbmask. Under a pbmask above zero its pixel mask is pb > pbmask, whatever pblimit's sign, which also bounds the mask it makes (SDMaskHandler::autoMaskWithinPB).",
       "evidence": [
         "signature",
         "reader",
@@ -836,7 +836,8 @@
       "mapping": "mask_box or mask_image"
     },
     "pbmask": {
-      "scope": "Read and ignored; non-default catalog-refused (issue 980): a primary-beam limit of user and automatic masks, and usemask='pb' (issue 823), needs the primary beam at every mask boundary.",
+      "status": "Implemented",
+      "scope": "Copied, in every mask mode; CASA's messages refuse a value of 1 or more or below 0 (SynthesisParamsDeconv::verify). The .pb level, compared as CASA's Float pb > pbmask: usemask='pb' keeps the pixels above it in every plane; a named user mask is kept only above it when pbmask is above zero (makePBMask(combinemask=True)), and with no mask named every pixel stays; under auto-multithresh above zero it is the mask's pixel mask and bound (autoMaskWithinPB); the nsigma noise reads the pixels above it (calcRobustRMS). With an outlierfile, usemask='pb' and a pbmask above zero are refused (issue 814): CASA's outlier fields take the main field's.",
       "evidence": [
         "signature",
         "reader"

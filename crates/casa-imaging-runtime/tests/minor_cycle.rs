@@ -82,6 +82,7 @@ fn setup(
         automask: false,
         primary_beam: None,
         residual_pixel_mask: false,
+        pbmask: 0.0,
     }
 }
 

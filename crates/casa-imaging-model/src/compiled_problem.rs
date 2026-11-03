@@ -831,6 +831,7 @@ pub struct ReconstructionControls {
     maximum_major_cycles: Option<usize>,
     noise_sigma: Option<f64>,
     noise_estimate: NoiseEstimate,
+    primary_beam_mask: f64,
     cycle_threshold: Option<CycleThresholdRule>,
     hogbom_iteration_accounting: HogbomIterationAccounting,
 }
@@ -847,6 +848,7 @@ impl ReconstructionControls {
             maximum_major_cycles: None,
             noise_sigma: None,
             noise_estimate: NoiseEstimate::Fast,
+            primary_beam_mask: 0.0,
             cycle_threshold: None,
             hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
         }
@@ -875,6 +877,15 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn with_noise_estimate(mut self, noise_estimate: NoiseEstimate) -> Self {
         self.noise_estimate = noise_estimate;
+        self
+    }
+
+    /// Bind tclean's `pbmask`, the `.pb` level in `[0, 1)` above which the
+    /// `nsigma` noise and an automatic mask read the residual
+    /// (`SIImageStore::calcRobustRMS`, `SDMaskHandler::autoMaskWithinPB`).
+    #[must_use]
+    pub const fn with_primary_beam_mask(mut self, level: f64) -> Self {
+        self.primary_beam_mask = level;
         self
     }
 
@@ -944,6 +955,12 @@ impl ReconstructionControls {
     #[must_use]
     pub const fn noise_estimate(self) -> NoiseEstimate {
         self.noise_estimate
+    }
+
+    /// Return tclean's `pbmask`: zero reads the `.pb`'s whole support.
+    #[must_use]
+    pub const fn primary_beam_mask(self) -> f64 {
+        self.primary_beam_mask
     }
 
     /// Return CASA's per-cycle threshold rule, when it is bound.

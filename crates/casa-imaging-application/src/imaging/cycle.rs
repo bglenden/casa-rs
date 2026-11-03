@@ -571,6 +571,7 @@ fn minor_setup<'a>(
         primary_beam,
         residual_pixel_mask: problem.products().validity().uncorrected_mask()
             == UncorrectedImageMaskPolicy::PrimaryBeam,
+        pbmask: controls.primary_beam_mask(),
     }
 }
 

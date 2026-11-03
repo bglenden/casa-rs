@@ -267,7 +267,8 @@ fn reconstruction_controls(
             request.minpsffraction,
             request.maxpsffraction,
         )
-        .with_noise_estimate(super::domains::noise_estimate(request));
+        .with_noise_estimate(super::domains::noise_estimate(request))
+        .with_primary_beam_mask(request.pbmask);
     if request.nsigma > 0.0 {
         controls.with_noise_sigma(request.nsigma)
     } else {

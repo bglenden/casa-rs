@@ -397,32 +397,33 @@ impl<'a> MosaicSensitivity<'a> {
         policy: PrimaryBeamValidityPolicy,
     ) -> Result<Vec<f32>, ProductsError> {
         (0..self.values.len())
-            .map(|index| {
-                let pb = self.model_primary_beam_at(index)?;
-                Ok(if Self::supported(pb, policy) {
-                    pb as f32
-                } else {
-                    0.0
-                })
-            })
+            .map(|index| self.weighted_primary_beam_at(index, policy))
             .collect()
     }
 
-    /// Whether pixel `index` of [`Self::weighted_primary_beam`] is positive:
-    /// its Float PB exceeds the cutoff (`SIImageStore::makePBFromWeight`
-    /// keeps `sqrt(|weight|) / pbmax` above `|pblimit|` and zeroes the
-    /// rest), the pixels `SIImageStore::calcRobustRMS` measures the noise
-    /// on at tclean's `pbmask` of 0 (`pb > pbmasklevel`).
+    /// Pixel `index` of [`Self::weighted_primary_beam`]: its Float PB
+    /// where that exceeds the cutoff, and zero elsewhere
+    /// (`SIImageStore::makePBFromWeight` keeps `sqrt(|weight|) / pbmax`
+    /// above `|pblimit|` and zeroes the rest). It is positive at the pixels
+    /// `SIImageStore::calcRobustRMS` measures the noise on at tclean's
+    /// `pbmask` of 0, and exceeds a `pbmask` above zero at those
+    /// `calcRobustRMS` and `SDMaskHandler::makePBMask` keep
+    /// (`pb > pbmasklevel`).
     ///
     /// # Errors
     ///
     /// A non-finite PB value.
-    pub fn weighted_primary_beam_positive_at(
+    pub fn weighted_primary_beam_at(
         self,
         index: usize,
         policy: PrimaryBeamValidityPolicy,
-    ) -> Result<bool, ProductsError> {
-        Ok(Self::supported(self.model_primary_beam_at(index)?, policy))
+    ) -> Result<f32, ProductsError> {
+        let pb = self.model_primary_beam_at(index)?;
+        Ok(if Self::supported(pb, policy) {
+            pb as f32
+        } else {
+            0.0
+        })
     }
 
     /// Return PB support, independent of the CLEAN mask and model.

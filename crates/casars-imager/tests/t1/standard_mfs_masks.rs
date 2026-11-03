@@ -93,6 +93,62 @@ fn box_mask_confines_the_model_and_leaves_the_masked_out_source() {
     );
 }
 
+/// `usemask='pb'` through the production route (#1061): the `.mask` is the
+/// published `.pb` above `pbmask` (`SDMaskHandler::makePBMask`), at 0 the
+/// `.pb`'s support, and the model stays inside it. The second run's
+/// `pbmask`, the median of the `.pb`'s positive pixels, cuts the beam. A
+/// run without a `.pb` is refused with CASA's message.
+#[test]
+fn usemask_pb_masks_the_published_pb_above_pbmask() {
+    let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);
+    let controls = |pbmask: f64| {
+        json!({
+            "weighting": "natural",
+            "deconvolver": "hogbom",
+            "niter": 200,
+            "threshold": THRESHOLD,
+            "usemask": "pb",
+            "pbmask": pbmask,
+            "write_pb": true,
+        })
+    };
+    let (_, products) = observation.image("pb-mask-0", controls(0.0));
+    let pb = products.get(".pb").pixels.clone();
+    let mut positive = pb
+        .iter()
+        .copied()
+        .filter(|value| *value > 0.0)
+        .collect::<Vec<_>>();
+    positive.sort_by(f32::total_cmp);
+    let level = positive[positive.len() / 2];
+    let check = |name: &str, products: &super::fixture::Products, pbmask: f32| {
+        let mask = &products.get(".mask").pixels;
+        assert_eq!(products.get(".pb").pixels, pb, "{name}: the same .pb");
+        for ((pixel, value), pb) in mask.indexed_iter().zip(pb.iter()) {
+            assert_eq!(
+                *value,
+                f32::from(*pb > pbmask),
+                "{name}: mask pixel {pixel:?}"
+            );
+        }
+        assert_model_inside(&products.get(".model").pixels, mask);
+    };
+    check("pb-mask-0", &products, 0.0);
+    let (_, cut) = observation.image("pb-mask-median", controls(f64::from(level)));
+    check("pb-mask-median", &cut, level);
+    let mask = &cut.get(".mask").pixels;
+    assert!(mask.iter().any(|value| *value == 0.0) && mask.iter().any(|value| *value != 0.0));
+    let mut without = controls(0.0);
+    without["write_pb"] = json!(false);
+    let Err(refused) = observation.try_image("pb-mask-without-pb", without) else {
+        panic!("a run without a .pb is refused");
+    };
+    assert!(
+        refused.contains("Need PB/Sensitivity/Weight image before a PB-based mask can be made"),
+        "{refused}"
+    );
+}
+
 #[test]
 fn auto_multithresh_masks_both_sources_and_confines_the_model() {
     let observation = Observation::synthesise(&[("point", POINT), ("gaussian", GAUSSIAN)]);

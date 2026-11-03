@@ -2,9 +2,10 @@
 
 //! Each image domain's mask plan, and the masks a major-cycle boundary
 //! materializes from them: a static mask (every pixel, pixel boxes or a
-//! reprojected mask image, its planes as CASA expands it), or CASA's
-//! automatic mask of every channel and polarization, which evolves from
-//! one boundary to the next.
+//! reprojected mask image, its planes as CASA expands it), such a mask cut
+//! to the primary beam of every channel and polarization at the first
+//! boundary, or CASA's automatic mask of every channel and polarization,
+//! which evolves from one boundary to the next.
 
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ use super::auto_multithresh::{
 use super::auto_planes::{
     AutoMaskEvidence, AutoMaskSource, AutoMaskState, auto_mask_domain, channel_blocks,
 };
+use super::primary_beam::{MaskBeamRead, cut_to_beam, valid_level};
 use super::{MaskBox, MaskError, MaskPlanes, ReconstructionMask};
 use crate::{FinalNormalState, ModelGeneration, NormalBasis, PsfSummary};
 
@@ -45,6 +47,21 @@ pub enum ReconstructionMaskPlan {
         /// materialized from the plan shares it.
         support: Arc<[bool]>,
     },
+    /// A static mask cut to the primary beam at the run's first boundary:
+    /// tclean's `usemask='pb'` (every pixel) and a named user mask under a
+    /// `pbmask` above zero (`SDMaskHandler::makePBMask`), each kept in
+    /// every channel and polarization where that plane's `.pb` exceeds
+    /// `level`. It holds a plane per channel and polarization, and the next
+    /// boundary keeps the mask it made, as tclean makes it once
+    /// (`SynthesisDeconvolver::setupMask`).
+    WithinPrimaryBeam {
+        /// The static mask the beam cuts: every pixel, boxes or a
+        /// reprojected support.
+        within: Box<ReconstructionMaskPlan>,
+        /// tclean's `pbmask`, in `[0, 1)`: the mask keeps the pixels whose
+        /// `.pb` exceeds it.
+        level: f64,
+    },
     /// Generate CASA auto-multithreshold support of every plane from the
     /// current Normal State.
     AutoMultithresh {
@@ -65,8 +82,43 @@ pub enum ReconstructionMaskPlan {
 }
 
 impl ReconstructionMaskPlan {
+    /// A static `within` cut to the primary beam at `level`
+    /// ([`Self::WithinPrimaryBeam`]).
+    ///
+    /// # Errors
+    ///
+    /// [`MaskError::InvalidPrimaryBeamMask`] when `within` is not a static
+    /// mask or `level` is not in `[0, 1)`, which tclean refuses for
+    /// `pbmask`.
+    pub fn within_primary_beam(within: Self, level: f64) -> Result<Self, MaskError> {
+        let plan = Self::WithinPrimaryBeam {
+            within: Box::new(within),
+            level,
+        };
+        plan.validate()?;
+        Ok(plan)
+    }
+
+    /// Check a [`Self::WithinPrimaryBeam`] plan: it cuts a static mask at a
+    /// level in `[0, 1)`.
+    fn validate(&self) -> Result<(), MaskError> {
+        match self {
+            Self::WithinPrimaryBeam { within, level }
+                if !valid_level(*level)
+                    || !matches!(
+                        **within,
+                        Self::FullPlane { .. } | Self::Boxes { .. } | Self::Reprojected { .. }
+                    ) =>
+            {
+                Err(MaskError::InvalidPrimaryBeamMask)
+            }
+            _ => Ok(()),
+        }
+    }
+
     /// Advance live automasking to the next major-cycle boundary from the
-    /// mask `current` and its automatic evidence.
+    /// mask `current` and its automatic evidence. A mask cut to the primary
+    /// beam keeps `current`, whose support it shares.
     #[must_use]
     pub fn next_cycle(
         &self,
@@ -90,19 +142,27 @@ impl ReconstructionMaskPlan {
                     .map(|evidence| evidence.stopped_channels().collect())
                     .unwrap_or_default(),
             },
+            Self::WithinPrimaryBeam { .. } => Self::Reprojected {
+                coordinate: current.coordinate,
+                planes: current.planes,
+                support: Arc::clone(&current.support),
+            },
             other => other.clone(),
         }
     }
 
     /// The planes this plan's masks hold for an image of `channels` by
-    /// `polarizations` planes: an automatic mask has one per plane.
+    /// `polarizations` planes: an automatic mask, or one cut to the
+    /// primary beam, has one per plane.
     #[must_use]
     pub fn mask_planes(&self, channels: usize, polarizations: usize) -> MaskPlanes {
         match self {
             Self::FullPlane { .. } | Self::Boxes { .. } => MaskPlanes::SHARED,
             Self::Reprojected { planes, .. } => *planes,
-            Self::AutoMultithresh { .. } => MaskPlanes::new(channels, polarizations)
-                .expect("an image has at least one channel and one polarization"),
+            Self::AutoMultithresh { .. } | Self::WithinPrimaryBeam { .. } => {
+                MaskPlanes::new(channels, polarizations)
+                    .expect("an image has at least one channel and one polarization")
+            }
         }
     }
 
@@ -112,7 +172,7 @@ impl ReconstructionMaskPlan {
         &self,
         domain: usize,
         (shape, planes): ([usize; 2], MaskPlanes),
-        auto: Option<&AutoMaskSource<'_, E>>,
+        sources: &MaskSources<'_, E>,
     ) -> Result<(ReconstructionMask, Option<AutoMaskEvidence>), E>
     where
         E: From<MaskError> + Send,
@@ -137,6 +197,15 @@ impl ReconstructionMaskPlan {
                     Arc::clone(support),
                 )?
             }
+            Self::WithinPrimaryBeam { within, level } => {
+                self.validate()?;
+                let static_sources = MaskSources {
+                    auto: None,
+                    beam: None,
+                };
+                let (within, _) = within.materialize(domain, (shape, planes), &static_sources)?;
+                cut_to_beam(&within, (domain, planes), *level, sources.beam)?
+            }
             Self::AutoMultithresh {
                 coordinate,
                 controls,
@@ -145,7 +214,7 @@ impl ReconstructionMaskPlan {
                 previous,
                 stopped_channels,
             } => {
-                let source = auto.ok_or(MaskError::InvalidBeamArea)?;
+                let source = sources.auto.ok_or(MaskError::InvalidBeamArea)?;
                 let state = AutoMaskState {
                     coordinate: *coordinate,
                     controls,
@@ -159,6 +228,26 @@ impl ReconstructionMaskPlan {
             }
         };
         Ok((mask, None))
+    }
+}
+
+/// What a boundary's masks read of its planes from the owner of the minor
+/// cycle: the planes an automatic mask is made from, and each plane's
+/// `.pb`, which a mask cut to the primary beam reads.
+pub struct MaskSources<'a, E> {
+    /// The planes of an automatic mask; required by one.
+    pub auto: Option<&'a AutoMaskSource<'a, E>>,
+    /// Each plane's pixels above a `.pb` level; required by a mask cut to
+    /// the primary beam ([`ReconstructionMaskPlan::WithinPrimaryBeam`]).
+    pub beam: Option<&'a MaskBeamRead<'a, E>>,
+}
+
+impl<E> Default for MaskSources<'_, E> {
+    fn default() -> Self {
+        Self {
+            auto: None,
+            beam: None,
+        }
     }
 }
 
@@ -253,10 +342,18 @@ fn normal_planes(normal: &FinalNormalState) -> MaskPlanes {
 
 impl ImageDomainReconstructionMaskPlans {
     /// Adopt one non-empty plan for each image domain in compiled order.
+    ///
+    /// # Errors
+    ///
+    /// No plan, or a mask cut to the primary beam that does not cut a
+    /// static mask at a level in `[0, 1)`.
     pub fn new(plans: impl IntoIterator<Item = ReconstructionMaskPlan>) -> Result<Self, MaskError> {
         let plans = plans.into_iter().collect::<Vec<_>>().into_boxed_slice();
         if plans.is_empty() {
             return Err(MaskError::DomainCardinalityMismatch);
+        }
+        for plan in &plans {
+            plan.validate()?;
         }
         Ok(Self {
             plans,
@@ -296,6 +393,15 @@ impl ImageDomainReconstructionMaskPlans {
         self.plans
             .iter()
             .any(|plan| matches!(plan, ReconstructionMaskPlan::AutoMultithresh { .. }))
+    }
+
+    /// Whether some domain's mask is cut to the primary beam at this
+    /// boundary, so that [`Self::materialize`] reads its planes' `.pb`.
+    #[must_use]
+    pub fn reads_primary_beam(&self) -> bool {
+        self.plans
+            .iter()
+            .any(|plan| matches!(plan, ReconstructionMaskPlan::WithinPrimaryBeam { .. }))
     }
 
     /// Advance every domain plan to the next shared major-cycle boundary
@@ -422,11 +528,14 @@ impl ImageDomainReconstructionMaskPlans {
     /// `domain_shape` gives by ordinal, with `channels` by `polarizations`
     /// planes: what a run plans before its first major cycle forms the
     /// Normal State (#737). Each domain's new masks
-    /// ([`Self::mask_bytes_for`]) and, for an automatic mask, on each of
-    /// the `workers` channels masked at once, what one plane's mask holds
+    /// ([`Self::mask_bytes_for`]) and, at most, one domain's working
+    /// memory. For an automatic mask, on each of the `workers` channels
+    /// masked at once, what one plane's mask holds
     /// ([`auto_multithresh_bytes`]), the plane's read (as `Complex64`) and
     /// the model support it reads, and the channel's new supports; and every
-    /// plane's PSF measurements, which the mask lists.
+    /// plane's PSF measurements, which the mask lists. For a mask cut to the
+    /// primary beam, the static plane it cuts and one plane's beam pixels;
+    /// the owner charges what it forms a beam plane from.
     #[must_use]
     pub fn materialize_bytes_for(
         &self,
@@ -438,12 +547,18 @@ impl ImageDomainReconstructionMaskPlans {
             .plans
             .iter()
             .enumerate()
-            .filter(|(_, plan)| matches!(plan, ReconstructionMaskPlan::AutoMultithresh { .. }))
-            .map(|(ordinal, _)| {
+            .map(|(ordinal, plan)| {
                 let Some(shape) = domain_shape(ordinal) else {
                     return 0;
                 };
                 let cells = (shape[0] * shape[1]) as u64;
+                match plan {
+                    ReconstructionMaskPlan::AutoMultithresh { .. } => {}
+                    ReconstructionMaskPlan::WithinPrimaryBeam { .. } => {
+                        return 2 * cells * size_of::<bool>() as u64;
+                    }
+                    _ => return 0,
+                }
                 let read = size_of::<num_complex::Complex64>() as u64
                     + size_of::<ModelSample>() as u64
                     + polarizations as u64 * size_of::<bool>() as u64;
@@ -462,19 +577,21 @@ impl ImageDomainReconstructionMaskPlans {
     }
 
     /// Materialize every domain's mask against one shared Normal State;
-    /// `auto` reads the planes an automatic mask is made from, and is
-    /// required by one. Channels of an automatic mask are masked side by
-    /// side on the current rayon pool.
+    /// `sources` reads the planes an automatic mask is made from and the
+    /// `.pb` a mask cut to the primary beam reads, each required by such a
+    /// mask. Channels of an automatic mask are masked side by side on the
+    /// current rayon pool.
     ///
     /// # Errors
     ///
-    /// A plan does not fit the state, a static mask is invalid, or the
-    /// automatic mask fails or cannot read a plane.
+    /// A plan does not fit the state, a static mask is invalid, the
+    /// automatic mask fails or cannot read a plane, or a mask cut to the
+    /// primary beam has no `.pb` to read ([`MaskError::NoPrimaryBeam`]).
     pub fn materialize<E>(
         &self,
         base: &ModelGeneration,
         normal: &FinalNormalState,
-        auto: Option<&AutoMaskSource<'_, E>>,
+        sources: &MaskSources<'_, E>,
     ) -> Result<ImageDomainMaskMaterialization, E>
     where
         E: From<MaskError> + Send,
@@ -491,7 +608,7 @@ impl ImageDomainReconstructionMaskPlans {
             let shape = normal
                 .domain_shape(ordinal)
                 .ok_or(MaskError::DomainCardinalityMismatch)?;
-            let (mask, auto_evidence) = plan.materialize(ordinal, (shape, planes), auto)?;
+            let (mask, auto_evidence) = plan.materialize(ordinal, (shape, planes), sources)?;
             masks.push(mask);
             evidence.push(auto_evidence);
         }
@@ -557,6 +674,7 @@ impl ImageDomainReconstructionMasks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MaskPlaneKey;
     use casa_imaging_model::{DirectionFrame, Projection, SkyDirection};
 
     fn grid() -> DirectionCoordinateSpec {
@@ -630,9 +748,57 @@ mod tests {
             support: Arc::clone(&support),
         };
         let (made, _) = plan
-            .materialize::<MaskError>(0, ([2, 2], planes), None)
+            .materialize::<MaskError>(0, ([2, 2], planes), &MaskSources::default())
             .unwrap();
         assert!(same(&made, &support));
         assert!(same(&made.clone(), &support));
+    }
+
+    /// A mask cut to the primary beam cuts a static mask at a `pbmask` in
+    /// `[0, 1)`, holds a plane per channel and polarization, and is kept by
+    /// the next boundary, which shares its support (tclean makes it once).
+    #[test]
+    fn a_mask_cut_to_the_beam_is_made_once_and_kept() {
+        let full = || ReconstructionMaskPlan::FullPlane { coordinate: grid() };
+        let auto = ReconstructionMaskPlan::AutoMultithresh {
+            coordinate: grid(),
+            controls: controls(),
+            completed_major_cycles: 0,
+            cycle_threshold_reached: false,
+            previous: None,
+            stopped_channels: Box::new([]),
+        };
+        for (within, level) in [(full(), 1.0), (full(), -0.1), (auto, 0.2)] {
+            assert_eq!(
+                ReconstructionMaskPlan::within_primary_beam(within, level).unwrap_err(),
+                MaskError::InvalidPrimaryBeamMask
+            );
+        }
+        let plan = ReconstructionMaskPlan::within_primary_beam(full(), 0.2).unwrap();
+        let planes = MaskPlanes::new(3, 2).unwrap();
+        assert_eq!(plan.mask_planes(3, 2), planes);
+        let beam = |key: MaskPlaneKey, _: f32| {
+            Ok::<_, MaskError>(Some(vec![key.channel == 1, true, false, true]))
+        };
+        let sources = MaskSources {
+            auto: None,
+            beam: Some(&beam),
+        };
+        let (made, _) = plan
+            .materialize::<MaskError>(0, ([2, 2], planes), &sources)
+            .unwrap();
+        assert_eq!(made.plane(1, 1).unwrap(), [true, true, false, true]);
+        assert_eq!(made.plane(2, 0).unwrap(), [false, true, false, true]);
+        let next = plan.next_cycle(&made, None, 1, false);
+        let (kept, _) = next
+            .materialize::<MaskError>(0, ([2, 2], planes), &MaskSources::default())
+            .unwrap();
+        assert!(same(&kept, made.support()));
+        // Without a `.pb`, tclean's makePBMask refuses the mask.
+        assert_eq!(
+            plan.materialize::<MaskError>(0, ([2, 2], planes), &MaskSources::default())
+                .unwrap_err(),
+            MaskError::NoPrimaryBeam
+        );
     }
 }

@@ -158,6 +158,15 @@ fn contradictory_parameters_are_refused_before_any_data_is_read() {
             json!({ "savemodel": "virtual", "niter": 1, "outlierfile": "outliers.txt" }),
             "savemodel, outlierfile",
         ),
+        // Outlier fields take the main field's pb masks in CASA (#814).
+        (
+            json!({ "usemask": "pb", "outlierfile": "outliers.txt" }),
+            "outlierfile, usemask, pbmask",
+        ),
+        (
+            json!({ "pbmask": 0.2, "outlierfile": "outliers.txt" }),
+            "outlierfile, usemask, pbmask",
+        ),
         (
             json!({ "save_continuum_residual": true }),
             "save_continuum_residual, fitspw",
