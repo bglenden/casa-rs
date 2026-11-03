@@ -391,11 +391,10 @@ class Refusals:
         self.text("phasecenter")
 
     def spectral(self, modes):
-        """`Tclean::spectral` and `refuse_derived_extent`."""
+        """`Tclean::spectral`."""
         nchan = self.integer("nchan")
         if modes["cube"] and isinstance(nchan, int) and nchan < 1 and nchan != -1:
             self.add("nchan below 1 (other than -1)", CASA_RS)
-        start, width = self.text("start"), self.text("width")
         outframe, veltype = self.text("outframe"), self.text("veltype")
         restfreq = self.texts("restfreq")
         interpolation = self.text("interpolation")
@@ -409,24 +408,16 @@ class Refusals:
             if restfreq:
                 self.add("restfreq with specmode='mfs'", NOT_YET, 980)
             return
-        # A channel selection in any MeasurementSet's spw.
-        selected = any(":" in spw for spw in self.per_measurement_set("spw"))
-        if nchan == -1 and (selected or width not in ("", "1", None) or start not in ("", None)):
-            self.add(
-                "nchan=-1 with a channel selection, start or width (derived cube extent)",
-                NOT_YET,
-                1066,
-            )
-        if selected and start == "":
-            self.add("start='' with a channel selection in spw", NOT_YET, 980)
         if not valid_frame:
             self.add(f"outframe={outframe!r}", NOT_YET, 980)
         if (veltype or "").lower() not in ("radio", "optical", "z", "beta", "relativistic", "true"):
             self.add(f"veltype={veltype!r}", NOT_YET, 980)
+        elif (veltype or "").lower() in ("optical", "z") and any(
+            is_velocity(self.text(name)) for name in ("start", "width")
+        ):
+            self.add("veltype='optical' with a velocity start or width (tabular axis)", NOT_YET, 1096)
         if len(restfreq) > 1:
             self.add("restfreq: a list of rest frequencies", NOT_YET, 980)
-        if interpolation == "cubic":
-            self.add("interpolation='cubic'", NOT_YET, 1066)
 
     def gridding(self, modes):
         """`Tclean::gridding` and `aw_terms`."""
@@ -482,8 +473,6 @@ class Refusals:
 
     def iteration(self):
         """`Tclean::iteration`."""
-        if self.values.get("savemodel") == "virtual":
-            self.add("savemodel='virtual'", NOT_YET, 823)
         self.integer("cycleniter")
 
     def masking(self, modes):
@@ -530,6 +519,15 @@ class Refusals:
             cell = cell if isinstance(cell, list) else [cell]
             if len(set(map(str, imsize))) > 1 or len(set(map(str, cell))) > 1:
                 self.add("AW projection of a non-square grid", GATE)
+
+
+def is_velocity(text):
+    """`tclean.rs`'s `is_velocity`: a start or width in velocity units, or a
+    dimensionless Doppler value (a number that is not a whole channel)."""
+    text = (text or "").strip()
+    if not text or re.fullmatch(r"[-+]?\d+", text):
+        return False
+    return bool(re.fullmatch(r"[-+]?[0-9.eE+-]+\s*(k?m/s)?", text))
 
 
 def selector_ids(text):

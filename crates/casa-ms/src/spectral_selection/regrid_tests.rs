@@ -39,7 +39,7 @@ fn request(
         quantity,
         start,
         width,
-        nchan,
+        nchan: Some(nchan),
         rest_frequency_hz: REST_HZ,
     }
 }
@@ -256,4 +256,120 @@ fn unordered_data_and_missing_rest_frequencies_are_refused() {
     };
     let error = casa_channel_frequencies(&velocity, &ascending_hz(), &WIDTHS_HZ).unwrap_err();
     assert!(error.to_string().contains("rest frequency"));
+}
+
+/// The image axis tclean writes for `nchan=-1`: its first plane, its
+/// increment and its plane count, against CASA's, to a millihertz.
+fn assert_derived(
+    quantity: RegridQuantity,
+    (start, width): (Option<f64>, Option<f64>),
+    veltype: DopplerRef,
+    (first_hz, increment_hz, planes): (f64, f64, usize),
+) {
+    let grid = RegridRequest {
+        nchan: None,
+        ..request(quantity, start, width, 1)
+    };
+    let axis = casa_regridded_image_axis_hz(&channels(&grid, &ascending_hz()), None, veltype);
+    assert_eq!(axis.len(), planes, "{quantity:?} {start:?} {width:?}");
+    assert!((axis[0] - first_hz).abs() < 1e-3, "{axis:?}");
+    assert!((axis[1] - axis[0] - increment_hz).abs() < 1e-3, "{axis:?}");
+}
+
+#[test]
+fn an_unset_nchan_fills_the_band_from_the_start_in_whole_channels() {
+    // CASA 6.7.6.14's axes for `nchan=-1`, `outframe='TOPO'`.
+    let frequency = |start, width, expected| {
+        assert_derived(
+            RegridQuantity::Frequency,
+            (start, width),
+            DopplerRef::RADIO,
+            expected,
+        );
+    };
+    frequency(Some(1.2e9), None, (1.2e9, 5.0e7, 16));
+    frequency(Some(1.2e9), Some(1.0e8), (1.2e9, 1.0e8, 8));
+    frequency(None, Some(1.0e8), (1.025e9, 1.0e8, 10));
+    frequency(None, Some(-1.0e8), (1.925e9, -1.0e8, 10));
+    frequency(Some(1.5e9), Some(-5.0e7), (1.5e9, -5.0e7, 11));
+    frequency(Some(1.234e9), Some(7.5e7), (1.234e9, 7.5e7, 10));
+    let radio = |start, width, expected| {
+        assert_derived(
+            RegridQuantity::RadioVelocity,
+            (start, width),
+            DopplerRef::RADIO,
+            expected,
+        );
+    };
+    radio(
+        Some(-11_991_700.0),
+        None,
+        (1_300_000_007.004_845_6, -5.0e7, 7),
+    );
+    radio(
+        Some(-11_991_700.0),
+        Some(20_000_000.0),
+        (1_300_000_007.004_846_6, -83_391_023.799_537_9, 4),
+    );
+    radio(
+        None,
+        Some(20_000_000.0),
+        (1_933_996_773.694_683_6, -83_391_023.799_537_66, 12),
+    );
+    radio(
+        Some(50_000_000.0),
+        Some(-20_000_000.0),
+        (1_041_522_440.501_154, 83_391_023.799_538_14, 11),
+    );
+    radio(Some(30_000_000.0), None, (1_124_913_464.300_693, -5.0e7, 3));
+}
+
+#[test]
+fn an_unset_nchan_keeps_an_optical_velocity_table_within_the_data() {
+    let derived = |start, width| {
+        let grid = RegridRequest {
+            nchan: None,
+            ..request(RegridQuantity::OpticalVelocity, start, width, 1)
+        };
+        channels(&grid, &ascending_hz()).centres_hz
+    };
+    let close = |left: &[f64], right: &[f64]| {
+        left.len() == right.len()
+            && left
+                .iter()
+                .zip(right)
+                .all(|(left, right)| (left - right).abs() < 1e-3)
+    };
+    let table = derived(Some(-41_347_800.0), Some(20_000_000.0));
+    assert!(
+        close(
+            &table,
+            &[
+                1_304_930_842.111_792_6,
+                1_189_124_000.893_648_6,
+                1_092_227_309.557_459,
+            ]
+        ),
+        "{table:?}"
+    );
+    let table = derived(None, Some(20_000_000.0));
+    assert_eq!(table.len(), 9, "{table:?}");
+    assert!((table[0] - 1_823_506_829.302_6).abs() < 1e-3, "{table:?}");
+    assert!(
+        (table[8] - 1_041_992_381.611_148_4).abs() < 1e-3,
+        "{table:?}"
+    );
+    let table = derived(Some(10_000_000.0), None);
+    assert!(
+        close(
+            &table,
+            &[
+                1_163_611_090.244_059,
+                1_111_198_424.928_366_4,
+                1_063_305_998.119_715_9,
+                1_019_372_985.302_970_4,
+            ]
+        ),
+        "{table:?}"
+    );
 }

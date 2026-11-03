@@ -3512,3 +3512,32 @@ CASA works in arcseconds; the common beams agree within one of the algorithm's
 The two searches can stop at different enclosing beams. For four nearly
 equal channel beams (axis ratio 1.17, the simulation round trip's cube,
 2026-11-03), the axes differ by 2.2e-4 and the position angle by 0.036°.
+
+## Cubic spectral interpolation reads past a short axis and fits flagged values
+
+- Date noted: 2026-11-03
+- Status: CASA bug casa-rs corrects (#1066)
+- Affected code: casacore `scimath/Mathematics/InterpolateArray1D.tcc`
+  (`interpolatePtr`'s `cubic` case and `polynomialInterpolation`), called by
+  casatools `synthesis/TransformMachines2/FTMachine.cc`
+  (`interpolateFrequencyTogrid`, `interpolateFrequencyFromgrid`)
+
+tclean's `interpolation='cubic'` fits casacore's cubic polynomial through the
+four points about each frequency. `polynomialInterpolation` takes four
+points whatever the axis holds (a `DebugAssert` only), so a row of two or
+three selected channels, or an image of two output channels, reads past the
+end of its arrays. casa-rs fits the polynomial through every point such an
+axis has. The cubic case also notes "TODO: implement flags properly - ie
+don't use flagged points": a sample takes the flags of the two channels it
+lies between, but its value fits all four, flagged ones included, so a
+flagged channel stored as NaN makes an unflagged sample NaN and the image
+NaN with it. casa-rs fits a flagged channel's stored value as CASA does and
+counts a non-finite one as zero. The model half follows CASA too: a residual
+sample is `Σ f·(V − M)` over its four channels, and the model `M` is zero at
+a flagged one, since `interpolateFrequencyFromgrid` writes the prediction
+through `swapyz(flipgrid, copyOfFlag, flipdata)`, which skips every entry
+`vb.flagCube()` flags. Weights are interpolated the same way;
+`VisImagingWeight` has already given a flagged channel zero weight, which
+casa-rs follows. Evidence: the operator laws in
+`casa-imaging-operator/tests/cubic.rs` and the cubic cases of
+`resources/casa-compat/tclean-cube-axes-cases.json`.

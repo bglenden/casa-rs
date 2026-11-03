@@ -3,20 +3,20 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "5de92adaf53eb500f3c8b11b48b6e69f77e58a02",
+  "casa_rs_revision": "0c1fd063042d5ee7c356075a3aafcc1ecc77b511",
   "parameter_surfaces_sha256": "75971d01b533264891d340a3f21f3f125e901c85093d52fe1129814972b3c506",
   "parameter_catalog_sha256": "2feb237df1620d8b3ef76fd219fd27a252ca8e54621238aa91f0ce93b5acf5b9",
-  "tclean_rs_sha256": "0eee1d49035aca9f8901150391aab56b9089bc1e9dd68e5f605e979b6b83ebd6",
+  "tclean_rs_sha256": "aa500d32b2edad3e9f8dae7b1803a3cf0a9f1196aad23eee310e0756cc4c7a09",
   "tclean_contract_version": 38
  },
  "totals": {
   "resolved_cases": 354,
   "cases_where_casa_expects_an_error": 4,
   "cases_counted": 350,
-  "cases_with_no_refusal": 248,
-  "cases_with_a_gap": 100,
+  "cases_with_no_refusal": 270,
+  "cases_with_a_gap": 78,
   "cases_with_only_refusals_casa_shares": 2,
-  "single_call_cases_with_no_refusal": 205
+  "single_call_cases_with_no_refusal": 218
  },
  "gaps": [
   {
@@ -34,20 +34,6 @@
    ]
   },
   {
-   "reason": "savemodel='virtual'",
-   "source": "tclean.rs not_yet",
-   "issue": 823,
-   "cases": 14,
-   "sole_blocker": 12,
-   "examples": [
-    "test_modelvis.test_modelvis_3.1+2",
-    "test_modelvis.test_modelvis_6.1+2",
-    "test_modelvis.test_modelvis_8.1+2",
-    "test_modelvis.test_modelvis_9.1+2+3",
-    "test_modelvis.test_modelvis_10.1+2+3"
-   ]
-  },
-  {
    "reason": "AW projection of a cube (#719)",
    "source": "availability.rs gate",
    "issue": 719,
@@ -59,20 +45,6 @@
     "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.2",
     "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.3",
     "test_hetarray_imaging.test_het_pointing_offsets_awproject_cube.4"
-   ]
-  },
-  {
-   "reason": "start='' with a channel selection in spw",
-   "source": "tclean.rs not_yet",
-   "issue": 980,
-   "cases": 11,
-   "sole_blocker": 10,
-   "examples": [
-    "test_onefield.test_onefield_pcwdT_and_pcwdF.1",
-    "test_onefield.test_onefield_pcwdT_and_pcwdF.2",
-    "test_cube.test_cube_23.1",
-    "test_modelvis.test_modelvis_8.1+2",
-    "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.1"
    ]
   },
   {
@@ -148,7 +120,7 @@
    "source": "catalog: value domain",
    "issue": null,
    "cases": 4,
-   "sole_blocker": 3,
+   "sole_blocker": 4,
    "examples": [
     "test_cube.test_cube_continuum_subtract_uvsub.1+2",
     "test_modelvis.test_modelvis_5.1+2",
@@ -265,16 +237,6 @@
    ]
   },
   {
-   "reason": "nchan=-1 with a channel selection, start or width (derived cube extent)",
-   "source": "tclean.rs not_yet",
-   "issue": 1066,
-   "cases": 1,
-   "sole_blocker": 0,
-   "examples": [
-    "test_modelvis.test_modelvis_8.1+2"
-   ]
-  },
-  {
    "reason": "pbmask: only the default 0.0 is implemented",
    "source": "surface: unimplemented (default only)",
    "issue": 1061,
@@ -312,6 +274,16 @@
    "sole_blocker": 0,
    "examples": [
     "test_stokes.test_stokes_mtmfs_IQUV.1+2"
+   ]
+  },
+  {
+   "reason": "veltype='optical' with a velocity start or width (tabular axis)",
+   "source": "tclean.rs not_yet",
+   "issue": 1096,
+   "cases": 1,
+   "sole_blocker": 1,
+   "examples": [
+    "test_cube.test_cube_13.1"
    ]
   }
  ],
@@ -480,26 +452,12 @@
    "refusals": []
   },
   "test_onefield.test_onefield_pcwdT_and_pcwdF.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "start='' with a channel selection in spw",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_pcwdT_and_pcwdF.2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "start='' with a channel selection in spw",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_twoMS.1": {
    "runs_without_refusal": true,
@@ -1159,8 +1117,15 @@
    "refusals": []
   },
   "test_cube.test_cube_13.1": {
-   "runs_without_refusal": true,
-   "refusals": []
+   "runs_without_refusal": false,
+   "refusals": [
+    {
+     "reason": "veltype='optical' with a velocity start or width (tabular axis)",
+     "source": "tclean.rs not_yet",
+     "issue": 1096,
+     "call": 1
+    }
+   ]
   },
   "test_cube.test_cube_21.1": {
    "runs_without_refusal": true,
@@ -1171,15 +1136,8 @@
    "refusals": []
   },
   "test_cube.test_cube_23.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "start='' with a channel selection in spw",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_cube.test_cube_descendF1.1": {
    "runs_without_refusal": true,
@@ -1750,21 +1708,8 @@
    "refusals": []
   },
   "test_modelvis.test_modelvis_3.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 1
-    },
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_4.1": {
    "runs_without_refusal": true,
@@ -1785,21 +1730,9 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 1
-    },
-    {
      "reason": "startmodel given as a list",
      "source": "catalog: value domain",
      "issue": null,
-     "call": 2
-    },
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
      "call": 2
     }
    ]
@@ -1809,186 +1742,84 @@
    "refusals": []
   },
   "test_modelvis.test_modelvis_8.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "nchan=-1 with a channel selection, start or width (derived cube extent)",
-     "source": "tclean.rs not_yet",
-     "issue": 1066,
-     "call": 1
-    },
-    {
-     "reason": "start='' with a channel selection in spw",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    },
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 1
-    },
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_9.1+2+3": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 3
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_10.1+2+3": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 3
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_11.1+2+3": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 3
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_12.1": {
    "runs_without_refusal": true,
    "refusals": []
   },
   "test_modelvis.test_modelvis_13.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_14.1": {
    "runs_without_refusal": true,
    "refusals": []
   },
   "test_modelvis.test_modelvis_15.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_16.1": {
    "runs_without_refusal": true,
    "refusals": []
   },
   "test_modelvis.test_modelvis_17.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_18.1": {
    "runs_without_refusal": true,
    "refusals": []
   },
   "test_modelvis.test_modelvis_19.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_20.1+2": {
    "runs_without_refusal": true,
    "refusals": []
   },
   "test_modelvis.test_modelvis_21.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_22.1+2": {
    "runs_without_refusal": true,
    "refusals": []
   },
   "test_modelvis.test_modelvis_23.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_24.1+2": {
    "runs_without_refusal": true,
    "refusals": []
   },
   "test_modelvis.test_modelvis_25.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_26.1+2": {
    "runs_without_refusal": true,
    "refusals": []
   },
   "test_modelvis.test_modelvis_27.1+2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "savemodel='virtual'",
-     "source": "tclean.rs not_yet",
-     "issue": 823,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_modelvis.test_modelvis_28.1": {
    "runs_without_refusal": true,
@@ -2170,81 +2001,32 @@
    ]
   },
   "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "start='' with a channel selection in spw",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "start='' with a channel selection in spw",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.3": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "start='' with a channel selection in spw",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 3
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.4": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "start='' with a channel selection in spw",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 4
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_hetarray_imaging.test_het_antenna_mosaic_cube_alma.5": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "start='' with a channel selection in spw",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 5
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_hetarray_imaging.test_het_antenna_mosaic_cube_ngvla.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "start='' with a channel selection in spw",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_hetarray_imaging.test_het_antenna_mosaic_cube_ngvla.2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "start='' with a channel selection in spw",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_hetarray_imaging.test_het_mosaic_mfs_alma_listofms_CAS14255fix.1": {
    "runs_without_refusal": true,
