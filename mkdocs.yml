@@ -4,6 +4,10 @@ theme:
   name: material
 
 docs_dir: docs
+# Working records (handoffs, proposals) link repository files outside docs/
+# as GitHub renders them; they are not site pages.
+exclude_docs: |
+  Planning/
 
 nav:
   - Home: README.md

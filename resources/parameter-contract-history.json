@@ -637,6 +637,11 @@
       "fingerprint": "b3a805f325a17b063097851f4e5669ca4c5be15ec808ce354eb4ce0b657994a2"
     },
     {
+      "id": "ms.selection.antenna",
+      "semantic_revision": 2,
+      "fingerprint": "bb2e04a62e22d4ca45a93796382b6da572b3d47d879060876f6fa919ff51e5e9"
+    },
+    {
       "id": "ms.selection.array",
       "semantic_revision": 1,
       "fingerprint": "bfbe35529b54e8643816eb776fb1449ae2089b364322b8371ee3671b0492c3f4"
@@ -672,9 +677,19 @@
       "fingerprint": "7058fa91483e33c7b6e3e857e44614b805bf5aa999b500471c17c13c17c066a9"
     },
     {
+      "id": "ms.selection.observation",
+      "semantic_revision": 2,
+      "fingerprint": "b10536620e98bcd86a0756d44d1d6be20d9fb43b869a571e9b9f5f60e9dd6c8d"
+    },
+    {
       "id": "ms.selection.scan",
       "semantic_revision": 1,
       "fingerprint": "7afdd21e9d481e138ea83abbe66911d2a4fae68b257ea687d050b7e1b97b294c"
+    },
+    {
+      "id": "ms.selection.scan",
+      "semantic_revision": 2,
+      "fingerprint": "6a849a39d3e1181739ddd927f0191b466f0ef25892bbc277973315cc8e6c74f0"
     },
     {
       "id": "ms.selection.spw",
@@ -685,6 +700,11 @@
       "id": "ms.selection.timerange",
       "semantic_revision": 1,
       "fingerprint": "9bcf4f93605547f1dfb14f63fafe0e9439a715c6393fb5d507fe8ba59c1c9b6e"
+    },
+    {
+      "id": "ms.selection.timerange",
+      "semantic_revision": 2,
+      "fingerprint": "c13a35c27323a8cc1837a9a9f4b9e716a935ccd46887f5ec37f8f760d89451c5"
     },
     {
       "id": "ms.selection.uvrange",
@@ -4622,6 +4642,46 @@
       "id": "tclean",
       "contract_version": 29,
       "fingerprint": "c510d87913f6acf010b342de03c202f9ebddaf820ef3e4f05ceb25ec6f89a511"
+    },
+    {
+      "id": "tclean",
+      "contract_version": 30,
+      "fingerprint": "077259a93724573288f68b2a7c4c3530ff44ea49206b28c531f69f1850a2de5e"
+    },
+    {
+      "id": "tclean",
+      "contract_version": 31,
+      "fingerprint": "2aa9c177cee29af14c9f6276b15838f452ec7250df074468f96ef3c22fb17484"
+    },
+    {
+      "id": "tclean",
+      "contract_version": 32,
+      "fingerprint": "5302c18f367a9c2d971c2d8cf4ab074f5beadbe12238c2201e38f5b6b4445a19"
+    },
+    {
+      "id": "tclean",
+      "contract_version": 33,
+      "fingerprint": "20b8efdf4cbfc9f19fd3c0191a6a6dcba7111e91461603b67b2c826b0baeb9f9"
+    },
+    {
+      "id": "tclean",
+      "contract_version": 34,
+      "fingerprint": "07bae9e680b9961580469461c1277b599e62257e18d7a56ce7854a6503407abf"
+    },
+    {
+      "id": "tclean",
+      "contract_version": 35,
+      "fingerprint": "7fd1d59254d275c5acef0b4419d26c8cdf94a064bed3fd4d4455eb658657c019"
+    },
+    {
+      "id": "tclean",
+      "contract_version": 36,
+      "fingerprint": "929f1115694db129085cc4dfa8bf39f8af25ea0272461eece90aa7b714d48233"
+    },
+    {
+      "id": "tclean",
+      "contract_version": 37,
+      "fingerprint": "b1efcc00cfc5d1328ecd454ace93d747dcc22cd836fcc6e1aaeafff81cf75014"
     },
     {
       "id": "uvcontsub",

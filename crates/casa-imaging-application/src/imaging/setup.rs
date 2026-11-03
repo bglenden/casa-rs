@@ -383,14 +383,15 @@ impl StageCharges {
 }
 
 /// The imaging weights' density pass on `workers` and the density grid it
-/// keeps, in bytes; none for natural weighting.
+/// keeps, in bytes; none for natural and radial weighting, which grid no
+/// density.
 fn weights_bytes(
     problem: &CompiledProblem,
     main: &DomainOperator,
     block: BlockShape,
     workers: usize,
 ) -> Result<(u64, u64), ImagingError> {
-    if matches!(problem.weighting().scheme(), WeightingScheme::Natural) {
+    if !problem.weighting().scheme().uses_density() {
         return Ok((0, 0));
     }
     let shape = density_shape(problem, &problem.geometry().domains()[0])?;
@@ -415,28 +416,19 @@ pub(super) fn weighting(
 ) -> Result<(WeightingGeneration, Reservation), ImagingError> {
     let contract = problem.weighting();
     let taper = contract.uv_taper();
-    let (robust, bandwidth) = match contract.scheme() {
+    let scheme = contract.scheme();
+    match scheme {
         WeightingScheme::Natural => {
             return Ok((WeightingGeneration::Natural { taper }, Reservation::none()));
         }
-        WeightingScheme::Uniform => (None, None),
-        WeightingScheme::Briggs { robust } => (Some(robust), None),
-        WeightingScheme::BriggsBandwidthTaper { robust } => {
-            let spectral = problem.geometry().spectral();
-            let last = spectral.output_channels().saturating_sub(1);
-            let (Some(first_hz), Some(last_hz)) = (
-                spectral.channel_centre_hz(0),
-                spectral.channel_centre_hz(last),
-            ) else {
-                return Err(ImagingError::Unsupported {
-                    reason: "the image spectral axis has no channels",
-                });
-            };
-            (
-                Some(robust),
-                Some(BandwidthTaper::from_frequency_range(first_hz, last_hz)?),
-            )
+        WeightingScheme::Radial => {
+            return Ok((WeightingGeneration::Radial { taper }, Reservation::none()));
         }
+        _ => {}
+    }
+    let bandwidth = match scheme {
+        WeightingScheme::BriggsBandwidthTaper { .. } => Some(bandwidth_taper(problem)?),
+        _ => None,
     };
     let shape = density_shape(problem, &problem.geometry().domains()[0])?;
     let (pass, grid) = weights_bytes(problem, main, source.maximum_block(), team.workers())?;
@@ -451,8 +443,35 @@ pub(super) fn weighting(
     let grid_values =
         run_density_pass(&main.operator, &main.resampler, shape, source, team, cancel)?;
     weights.retain(grid);
-    let weighting = WeightingGeneration::density(grid_values, robust, bandwidth, taper)?;
+    let weighting = match scheme {
+        WeightingScheme::BriggsAbsolute { robust, noise_jy } => {
+            WeightingGeneration::absolute_density(grid_values, robust, noise_jy, taper)?
+        }
+        WeightingScheme::Briggs { robust } | WeightingScheme::BriggsBandwidthTaper { robust } => {
+            WeightingGeneration::density(grid_values, Some(robust), bandwidth, taper)?
+        }
+        // Natural and radial weighting returned above, with no density.
+        WeightingScheme::Uniform | WeightingScheme::Natural | WeightingScheme::Radial => {
+            WeightingGeneration::density(grid_values, None, None, taper)?
+        }
+    };
     Ok((weighting, weights))
+}
+
+/// CASA `briggsbwtaper`'s fractional bandwidth, from the first and last
+/// channels of the image's spectral axis (`SynthesisImagerVi2::weight`).
+fn bandwidth_taper(problem: &CompiledProblem) -> Result<BandwidthTaper, ImagingError> {
+    let spectral = problem.geometry().spectral();
+    let last = spectral.output_channels().saturating_sub(1);
+    let (Some(first_hz), Some(last_hz)) = (
+        spectral.channel_centre_hz(0),
+        spectral.channel_centre_hz(last),
+    ) else {
+        return Err(ImagingError::Unsupported {
+            reason: "the image spectral axis has no channels",
+        });
+    };
+    Ok(BandwidthTaper::from_frequency_range(first_hz, last_hz)?)
 }
 
 /// The cache of the paged cube state on `workers`: as large as the whole

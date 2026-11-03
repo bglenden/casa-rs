@@ -21,8 +21,9 @@
 //! `mask_box`), and its `cycleniter` the minor-cycle length
 //! (`minor_cycle_length`); `nchan` is a cube's `channel_count`.
 
-use std::{collections::BTreeSet, fmt};
+use std::{collections::BTreeSet, fmt, str::FromStr};
 
+use casa_types::quanta::{Quantity, Unit};
 use serde_json::{Map, Value, json};
 
 use crate::ImagingRequest;
@@ -58,6 +59,8 @@ impl TcleanRefusal {
 impl ImagingRequest {
     /// The request tclean's resolved parameters `values` make: every
     /// parameter of the catalog's `tclean` surface, active or not, by name.
+    /// The scan and observation selectors' catalog concepts (revision 2)
+    /// keep their exact text; only an exactly empty string is unset.
     ///
     /// # Errors
     ///
@@ -65,7 +68,7 @@ impl ImagingRequest {
     /// request cannot read (`imsize = [0]`), refused at its tclean parameter.
     pub fn from_tclean(values: &Map<String, Value>) -> Result<Self, TcleanRefusal> {
         let (request, _) = read(values)?;
-        serde_path_to_error::deserialize(Value::Object(request)).map_err(
+        let request: Self = serde_path_to_error::deserialize(Value::Object(request)).map_err(
             |error: serde_path_to_error::Error<serde_json::Error>| {
                 let parameter = match error.path().iter().next() {
                     Some(serde_path_to_error::Segment::Map { key }) => tclean_parameter(key),
@@ -76,7 +79,20 @@ impl ImagingRequest {
                     format!("tclean parameter {parameter:?}: {}", error.inner()),
                 )
             },
-        )
+        )?;
+        // casa-rs's automatic mask is one plane per image; CASA masks each
+        // Stokes plane and channel of its own (`autoMaskByMultiThreshold`).
+        if request.usemask == crate::UseMask::AutoMultithresh
+            && request.niter > 0
+            && (request.stokes.len() > 1 || request.specmode != crate::SpecMode::Mfs)
+        {
+            return Err(TcleanRefusal::not_yet(
+                "usemask",
+                "'auto-multithresh' with a cube or more than one Stokes plane",
+                980,
+            ));
+        }
+        Ok(request)
     }
 }
 
@@ -84,7 +100,7 @@ impl ImagingRequest {
 fn tclean_parameter(field: &str) -> &str {
     match field {
         "phasecenter_field" => "phasecenter",
-        "mask_box" | "mask_image" => "mask",
+        "mask_box" | "mask_image" | "explicit_empty_mask" => "mask",
         "minor_cycle_length" => "cycleniter",
         other => other,
     }
@@ -104,6 +120,7 @@ fn read(
     tclean.geometry()?;
     tclean.spectral(&modes)?;
     tclean.gridding(&modes)?;
+    tclean.weighting(&modes)?;
     tclean.deconvolution(&modes)?;
     tclean.iteration()?;
     tclean.masking(&modes)?;
@@ -120,6 +137,7 @@ struct Modes {
     /// `ftmosaic` (`task_tclean.py`).
     per_field_density: bool,
     deconvolver: String,
+    weighting: String,
     density_weighting: bool,
     user_mask: bool,
 }
@@ -294,7 +312,13 @@ impl<'a> Tclean<'a> {
         let weighting = self.text("weighting")?;
         if !matches!(
             weighting,
-            "natural" | "uniform" | "briggs" | "briggsbwtaper"
+            "natural"
+                | "uniform"
+                | "superuniform"
+                | "radial"
+                | "briggs"
+                | "briggsabs"
+                | "briggsbwtaper"
         ) {
             return Err(TcleanRefusal::not_yet(
                 "weighting",
@@ -321,7 +345,9 @@ impl<'a> Tclean<'a> {
             gridder,
             per_field_density: gridder_name == "mosaic",
             deconvolver: deconvolver.to_string(),
-            density_weighting: weighting != "natural",
+            weighting: weighting.to_string(),
+            // `VisImagingWeight("natural")` and `("radial")` grid no density.
+            density_weighting: !matches!(weighting, "natural" | "radial"),
             user_mask: usemask == "user",
         })
     }
@@ -330,20 +356,26 @@ impl<'a> Tclean<'a> {
         self.copy(&["vis", "imagename"])?;
         // CASA's tclean selects whatever selectdata says: its parameter
         // classes never read it (`task_tclean.py`).
-        self.ignore(&["selectdata", "timerange", "antenna", "scan", "observation"])?;
+        self.ignore(&["selectdata"])?;
         let field = self.text("field")?;
-        // `none` is the catalog's absence, as `''` is CASA's.
-        if field != "none" && field.chars().any(|c| c.is_ascii_alphabetic() || c == '*') {
-            return Err(TcleanRefusal::not_yet(
-                "field",
-                format!("{field:?} (casa-rs selects fields by id)"),
-                980,
-            ));
-        }
         self.set("field", field);
-        for name in ["spw", "uvrange", "intent"] {
+        for name in ["uvrange", "intent"] {
             let value = self.text(name)?;
             self.set(name, value);
+        }
+        // `MSSpwGram` reads a lone `*` as every spectral window, every
+        // channel: what an empty selector selects.
+        let spw = self.text("spw")?;
+        self.set("spw", if spw == "*" { "" } else { spw });
+        // Scan, observation, antenna and time selectors keep their exact text:
+        // CASA's tclean refuses whitespace-only text and `none`, and its
+        // grammars give padding and case their own meanings.
+        for name in ["scan", "observation", "antenna", "timerange"] {
+            let value = self.value(name)?;
+            let text = value
+                .as_str()
+                .ok_or_else(|| Self::mismatch(name, "text", value))?;
+            self.set(name, text);
         }
         let column = match self.text("datacolumn")?.to_ascii_lowercase().as_str() {
             // CASA images DATA when CORRECTED_DATA is absent.
@@ -386,13 +418,13 @@ impl<'a> Tclean<'a> {
         self.ignore(&["projection", "psfphasecenter", "vptable"])
     }
 
-    /// Refuse the cube axes CASA derives from the channels `spw` selects,
+    /// Refuse the cube extents CASA derives from the channels `spw` selects,
     /// which casa-rs does not yet (#980). CASA's `getImFreq` passes
     /// `nchan=-1` and its `start` and `width` to
-    /// `MSTransformRegridder::calcChanFreqs`, which starts the axis at
-    /// `start` or the first selected channel and counts the selected
-    /// channels from there in steps of `width`; casa-rs's axis takes as
-    /// many channels as the window has, wherever it starts.
+    /// `MSTransformRegridder::calcChanFreqs`, which counts the selected
+    /// channels from `start` in steps of `width`; casa-rs's axis takes as
+    /// many channels as the window has, wherever it starts. (Where an
+    /// unset `start` begins, the first selected channel, casa-rs follows.)
     fn refuse_derived_extent(
         &mut self,
         nchan: i64,
@@ -401,11 +433,6 @@ impl<'a> Tclean<'a> {
         width: &str,
     ) -> Result<(), TcleanRefusal> {
         let channels_selected = self.text("spw")?.contains(':');
-        let first_given = !start.is_empty()
-            || self
-                .value("channel_start")?
-                .as_str()
-                .is_none_or(|text| text.trim() != "none");
         let wide = !matches!(width, "" | "1");
         if nchan == -1 && !counted && (channels_selected || wide || !start.is_empty()) {
             return Err(TcleanRefusal::not_yet(
@@ -415,19 +442,12 @@ impl<'a> Tclean<'a> {
                 980,
             ));
         }
-        if channels_selected && !first_given {
-            return Err(TcleanRefusal::not_yet(
-                "start",
-                "'' with a channel selection in spw, where CASA starts the cube at the first \
-                 selected channel; give start",
-                980,
-            ));
-        }
         Ok(())
     }
 
     fn spectral(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
-        self.ignore(&["reffreq"])?;
+        // CASA reads reffreq in every mode; a cube ignores it after reading.
+        self.copy(&["reffreq"])?;
         self.copy(&["channel_start", "perchanweightdensity"])?;
         let nchan = self.integer("nchan")?;
         let count = self.value("channel_count")?.clone();
@@ -456,32 +476,29 @@ impl<'a> Tclean<'a> {
         let width = self.text("width")?;
         let outframe = self.text("outframe")?;
         let veltype = self.text("veltype")?;
-        let restfreq = self.texts("restfreq")?;
+        let restfreq = self.rest_frequencies()?;
         let interpolation = self.text("interpolation")?;
+        // CASA's image header takes its spectral frame and rest frequencies
+        // from these in every mode (`buildCoordinateSystemCore`).
+        let frame = output_frame(outframe)?;
+        self.set("restfreq", restfreq);
         if !modes.cube {
-            // CASA's mfs image takes its spectral frame and rest frequency
-            // from these; casa-rs's is LSRK, with none.
-            if output_frame(outframe)? != "LSRK" {
+            // An mfs image's REST axis would grid the data's frequencies
+            // unconverted (CASA's `freqFrameValid` is false), which casa-rs's
+            // continuum does not.
+            if frame == "REST" {
                 return Err(TcleanRefusal::not_yet(
                     "outframe",
-                    format!("{outframe:?} with specmode='mfs'"),
+                    "'REST' with specmode='mfs'",
                     980,
                 ));
             }
-            if !restfreq.is_empty() {
-                return Err(TcleanRefusal::not_yet(
-                    "restfreq",
-                    "a rest frequency with specmode='mfs'",
-                    980,
-                ));
-            }
+            self.set("outframe", frame);
             // CASA reads none of the cube's other axis controls in mfs.
             for (field, value) in [
                 ("start", "none"),
                 ("width", "none"),
-                ("outframe", "LSRK"),
                 ("veltype", "RADIO"),
-                ("restfreq", "none"),
                 ("interpolation", "linear"),
             ] {
                 self.set(field, value);
@@ -491,25 +508,42 @@ impl<'a> Tclean<'a> {
         self.refuse_derived_extent(nchan, counted, start, width)?;
         self.set("start", start);
         self.set("width", width);
-        self.set("outframe", output_frame(outframe)?);
+        self.set("outframe", frame);
         self.set("veltype", velocity_convention(veltype)?);
-        let restfreq = match restfreq.as_slice() {
-            [] => "none",
-            [one] => one,
-            _ => {
-                return Err(TcleanRefusal::not_yet(
-                    "restfreq",
-                    "a list of rest frequencies",
-                    980,
-                ));
-            }
-        };
-        self.set("restfreq", restfreq);
         if interpolation == "cubic" {
             return Err(TcleanRefusal::not_yet("interpolation", "'cubic'", 823));
         }
         self.set("interpolation", interpolation);
         Ok(())
+    }
+
+    /// tclean's rest frequencies, `none` when it gives none. CASA's first is
+    /// the image's rest frequency and the others follow it in the header
+    /// (`buildCoordinateSystemCore`); CASA reads a blank entry as a zero
+    /// frequency, which casa-rs does not represent.
+    fn rest_frequencies(&mut self) -> Result<Value, TcleanRefusal> {
+        let value = self.value("restfreq")?;
+        let items = match value {
+            Value::Array(items) => items.iter().collect(),
+            value => vec![value],
+        };
+        let texts = items
+            .into_iter()
+            .map(|item| {
+                item.as_str()
+                    .map(str::trim)
+                    .ok_or_else(|| Self::mismatch("restfreq", "text", value))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        match texts.as_slice() {
+            [] | [""] => Ok(json!("none")),
+            texts if texts.contains(&"") => Err(TcleanRefusal::not_yet(
+                "restfreq",
+                "a list of rest frequencies with a blank entry",
+                980,
+            )),
+            texts => Ok(json!(texts)),
+        }
     }
 
     fn gridding(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
@@ -558,14 +592,23 @@ impl<'a> Tclean<'a> {
             self.set("normtype", normtype);
         }
         // CASA weighs density by field only for the gridder named mosaic
-        // (`task_tclean.py`); casa-rs's mosaic weighs it over all fields,
-        // as CASA does for mosaicft and ftmosaic.
-        if self.flag("mosweight")? && modes.per_field_density && modes.density_weighting {
-            return Err(TcleanRefusal::not_yet(
-                "mosweight",
-                "True with density weighting (casa-rs weighs density over all fields)",
-                818,
-            ));
+        // (`task_tclean.py`), and over all fields for mosaicft and
+        // ftmosaic. A cube's per-channel density by field
+        // (`BriggsCubeWeightor`'s `multiField`) is not yet native.
+        let mosweight = self.flag("mosweight")?;
+        if modes.gridder == "mosaic" {
+            let mosweight = mosweight && modes.per_field_density;
+            let per_channel = modes.cube
+                && self.flag("perchanweightdensity")?
+                && modes.weighting != "superuniform";
+            if mosweight && modes.density_weighting && per_channel {
+                return Err(TcleanRefusal::not_yet(
+                    "mosweight",
+                    "True with a cube's per-channel density (perchanweightdensity=True)",
+                    818,
+                ));
+            }
+            self.set("mosweight", mosweight);
         }
         self.aw_terms(modes)?;
         let cfcache = self.text("cfcache")?;
@@ -603,46 +646,96 @@ impl<'a> Tclean<'a> {
         ])
     }
 
-    /// casa-rs's AW projection runs as CASA's `aterm=True, psterm=False,
-    /// wbawp=True, conjbeams=True`, and its mosaic as `conjbeams=False`.
+    /// The AW projection reads `aterm`, `psterm`, `wbawp` and `conjbeams`
+    /// (`createAWPFTMachine`); the mosaic reads `conjbeams` alone.
     fn aw_terms(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
-        let fixed: &[(&str, bool)] = match modes.gridder {
-            "awproject" => &[
-                ("aterm", true),
-                ("psterm", false),
-                ("wbawp", true),
-                ("conjbeams", true),
-            ],
-            "mosaic" => &[("conjbeams", false)],
+        let read: &[&str] = match modes.gridder {
+            "awproject" => &["aterm", "psterm", "wbawp", "conjbeams"],
+            "mosaic" => &["conjbeams"],
             _ => &[],
         };
         for name in ["aterm", "psterm", "wbawp", "conjbeams"] {
             let value = self.flag(name)?;
-            if let Some((_, required)) = fixed.iter().find(|(fixed, _)| *fixed == name)
-                && value != *required
-            {
-                let given = if value { "True" } else { "False" };
-                return Err(TcleanRefusal::not_yet(
-                    name,
-                    format!("{given} with gridder='{}'", modes.gridder),
-                    980,
-                ));
+            if read.contains(&name) {
+                self.set(name, value);
             }
         }
         Ok(())
     }
 
+    /// `npixels` and `noise` as `SynthesisImagerVi2::weight` reads them for
+    /// the weighting (`task_tclean.py`'s `ImagerParameters` maps
+    /// `briggsabs` to Briggs with `rmode = "abs"`, the only mode that reads
+    /// `noise`).
+    fn weighting(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
+        let npixels = self.integer("npixels")?;
+        let noise = self.value("noise")?;
+        let cells = match modes.weighting.as_str() {
+            // `VisImagingWeight("natural")` and `("radial")` grid no density.
+            "natural" | "radial" => 0,
+            // `actualNpix = npixels`, or 3 when `npixels <= 0`.
+            "superuniform" if npixels <= 0 => 3,
+            // `task_tclean.py` returns before imaging.
+            "briggsbwtaper" if npixels != 0 => {
+                return Err(TcleanRefusal::new(
+                    "npixels",
+                    "weighting='briggsbwtaper' takes npixels=0: CASA's tclean images nothing \
+                     otherwise, and casa-rs refuses it",
+                ));
+            }
+            _ if npixels < 0 => {
+                return Err(TcleanRefusal::new(
+                    "npixels",
+                    format!(
+                        "npixels={npixels}: a uniform or Briggs density grid needs 0 (the \
+                         image's cells) or a positive size; CASA's of negative size fails"
+                    ),
+                ));
+            }
+            _ => npixels,
+        };
+        self.set("npixels", cells);
+        if modes.weighting != "briggsabs" {
+            self.set("noise", "none");
+            return Ok(());
+        }
+        // `noise.get("Jy")`: a flux density, which a bare number is not.
+        let jy = noise
+            .as_str()
+            .and_then(|text| text.trim().parse::<Quantity>().ok())
+            .filter(|quantity| !quantity.unit().name().is_empty())
+            .and_then(|quantity| quantity.get_value_in(&Unit::from_str("Jy").ok()?).ok())
+            .filter(|jy| jy.is_finite())
+            .ok_or_else(|| {
+                TcleanRefusal::new(
+                    "noise",
+                    format!("noise {noise}: weighting='briggsabs' needs a flux density, as 1.0Jy"),
+                )
+            })?;
+        // CASA's denominator robust²·D + 2·noise² would vanish:
+        // `SynthesisImagerVi2::weight` refuses this pair for a cube, and a
+        // continuum image weighs every visibility infinite.
+        if jy == 0.0 && self.values.get("robust").and_then(Value::as_f64) == Some(0.0) {
+            return Err(TcleanRefusal::new(
+                "noise",
+                "weighting='briggsabs' with robust=0 and noise=0 divides by zero: CASA refuses \
+                 it for a cube, and casa-rs in every mode",
+            ));
+        }
+        self.set("noise", jy);
+        Ok(())
+    }
+
     fn deconvolution(&mut self, modes: &Modes) -> Result<(), TcleanRefusal> {
-        self.copy(&["smallscalebias", "pbcor", "robust", "uvtaper"])?;
-        // `asp` reads these, and casa-rs refuses `asp`; `noise` and
-        // `npixels` are held at their defaults.
-        self.ignore(&[
-            "fusedthreshold",
-            "largestscale",
+        self.copy(&[
+            "smallscalebias",
+            "pbcor",
+            "robust",
+            "uvtaper",
             "restoration",
-            "noise",
-            "npixels",
         ])?;
+        // `asp` reads these, and casa-rs refuses `asp`.
+        self.ignore(&["fusedthreshold", "largestscale"])?;
         let scales = self.number_list("scales")?;
         let multiscale = matches!(modes.deconvolver.as_str(), "multiscale" | "mtmfs");
         self.set(
@@ -669,19 +762,39 @@ impl<'a> Tclean<'a> {
                 1
             },
         );
-        let beam = match self.texts("restoringbeam")?.as_slice() {
-            [] => "none",
-            ["common"] => "common",
-            _ => {
-                return Err(TcleanRefusal::not_yet(
-                    "restoringbeam",
-                    "a beam given by its axes and angle",
-                    980,
-                ));
-            }
-        };
+        let beam = self.restoring_beam()?;
         self.set("restoringbeam", beam);
         Ok(())
+    }
+
+    /// CASA's `restoringbeam` (`SynthesisParamsDeconv::fromRecord`), one
+    /// text or a list: `''` or `[]` restores each plane with its fitted
+    /// beam and `'common'` with one beam enclosing them; one, two or three
+    /// entries are a beam's `[major, minor, angle]`, a circle of the one
+    /// axis or an angle of zero when not given. CASA reads any other number
+    /// of entries as no beam, and restores with the fitted beams.
+    fn restoring_beam(&mut self) -> Result<Value, TcleanRefusal> {
+        let value = self.value("restoringbeam")?;
+        let items = match value {
+            Value::Array(items) => items.iter().collect(),
+            value => vec![value],
+        };
+        let texts = items
+            .into_iter()
+            .map(|item| {
+                item.as_str()
+                    .map(str::trim)
+                    .ok_or_else(|| Self::mismatch("restoringbeam", "text", value))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(match texts.as_slice() {
+            [] | [""] => json!("none"),
+            ["common"] => json!("common"),
+            [axis] => json!([axis, axis, "0deg"]),
+            [major, minor] => json!([major, minor, "0deg"]),
+            [major, minor, angle] => json!([major, minor, angle]),
+            _ => json!("none"),
+        })
     }
 
     fn iteration(&mut self) -> Result<(), TcleanRefusal> {
@@ -697,17 +810,12 @@ impl<'a> Tclean<'a> {
             "psfcutoff",
             "parallel",
             "savemodel",
-        ])?;
-        self.ignore(&[
-            "interactive",
-            "fullsummary",
-            "restart",
             "calcres",
             "calcpsf",
         ])?;
-        if self.values.get("savemodel").and_then(Value::as_str) == Some("virtual") {
-            return Err(TcleanRefusal::not_yet("savemodel", "'virtual'", 823));
-        }
+        // `restart` chooses the output names before the request runs
+        // (`ImagingRequest::with_tclean_output_policy`).
+        self.ignore(&["interactive", "fullsummary", "restart"])?;
         let niter = self
             .values
             .get("niter")
@@ -720,10 +828,6 @@ impl<'a> Tclean<'a> {
             n => n,
         };
         self.set("minor_cycle_length", length);
-        if niter > 0 && self.values.get("nmajor").and_then(Value::as_i64) == Some(0) {
-            // CASA makes the residual and stops, at stopcode 9.
-            return Err(TcleanRefusal::not_yet("nmajor", "0", 980));
-        }
         Ok(())
     }
 
@@ -735,16 +839,30 @@ impl<'a> Tclean<'a> {
             "negativethreshold",
             "minbeamfrac",
             "growiterations",
-        ])?;
-        self.ignore(&[
-            "pbmask",
-            "smoothfactor",
             "cutthreshold",
             "dogrowprune",
             "minpercentchange",
             "verbose",
             "fastnoise",
         ])?;
+        // CASA's automatic mask smooths by smoothfactor beams and fails on a
+        // beam of no positive width (`GaussianBeam::setMajorMinor`).
+        let smoothfactor = self.value("smoothfactor")?.clone();
+        let cleans = self
+            .values
+            .get("niter")
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            > 0;
+        if !modes.user_mask && cleans && smoothfactor.as_f64().is_some_and(|factor| factor <= 0.0) {
+            return Err(TcleanRefusal::new(
+                "smoothfactor",
+                "CASA's auto-multithresh smooths its mask by a beam of positive width: \
+                 smoothfactor must be positive, as CASA's tclean requires",
+            ));
+        }
+        self.set("smoothfactor", smoothfactor);
+        self.ignore(&["pbmask"])?;
         let entries = self.texts("mask")?;
         // CASA reads `mask` with usemask='user' only.
         let (boxes, image) = if modes.user_mask {
@@ -752,6 +870,10 @@ impl<'a> Tclean<'a> {
         } else {
             (Vec::new(), None)
         };
+        self.set(
+            "explicit_empty_mask",
+            modes.user_mask && !entries.is_empty() && boxes.is_empty() && image.is_none(),
+        );
         self.set(
             "mask_box",
             if boxes.is_empty() {
@@ -781,7 +903,7 @@ impl<'a> Tclean<'a> {
     }
 }
 
-/// A cube's spectral frame, in casacore's spelling.
+/// An image's spectral frame, in casacore's spelling.
 fn output_frame(text: &str) -> Result<String, TcleanRefusal> {
     let frame = text.to_ascii_uppercase();
     match frame.as_str() {
@@ -838,7 +960,7 @@ fn pixel_box_list(text: &str) -> Option<Vec<String>> {
         .map(|corners| {
             let corners = corners
                 .split(',')
-                .map(|corner| corner.trim().parse::<u64>().ok())
+                .map(|corner| corner.trim().parse::<i64>().ok())
                 .collect::<Option<Vec<_>>>()?;
             let [x0, y0, x1, y1] = corners.as_slice() else {
                 return None;
@@ -864,7 +986,7 @@ fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
             .trim()
             .strip_suffix("pix")
             .and_then(|number| number.trim().parse::<f64>().ok())
-            .filter(|number| number.fract() == 0.0 && *number >= 0.0)
+            .filter(|number| number.fract() == 0.0)
             .ok_or_else(refused)
     };
     let mut boxes = Vec::new();

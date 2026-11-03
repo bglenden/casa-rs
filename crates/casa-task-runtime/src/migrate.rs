@@ -43,7 +43,12 @@ pub(crate) fn migrate_parameters(
                     bundle.surface.contract_version()
                 ))
             })?;
-        let explicit = migrate_once(migration, &mut parameters)?;
+        let explicit = migrate_once(
+            migration,
+            &mut parameters,
+            bundle.surface.id(),
+            &mut diagnostics,
+        )?;
         for name in &migration.changed_defaults {
             if !explicit.contains(name) {
                 diagnostics.push(
@@ -77,6 +82,8 @@ pub(crate) fn migrate_parameters(
 fn migrate_once(
     migration: &SurfaceMigration,
     parameters: &mut BTreeMap<String, ParameterValue>,
+    surface: &str,
+    diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<BTreeSet<String>, ProfileError> {
     let mut explicit = parameters.keys().cloned().collect::<BTreeSet<_>>();
     for step in &migration.steps {
@@ -98,7 +105,30 @@ fn migrate_once(
             }
             _ => {}
         }
+        let replacement = match step {
+            MigrationStep::ReplaceValue {
+                parameter,
+                from,
+                to,
+            } if from != to && parameters.get(parameter) == Some(from) => {
+                Some((parameter, from, to))
+            }
+            _ => None,
+        };
         apply_migration_step(step, parameters)?;
+        if let Some((parameter, from, to)) = replacement {
+            diagnostics.push(
+                Diagnostic::warning(
+                    DiagnosticCode::Migrated,
+                    format!(
+                        "migrated stored {parameter:?} from {} to {} for native {surface} contract {} to {}. This translates the stored legacy representation; it does not reconstruct earlier input or permit the old spelling in current calls",
+                        from.to_plain_json(), to.to_plain_json(),
+                        migration.from_contract, migration.to_contract,
+                    ),
+                )
+                .for_parameter(parameter.clone()),
+            );
+        }
     }
     Ok(explicit)
 }

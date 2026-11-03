@@ -149,7 +149,8 @@ impl ImagerRunTaskResult {
 pub struct ImagerRunReport {
     /// Selected samples gridded by each major cycle.
     pub gridded_samples: u64,
-    /// Major cycles run, the initial one included.
+    /// Major cycles run: the initial one when the run formed its residual,
+    /// none for a residual it read (`calcres=False`), as CASA counts them.
     pub major_cycles: usize,
     /// Minor-cycle iterations charged to the `niter` budget.
     pub minor_iterations: usize,

@@ -281,7 +281,7 @@ impl CasaImageWriter {
         image
             .set_image_info(&ImageInfo {
                 beam_set: if storage.attach_beam() {
-                    persisted_beam_set(beams)
+                    persisted_beam_set(beams, layout.shape()[layout.spectral_axis()])?
                 } else {
                     ImageBeamSet::default()
                 },
@@ -437,17 +437,30 @@ fn beam_metadata_residency_bytes(count: usize) -> Result<u64, ProductsError> {
     u64::try_from(record.checked_add(arrays).ok_or_else(overflow)?).map_err(|_| overflow())
 }
 
-fn persisted_beam_set(beams: &[Option<RestoringBeam>]) -> ImageBeamSet {
+/// The beam set casacore keeps for a member's beams, which are listed channel
+/// by channel with polarization fastest. As `SIImageStore::makeImageBeamSet`
+/// and `restore` store them, one beam is the image's beam and more are a
+/// channel × Stokes grid, equal or not: the shape `ImageInfo::checkBeamSet`
+/// requires of an image with `channels` channels before it opens it. A
+/// plane without a beam takes the largest one, as CASA's do. Beams that do
+/// not fill whole channels are refused.
+fn persisted_beam_set(
+    beams: &[Option<RestoringBeam>],
+    channels: usize,
+) -> Result<ImageBeamSet, ProductsError> {
     if beams.is_empty() {
-        return ImageBeamSet::default();
+        return Ok(ImageBeamSet::default());
+    }
+    if let [Some(only)] = beams {
+        return Ok(ImageBeamSet::new(gaussian_beam(*only)));
+    }
+    if channels == 0 || !beams.len().is_multiple_of(channels) {
+        return Err(ProductsError::BeamGrid {
+            beams: beams.len(),
+            channels,
+        });
     }
     let valid = beams.iter().flatten().copied().collect::<Vec<_>>();
-    if let Some(first) = valid.first().copied()
-        && valid.len() == beams.len()
-        && valid.iter().all(|beam| *beam == first)
-    {
-        return ImageBeamSet::new(gaussian_beam(first));
-    }
     let filler = valid
         .iter()
         .copied()
@@ -461,12 +474,18 @@ fn persisted_beam_set(beams: &[Option<RestoringBeam>]) -> ImageBeamSet {
             let one_microarcsecond_rad = std::f64::consts::PI / (180.0 * 3_600_000_000.0);
             GaussianBeam::new(one_microarcsecond_rad, one_microarcsecond_rad, 0.0)
         });
-    ImageBeamSet::from_grid(
+    let polarizations = beams.len() / channels;
+    Ok(ImageBeamSet::from_grid(
         beams
-            .iter()
-            .map(|beam| vec![beam.map_or(filler, gaussian_beam)])
+            .chunks(polarizations)
+            .map(|channel| {
+                channel
+                    .iter()
+                    .map(|beam| beam.map_or(filler, gaussian_beam))
+                    .collect()
+            })
             .collect(),
-    )
+    ))
 }
 
 fn gaussian_beam(beam: RestoringBeam) -> GaussianBeam {
@@ -587,7 +606,7 @@ fn exchange_directories(_: &Path, _: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{CasaImageDomainOutput, CasaImageWriter, persisted_beam_set};
-    use crate::RestoringBeam;
+    use crate::{ProductsError, RestoringBeam};
     use casa_coordinates::CoordinateSystem;
     use casa_imaging_model::ImageDomainRole;
 
@@ -604,7 +623,8 @@ mod tests {
                 Some(RestoringBeam::new(2.0e-6 + index as f64 * 1.0e-8, 1.0e-6, 0.0).unwrap())
             })
             .collect::<Vec<_>>();
-        let record_bytes = persisted_beam_set(&beams)
+        let record_bytes = persisted_beam_set(&beams, 16)
+            .expect("a beam grid")
             .to_record()
             .retained_heap_bytes()
             .unwrap();
@@ -632,7 +652,8 @@ mod tests {
     fn blank_beam_slots_use_the_largest_valid_casa_persistence_filler() {
         let small = RestoringBeam::new(2.0e-6, 1.0e-6, 0.1).expect("small beam");
         let large = RestoringBeam::new(4.0e-6, 3.0e-6, -0.2).expect("large beam");
-        let persisted = persisted_beam_set(&[Some(small), None, Some(large)]);
+        let persisted =
+            persisted_beam_set(&[Some(small), None, Some(large)], 3).expect("a beam grid");
 
         assert_eq!(persisted.shape(), (3, 1));
         assert_eq!(persisted.beam(0, 0).major, small.major_fwhm_rad());
@@ -641,8 +662,66 @@ mod tests {
     }
 
     #[test]
+    fn equal_beams_of_several_planes_stay_a_grid_as_casa_stores_them() {
+        let beam = RestoringBeam::new(2.0e-6, 1.0e-6, 0.1).expect("beam");
+        assert_eq!(
+            persisted_beam_set(&[Some(beam)], 1)
+                .expect("a beam grid")
+                .shape(),
+            (1, 1)
+        );
+        assert!(
+            persisted_beam_set(&[Some(beam)], 1)
+                .expect("a beam grid")
+                .single_beam()
+                .is_some()
+        );
+        let continuum_iv = persisted_beam_set(&[Some(beam), Some(beam)], 1).expect("a beam grid");
+        assert_eq!(continuum_iv.shape(), (1, 2));
+        assert!(continuum_iv.single_beam().is_none());
+    }
+
+    #[test]
+    fn a_cube_of_several_stokes_keeps_a_channel_by_stokes_beam_grid() {
+        // casacore opens an image only when its beam set has one beam per
+        // channel and Stokes plane (`ImageInfo::checkBeamSet`).
+        let beam = |major| Some(RestoringBeam::new(major, 1.0e-6, 0.0).expect("beam"));
+        let beams = [
+            beam(2.0e-6),
+            beam(3.0e-6),
+            beam(4.0e-6),
+            beam(5.0e-6),
+            beam(6.0e-6),
+            beam(7.0e-6),
+        ];
+        let persisted = persisted_beam_set(&beams, 3).expect("a beam grid");
+
+        assert_eq!(persisted.shape(), (3, 2));
+        assert_eq!(persisted.beam(1, 0).major, 4.0e-6);
+        assert_eq!(persisted.beam(1, 1).major, 5.0e-6);
+        assert_eq!(persisted.beam(2, 1).major, 7.0e-6);
+        let record = persisted.to_record();
+        let restored = casa_images::ImageBeamSet::from_record(&record).expect("record");
+        assert_eq!(restored.shape(), (3, 2));
+        assert!((restored.beam(2, 0).major - 6.0e-6).abs() < 1.0e-15);
+    }
+
+    #[test]
+    fn beams_that_do_not_fill_whole_channels_are_refused() {
+        let beam = Some(RestoringBeam::new(2.0e-6, 1.0e-6, 0.1).expect("beam"));
+        assert!(matches!(
+            persisted_beam_set(&[beam, beam, beam], 2),
+            Err(ProductsError::BeamGrid {
+                beams: 3,
+                channels: 2
+            })
+        ));
+        assert!(persisted_beam_set(&[beam, beam], 0).is_err());
+    }
+
+    #[test]
     fn all_blank_beam_slots_use_only_the_casa_imageinfo_placeholder() {
-        let persisted = persisted_beam_set(&[None, None]);
+        let persisted = persisted_beam_set(&[None, None], 2).expect("a beam grid");
         let filler = persisted.beam(0, 0);
         assert_eq!(persisted.shape(), (2, 1));
         assert!(filler.major > 0.0);

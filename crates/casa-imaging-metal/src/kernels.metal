@@ -17,15 +17,21 @@ using namespace metal;
 #define MAX_TERMS 16
 #define MAX_POLS 4
 
+// Sample::flags bit 2: the support lies wholly on the grid, so a prediction
+// gathers it; a mosaic predicts zero for a support that overruns the grid.
+#define PREDICTS 4u
+
 struct Sample {
-    uint2 origin;      // first tap, relative to the accumulator tile
+    int2 origin;       // first tap, relative to the accumulator tile
     ushort2 fine;      // fine-offset rows ox, oy
     uint plane;        // accumulator-local plane
     uint model_plane;  // model-local plane
     uint table;        // kernel table
     float spectral;    // Taylor variable
-    uint flags;        // bit 0: gridding w > 0; bit 1: prediction w > 0
+    uint flags;        // bit 0: gridding w > 0; bit 1: prediction w > 0; bit 2: PREDICTS
     float2 gradient;   // pointing phase gradient, radians per cell
+    int2 clip_low;     // first tile cell a spread writes
+    int2 clip_high;    // one past the last
 };
 
 struct Table {
@@ -56,6 +62,7 @@ struct Params {
     uint2 grid_shape;
     char adjoint[2][16];    // [w > 0][gpol * 4 + vpol]: Mueller plane or -1
     char forward[2][16];
+    ulong compensation;
 };
 
 #define NO_CELL 0xffffffffu
@@ -169,6 +176,52 @@ static inline Routes routes_of(constant char *table, uint gpols, uint npol) {
     return r;
 }
 
+// Each atomic add returns the preceding sum. TwoSum recovers that add's
+// rounding loss, independently of the interleaving of other threads. A second
+// f32 grid collects these much smaller corrections. No reassociation/FMA.
+static inline void accumulate(device atomic_float *grid, ulong at, float value, ulong correction) {
+#pragma clang fp contract(off)
+#pragma clang fp reassociate(off)
+    float previous = atomic_fetch_add_explicit(&grid[at], value, memory_order_relaxed);
+    float sum = previous + value;
+    float part = sum - previous;
+    float error = (previous - (sum - part)) + (value - part);
+    if (isfinite(error) && error != 0.0f) {
+        float low = atomic_fetch_add_explicit(&grid[correction + at], error, memory_order_relaxed);
+        float low_sum = low + error;
+        float low_part = low_sum - low;
+        float low_error = (low - (low_sum - low_part)) + (error - low_part);
+        if (isfinite(low_error) && low_error != 0.0f) {
+            atomic_fetch_add_explicit(&grid[2 * correction + at], low_error, memory_order_relaxed);
+        }
+    }
+}
+
+kernel void fold_grid(device float *grid [[buffer(0)]], constant ulong &count [[buffer(1)]],
+                      uint index [[thread_position_in_grid]]) {
+#pragma clang fp contract(off)
+#pragma clang fp reassociate(off)
+    if (ulong(index) < count) {
+        float high = grid[index];
+        float low = grid[count + index];
+        float tail = grid[2 * count + index];
+        float sum = high + low;
+        float part = sum - high;
+        float error = (high - (sum - part)) + (low - part);
+        float total = sum + tail;
+        float tail_part = total - sum;
+        float tail_error = (sum - (total - tail_part)) + (tail - tail_part);
+        float remainder = error + tail_error;
+        float remainder_part = remainder - error;
+        float remainder_error = (error - (remainder - remainder_part)) + (tail_error - remainder_part);
+        grid[index] = total;
+        // Preserve the fold's loss across applies. Clearing it here makes the
+        // result depend on row/chunk boundaries even with exact inner sums.
+        grid[count + index] = isfinite(total) ? remainder : 0.0f;
+        grid[2 * count + index] = isfinite(total) ? remainder_error : 0.0f;
+    }
+}
+
 // Spread `values` (one per visibility polarization) of sample `s` over its
 // support through the adjoint table, lanes striding over the taps. The
 // values a route carries are summed first, skipping zero weights, so each
@@ -206,7 +259,12 @@ static inline void spread_values(Sample s, Table t, thread const float2 *values,
     for (uint k = lane; k < taps; k += width) {
         uint ix = k % sx;
         uint iy = k / sx;
-        ulong cell = ulong(s.origin.y + iy) * ulong(p.tile_shape.x) + ulong(s.origin.x + ix);
+        int x = s.origin.x + int(ix);
+        int y = s.origin.y + int(iy);
+        if (x < s.clip_low.x || y < s.clip_low.y || x >= s.clip_high.x || y >= s.clip_high.y) {
+            continue;
+        }
+        ulong cell = ulong(y) * ulong(p.tile_shape.x) + ulong(x);
         for (uint r = 0; r < used; ++r) {
             uint gpol = routes.gpol[r];
             float2 contribution = cmul(carried[r], tap_value(t, rows, dense, s, routes.mueller[r], ix, iy, w_positive != 0u));
@@ -214,8 +272,8 @@ static inline void spread_values(Sample s, Table t, thread const float2 *values,
                 float2 value = contribution * powers[term];
                 ulong block = ulong((s.plane * p.gpols + gpol) * p.terms + p.term_base + term);
                 ulong at = 2 * (block * tile_cells + cell);
-                atomic_fetch_add_explicit(&grid[at], value.x, memory_order_relaxed);
-                atomic_fetch_add_explicit(&grid[at + 1], value.y, memory_order_relaxed);
+                accumulate(grid, at, value.x, p.compensation);
+                accumulate(grid, at + 1, value.y, p.compensation);
             }
         }
     }
@@ -257,12 +315,21 @@ static inline void gather(Sample s, Table t, device const float2 *inverse_norms,
                           device const float *rows, device const float2 *dense,
                           device const float2 *model, constant Params &p,
                           uint lane, uint width, thread float2 *predicted) {
+    if ((s.flags & PREDICTS) == 0u) {
+        // A support that overruns the grid predicts nothing (`omos`); every
+        // lane of the sample takes this branch.
+        for (uint vpol = 0; vpol < p.npol; ++vpol) {
+            predicted[vpol] = float2(0.0f);
+        }
+        return;
+    }
     float powers[MAX_TERMS];
     spectral_powers(s.spectral, p.term_count, powers);
     float2 sums[MAX_POLS] = {float2(0.0f), float2(0.0f), float2(0.0f), float2(0.0f)};
     uint sx = t.support.x;
     uint sy = support_y(t);
     uint w_positive = (s.flags >> 1u) & 1u;
+    uint2 origin = uint2(s.origin);
     Routes routes = routes_of(p.forward[w_positive], p.gpols, p.npol);
     ulong grid_cells = ulong(p.grid_shape.x) * ulong(p.grid_shape.y);
     // Each route's first term plane.
@@ -272,8 +339,8 @@ static inline void gather(Sample s, Table t, device const float2 *inverse_norms,
     }
     if (width == 1u) {
         for (uint iy = 0; iy < sy; ++iy) {
-            ulong row = ulong(s.origin.y + p.tile_origin.y + iy) * ulong(p.grid_shape.x)
-                        + ulong(s.origin.x + p.tile_origin.x);
+            ulong row = ulong(origin.y + p.tile_origin.y + iy) * ulong(p.grid_shape.x)
+                        + ulong(origin.x + p.tile_origin.x);
             for (uint ix = 0; ix < sx; ++ix) {
                 gather_tap(s, t, rows, dense, model, p, routes, bases, grid_cells, powers, ix, iy,
                            row + ix, w_positive != 0u, sums);
@@ -283,8 +350,8 @@ static inline void gather(Sample s, Table t, device const float2 *inverse_norms,
         for (uint k = lane; k < sx * sy; k += width) {
             uint ix = k % sx;
             uint iy = k / sx;
-            ulong cell = ulong(s.origin.y + p.tile_origin.y + iy) * ulong(p.grid_shape.x)
-                         + ulong(s.origin.x + p.tile_origin.x + ix);
+            ulong cell = ulong(origin.y + p.tile_origin.y + iy) * ulong(p.grid_shape.x)
+                         + ulong(origin.x + p.tile_origin.x + ix);
             gather_tap(s, t, rows, dense, model, p, routes, bases, grid_cells, powers, ix, iy,
                        cell, w_positive != 0u, sums);
         }

@@ -8,13 +8,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_imaging_model::{
-    IdSelection, IntentSelection, ObservationSelection, RowSelection, SelectionBound,
-    SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange, UvDistanceUnit,
-    UvSelection, VisibilityColumn as OwnerVisibilityColumn,
+    BaselineSelection, IdSelection, IntentSelection, ObservationSelection, RowSelection,
+    SelectionBound, SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange,
+    UvDistanceUnit, UvSelection, VisibilityColumn as OwnerVisibilityColumn,
 };
 use casa_ms::{
-    UvDistanceInterval, UvDistanceLimit, VisibilityDataColumn, parse_spw_selector,
-    parse_uv_distance_intervals, resolve_channel_selector_selection,
+    UvDistanceInterval, UvDistanceLimit, VisibilityDataColumn, parse_uv_distance_intervals,
 };
 use casa_observation::{Catalogue, StateId};
 use casa_types::measures::frequency::FrequencyRef;
@@ -35,26 +34,25 @@ pub(super) struct SourceSpectralWindow {
 /// Selected source channels per spectral window id.
 pub(super) type WindowChannels = BTreeMap<usize, Vec<usize>>;
 
-/// The request's per-sample predicates: its fields, UV-distance intervals
-/// and the observing modes its `intent` selector names
-/// ([`intents::resolve`]), with the states a state number named.
+/// The request's per-sample predicates: its fields, UV-distance intervals,
+/// scan numbers, observation identifiers, baselines and the observing modes
+/// its `intent` selector names ([`intents::resolve`]), with the states a
+/// state number named.
+///
+/// The field selector resolves against the catalogue's fields
+/// ([`resolve_fields`]); scan and observation text against CASA's strict
+/// numeric grammar, kept as inclusive intervals so a wide range holds no
+/// more than its terms.
 pub(super) fn row_selection(
     request: &ImagingRequest,
     catalogue: &Catalogue,
 ) -> Result<(RowSelection, BTreeSet<StateId>), PrepareError> {
-    let fields = match &request.field {
-        Some(ids) => IdSelection::Only(
-            ids.iter()
-                .map(|id| {
-                    u32::try_from(*id).map_err(|_| PrepareError::NegativeId {
-                        selector: "field",
-                        value: *id,
-                    })
-                })
-                .collect::<Result<_, _>>()?,
-        ),
+    let fields = match request.field.as_deref() {
+        Some(selector) => resolve_fields(selector, catalogue)?,
         None => IdSelection::All,
     };
+    let scans = numeric_row_ids(request.scan.as_deref(), "scan")?;
+    let observations = numeric_row_ids(request.observation.as_deref(), "observation")?;
     let uv_distances = match request.uvrange.as_deref() {
         Some(text) => UvSelection::Ranges(
             parse_uv_distance_intervals(text)?
@@ -71,7 +69,98 @@ pub(super) fn row_selection(
         }
         None => (IntentSelection::All, BTreeSet::new()),
     };
-    Ok((RowSelection::new(fields, uv_distances, intents), states))
+    let baselines = match request.antenna.as_deref() {
+        Some(text) => resolve_baselines(text, catalogue)?,
+        None => BaselineSelection::All,
+    };
+    Ok((
+        RowSelection::new(fields, uv_distances, intents)
+            .with_scan_observation(scans, observations)
+            .with_baselines(baselines),
+        states,
+    ))
+}
+
+/// The baselines CASA's antenna expression `text` selects among
+/// `catalogue`'s antennas, through the shared port of CASA's antenna grammar
+/// ([`casa_ms::resolve_antenna_selector`]): names, stations and positions
+/// in catalogue order, an antenna's identifier being its place.
+fn resolve_baselines(text: &str, catalogue: &Catalogue) -> Result<BaselineSelection, PrepareError> {
+    let positions = catalogue
+        .antennas
+        .iter()
+        .map(|antenna| antenna.position.as_itrf())
+        .collect::<Vec<_>>();
+    let rows = catalogue
+        .antennas
+        .iter()
+        .zip(&positions)
+        .map(|(antenna, position_m)| casa_ms::AntennaRow {
+            name: &antenna.name,
+            station: &antenna.station,
+            position_m: *position_m,
+        })
+        .collect::<Vec<_>>();
+    let selected = casa_ms::resolve_antenna_selector(&rows, text)?;
+    Ok(BaselineSelection::from_pairs(
+        rows.len(),
+        |antenna1, antenna2| selected.holds(antenna1, antenna2),
+    ))
+}
+
+/// The fields `selector` names among `catalogue`'s, through the shared
+/// FIELD selector ([`casa_ms::resolve_field_selector_rows`]): IDs and
+/// ranges bounded by the fields that exist, exact names and simple `*`
+/// patterns over unflagged fields. An MSv2 catalogue's field `i` is
+/// `FIELD_ID` `i`; an MSv4's fields are numbered in its catalogue's order
+/// and named as stored (XRADIO appends the MSv2 field number), with no row
+/// flags. Empty text selects every field; a nonempty selector that matches
+/// none is refused, as imaging never reads an empty selection.
+fn resolve_fields(selector: &str, catalogue: &Catalogue) -> Result<IdSelection, PrepareError> {
+    let rows = catalogue
+        .fields
+        .iter()
+        .map(|field| casa_ms::FieldSelectorRow {
+            name: &field.name,
+            flagged: field.flagged.unwrap_or(false),
+        })
+        .collect::<Vec<_>>();
+    let ids = casa_ms::resolve_field_selector_rows(&rows, selector)?;
+    if ids.is_empty() {
+        return Ok(IdSelection::All);
+    }
+    Ok(IdSelection::Only(
+        ids.into_iter()
+            .map(|id| u32::try_from(id).expect("a resolved FIELD_ID is nonnegative"))
+            .collect(),
+    ))
+}
+
+/// The scan numbers or observation identifiers `text` names, as inclusive
+/// intervals ([`casa_ms::parse_numeric_row_id_ranges`]); absent or empty
+/// text selects every one.
+fn numeric_row_ids(text: Option<&str>, label: &str) -> Result<IdSelection, PrepareError> {
+    let Some(text) = text.filter(|text| !text.is_empty()) else {
+        return Ok(IdSelection::All);
+    };
+    let ranges = casa_ms::parse_numeric_row_id_ranges(text, label)?;
+    if ranges.is_empty() {
+        return Err(casa_ms::MsError::InvalidInput(format!(
+            "{label} selector must contain nonnegative IDs"
+        ))
+        .into());
+    }
+    Ok(IdSelection::Ranges(
+        ranges
+            .into_iter()
+            .map(|(start, end)| {
+                (
+                    u32::try_from(start).expect("a parsed row ID is nonnegative"),
+                    u32::try_from(end).expect("a parsed row ID is nonnegative"),
+                )
+            })
+            .collect(),
+    ))
 }
 
 /// One `uvrange` interval as the model states it.
@@ -149,17 +238,17 @@ pub(super) fn one_window<'a>(
     }
 }
 
-/// The spectral windows a request selects: the catalogue's windows its
-/// `spw` selector numbers (a MeasurementSet's `SPECTRAL_WINDOW` rows; an
-/// MSv4's windows in the order its datasets name them), or every window, or
-/// the one MSv2 data description its `ddid` names.
+/// The spectral windows a request selects: every window; the data
+/// descriptions of a MeasurementSet whose MAIN rows CASA's `spw` selection
+/// keeps, or the one its `ddid` names; or an MSv4's windows `spw` selects
+/// (numbered in the order its datasets name them).
 pub(super) enum WindowChoice {
     /// Every window.
     All,
-    /// These windows.
+    /// These MSv4 windows.
     Windows(BTreeSet<u32>),
-    /// The partitions of one MSv2 `DATA_DESCRIPTION` row.
-    DataDescription(u32),
+    /// The partitions of these MSv2 `DATA_DESCRIPTION` rows.
+    DataDescriptions(BTreeSet<u32>),
 }
 
 impl WindowChoice {
@@ -168,24 +257,56 @@ impl WindowChoice {
         match self {
             Self::All => true,
             Self::Windows(windows) => windows.contains(&store.catalogue().partition(id).window.0),
-            Self::DataDescription(ddid) => store
+            Self::DataDescriptions(ddids) => store
                 .msv2()
-                .is_some_and(|observation| observation.data_description_id(id) == *ddid),
+                .is_some_and(|observation| ddids.contains(&observation.data_description_id(id))),
         }
     }
 }
 
-/// The windows `request` selects in `store` ([`WindowChoice`]).
+/// What a request's `spw` selects: the windows (or data descriptions), and
+/// the channels it names per window. A window `spw` names without channels
+/// (its whole channel range) is absent from `channels`, so `channel_start`
+/// and `channel_count` still apply to it.
+pub(super) struct SpwChoice {
+    pub(super) windows: WindowChoice,
+    pub(super) channels: WindowChannels,
+}
+
+/// The windows and channels `request` selects in `store` ([`SpwChoice`]):
+/// those its `spw` selects, except that a `ddid` (casa-rs's own parameter)
+/// names the partitions instead while `spw` still names their channels.
 ///
 /// # Errors
 ///
 /// A `ddid` of an MSv4, which has no data descriptions, or one that is not
 /// a `DATA_DESCRIPTION` row binding a window and a polarization; an `spw`
-/// selector that does not parse.
+/// selection CASA refuses or this one does not image ([`spw_choice`]).
 pub(super) fn window_choice(
     request: &ImagingRequest,
     store: &OpenedStore,
-) -> Result<WindowChoice, PrepareError> {
+) -> Result<SpwChoice, PrepareError> {
+    let data_description = data_description_choice(request, store)?;
+    let mut choice = match request.spw.as_deref().filter(|text| !text.is_empty()) {
+        Some(text) => spw_choice(text, store)?,
+        None => SpwChoice {
+            windows: WindowChoice::All,
+            channels: WindowChannels::new(),
+        },
+    };
+    // casa-rs's `ddid` names the partitions; `spw` still names their
+    // channels.
+    if let Some(windows) = data_description {
+        choice.windows = windows;
+    }
+    Ok(choice)
+}
+
+/// The one MSv2 data description `request`'s `ddid` names, if it names one.
+fn data_description_choice(
+    request: &ImagingRequest,
+    store: &OpenedStore,
+) -> Result<Option<WindowChoice>, PrepareError> {
     if let Some(ddid) = request.ddid {
         let observation = store
             .msv2()
@@ -204,33 +325,158 @@ pub(super) fn window_choice(
         if !binds {
             return Err(PrepareError::InvalidDataDescription { ddid });
         }
-        return Ok(WindowChoice::DataDescription(
+        return Ok(Some(WindowChoice::DataDescriptions(BTreeSet::from([
             u32::try_from(ddid).expect("a bound DATA_DESC_ID is nonnegative"),
-        ));
+        ]))));
     }
-    let Some(text) = request.spw.as_deref() else {
-        return Ok(WindowChoice::All);
+    Ok(None)
+}
+
+/// CASA's `spw` selection `text` in `store`, through the port of CASA's
+/// grammar ([`casa_ms::resolve_spw_selector`]): on a MeasurementSet, over
+/// its SPECTRAL_WINDOW and DATA_DESCRIPTION tables, selecting the MAIN rows
+/// of the data descriptions CASA keeps; on an MSv4, over its catalogue's
+/// windows, each standing for one unflagged data description. Each window's
+/// channels are the union of its channel ranges (`getChanList`), as CASA's
+/// iterator slices them; CASA's clamp warnings are logged.
+///
+/// # Errors
+///
+/// A selection CASA refuses, and three it accepts but whose imaging is not
+/// established here: one in parentheses, which keeps every MAIN row while
+/// naming channels of some windows only; one that keeps rows of a window
+/// none of whose channel ranges found a channel; and overlapping channel
+/// ranges of one window, which CASA's iterator would read twice.
+fn spw_choice(text: &str, store: &OpenedStore) -> Result<SpwChoice, PrepareError> {
+    let catalogue = store.catalogue();
+    let selection = match store.msv2() {
+        Some(observation) => observation.measurement_set().resolve_spw_selector(text)?,
+        None => catalogue_spw_selection(text, catalogue)?,
     };
-    let windows = parse_spw_selector(text)?
-        .into_iter()
-        .filter_map(|selector| u32::try_from(selector.spw_id).ok())
-        .collect::<BTreeSet<_>>();
-    Ok(if windows.is_empty() {
-        WindowChoice::All
+    for warning in selection.warnings() {
+        tracing::warn!("{warning}");
+    }
+    let refuse = |reason: String| -> PrepareError {
+        casa_ms::MsError::InvalidInput(format!("spw selection {text:?}: {reason}")).into()
+    };
+    let Some(rows) = selection.row_data_descriptions() else {
+        return Err(refuse(
+            "a parenthesized expression keeps every MAIN row while naming channels of some \
+             windows only, which tclean's imaging of is not established"
+                .to_string(),
+        ));
+    };
+    // Every listed window has a data description among `rows`.
+    let row_windows = selection.spw_ids().iter().copied().collect::<BTreeSet<_>>();
+    let mut channels = WindowChannels::new();
+    for &spw in &row_windows {
+        let ranges = selection
+            .channel_list()
+            .iter()
+            .filter(|range| range.spw_id == spw)
+            .collect::<Vec<_>>();
+        let Some(union) = selection.channels_of(spw)? else {
+            return Err(refuse(format!(
+                "window {spw}'s rows are selected but none of its channel ranges found a \
+                 channel, where CASA's iterator would read the whole window"
+            )));
+        };
+        let counted: usize = ranges
+            .iter()
+            .map(|range| range.channels().map_or(0, Iterator::count))
+            .sum();
+        if counted != union.len() {
+            return Err(refuse(format!(
+                "window {spw}'s channel ranges overlap, so CASA's iterator would read some \
+                 channels twice"
+            )));
+        }
+        let whole = catalogue
+            .partitions
+            .iter()
+            .find(|entry| entry.window.0 as usize == spw)
+            .map_or(0, |entry| entry.frequencies_hz.len());
+        if !(union.len() == whole && ranges.len() == 1 && ranges[0].step == 1) {
+            channels.insert(spw, union);
+        }
+    }
+    let as_u32 = |values: &[usize]| {
+        values
+            .iter()
+            .map(|value| u32::try_from(*value).expect("a SPECTRAL_WINDOW or DATA_DESCRIPTION row"))
+            .collect::<BTreeSet<_>>()
+    };
+    let windows = if store.msv2().is_some() {
+        WindowChoice::DataDescriptions(as_u32(rows))
     } else {
-        WindowChoice::Windows(windows)
-    })
+        WindowChoice::Windows(as_u32(rows))
+    };
+    Ok(SpwChoice { windows, channels })
+}
+
+/// [`casa_ms::resolve_spw_selector`] over an MSv4's catalogue: window `i`
+/// is NAMEd and channelled as its first partition states it, with its
+/// REF_FREQUENCY in the stored frame, its TOTAL_BANDWIDTH (else the sum of
+/// its widths) and its FLAG_ROW, and data description `i` is window `i`.
+fn catalogue_spw_selection(
+    text: &str,
+    catalogue: &Catalogue,
+) -> Result<casa_ms::SpwSelection, PrepareError> {
+    let first_partitions = (0..catalogue.windows.len())
+        .map(|window| {
+            catalogue
+                .partitions
+                .iter()
+                .find(|entry| entry.window.0 as usize == window)
+        })
+        .collect::<Vec<_>>();
+    let rows = catalogue
+        .windows
+        .iter()
+        .zip(&first_partitions)
+        .map(|(window, partition)| {
+            let (name, frequencies, widths) = partition.map_or(("", &[][..], &[][..]), |entry| {
+                (
+                    entry.spectral_window.as_str(),
+                    entry.frequencies_hz.as_slice(),
+                    entry.channel_widths_hz.as_slice(),
+                )
+            });
+            casa_ms::SpectralWindowRow {
+                name,
+                chan_freq_hz: frequencies,
+                chan_width_hz: widths,
+                ref_frequency_hz: window
+                    .reference_frequency
+                    .as_ref()
+                    .map_or(f64::NAN, casa_types::measures::frequency::MFrequency::hz),
+                total_bandwidth_hz: window
+                    .total_bandwidth_hz
+                    .unwrap_or_else(|| widths.iter().map(|width| width.abs()).sum()),
+                flag_row: window.flagged.unwrap_or(false),
+            }
+        })
+        .collect::<Vec<_>>();
+    let descriptions = (0..rows.len())
+        .map(|window| casa_ms::DataDescriptionRow {
+            spectral_window_id: i32::try_from(window).expect("a window count fits i32"),
+            flag_row: false,
+        })
+        .collect::<Vec<_>>();
+    Ok(casa_ms::resolve_spw_selector(&rows, &descriptions, text)?)
 }
 
 /// The channels of `spw_id` the request selects: those its `spw`
-/// selector names, else `channel_start` and `channel_count`.
+/// selector names (`named`, from [`SpwChoice::channels`]), else
+/// `channel_start` and `channel_count`.
 pub(super) fn selected_channels(
     request: &ImagingRequest,
+    named: &WindowChannels,
     spw_id: usize,
     frequencies: &[f64],
 ) -> Result<Vec<usize>, PrepareError> {
-    if let Some(channels) = explicit_spw_channels(request, spw_id, frequencies)? {
-        return Ok(channels);
+    if let Some(channels) = named.get(&spw_id) {
+        return Ok(channels.clone());
     }
     let start = request.channel_start.unwrap_or(0);
     let count = request
@@ -247,35 +493,15 @@ pub(super) fn selected_channels(
     }
 }
 
-/// The channels of `spw_id` the request's `spw` selector names, if it
-/// names any.
-pub(super) fn explicit_spw_channels(
-    request: &ImagingRequest,
-    spw_id: usize,
-    frequencies: &[f64],
-) -> Result<Option<Vec<usize>>, PrepareError> {
-    let Some(text) = request.spw.as_deref() else {
-        return Ok(None);
-    };
-    let Some(selector) = parse_spw_selector(text)?
-        .into_iter()
-        .find(|selector| usize::try_from(selector.spw_id).ok() == Some(spw_id))
-        .and_then(|selector| selector.channels)
-    else {
-        return Ok(None);
-    };
-    Ok(Some(
-        resolve_channel_selector_selection(frequencies, &selector)?.indices,
-    ))
-}
-
 /// The observation selection: the surveyed partitions and samples, and
 /// `channels` per window with the window's whole frequency axis (CASA's
 /// mosaic kernels select by the complete `CHAN_FREQ` and
-/// `|CHAN_WIDTH[0]|`).
+/// `|CHAN_WIDTH[0]|`) and its factor to LSRK at its first visibility
+/// buffer, from `lsrk_factors` ([`super::envelope::first_buffer_lsrk_factors`]).
 pub(super) fn observation_selection(
     survey: Survey,
     channels: &WindowChannels,
+    lsrk_factors: &BTreeMap<usize, f64>,
 ) -> Result<ObservationSelection, PrepareError> {
     let spectral_windows = channels
         .iter()
@@ -292,14 +518,20 @@ pub(super) fn observation_selection(
                     SpectralWindowCoordinateCatalog::new(window.frequencies_hz.clone(), *width)
                 })
                 .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: *spw_id })?;
-            Ok(SpectralWindowSelection::new(
+            let factor = lsrk_factors
+                .get(spw_id)
+                .copied()
+                .expect("every selected window has its first-buffer factor");
+            SpectralWindowSelection::new(
                 u32::try_from(*spw_id).expect("SPW ids are nonnegative stored i32 values"),
                 channels
                     .iter()
                     .map(|channel| u32::try_from(*channel).expect("a CHAN_FREQ index fits u32"))
                     .collect(),
             )
-            .with_coordinate_catalog(catalog))
+            .with_coordinate_catalog(catalog)
+            .with_first_buffer_lsrk_factor(factor)
+            .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: *spw_id })
         })
         .collect::<Result<Vec<_>, PrepareError>>()?;
     Ok(ObservationSelection::new(
@@ -481,7 +713,7 @@ mod tests {
     fn channels_past_the_window_are_refused() {
         let request = request(json!({ "channel_start": 1, "channel_count": 2 }));
         assert!(matches!(
-            selected_channels(&request, 0, &[1.0e9, 1.1e9]),
+            selected_channels(&request, &WindowChannels::new(), 0, &[1.0e9, 1.1e9]),
             Err(PrepareError::ChannelRange {
                 spw_id: 0,
                 start: 1,

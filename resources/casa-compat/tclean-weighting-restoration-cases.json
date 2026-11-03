@@ -1,0 +1,524 @@
+{
+ "inputs": {
+  "point": "unittest/tclean/refim_point.ms"
+ },
+ "common": {
+  "imsize": 100,
+  "cell": "8.0arcsec",
+  "gridder": "standard",
+  "stokes": "I"
+ },
+ "cases": {
+  "w_superuniform_npix0": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "superuniform",
+    "npixels": 0
+   }
+  },
+  "w_superuniform_npix3": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "superuniform",
+    "npixels": 3
+   }
+  },
+  "w_superuniform_npix8": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "superuniform",
+    "npixels": 8
+   }
+  },
+  "w_radial": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "radial"
+   }
+  },
+  "w_briggsabs_r0.5_n1": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "briggsabs",
+    "robust": 0.5,
+    "noise": "1.0Jy"
+   }
+  },
+  "w_briggsabs_r0_n0.5": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "briggsabs",
+    "robust": 0.0,
+    "noise": "0.5Jy"
+   }
+  },
+  "w_briggsabs_r2_n0": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "briggsabs",
+    "robust": 2.0,
+    "noise": "0Jy"
+   }
+  },
+  "w_briggsabs_rm1_n5m": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "briggsabs",
+    "robust": -1.0,
+    "noise": "5mJy"
+   }
+  },
+  "w_uniform_npix16": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "uniform",
+    "npixels": 16
+   }
+  },
+  "w_uniform_npix25": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "uniform",
+    "npixels": 25
+   }
+  },
+  "w_uniform_npix100": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "uniform",
+    "npixels": 100
+   }
+  },
+  "w_briggs_npix20": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "briggs",
+    "robust": 0.5,
+    "npixels": 20
+   }
+  },
+  "w_superuniform_taper": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "superuniform",
+    "npixels": 3,
+    "uvtaper": [
+     "20arcsec"
+    ]
+   }
+  },
+  "wc_uniform_npix1": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "niter": 0,
+    "weighting": "uniform",
+    "npixels": 1
+   }
+  },
+  "wc_uniform_npix2": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "niter": 0,
+    "weighting": "uniform",
+    "npixels": 2
+   }
+  },
+  "wc_briggs_npix2": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "niter": 0,
+    "weighting": "briggs",
+    "robust": 0.5,
+    "npixels": 2
+   }
+  },
+  "wc_briggsabs_npix0": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "niter": 0,
+    "weighting": "briggsabs",
+    "robust": 0.5,
+    "noise": "1Jy",
+    "npixels": 0
+   }
+  },
+  "wc_briggsabs_npix1": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "niter": 0,
+    "weighting": "briggsabs",
+    "robust": 0.5,
+    "noise": "1Jy",
+    "npixels": 1
+   }
+  },
+  "wc_superuniform_pcwdTrue": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "niter": 0,
+    "weighting": "superuniform",
+    "npixels": 3,
+    "perchanweightdensity": true
+   }
+  },
+  "wc_superuniform_pcwdFalse": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "niter": 0,
+    "weighting": "superuniform",
+    "npixels": 3,
+    "perchanweightdensity": false
+   }
+  },
+  "wc_radial": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "niter": 0,
+    "weighting": "radial"
+   }
+  },
+  "wc_briggs_npix2_pcwdF": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "niter": 0,
+    "weighting": "briggs",
+    "robust": 0.5,
+    "npixels": 2,
+    "perchanweightdensity": false
+   }
+  },
+  "wc_briggsbwtaper_pcwdF": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "niter": 0,
+    "weighting": "briggsbwtaper",
+    "robust": 0.5,
+    "perchanweightdensity": false
+   },
+   "note": "CASA warns and weighs uniformly"
+  },
+  "w_refused_bwtaper_npix2": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "niter": 0,
+    "weighting": "briggsbwtaper",
+    "npixels": 2
+   },
+   "note": "CASA images nothing"
+  },
+  "w_refused_briggsabs_r0_n0": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "niter": 0,
+    "weighting": "briggsabs",
+    "robust": 0.0,
+    "noise": "0Jy"
+   },
+   "note": "CASA weighs infinite (continuum); casa-rs refuses"
+  },
+  "r_beam_100arcsec": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 10,
+    "restoringbeam": "100.0arcsec"
+   }
+  },
+  "r_beam_ellipse": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 10,
+    "restoringbeam": [
+     "120arcsec",
+     "100arcsec",
+     "20deg"
+    ]
+   }
+  },
+  "r_beam_narrow": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 10,
+    "restoringbeam": "10arcsec"
+   },
+   "note": "narrower than fitted: CASA warns and adds the residual unscaled"
+  },
+  "r_beam_refused_unitless": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 10,
+    "restoringbeam": [
+     "10",
+     "8"
+    ]
+   }
+  },
+  "r_beam_refused_minor_gt_major": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 10,
+    "restoringbeam": [
+     "8arcsec",
+     "10arcsec"
+    ]
+   }
+  },
+  "r_beam_refused_unitless_pa": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 10,
+    "restoringbeam": [
+     "10arcsec",
+     "8arcsec",
+     "45"
+    ]
+   }
+  },
+  "r_beam_four_entries": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 10,
+    "restoringbeam": [
+     "120arcsec",
+     "100arcsec",
+     "20deg",
+     "x"
+    ]
+   }
+  },
+  "r_beam_zero_minor": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 10,
+    "restoringbeam": [
+     "60arcsec",
+     "0arcsec"
+    ]
+   }
+  },
+  "r_mtmfs_beam": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "mtmfs",
+    "niter": 10,
+    "nterms": 2,
+    "restoringbeam": [
+     "120arcsec",
+     "100arcsec",
+     "20deg"
+    ]
+   }
+  },
+  "r_cube_beam": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "deconvolver": "hogbom",
+    "niter": 10,
+    "restoringbeam": [
+     "120arcsec",
+     "100arcsec"
+    ]
+   }
+  },
+  "r_norestore_niter10": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 10,
+    "restoration": false,
+    "pbcor": true
+   }
+  },
+  "r_norestore_niter0": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 0,
+    "restoration": false,
+    "pbcor": true
+   }
+  },
+  "r_norestore_mosaic": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 10,
+    "restoration": false,
+    "pbcor": true,
+    "gridder": "mosaic"
+   }
+  },
+  "r_outframe_bary": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 0,
+    "outframe": "BARY",
+    "restfreq": [
+     "1.0GHz",
+     "1.2GHz"
+    ]
+   }
+  },
+  "r_outframe_topo": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "hogbom",
+    "niter": 0,
+    "outframe": "TOPO",
+    "restfreq": [
+     "1.0GHz",
+     "1.2GHz"
+    ]
+   }
+  },
+  "r_mtmfs_topo": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "mfs",
+    "deconvolver": "mtmfs",
+    "niter": 0,
+    "nterms": 2,
+    "outframe": "TOPO"
+   }
+  },
+  "r_cube_restfreqs": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "specmode": "cube",
+    "nchan": 5,
+    "start": 0,
+    "width": 1,
+    "niter": 0,
+    "restfreq": [
+     "1.0GHz",
+     "1.1GHz"
+    ]
+   }
+  }
+ }
+}

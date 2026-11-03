@@ -212,7 +212,8 @@ pub(crate) fn admit_batches(
         + pointing
         + survey_bytes
         + keys * SURVEY_ENTRY_BYTES
-        + PackScratch::bound(layout);
+        + PackScratch::bound(layout)
+        + selection.predicate_bytes();
     tracing::info!(
         rows_per_block = rows,
         source_bytes = source,

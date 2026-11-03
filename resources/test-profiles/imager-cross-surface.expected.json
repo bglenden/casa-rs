@@ -42,8 +42,7 @@
       "uvrange": "<12km",
       "vis": ["VLASS.multi-spw.ms"],
       "weighting": "briggs",
-      "wprojplanes": 32,
-      "write_pb": true
+      "wprojplanes": 32
     }
   }
 }

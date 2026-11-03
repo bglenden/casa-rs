@@ -900,6 +900,37 @@ fn a_visibility_write_stays_within_its_admission() {
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 
+/// A cleaned run that saves its model as CASA's virtual model: once its
+/// products are published, the selection's models are cleared, its
+/// combinations read a chunk at a time, and the final model's grid formed
+/// and written into the grid image a plane at a time.
+#[test]
+fn a_virtual_model_stays_within_its_admission() {
+    if !alone("a_virtual_model_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), 4);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    for (imsize, workers) in [(256, 1), (1024, 4)] {
+        let savemodel = request(
+            &measurement_set,
+            &root.path().join(format!("virtual-{imsize}")),
+            imsize,
+            json!({ "deconvolver": "hogbom", "savemodel": "virtual" }),
+        );
+        check(
+            &mut breaches,
+            &format!("virtual model {imsize} px {workers} workers"),
+            &savemodel,
+            workers,
+            AMPLE,
+        );
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
 /// A start model (#841 Phase 6b) is read, zeroed where masked and
 /// regridded under its own admission before the initial pass, which then
 /// grids its residual with the model: on its own grid, regridded from

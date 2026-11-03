@@ -15,6 +15,11 @@ mod native;
 #[doc(hidden)]
 pub mod product_law;
 mod request;
+mod restart;
+#[doc(hidden)]
+pub mod restart_mask_law;
+#[doc(hidden)]
+pub mod restart_products_law;
 #[doc(hidden)]
 pub mod source_law;
 #[doc(hidden)]
@@ -22,8 +27,9 @@ pub mod start_model_law;
 #[doc(hidden)]
 pub mod store_law;
 mod tclean;
+mod virtual_model;
 
-pub use casa_imaging_deconvolution::CleanStop;
+pub use casa_imaging_deconvolution::{CleanStop, ResidualStatistics};
 pub use casa_imaging_model::{
     HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
 };
@@ -36,7 +42,7 @@ pub use casa_imaging_runtime::{
 pub use compile::{OutlierProblem, PrepareError};
 pub use request::{
     AwCfSource, AwProjection, BackendRequest, DataColumn, Deconvolver, Gridder, ImagingRequest,
-    InvalidRequest, NativeAwCachePolicy, SpecMode, UseMask, Weighting,
+    InvalidRequest, NativeAwCachePolicy, SaveModel, SpecMode, UseMask, Weighting,
 };
 pub use tclean::TcleanRefusal;
 
@@ -129,10 +135,16 @@ pub struct ImagingOutcome {
     pub problem: CompiledProblem,
     /// Ordered solve evidence captured before each major-cycle pass.
     pub minor_cycles: Vec<NativeMinorCycleOutcome>,
+    /// Statistics from the final minor-cycle preparation/convergence check.
+    /// Captured even when no minor cycle runs; absent for dirty imaging.
+    /// These in-memory scalars are not part of the persisted run summary.
+    pub final_residual_statistics: Option<ResidualStatistics>,
     /// Why cleaning stopped (CASA's `stopcode`); `None` for a dirty run or
     /// when a minor cycle cleaned nothing.
     pub stop: Option<CleanStop>,
-    /// Number of executed major passes, including the initial pass.
+    /// Number of executed major cycles: the initial pass when it formed the
+    /// residual (none when the run read it, `calcres=False`), and each pass
+    /// after it that formed a residual.
     pub major_cycle_count: usize,
     /// Total component count charged to the reported task/controller budget.
     pub total_minor_iterations: usize,
@@ -326,6 +338,15 @@ pub fn execute(
             Ok(outcome)
         }
         Err(error) => {
+            // A rejected continuation never replaces the previous successful record.
+            if request.tclean_restart
+                && matches!(
+                    &error,
+                    ApplicationDispatchError::Preparation(PrepareError::Restart { .. })
+                )
+            {
+                return Err(error);
+            }
             let status = match &error {
                 ApplicationDispatchError::Cancelled => RunStatus::Cancelled,
                 error => RunStatus::Failed {
@@ -396,7 +417,7 @@ fn compile_run(
         .map_err(ApplicationDispatchError::Request)?;
     casa_imaging_runtime::charge_process_caches(&context.host, &context.policy)
         .map_err(ApplicationDispatchError::Admission)?;
-    let resident = casa_imaging_runtime::admit(
+    let mut resident = casa_imaging_runtime::admit(
         &context.host,
         &context.policy,
         &casa_imaging_runtime::Demand {
@@ -409,6 +430,9 @@ fn compile_run(
         PrepareError::Admission(admission) => ApplicationDispatchError::Admission(admission),
         error => ApplicationDispatchError::Preparation(error),
     })?;
+    // The static restart-mask plan and its clone stay charged through all passes
+    // and publication; ordinary minor-cycle mask charges cover their derived masks.
+    resident.join(prepared.mask_resident);
     let observation = compile_observation(prepared.snapshot)
         .map_err(|error| ApplicationDispatchError::Preparation(error.into()))?;
     drop(prepared.survey);
@@ -436,8 +460,14 @@ fn compile_run(
         observation: prepared.observation,
         write_model_column: prepared.write_model_column,
         write_corrected_data: prepared.write_corrected_data,
+        virtual_model: prepared.virtual_model,
         masks: prepared.masks,
         start_model: prepared.start_model,
+        existing: prepared.existing,
+        forms: imaging::Forms {
+            psf: request.calcpsf,
+            residual: request.calcres,
+        },
         minor_cycle_image_response: prepared.minor_cycle_image_response,
     };
     Ok((problem, input, native, resident))

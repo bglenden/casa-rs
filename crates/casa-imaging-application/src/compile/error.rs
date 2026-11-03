@@ -20,6 +20,30 @@ use casa_types::measures::{
 /// action can cause is a bug and panics with the invariant it broke.
 #[derive(Debug, thiserror::Error)]
 pub enum PrepareError {
+    /// Existing products require CASA restart, which is not implemented yet.
+    #[error(
+        "existing image product {path:?}: this CASA restart configuration is not implemented yet (#944); previous products were preserved; choose a new imagename and, when applicable, supply the previous model with startmodel"
+    )]
+    ExistingImageProduct {
+        /// The occupied scientific product path.
+        path: PathBuf,
+    },
+    /// The existing image cannot be reused under the requested continuation.
+    #[error("cannot restart from {path:?}: {reason}; previous products were preserved (#944)")]
+    Restart {
+        /// Existing product.
+        path: PathBuf,
+        /// Incompatible request or image header.
+        reason: String,
+    },
+    /// The output namespace could not be inspected before a run.
+    #[error("cannot inspect output directory {path:?}: {source}")]
+    InspectOutputDirectory {
+        /// The directory containing the output prefix.
+        path: PathBuf,
+        /// The filesystem failure.
+        source: std::io::Error,
+    },
     /// The MeasurementSet, or one of its subtables or columns, could not be
     /// read.
     #[error(transparent)]
@@ -83,6 +107,26 @@ pub enum PrepareError {
     /// The selection holds no sample.
     #[error("selection resolved to no samples")]
     NoSelectedSamples,
+    /// A continuum `reffreq` with an `outframe` other than LSRK: CASA
+    /// converts the header's reference to LSRK for gridding and Taylor
+    /// expansion through the image's frame conversion, which casa-rs does
+    /// not yet do for a given reference.
+    #[error(
+        "reffreq with outframe={outframe:?} is not implemented by casa-rs yet (#980): give \
+         outframe='LSRK' or no reffreq"
+    )]
+    ReferenceFrequencyOutsideLsrk {
+        /// The requested output frame.
+        outframe: casa_types::measures::frequency::FrequencyRef,
+    },
+    /// A `timerange` selects an MSv4 processing set's times: CASA's time
+    /// grammar takes a partial time's defaults from the first MAIN row the
+    /// other selections select, which an MSv4 has no counterpart of.
+    #[error(
+        "timerange is not implemented for an MSv4 processing set (#980): CASA's time \
+         selection takes its defaults from MeasurementSet MAIN rows"
+    )]
+    TimeRangeWithoutMainRows,
     /// A `ddid` selection names a data description of an observation that
     /// has none: an MSv4 processing set.
     #[error("DATA_DESC_ID {ddid} is selected, but the observation has no data descriptions")]
@@ -116,14 +160,6 @@ pub enum PrepareError {
     InvalidDataDescription {
         /// The data description.
         ddid: i32,
-    },
-    /// A selector names a negative id.
-    #[error("the {selector} selection names a negative id ({value})")]
-    NegativeId {
-        /// The selector.
-        selector: &'static str,
-        /// The id it names.
-        value: i32,
     },
     /// `channel_start` and `channel_count` select no channel, or run past
     /// the window's last channel.
@@ -237,10 +273,12 @@ pub enum PrepareError {
     /// A source-frame cube needs an ephemeris phase centre.
     #[error("source-frame cube imaging requires a moving phase centre")]
     MovingPhaseCentre,
-    /// An analytic primary beam for a moving phase centre: CASA shifts each
-    /// field's beam with the source (`SynthesisImagerVi2::getMovingDirection`),
-    /// which casa-rs does not.
-    #[error("write_pb and pbcor need a fixed phase centre with the standard and wproject gridders")]
+    /// An analytic primary beam for a field that follows an ephemeris under
+    /// a fixed phase centre, where CASA's `makePrimaryBeam` tracks no beam.
+    #[error(
+        "write_pb and pbcor need a moving phase centre for a field that follows an ephemeris, \
+         with the standard and wproject gridders"
+    )]
     MovingAnalyticPrimaryBeam,
     /// An analytic primary beam for a field whose `PHASE_DIR` polynomial
     /// has a nonzero rate term: CASA evaluates it at the field's first
@@ -326,8 +364,11 @@ pub enum PrepareError {
         /// Its dish diameter.
         diameter_m: f64,
     },
-    /// Native aperture generation models the EVLA only.
-    #[error("native aperture generation requires an EVLA observation")]
+    /// Native aperture generation models the EVLA only; without the
+    /// aperture a VLA observation serves too.
+    #[error(
+        "native aperture generation requires an EVLA observation (or a VLA one with aterm=False)"
+    )]
     NativeAwTelescope,
     /// Native EVLA generation models 25 m dishes only.
     #[error("native EVLA generation requires the explicit homogeneous 25 m dish model")]

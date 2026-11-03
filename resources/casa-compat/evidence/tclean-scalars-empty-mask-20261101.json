@@ -1,0 +1,516 @@
+{
+  "schema_version": 1,
+  "record": "tclean-final-cycle-scalars-and-empty-mask",
+  "date": "2026-11-01",
+  "status": "18 scoped paired cases and full normal gate pass; whole-task equivalence unfinished",
+  "native_revision": "fd7b8e7b2d409c87fdb857f42c9126b99b5849ac",
+  "native_binary_sha256": "670a7153d5eaab910d91a0d2e4cc2ce4bfd00238437b8759d3ef78e618bfd29b",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "host": {
+    "chip": "Apple M4",
+    "physical_cores": 10,
+    "memory_bytes": 34359738368
+  },
+  "fftw": {
+    "static_library_directory": "/opt/homebrew/Cellar/fftw/3.3.11/lib",
+    "libraries": [
+      "fftw3f_threads",
+      "fftw3_threads",
+      "fftw3f",
+      "fftw3"
+    ],
+    "n1fv_symbol_count": 0
+  },
+  "scope": "Two scalar returns and six small standard Stokes-I MFS lifecycle cases on three backends; not all return values, all modes, or full metadata",
+  "comparison": "Recorded products: exact inventory/masks/finite; NRMS1e-3, sumwt5e-5, recorded unit/Stokes/frame/WCS/restfreq and beam limits as captured in raw comparator. No universal scientific tolerance or full metadata claim.",
+  "scalar_tolerance": {
+    "relative": 1e-06,
+    "absolute": 1e-08
+  },
+  "rows": [
+    {
+      "case": "scalar-returns-20261101/cpu64/iteration",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974842071533203,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.16471268236637115,
+      "casa_cyclethreshold_jy": 0.16471263766288757,
+      "products_passed": true,
+      "execution": {
+        "backend": "cpu",
+        "precision": "f64",
+        "workers": 1,
+        "capacity_bytes": 15062646784
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-20261101/final-cpu64/receipt.json",
+      "receipt_sha256": "859ecf99845f32bad1b20c25b1d063d52f974f458d1f8718971f341589ae0c0c"
+    },
+    {
+      "case": "scalar-returns-20261101/cpu64/threshold",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974842071533203,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.5831999182701111,
+      "casa_cyclethreshold_jy": 0.583200216293335,
+      "products_passed": true,
+      "execution": {
+        "backend": "cpu",
+        "precision": "f64",
+        "workers": 1,
+        "capacity_bytes": 15029682176
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-20261101/final-cpu64/receipt.json",
+      "receipt_sha256": "859ecf99845f32bad1b20c25b1d063d52f974f458d1f8718971f341589ae0c0c"
+    },
+    {
+      "case": "scalar-returns-20261101/cpu64/above",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974842071533203,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.800000011920929,
+      "casa_cyclethreshold_jy": 0.8000006079673767,
+      "products_passed": true,
+      "execution": {
+        "backend": "cpu",
+        "precision": "f64",
+        "workers": 1,
+        "capacity_bytes": 15075262464
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-20261101/final-cpu64/receipt.json",
+      "receipt_sha256": "859ecf99845f32bad1b20c25b1d063d52f974f458d1f8718971f341589ae0c0c"
+    },
+    {
+      "case": "scalar-returns-20261101/cpu64/empty",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974842071533203,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.800000011920929,
+      "casa_cyclethreshold_jy": 0.8000006079673767,
+      "products_passed": true,
+      "execution": {
+        "backend": "cpu",
+        "precision": "f64",
+        "workers": 1,
+        "capacity_bytes": 15100379136
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-20261101/final-cpu64/receipt.json",
+      "receipt_sha256": "859ecf99845f32bad1b20c25b1d063d52f974f458d1f8718971f341589ae0c0c"
+    },
+    {
+      "case": "scalar-returns-20261101/cpu32/iteration",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974843263626099,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.16471272706985474,
+      "casa_cyclethreshold_jy": 0.16471263766288757,
+      "products_passed": true,
+      "execution": {
+        "backend": "cpu",
+        "precision": "f32",
+        "workers": 1,
+        "capacity_bytes": 14023999488
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-20261101/final-cpu32/receipt.json",
+      "receipt_sha256": "1466222584d868c6fa7ddefe1716e93ba5f798a8b156de57fed9275747338071"
+    },
+    {
+      "case": "scalar-returns-20261101/cpu32/threshold",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974843263626099,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.5831999182701111,
+      "casa_cyclethreshold_jy": 0.583200216293335,
+      "products_passed": true,
+      "execution": {
+        "backend": "cpu",
+        "precision": "f32",
+        "workers": 1,
+        "capacity_bytes": 14051409920
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-20261101/final-cpu32/receipt.json",
+      "receipt_sha256": "1466222584d868c6fa7ddefe1716e93ba5f798a8b156de57fed9275747338071"
+    },
+    {
+      "case": "scalar-returns-20261101/cpu32/above",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974843263626099,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.800000011920929,
+      "casa_cyclethreshold_jy": 0.8000006079673767,
+      "products_passed": true,
+      "execution": {
+        "backend": "cpu",
+        "precision": "f32",
+        "workers": 1,
+        "capacity_bytes": 14044708864
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-20261101/final-cpu32/receipt.json",
+      "receipt_sha256": "1466222584d868c6fa7ddefe1716e93ba5f798a8b156de57fed9275747338071"
+    },
+    {
+      "case": "scalar-returns-20261101/cpu32/empty",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974843263626099,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.800000011920929,
+      "casa_cyclethreshold_jy": 0.8000006079673767,
+      "products_passed": true,
+      "execution": {
+        "backend": "cpu",
+        "precision": "f32",
+        "workers": 1,
+        "capacity_bytes": 14089027584
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-20261101/final-cpu32/receipt.json",
+      "receipt_sha256": "1466222584d868c6fa7ddefe1716e93ba5f798a8b156de57fed9275747338071"
+    },
+    {
+      "case": "scalar-returns-20261101/gpu32/iteration",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974843263626099,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.16471266746520996,
+      "casa_cyclethreshold_jy": 0.16471263766288757,
+      "products_passed": true,
+      "execution": {
+        "backend": "metal",
+        "precision": "f32",
+        "workers": 1,
+        "capacity_bytes": 15175761920
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-20261101/final-gpu32/receipt.json",
+      "receipt_sha256": "7451497dafcdb246afd4be93eeba563e075323229512e8175721aff7b3038aef"
+    },
+    {
+      "case": "scalar-returns-20261101/gpu32/threshold",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974843263626099,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.5831999182701111,
+      "casa_cyclethreshold_jy": 0.583200216293335,
+      "products_passed": true,
+      "execution": {
+        "backend": "metal",
+        "precision": "f32",
+        "workers": 1,
+        "capacity_bytes": 15150301184
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-20261101/final-gpu32/receipt.json",
+      "receipt_sha256": "7451497dafcdb246afd4be93eeba563e075323229512e8175721aff7b3038aef"
+    },
+    {
+      "case": "scalar-returns-20261101/gpu32/above",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974843263626099,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.800000011920929,
+      "casa_cyclethreshold_jy": 0.8000006079673767,
+      "products_passed": true,
+      "execution": {
+        "backend": "metal",
+        "precision": "f32",
+        "workers": 1,
+        "capacity_bytes": 15146385408
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-20261101/final-gpu32/receipt.json",
+      "receipt_sha256": "7451497dafcdb246afd4be93eeba563e075323229512e8175721aff7b3038aef"
+    },
+    {
+      "case": "scalar-returns-20261101/gpu32/empty",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974843263626099,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.800000011920929,
+      "casa_cyclethreshold_jy": 0.8000006079673767,
+      "products_passed": true,
+      "execution": {
+        "backend": "metal",
+        "precision": "f32",
+        "workers": 1,
+        "capacity_bytes": 15182151680
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-20261101/final-gpu32/receipt.json",
+      "receipt_sha256": "7451497dafcdb246afd4be93eeba563e075323229512e8175721aff7b3038aef"
+    },
+    {
+      "case": "scalar-returns-restart-20261101/cpu64/restart",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974842071533203,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.13341711461544037,
+      "casa_cyclethreshold_jy": 0.13341708481311798,
+      "products_passed": true,
+      "execution": {
+        "backend": "cpu",
+        "precision": "f64",
+        "workers": 1,
+        "capacity_bytes": 15183282176
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-restart-20261101/final-cpu64/receipt.json",
+      "receipt_sha256": "055b1955967317ed9b498790731425e85eb41a279c9f856ef8f9d398bb93acc5"
+    },
+    {
+      "case": "scalar-returns-restart-20261101/cpu32/restart",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974843263626099,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.13341714441776276,
+      "casa_cyclethreshold_jy": 0.13341708481311798,
+      "products_passed": true,
+      "execution": {
+        "backend": "cpu",
+        "precision": "f32",
+        "workers": 1,
+        "capacity_bytes": 13968506880
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-restart-20261101/final-cpu32/receipt.json",
+      "receipt_sha256": "54bd93f7c436772ffc21723ca2f3675d1dd2e537f0ba698920caebba8fba5794"
+    },
+    {
+      "case": "scalar-returns-restart-20261101/gpu32/restart",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974843263626099,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.13341711461544037,
+      "casa_cyclethreshold_jy": 0.13341708481311798,
+      "products_passed": true,
+      "execution": {
+        "backend": "metal",
+        "precision": "f32",
+        "workers": 1,
+        "capacity_bytes": 14817312768
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-restart-20261101/final-gpu32/receipt.json",
+      "receipt_sha256": "25569aa2e31ef632a3b72219ffb4e126d17fe7ac08bb7af8a8814f6ef55b9699"
+    },
+    {
+      "case": "scalar-returns-empty-restart-20261101/cpu64/restart",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974842071533203,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.2510479688644409,
+      "casa_cyclethreshold_jy": 0.25104817748069763,
+      "products_passed": true,
+      "execution": {
+        "backend": "cpu",
+        "precision": "f64",
+        "workers": 1,
+        "capacity_bytes": 15236399104
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-empty-restart-20261101/final-cpu64/receipt.json",
+      "receipt_sha256": "baa205ddeeba5e64f5bf2b786fc5f58cf2c6f4c1c2bf01541973635cd046bd97"
+    },
+    {
+      "case": "scalar-returns-empty-restart-20261101/cpu32/restart",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974843263626099,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.2510479688644409,
+      "casa_cyclethreshold_jy": 0.25104817748069763,
+      "products_passed": true,
+      "execution": {
+        "backend": "cpu",
+        "precision": "f32",
+        "workers": 1,
+        "capacity_bytes": 14848114688
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-empty-restart-20261101/final-cpu32/receipt.json",
+      "receipt_sha256": "38c7b35e3eb00e8a656176aaffb578c2088397effff069512ed8d7e4e77cd2ab"
+    },
+    {
+      "case": "scalar-returns-empty-restart-20261101/gpu32/restart",
+      "passed_scalar_keys": [
+        "maxpsfsidelobe",
+        "cyclethreshold"
+      ],
+      "exact_integer_keys": [
+        "iterdone",
+        "nmajordone",
+        "stopcode"
+      ],
+      "native_psf_sidelobe": 0.9974843263626099,
+      "casa_psf_sidelobe": 0.9974840879440308,
+      "native_cyclethreshold_jy": 0.25104793906211853,
+      "casa_cyclethreshold_jy": 0.25104817748069763,
+      "products_passed": true,
+      "execution": {
+        "backend": "metal",
+        "precision": "f32",
+        "workers": 1,
+        "capacity_bytes": 14675623936
+      },
+      "receipt": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/scalar-returns-empty-restart-20261101/final-gpu32/receipt.json",
+      "receipt_sha256": "058d49dbaba2b19c037bfee275ef68f8aa498e797bd65cae8878ddfbee32c1c5"
+    }
+  ],
+  "implementation": {
+    "scalars": "Capture already-computed final convergence statistics before exit; report CASA Float rounding for PSF sidelobe and raw automatic threshold, without global-threshold clamp",
+    "mask": "Accept correctly shaped all-false reprojected support; existing zero-mask controller stops without components, preserving an existing nonzero model",
+    "formats": "No change to persisted summaries, serialized ImagerRunReport, CASA signatures or provider bundle31",
+    "native_computation": "Rust only; no new image rereads, dynamic payloads or solver arithmetic"
+  },
+  "focused_checks": "6 scalar unit tests,13 mask/controller laws and10 production return/mask/restart tests pass; touched clippy and dependency checks pass",
+  "independent_review": "Separate-agent staged and actual-diff reviews have no outstanding findings; nonzero-model preservation suggestion added and passed",
+  "full_gate": "4698 workspace tests passed,45 skipped; doctests,workspace clippy,architecture/SPDX/fmt,21 CLI hosts,875 performance-tool tests/307 subtests",
+  "archive": {
+    "path": "/Volumes/home/casa-rs/tclean/20261031/scalar-returns-empty-mask-20261101.tar",
+    "bytes": 31488000,
+    "sha256": "73ed966f5947bad37e78ea842f6125a68dcd35768d91c9b51c9114433427aa6b",
+    "manifest_entries": 1937,
+    "manifest_sha256": "3da89ff74c205324541eaa408559a302d34e0535edb2fa53a190b758be13fe7a",
+    "verification": "All local TAR member bytes checked; copied NAS TAR reread SHA256 matches verified archive",
+    "excluded": "table.lock and running full-gate log; final log retained separately"
+  },
+  "visual_review": "Shared-scale fresh-empty CPU64 and seeded-empty Metal32 model/residual/mask plots inspected; raw comparison receipts retain all7 product checks",
+  "remaining": [
+    "Dirty residual and outside-mask return peaks",
+    "Seeded/restarted model flux and multi-plane summary values",
+    "Restart False numbering and false calc controls",
+    "Broader modes/selection, full metadata, representative/runtime-prediction and whole-task acceptance"
+  ],
+  "full_gate_nas": {
+    "source_revision": "fd7b8e7b2d409c87fdb857f42c9126b99b5849ac",
+    "path": "/Volumes/home/casa-rs/tclean/20261031/scalar-return-quick-20261101.log",
+    "sha256": "7c36c370f1e36681594b891f5c0093436b78e618582c1d3d87a9dab3f9a053b1",
+    "passed": "4698 workspace tests/45 skips; doctests,workspace clippy,architecture/SPDX/fmt,21 CLI hosts,875 performance-tool tests/307 subtests"
+  }
+}

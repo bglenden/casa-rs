@@ -1,0 +1,382 @@
+{
+  "casa_tasks": "6.7.6.14",
+  "casa_tools": "6.7.6-14",
+  "casars_revision": "5ad410a88eb9957e2a0de177218e766d89095d3a",
+  "parameters": {
+    "vis": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/accuracy-fixture/alma_ephemobj_icrs.ms",
+    "field": "J0006-0623",
+    "spw": "0",
+    "datacolumn": "data",
+    "imsize": [
+      64
+    ],
+    "cell": "0.1arcsec",
+    "niter": 0,
+    "weighting": "natural",
+    "pblimit": -0.1
+  },
+  "native_write_pb": false,
+  "casa_reference": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/accuracy-991-current/casa",
+  "field_id": 0,
+  "field_name": "J0006-0623",
+  "fixture_table_dat_sha256": "45c74d6f940e0c7cfbaa3b6237eb66220ddee8325240fa572cc4a237c4ea0b0b",
+  "command": "CASA Python -I /private/tmp/probe-tclean-accuracy-991.py",
+  "scope": "Diagnostic #991 compact-array MFS, native field-name selection, explicit native PB opt-out, small image; not a whole-task acceptance or timing benchmark",
+  "runs": {
+    "cpu64": {
+      "backend": "cpu",
+      "precision": "f64",
+      "workers": 1,
+      "members": [
+        "image.image",
+        "image.model",
+        "image.psf",
+        "image.residual",
+        "image.sumwt"
+      ],
+      "casa_members": [
+        "image.image",
+        "image.model",
+        "image.pb",
+        "image.psf",
+        "image.residual",
+        "image.sumwt"
+      ],
+      "products": {
+        "image.image": {
+          "nrms": 1.134130785029878e-07,
+          "mask_mismatch": 0,
+          "beam": [
+            [
+              7.748331,
+              4.386522,
+              -89.166939
+            ],
+            [
+              7.748331,
+              4.386522,
+              -89.166939
+            ]
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.model": {
+          "nrms": 0.0,
+          "mask_mismatch": 0,
+          "beam": [
+            null,
+            null
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.psf": {
+          "nrms": 8.353861312256547e-08,
+          "mask_mismatch": 0,
+          "beam": [
+            [
+              7.748331,
+              4.386522,
+              -89.166939
+            ],
+            [
+              7.748331,
+              4.386522,
+              -89.166939
+            ]
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.residual": {
+          "nrms": 1.134130785029878e-07,
+          "mask_mismatch": 0,
+          "beam": [
+            null,
+            null
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.sumwt": {
+          "nrms": 0.0,
+          "mask_mismatch": 0,
+          "beam": [
+            null,
+            null
+          ],
+          "nrms_within_1e_3": true,
+          "sumwt": [
+            1384922880.0,
+            1384922880.0
+          ]
+        }
+      }
+    },
+    "cpu32": {
+      "backend": "cpu",
+      "precision": "f32",
+      "workers": 1,
+      "members": [
+        "image.image",
+        "image.model",
+        "image.psf",
+        "image.residual",
+        "image.sumwt"
+      ],
+      "casa_members": [
+        "image.image",
+        "image.model",
+        "image.pb",
+        "image.psf",
+        "image.residual",
+        "image.sumwt"
+      ],
+      "products": {
+        "image.image": {
+          "nrms": 0.0001768597126648223,
+          "mask_mismatch": 0,
+          "beam": [
+            [
+              7.848378,
+              4.391733,
+              -89.115059
+            ],
+            [
+              7.748331,
+              4.386522,
+              -89.166939
+            ]
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.model": {
+          "nrms": 0.0,
+          "mask_mismatch": 0,
+          "beam": [
+            null,
+            null
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.psf": {
+          "nrms": 0.019186516562536768,
+          "mask_mismatch": 0,
+          "beam": [
+            [
+              7.848378,
+              4.391733,
+              -89.115059
+            ],
+            [
+              7.748331,
+              4.386522,
+              -89.166939
+            ]
+          ],
+          "nrms_within_1e_3": false
+        },
+        "image.residual": {
+          "nrms": 0.0001768597126648223,
+          "mask_mismatch": 0,
+          "beam": [
+            null,
+            null
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.sumwt": {
+          "nrms": 0.0,
+          "mask_mismatch": 0,
+          "beam": [
+            null,
+            null
+          ],
+          "nrms_within_1e_3": true,
+          "sumwt": [
+            1384922880.0,
+            1384922880.0
+          ]
+        }
+      }
+    },
+    "auto-a": {
+      "backend": "metal",
+      "precision": "f32",
+      "workers": 1,
+      "members": [
+        "image.image",
+        "image.model",
+        "image.psf",
+        "image.residual",
+        "image.sumwt"
+      ],
+      "casa_members": [
+        "image.image",
+        "image.model",
+        "image.pb",
+        "image.psf",
+        "image.residual",
+        "image.sumwt"
+      ],
+      "products": {
+        "image.image": {
+          "nrms": 0.0002206626409990428,
+          "mask_mismatch": 0,
+          "beam": [
+            [
+              7.845535,
+              4.392313,
+              -89.132263
+            ],
+            [
+              7.748331,
+              4.386522,
+              -89.166939
+            ]
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.model": {
+          "nrms": 0.0,
+          "mask_mismatch": 0,
+          "beam": [
+            null,
+            null
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.psf": {
+          "nrms": 0.01883764444713561,
+          "mask_mismatch": 0,
+          "beam": [
+            [
+              7.845535,
+              4.392313,
+              -89.132263
+            ],
+            [
+              7.748331,
+              4.386522,
+              -89.166939
+            ]
+          ],
+          "nrms_within_1e_3": false
+        },
+        "image.residual": {
+          "nrms": 0.0002206626409990428,
+          "mask_mismatch": 0,
+          "beam": [
+            null,
+            null
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.sumwt": {
+          "nrms": 0.0,
+          "mask_mismatch": 0,
+          "beam": [
+            null,
+            null
+          ],
+          "nrms_within_1e_3": true,
+          "sumwt": [
+            1384922880.0,
+            1384922880.0
+          ]
+        }
+      }
+    },
+    "auto-b": {
+      "backend": "metal",
+      "precision": "f32",
+      "workers": 1,
+      "members": [
+        "image.image",
+        "image.model",
+        "image.psf",
+        "image.residual",
+        "image.sumwt"
+      ],
+      "casa_members": [
+        "image.image",
+        "image.model",
+        "image.pb",
+        "image.psf",
+        "image.residual",
+        "image.sumwt"
+      ],
+      "products": {
+        "image.image": {
+          "nrms": 0.00021702477257202598,
+          "mask_mismatch": 0,
+          "beam": [
+            [
+              7.845531,
+              4.392314,
+              -89.132263
+            ],
+            [
+              7.748331,
+              4.386522,
+              -89.166939
+            ]
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.model": {
+          "nrms": 0.0,
+          "mask_mismatch": 0,
+          "beam": [
+            null,
+            null
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.psf": {
+          "nrms": 0.01883823280872512,
+          "mask_mismatch": 0,
+          "beam": [
+            [
+              7.845531,
+              4.392314,
+              -89.132263
+            ],
+            [
+              7.748331,
+              4.386522,
+              -89.166939
+            ]
+          ],
+          "nrms_within_1e_3": false
+        },
+        "image.residual": {
+          "nrms": 0.00021702477257202598,
+          "mask_mismatch": 0,
+          "beam": [
+            null,
+            null
+          ],
+          "nrms_within_1e_3": true
+        },
+        "image.sumwt": {
+          "nrms": 0.0,
+          "mask_mismatch": 0,
+          "beam": [
+            null,
+            null
+          ],
+          "nrms_within_1e_3": true,
+          "sumwt": [
+            1384922880.0,
+            1384922880.0
+          ]
+        }
+      }
+    }
+  },
+  "same_auto_repeat": {
+    "image.image": 2.075787328575779e-05,
+    "image.model": 0.0,
+    "image.psf": 1.6330918914929615e-06,
+    "image.residual": 2.075787328575779e-05,
+    "image.sumwt": 0.0
+  }
+}

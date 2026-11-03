@@ -54,11 +54,22 @@ pub(super) fn standard_primary_beam_model(
         .collect::<Vec<_>>()
         .as_slice()
     {
-        ["ALMA"] => homogeneous_dishes(
-            catalogue,
-            10.0..13.0,
-            AnalyticPrimaryBeamModel::CasaAlma12mAiry,
-        ),
+        ["ALMA"] => {
+            // SynthesisImager::makePBImage selects ACA for an ALMA-labelled
+            // observation whose first dish is smaller than 12 m.
+            if dish_diameters(catalogue)
+                .first()
+                .is_some_and(|diameter_m| *diameter_m < 12.0)
+            {
+                homogeneous_dishes(catalogue, 6.0..8.0, AnalyticPrimaryBeamModel::CasaAca7mAiry)
+            } else {
+                homogeneous_dishes(
+                    catalogue,
+                    10.0..13.0,
+                    AnalyticPrimaryBeamModel::CasaAlma12mAiry,
+                )
+            }
+        }
         ["ACA"] => homogeneous_dishes(catalogue, 6.0..8.0, AnalyticPrimaryBeamModel::CasaAca7mAiry),
         _ => analytic_primary_beam_model_for_telescopes(&telescopes),
     }
@@ -101,31 +112,41 @@ fn analytic_primary_beam_model_for_telescopes(
 
 /// The instrument response of a direction-dependent gridder; `None` for the
 /// others.
+///
+/// The mosaic's is the one `SynthesisImagerVi2::createMosFTMachine` gives
+/// `HetArrayConvFunc`: for ALMA and ACA, an Airy aperture per class of
+/// dish; for the EVLA, CASA's common EVLA beam for every antenna, whatever
+/// its dish (`PBMathInterface::COMMONPB`).
 pub(super) fn scientific_instrument_model(
     gridder: &Gridder,
     catalogue: &Catalogue,
 ) -> Result<Option<InstrumentModel>, PrepareError> {
+    let telescopes = telescopes(catalogue);
+    let all = |known: fn(&str) -> bool| {
+        !telescopes.is_empty() && telescopes.iter().all(|name| known(name))
+    };
     let (model, dishes): (_, fn(f64) -> bool) = match gridder {
-        Gridder::Awproject(_) => (InstrumentModel::CasaEvlaWidebandAwV1, |diameter| {
-            (diameter - 25.0).abs() < 1.0
-        }),
-        Gridder::Mosaic { .. } => (
+        Gridder::Awproject(_) if all(|name| matches!(name, "VLA" | "EVLA")) => {
+            (InstrumentModel::CasaEvlaWidebandAwV1, |diameter| {
+                (diameter - 25.0).abs() < 1.0
+            })
+        }
+        Gridder::Mosaic { .. } if all(AntennaResponseClass::casa_alma_aca_telescope) => (
             InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
             |diameter| AntennaResponseClass::casa_alma_aca(diameter).is_some(),
         ),
+        Gridder::Mosaic { .. } if all(AntennaResponseClass::casa_evla_telescope) => {
+            return Ok(Some(
+                InstrumentModel::CasaEvlaCommonInterferometricResponseV1,
+            ));
+        }
+        Gridder::Awproject(_) | Gridder::Mosaic { .. } => {
+            return Err(PrepareError::UnsupportedInstrument {
+                telescopes: telescopes.into_iter().collect(),
+            });
+        }
         Gridder::Standard { .. } | Gridder::Wproject { .. } => return Ok(None),
     };
-    let telescopes = telescopes(catalogue);
-    let supported = !telescopes.is_empty()
-        && telescopes.iter().all(|name| match gridder {
-            Gridder::Awproject(_) => matches!(name.as_str(), "VLA" | "EVLA"),
-            _ => AntennaResponseClass::casa_alma_aca_telescope(name),
-        });
-    if !supported {
-        return Err(PrepareError::UnsupportedInstrument {
-            telescopes: telescopes.into_iter().collect(),
-        });
-    }
     let diameters = dish_diameters(catalogue);
     if diameters.is_empty() {
         return Err(PrepareError::NoAntennaDishes);
@@ -143,7 +164,8 @@ pub(super) fn scientific_instrument_model(
 }
 
 /// Where each row points: the POINTING table under tclean `usepointing`
-/// (AW samples it at the visibility time, mosaic interpolates it); each
+/// (AW samples it at the visibility time, mosaic interpolates it, or
+/// takes each field's direction from a MeasurementSet without one); each
 /// row's FIELD direction for a mosaic or A-projection run without it
 /// (`usepointing=False`, the tclean default); the phase-tracking centre
 /// for a direction-independent run.
@@ -167,7 +189,7 @@ pub(super) fn pointing_centre_law(gridder: &Gridder) -> PointingCentreLaw {
             PointingTimeSampling::VisibilityTimeCentroid,
             PointingInterpolation::GreatCircleShortestArc,
             PointingExtrapolation::Reject,
-            MissingPointingPolicy::Reject,
+            MissingPointingPolicy::FieldCentreWithoutPointingTable,
         )),
         Gridder::Awproject(_) | Gridder::Mosaic { .. } => PointingCentreLaw::FieldCentre,
         Gridder::Standard { .. } | Gridder::Wproject { .. } => {
@@ -189,6 +211,10 @@ mod tests {
     fn aw(usepointing: bool) -> Gridder {
         Gridder::Awproject(AwProjection {
             wprojplanes: NonZeroUsize::new(32),
+            aterm: true,
+            psterm: false,
+            wbawp: true,
+            conjbeams: true,
             usepointing,
             normtype: ProductNormalization::FlatNoise,
             cf_resident_mb: Some(256),
@@ -219,6 +245,8 @@ mod tests {
         let mosaic = |usepointing| Gridder::Mosaic {
             usepointing,
             normtype: ProductNormalization::FlatNoise,
+            conjbeams: false,
+            mosweight: false,
         };
         assert!(matches!(
             pointing_centre_law(&Gridder::Standard {
@@ -242,7 +270,10 @@ mod tests {
             PointingInterpolation::GreatCircleShortestArc
         );
         assert_eq!(law.extrapolation(), PointingExtrapolation::Reject);
-        assert_eq!(law.missing(), MissingPointingPolicy::Reject);
+        assert_eq!(
+            law.missing(),
+            MissingPointingPolicy::FieldCentreWithoutPointingTable
+        );
     }
 
     #[test]

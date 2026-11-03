@@ -19,6 +19,8 @@ CASA behaviours casa-rs does not follow:
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
+[continuum `briggsabs` at robust 0 and noise 0](#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite),
+[`nsigma` with `fastnoise=False` and no mask](#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
 [an unflagged non-finite sample](#an-unflagged-non-finite-sample-turns-the-image-to-nan),
@@ -122,6 +124,11 @@ Coordinate behaviours casa-rs does not follow:
 [a tabular coordinate's subimage](#a-subimage-offsets-a-tabular-coordinates-world-values-instead-of-moving-its-table),
 [a FITS date's time scale](#importfits-reads-every-fits-date-as-utc),
 [`feather` on a transposed image](#feather-fails-on-an-image-whose-direction-is-not-on-its-first-two-axes).
+MeasurementSet selection behaviours casa-rs follows:
+[later `timerange` terms' defaults](#later-timerange-terms-take-their-defaults-from-row-0),
+[`FLAG_ROW` beside other selections](#the-timerange-defaults-ignore-flag_row-when-other-selections-are-set).
+MeasurementSet selection behaviours casa-rs does not follow:
+[the state a refused bracketed range leaves](#a-refused-bracketed-timerange-makes-later-ranges-edge-inclusive).
 
 ## AW-projection pairs the partner hand's visibility with the conjugate-baseline cell
 
@@ -258,6 +265,13 @@ parity work that surfaced this CASA-side issue.
 
 In the current CASA `tclean(..., deconvolver='hogbom')` path, `niter=1` appears able to commit
 two clean components inside a single minor cycle while still reporting `iterdone = 1`.
+
+Since provider contract 31 (owner approved 2026-10-31), casa-rs defaults its
+extra `hogbom_iteration_mode` option to `casa-inclusive` to reproduce this
+behavior. Explicit `strict` limits physical updates to the requested budget.
+Migrating an older profile warns when that option was omitted and adopts the
+inclusive default; explicit values are preserved. CASA's 92 parameter defaults
+are unchanged.
 
 The effect is not limited to the top-level `niter=1` case. Any CASA Hogbom
 minor-cycle call that enters `hclean` with a positive `cycleNiter` may commit
@@ -456,6 +470,30 @@ rule at the MeasurementSet uvw, as `VisImagingWeight` does
 (`the_standard_density_bins_the_measurement_set_uvw`). Cubes imaged at their
 own field centre agree with CASA either way; off-centre and multi-field cubes
 under a density weighting differ from CASA's weights by this mechanism.
+
+## Continuum `briggsabs` at robust 0 and noise 0 weighs every visibility infinite
+
+- Date noted: 2026-11-02
+- Status: CASA bug; casa-rs does not follow it (#980)
+- Affected code (CASA 6.7.6.14):
+  - `casatools/src/code/synthesis/ImagerObjects/SynthesisImagerVi2.cc`
+    (`weight`)
+  - `casatools/src/code/msvis/MSVis/VisImagingWeight.cc` (the
+    `VisibilityIterator2` constructor and `weightUniform`)
+
+Absolute Briggs weighting (`weighting='briggsabs'`, `rmode = "abs"`) divides
+each weight by `D·f² + d²` with `f² = robust²` and `d² = 2·noise²`. With
+`robust = 0` and `noise = 0` both vanish. For a cube with
+`perchanweightdensity`, `SynthesisImagerVi2::weight` refuses the pair
+("Absolute Briggs formula does not allow for robust 0 and estimated noise per
+visibility 0") before it builds the `BriggsCubeWeightor`; every other density
+(a continuum image, or a cube without `perchanweightdensity`) goes to
+`VisImagingWeight`, which has no such check, so `weightUniform` divides every
+weight by zero and the imaging weights are infinite.
+
+casa-rs refuses the pair in every mode, at the tclean reader (`noise`), the
+compiled weighting contract and the operator
+(`WeightingGeneration::absolute_density`).
 
 ## MultiTermFTNew forms Taylor imaging weights in single precision
 
@@ -2542,11 +2580,51 @@ image depends on the value and the baselines, and a small enough one does
 not. casa-rs refuses a `uvtaper` entry without a unit and asks for an angle
 or for wavelengths (`casa_imaging_application::ImagingRequest::uvtaper`).
 
+## `tclean` corrupts an absolute directory when numbering a restart
+
+- Date noted: 2026-10-31
+- Status: CASA bug; owner approved preserving the correct directory (#944).
+  Native `restart=False` numbering is still unfinished.
+- Affected build/code: CASA 6.7.6.14, casatasks
+  `private/imagerhelpers/input_parameters.py`, `incrementImageNameList`.
+
+With existing products and `restart=False`, CASA finds the next shared
+numbered image prefix. Its Python helper removes the first two characters
+of each directory with `dirnames[immod][2:]`, assuming a `./` prefix. For an
+absolute imagename under `/Volumes/`, this instead produces `olumes/` and
+fails to create the numbered PSF. Relative prefixes in the same probe
+correctly produce `_2` and `_3`. The exact build, parameters and failure
+are recorded on #944 and in the lifecycle receipt linked from the generated
+compatibility reference. The approved casa-rs target keeps the requested
+absolute directory; this decision is not evidence that restart is complete.
+
+## `tclean` cleans nothing with `nsigma`, `fastnoise=False` and no mask
+
+- Date noted: 2026-11-02
+- Status: CASA bug; casa-rs cleans the whole image, as CASA does with
+  `fastnoise=True` (#980)
+- Affected build/code: CASA 6.7.6.14, casatools
+  `synthesis/ImagerObjects/SIImageStore.cc` (`calcRobustRMS`) and
+  `SynthesisDeconvolver.cc` (`initMinorCycle`, `setupMask`)
+
+With `usemask='user'`, no `mask`, `nsigma>0` and `fastnoise=False`, the
+first `initMinorCycle` estimates the noise with
+`calcRobustImageStatistics(*residual(), *mask(), ...)`. `mask()` creates the
+`.mask` image there, filled with zeros. `setupMask` then finds an existing
+mask and keeps it ("Initializing to existing mask") instead of setting the
+whole image to 1, as it does when no mask exists. The run stops at once with
+the zero-mask stop code 7, an empty `.mask` and an empty model (CASA 6.7.6.14
+on `refim_twochan.ms`, `imsize=100`, `cell='8.0arcsec'`, `niter=300`,
+`nsigma=3`). With `fastnoise=True` the noise estimate never touches `mask()`
+and the whole image is cleaned. casa-rs cleans the whole image in both cases:
+without a mask its noise estimate is Chauvenet's over every valid pixel, as
+CASA's would be once the full mask existed.
+
 ## `tclean` seeds a Stokes I image from a Stokes Q start model
 
 - Date noted: 2026-10-28
-- Status: CASA bug; casa-rs refuses the start model (#841 Phase 6b, #970
-  review)
+- Status: CASA behavior retained with a warning (owner decision #980,
+  2026-10-31; supersedes #970's refusal)
 - Affected code: casatools `synthesis/ImagerObjects/SIImageStore.cc`
   (`setModelImageOne`, `regridToModelImage`) and casacore
   `images/Images/ImageRegrid.tcc`
@@ -2555,8 +2633,12 @@ or for wavelengths (`casa_imaging_application::ImagingRequest::uvtaper`).
 axes only. `ImageRegrid` copies the Stokes axis without comparing its
 coordinate, so a one-plane Stokes Q model seeds the model of a Stokes I run.
 Its pixels are then predicted, subtracted and restored as Stokes I. casa-rs
-requires the start model's Stokes to be the image's, plane for plane, a
-single plane included (`casa_imaging_application`'s `StartModel`).
+now matches this positional copy for equal-count Stokes axes and warns when
+the labels differ (`casa_imaging_application`'s `StartModel`). The owner
+requested matching CASA with a warning on 2026-10-31 (#980), replacing the
+earlier refusal. This is not a physical polarization conversion; published
+coordinates still describe the requested target image. Unequal-plane-count
+forms remain unassessed for equivalence.
 
 A degenerate spectral axis is replicated the same way: an MFS start model of
 one plane seeds the MFS plane at whatever frequency it is stated. That is
@@ -2803,6 +2885,58 @@ does not fit the output column's type is wrapped as a C cast does (a `Short`
 column of ...`, before the output is touched, rather than store a wrong
 number.
 
+## Later `timerange` terms take their defaults from row 0
+
+- Date noted: 2026-11-02
+- Status: CASA quirk casa-rs follows for parity (#980,
+  `casa-ms` `selection::time_expr`)
+- Affected code: casacore `ms/MSSel/MSTimeParse.cc` (`getDefaults`)
+
+A `timerange` time with missing fields (`09:00:00`, `*`, `2017/03/01`) takes
+them, and a single time's tolerance and a bracketed range's edge width take
+the `EXPOSURE`, from the "first logical row". `getDefaults` sets
+`firstLogicalRow = 0` and searches for the first logical row only while the
+static `defaultTimeComputed` is false, which its first call makes true. Every
+comma-separated term calls it once, so the first term reads the first logical
+row and every later term reads row 0. With `field='1'` on an MS whose FIELD 1
+rows start a day after row 0, CASA 6.7.6.14 selects `10:30:00.5` on FIELD 1's
+day in `10:30:00.5,10:40:00.5` but looks for `10:40:00.5` on row 0's day
+(`fields` cases of
+`resources/casa-compat/evidence/msselection-time-casa-20261102.json`).
+casa-rs resolves the terms the same way (`TimeSelectorDefaults`).
+
+## The `timerange` defaults ignore `FLAG_ROW` when other selections are set
+
+- Date noted: 2026-11-02
+- Status: CASA quirk casa-rs follows for parity (#980)
+- Affected code: casacore `ms/MSSel/MSTimeParse.cc` (`getDefaults`)
+
+`MSSelection` builds its time parser with `honourRowFlags` true. With no other
+selection expression, the first logical row is the first row whose `FLAG_ROW`
+is false. With one, `getDefaults` tests `FLAG_ROW` but both branches of the
+test read the other expressions' condition the same way, so the first logical
+row is the first row they select, flagged or not. casa-rs follows both
+(`msselection_first_logical_row`).
+
+## A refused bracketed `timerange` makes later ranges edge-inclusive
+
+- Date noted: 2026-11-02
+- Status: CASA bug casa-rs does not follow (#980)
+- Affected code: casacore `ms/MSSel/MSTimeGram.yy` (`brangetimeexpr`)
+
+The grammar keeps a bracketed range's state in the process globals
+`MSTimeEdgeInclusiveRange` and `MSTimeEdgeBuffer`, set when `[` (or `N[`) is
+read and cleared only when a range completes. A bracketed range that is
+refused (`[09:00:00]`, `10.25[09:00:00~08:00:00]`) leaves them set, so the
+next unbracketed range anywhere in the process is edge-inclusive with that
+width until a range completes. In CASA 6.7.6.14, `09:00:00~09:01:00` after
+`10.25[09:00:00~08:00:00]` selects 35 rows of a 2 s MS instead of 30, and
+`09:00:00.5+00:00:30` after `0.0[09:00:10~09:00:00]` loses both end rows
+(`bracket_state_leaks` in
+`resources/casa-compat/evidence/msselection-time-casa-20261102.json`, whose
+other cases each run after a completed range clears the state). casa-rs keeps
+no state between parses.
+
 ## `MSIter` keeps the previous window's receptor angles for a window without its own `FEED` row
 
 - Date noted: 2026-11-02
@@ -2827,3 +2961,53 @@ casa-rs reads an antenna and feed's rows in the window, else its rows for
 every window, and states no receptors where it has neither. Where `FEED`'s
 rows are all -1 or all name windows, which is how CASA's simulator, ALMA
 and casa-rs's MSv2 writer write it, the receptors are the same.
+
+## `spw` "no match" warnings refuse the expression
+
+- Date noted: 2026-11-02
+- Status: CASA behaviour casa-rs follows for parity (#980, `casa-ms`
+  `selection::spw_expr`)
+- Affected code: casacore `ms/MSSel/MSSSpwErrorHandler.h`,
+  `MSSelection.cc` (`initErrorHandler`, `setErrorHandler`)
+
+`MSSSpwErrorHandler` only logs its reports (`handleError` posts a `WARN`), so
+a `spw` term matching nothing (`0,7` on a 4-window MeasurementSet, an unknown
+name) looks meant to be a warning. But it does not override `clone()`, and
+`MSSelection` installs `mssEH->clone()`, a base `MSSelectionErrorHandler`,
+which throws: CASA 6.7.6.14 refuses `0,7` with "Spw Expression: No match
+found for 7," (`resources/casa-compat/evidence/msselection-spw-casa-20261102.json`).
+casa-rs refuses it too.
+
+## A `spw` frequency range with a negative step can loop forever
+
+- Date noted: 2026-11-02
+- Status: CASA bug casa-rs does not follow (#980)
+- Affected code: casacore `ms/MSSel/MSSpwIndex.cc` (`matchFrequencyRange`)
+
+A stepped window range `f0~f1^s` with `s < 0` steps by each window's least
+`CHAN_WIDTH`, in single precision. A window whose widths are negative then
+steps away from `f1` and never leaves the loop; a step too small to move a
+single-precision frequency stalls it. CASA 6.7.6.14's `ms.msselect` does not
+return for `4GHz~5GHz^-1MHz` on a MeasurementSet with a descending window
+(`not_returning` in the evidence file). casa-rs refuses such expressions.
+
+## `spw` channel quirks casa-rs follows
+
+- Date noted: 2026-11-02
+- Status: CASA quirks casa-rs follows for parity (#980)
+- Affected code: casacore `ms/MSSel/MSSpwIndex.cc`, `MSSpwParse.cc`,
+  `MSSpwGram.yy`
+
+A single window frequency (`1.4GHz`) matches a window within its largest
+*signed* `CHAN_WIDTH` of the window's midpoint, so never a window whose widths
+are negative. A channel range in hertz reads the channel order from the sign
+of the first `CHAN_WIDTH`, not from the frequencies. When a window's first
+frequency channel range finds no channel, `selectChannelsFromIDList` skips
+one range instead of the window's ranges, so the next window takes the
+skipped window's later ranges (`0~2:4.5GHz~4.55GHz;0~1` gives window 2 the
+ranges `0~1` and `-1~63`). In a window list, a frequency replaces the list
+but not its write position (`100GHz~101GHz;0` lists the matched windows, then
+window 0). `( ... )` skips `endOfCeremony`, so the expression keeps every MAIN
+row. All are in the evidence file; `casa-ms` reproduces them, and `tclean`
+refuses the parenthesized form and a window kept without channels, whose
+imaging in CASA is not established.

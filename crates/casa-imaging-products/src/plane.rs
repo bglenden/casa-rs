@@ -53,16 +53,19 @@ pub(crate) fn produce_plane_member(
     match member.role {
         ProductRole::Psf(casa_imaging_model::ProductTerm::Single)
         | ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(0)) => {
-            if valid {
-                let mut values = psf_real_plane(plane)?;
-                let peak = psf_peak(values.iter().copied())?;
-                for value in &mut values {
-                    *value = normalized_psf_value(*value, peak);
-                }
-                Ok(values)
-            } else {
-                Ok(vec![0.0; cells])
+            // `SIImageStore::normPSF` divides each plane by its own peak, or
+            // zeroes it when the peak is at most 1e-7, whatever the plane's
+            // `sumwt`: a Stokes plane no correlation feeds keeps the PSF its
+            // conversion gives it (Stokes I's).
+            let mut values = psf_real_plane(plane)?;
+            let peak = psf_peak(values.iter().copied())?;
+            if !psf_normalizes(peak) {
+                return Ok(vec![0.0; cells]);
             }
+            for value in &mut values {
+                *value = normalized_psf_value(*value, peak);
+            }
+            Ok(values)
         }
         ProductRole::Residual(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
@@ -286,6 +289,12 @@ fn required_normalization(member: &PlannedMember) -> ProductNormalization {
     member
         .normalization
         .expect("the product list normalizes residual, image and pbcor members")
+}
+
+/// Whether `SIImageStore::normPSF` divides a PSF plane by its `peak`
+/// rather than zeroing it: a Float peak above 1e-7.
+pub(crate) fn psf_normalizes(peak: f32) -> bool {
+    f64::from(peak) > casa_imaging_deconvolution::EMPTY_PLANE_SUM_WEIGHT
 }
 
 pub(crate) fn psf_real_plane(

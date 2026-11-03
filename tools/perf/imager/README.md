@@ -16,7 +16,9 @@ Their tests run with `scripts/test-perf-tools.sh`.
   one comparison receipt (see [Two-build comparison](#two-build-comparison)).
 - `scripts/bench-imager-vs-casa.sh`: compares Rust CLI wall times and stage
   medians with CASA `tclean` on the same MeasurementSet selection, and can keep
-  the final run's products for comparison.
+  the final run's products for comparison. It reads each run's phase timings
+  from `<imagename>.summary.json`, which it asks for with
+  `CASA_RS_IMAGER_RUN_SUMMARY=1`.
 - `stage_wave1_datasets.py` with `wave1_dataset_registry.json`: validates the
   simulated benchmark datasets, enforces the data-root policy, and writes
   source models, simulation requests and generated workload manifests.
@@ -148,7 +150,10 @@ which is Metal on macOS) and `gridprecision` (`auto`, `f32` or `f64`); a timing
 must name the backend and precision it ran with to be repeatable, and
 `bench-imager-vs-casa.sh` always passes them.
 
-Each run writes `<imagename>.summary.json` however it ends: its status, the
+With `CASA_RS_IMAGER_RUN_SUMMARY=1` in its environment (the benchmark
+scripts set it; CASA's tclean writes nothing beside its products, so by
+default neither does `casars-imager`), each run writes
+`<imagename>.summary.json` however it ends: its status, the
 memory capacity, workers, backend and resolved precision, the stop reason, the
 minor-cycle totals and the products published, and for each phase its wall
 time, resident high-water mark and `peak_reserved_bytes`.

@@ -326,7 +326,7 @@ impl<'a> MosaicSensitivity<'a> {
             return Err(ProductsError::GeneratedNonfinite);
         }
         if sum_weight != 1.0 {
-            residual = if f64::from(sum_weight) > 1.0e-7 {
+            residual = if casa_imaging_deconvolution::casa_divides_plane(f64::from(sum_weight)) {
                 residual / sum_weight
             } else {
                 0.0

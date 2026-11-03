@@ -90,10 +90,11 @@ impl Layout {
     }
 }
 
-/// Which samples of `batch` the selection images, into `keep`: those that
-/// are no padding (every flag set and every weight not finite, as the MSv2
-/// adapter pads and XRADIO's NaN cells read) and whose UV distance it
-/// selects. Fields and intents were selected by the request.
+/// Which samples of `batch` the selection images, into `keep`: those of a
+/// selected scan and baseline that are no padding (every flag set and every
+/// weight not finite, as the MSv2 adapter pads and XRADIO's NaN cells read)
+/// and whose UV distance it selects. Fields and intents were selected by the
+/// request.
 pub(super) fn select_samples(
     batch: &VisibilityBatch<'_>,
     selection: &PartitionSelection,
@@ -104,13 +105,20 @@ pub(super) fn select_samples(
     let weights = batch.group.weights.ok_or("the batch carries no weights")?;
     let uvw = batch.group.uvw.ok_or("the batch carries no UVW")?;
     keep.clear();
-    keep.extend((0..batch.samples()).map(|sample| {
-        let flags = flags.index_axis(ndarray::Axis(0), sample);
-        let weights = weights.index_axis(ndarray::Axis(0), sample);
-        let padding =
-            flags.iter().all(|flag| *flag) && weights.iter().all(|weight| !weight.is_finite());
-        !padding && selection.uv_holds(partition, uvw.metres_at(sample))
-    }));
+    let baselines = batch.samples_per_time();
+    for time in 0..batch.times() {
+        let scan_selected = selection.time_holds(batch, time)?;
+        keep.extend((time * baselines..(time + 1) * baselines).map(|sample| {
+            if !scan_selected || !selection.baseline_holds(batch.baselines[sample % baselines]) {
+                return false;
+            }
+            let flags = flags.index_axis(ndarray::Axis(0), sample);
+            let weights = weights.index_axis(ndarray::Axis(0), sample);
+            let padding =
+                flags.iter().all(|flag| *flag) && weights.iter().all(|weight| !weight.is_finite());
+            !padding && selection.uv_holds(partition, uvw.metres_at(sample))
+        }));
+    }
     Ok(())
 }
 

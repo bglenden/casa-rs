@@ -32,9 +32,6 @@ pub(super) fn read_header(path: &Path) -> Result<CellHeader, AwCatalogError> {
             format!("expected [nx, ny, 1, 1], got {shape:?}"),
         ));
     }
-    if shape[0] % 2 != 0 || shape[1] % 2 != 0 {
-        return Err(cache_error(path, "cell images must have even extents"));
-    }
     let coordinates = image.coordinates();
     let spectral = coordinates
         .find_coordinate(CoordinateType::Spectral)
@@ -245,13 +242,24 @@ pub(super) fn load_group(
     })
 }
 
-/// The dense cell of `planes` (each `[y][x]` with origin at `shape/2` and
-/// its own declared half support) at `half` taps each side: tap `k` at
-/// fine offset `off` reads pixel `origin + k·sampling + off`
-/// (`accumulateToGrid.inc`: `convOrigin + (Int)(sampling·ix + off)`), zero
-/// outside the plane and beyond the plane's own support (`AWVisResampler`
-/// takes the support per Mueller cell; the crop buffer around it is not
-/// part of the kernel).
+/// The pixel a cell's taps are read about (`AWVisResampler::DataToGrid`
+/// and `GridToData`'s `convOrigin`): `shape/2` when both extents are even,
+/// else `shape/2 + 1` on both axes. CASA's own crops are even
+/// (`AWConvFunc::resizeCF`), but caches older CASA wrote hold odd cells,
+/// centred and area-normalised at `shape/2`; CASA grids them one fine
+/// sample off that centre, and so does casa-rs.
+pub(super) fn convolution_origin(shape: [usize; 2]) -> [i64; 2] {
+    let odd = !(shape[0].is_multiple_of(2) && shape[1].is_multiple_of(2));
+    shape.map(|extent| (extent / 2 + usize::from(odd)) as i64)
+}
+
+/// The dense cell of `planes` (each `[y][x]` with its own declared half
+/// support) at `half` taps each side: tap `k` at fine offset `off` reads
+/// pixel `origin + k·sampling + off` about the plane's
+/// [`convolution_origin`] (`accumulateToGrid.inc`:
+/// `convOrigin + (Int)(sampling·ix + off)`), zero outside the plane and
+/// beyond the plane's own support (`AWVisResampler` takes the support per
+/// Mueller cell; the crop buffer around it is not part of the kernel).
 pub(super) fn dense_cell_padded(
     planes: &[(Vec<Complex32>, [usize; 2], [u16; 2])],
     half: [u16; 2],
@@ -267,7 +275,7 @@ pub(super) fn dense_cell_padded(
         for ox in 0..rows {
             let off_x = ox as i64 - fine_half;
             for (plane, shape, plane_half) in planes {
-                let origin = [(shape[0] / 2) as i64, (shape[1] / 2) as i64];
+                let origin = convolution_origin(*shape);
                 for iy in 0..sy {
                     let ky = iy as i64 - i64::from(half[1]);
                     let y = origin[1] + ky * i64::from(sampling) + off_y;

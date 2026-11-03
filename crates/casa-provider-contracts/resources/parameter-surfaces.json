@@ -8065,7 +8065,7 @@
     {
       "kind": "task",
       "id": "tclean",
-      "contract_version": 29,
+      "contract_version": 37,
       "display_name": "Tclean",
       "category": "Imaging",
       "summary": "Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.",
@@ -8123,7 +8123,7 @@
           "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "False ignores the selection parameters, as CASA's tclean does.",
+          "surface_note": "Selections apply with either selectdata value, as CASA's tclean does; unsupported selectors are still refused.",
           "projections": {
             "cli": {"flags": ["--selectdata"], "false_flags": ["--no-selectdata"]},
             "provider": {"field": "selectdata"},
@@ -8163,7 +8163,8 @@
         },
         {
           "name": "timerange",
-          "concept": {"id": "ms.selection.timerange", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.timerange", "semantic_revision": 2},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 2 corrects normalized validity distinctions by preserving exact selector text; revision-1 consumers remain unchanged."},
           "order": 4,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8173,8 +8174,7 @@
             "provider": {"field": "timerange"},
             "python": {"name": "timerange"},
             "presentation": {"label": "Time Range", "group": "Context", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "uvrange",
@@ -8193,7 +8193,8 @@
         },
         {
           "name": "antenna",
-          "concept": {"id": "ms.selection.antenna", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.antenna", "semantic_revision": 2},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet selection is unchanged. Revision 2 corrects normalized validity distinctions by preserving exact selector text; revision-1 consumers remain unchanged."},
           "order": 6,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8203,12 +8204,12 @@
             "provider": {"field": "antenna"},
             "python": {"name": "antenna"},
             "presentation": {"label": "Antenna", "group": "Context", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "scan",
-          "concept": {"id": "ms.selection.scan", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.scan", "semantic_revision": 2},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet ID is unchanged. Revision 2 corrects normalized validity distinctions by preserving exact selector text; revision-1 consumers remain unchanged."},
           "order": 7,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8219,11 +8220,12 @@
             "python": {"name": "scan"},
             "presentation": {"label": "Scan", "group": "Context", "advanced": true}
           },
-          "unimplemented": {"issue": 980}
+          "unimplemented_forms": {"issue": 980, "forms": "selector grammar beyond nonnegative numeric IDs, comma-separated lists and strictly ascending inclusive a~b ranges"}
         },
         {
           "name": "observation",
-          "concept": {"id": "ms.selection.observation", "semantic_revision": 1},
+          "concept": {"id": "ms.selection.observation", "semantic_revision": 2},
+          "reviewed_homonym": {"review_id": "#980", "reason": "The physical MeasurementSet ID is unchanged. Revision 2 corrects normalized validity distinctions by preserving exact selector text; revision-1 consumers remain unchanged."},
           "order": 8,
           "default": {"kind": "literal", "value": {"kind": "string", "value": ""}},
           "required_when": {"kind": "never"},
@@ -8234,7 +8236,7 @@
             "python": {"name": "observation"},
             "presentation": {"label": "Observation", "group": "Context", "advanced": true}
           },
-          "unimplemented": {"issue": 980}
+          "unimplemented_forms": {"issue": 980, "forms": "selector grammar beyond nonnegative numeric IDs, comma-separated lists and strictly ascending inclusive a~b ranges"}
         },
         {
           "name": "intent",
@@ -8395,8 +8397,7 @@
             "provider": {"field": "reffreq"},
             "python": {"name": "reffreq"},
             "presentation": {"label": "Reference Frequency", "group": "Stages", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "nchan",
@@ -8570,7 +8571,7 @@
           "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "-1 derives the W planes from the selected W range; awproject takes CASA's 32-plane EVLA cache.",
+          "surface_note": "-1 derives the W planes from the selected W range with wproject; awproject takes a positive count (one images co-planar), which a native EVLA cache generates and an imported CASA cache already holds.",
           "projections": {
             "cli": {"flags": ["--wprojplanes"], "metavar": "N"},
             "provider": {"field": "wprojplanes", "adapter": "identity"},
@@ -8626,7 +8627,7 @@
           "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another aterm is refused.",
+          "surface_note": "awproject reads it as CASA does: a native EVLA cache generates its cells without the aperture when False (and then without wideband cells, and for a VLA observation too); an imported CASA cache holds the cells its run made. aterm=False with psterm=False is refused, as CASA refuses it. Other gridders ignore it.",
           "projections": {
             "cli": {"flags": ["--aterm"], "false_flags": ["--no-aterm"]},
             "provider": {"field": "aterm"},
@@ -8641,7 +8642,7 @@
           "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another psterm is refused.",
+          "surface_note": "awproject reads it as CASA does: a native EVLA cache generates its cells with the prolate spheroidal when True; an imported CASA cache holds the cells its run made. Other gridders ignore it.",
           "projections": {
             "cli": {"flags": ["--psterm"], "false_flags": ["--no-psterm"]},
             "provider": {"field": "psterm"},
@@ -8656,7 +8657,7 @@
           "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another wbawp is refused.",
+          "surface_note": "awproject reads it as CASA does: a native EVLA cache generates cells at each selected window's frequency when True (with the aperture), else at the image reference frequency alone; an imported CASA cache holds the cells its run made. Other gridders ignore it.",
           "projections": {
             "cli": {"flags": ["--wbawp"], "false_flags": ["--no-wbawp"]},
             "provider": {"field": "wbawp"},
@@ -8671,7 +8672,7 @@
           "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another conjbeams is refused.",
+          "surface_note": "awproject grids each sample with the cell nearest its conjugate frequency when True, else its own, and a native EVLA cache weighs with the beam there; the mosaic grids with conjugate beams on an image of one plane. Other gridders ignore it.",
           "projections": {
             "cli": {"flags": ["--conjbeams"], "false_flags": ["--no-conjbeams"]},
             "provider": {"field": "conjbeams"},
@@ -8887,8 +8888,7 @@
             "provider": {"field": "restoration"},
             "python": {"name": "restoration"},
             "presentation": {"label": "Restoration", "group": "Stages", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "restoringbeam",
@@ -8972,8 +8972,7 @@
             "provider": {"field": "noise"},
             "python": {"name": "noise"},
             "presentation": {"label": "Briggs-abs Noise", "group": "Stages", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "equals", "parameter": "weighting", "value": {"kind": "string", "value": "briggsabs"}}}
+          }
         },
         {
           "name": "npixels",
@@ -8987,8 +8986,7 @@
             "provider": {"field": "npixels"},
             "python": {"name": "npixels"},
             "presentation": {"label": "Weighting Pixels", "group": "Stages", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "not", "predicate": {"kind": "equals", "parameter": "weighting", "value": {"kind": "string", "value": "natural"}}}}
+          }
         },
         {
           "name": "uvtaper",
@@ -9275,8 +9273,7 @@
             "provider": {"field": "smoothfactor"},
             "python": {"name": "smoothfactor"},
             "presentation": {"label": "Smooth Factor", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "equals", "parameter": "usemask", "value": {"kind": "string", "value": "auto-multithresh"}}}
+          }
         },
         {
           "name": "minbeamfrac",
@@ -9304,8 +9301,7 @@
             "provider": {"field": "cutthreshold"},
             "python": {"name": "cutthreshold"},
             "presentation": {"label": "Cut Threshold", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "equals", "parameter": "usemask", "value": {"kind": "string", "value": "auto-multithresh"}}}
+          }
         },
         {
           "name": "growiterations",
@@ -9333,8 +9329,7 @@
             "provider": {"field": "dogrowprune"},
             "python": {"name": "dogrowprune"},
             "presentation": {"label": "Grow Prune", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "equals", "parameter": "usemask", "value": {"kind": "string", "value": "auto-multithresh"}}}
+          }
         },
         {
           "name": "minpercentchange",
@@ -9348,8 +9343,7 @@
             "provider": {"field": "minpercentchange"},
             "python": {"name": "minpercentchange"},
             "presentation": {"label": "Min Percent Change", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "equals", "parameter": "usemask", "value": {"kind": "string", "value": "auto-multithresh"}}}
+          }
         },
         {
           "name": "verbose",
@@ -9363,8 +9357,7 @@
             "provider": {"field": "verbose"},
             "python": {"name": "verbose"},
             "presentation": {"label": "Verbose", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 980, "applies_when": {"kind": "equals", "parameter": "usemask", "value": {"kind": "string", "value": "auto-multithresh"}}}
+          }
         },
         {
           "name": "fastnoise",
@@ -9378,8 +9371,7 @@
             "provider": {"field": "fastnoise"},
             "python": {"name": "fastnoise"},
             "presentation": {"label": "Fast Noise", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "restart",
@@ -9388,14 +9380,13 @@
           "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "casa-rs overwrites existing products: it never restarts from them (#944).",
+          "surface_note": "restart=true continues on an earlier run's products at imagename on the same grid, as CASA's SIImageStore opens them: the model (every Taylor term, cube channel and Stokes plane) is the start model, a CLEAN mask is reused when no new mask is given, and with calcpsf=false or calcres=false the PSF, sums of weights and residual are read rather than formed. restart=false selects the next single-main-image namespace using CASA filename numbering. Refused (#944, #980): continuing outlier fields or another deconvolver family's products, a new user mask or auto-multithresh over an existing CLEAN mask when cleaning, a CLEAN mask whose planes differ, and calcpsf=false or calcres=false with facets, mosaic, A-projection or outlier fields, or with no earlier PSF (calcpsf) or residual to clean (calcres with niter > 0).",
           "projections": {
             "cli": {"flags": ["--restart"], "false_flags": ["--no-restart"]},
             "provider": {"field": "restart"},
             "python": {"name": "restart"},
             "presentation": {"label": "Restart", "group": "Products", "advanced": true}
-          },
-          "unimplemented": {"issue": 944}
+          }
         },
         {
           "name": "savemodel",
@@ -9423,8 +9414,7 @@
             "provider": {"field": "calcres"},
             "python": {"name": "calcres"},
             "presentation": {"label": "Calculate Residual", "group": "Stages", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "calcpsf",
@@ -9438,8 +9428,7 @@
             "provider": {"field": "calcpsf"},
             "python": {"name": "calcpsf"},
             "presentation": {"label": "Calculate PSF", "group": "Stages", "advanced": true}
-          },
-          "unimplemented": {"issue": 980}
+          }
         },
         {
           "name": "psfcutoff",
@@ -9515,7 +9504,7 @@
           "name": "hogbom_iteration_mode",
           "concept": {"id": "parameter.hogbom_iteration_mode", "semantic_revision": 1},
           "order": 95,
-          "default": {"kind": "literal", "value": {"kind": "string", "value": "strict"}},
+          "default": {"kind": "literal", "value": {"kind": "string", "value": "casa-inclusive"}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
@@ -9529,7 +9518,7 @@
           "name": "write_pb",
           "concept": {"id": "parameter.write_pb", "semantic_revision": 1},
           "order": 96,
-          "default": {"kind": "literal", "value": {"kind": "bool", "value": false}},
+          "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
           "projections": {
@@ -9826,6 +9815,60 @@
             {"kind": "set", "parameter": "conjbeams", "value": {"kind": "bool", "value": true}, "when": {"kind": "equals", "parameter": "gridder", "value": {"kind": "string", "value": "awproject"}}}
           ],
           "changed_defaults": ["imsize", "cell", "cycleniter", "nterms", "perchanweightdensity"]
+        },
+        {
+          "from_contract": 29,
+          "to_contract": 30,
+          "steps": [],
+          "changed_defaults": ["write_pb"]
+        },
+        {
+          "from_contract": 30,
+          "to_contract": 31,
+          "steps": [],
+          "changed_defaults": ["hogbom_iteration_mode"]
+        },
+        {
+          "from_contract": 31,
+          "to_contract": 32,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 32,
+          "to_contract": 33,
+          "steps": [
+            {"kind": "replace_value", "parameter": "scan", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
+            {"kind": "replace_value", "parameter": "observation", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
+          ],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 33,
+          "to_contract": 34,
+          "steps": [
+            {"kind": "replace_value", "parameter": "antenna", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}},
+            {"kind": "replace_value", "parameter": "timerange", "from": {"kind": "string", "value": "none"}, "to": {"kind": "string", "value": ""}}
+          ],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 34,
+          "to_contract": 35,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 35,
+          "to_contract": 36,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 36,
+          "to_contract": 37,
+          "steps": [],
+          "changed_defaults": []
         }
       ]
     },

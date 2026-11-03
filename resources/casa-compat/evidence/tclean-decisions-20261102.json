@@ -1,0 +1,55 @@
+{
+  "schema": "tclean-evidence-receipt/1",
+  "title": "Owner decisions of 2026-11-02: scan/observation activation and no summary sidecar",
+  "work_issue": 980,
+  "date": "2026-11-02",
+  "decisions": {
+    "scan_observation": "Approved: activate the prepared provider 32->33 contract change (tclean contract 33; fingerprint 20b8efdf4cbfc9f19fd3c0191a6a6dcba7111e91461603b67b2c826b0baeb9f9, as proposed). Implemented in 1b54421.",
+    "summary_sidecar": "Declined: a tclean run writes only image products, as CASA's does. casars-imager writes <imagename>.summary.json only when CASA_RS_IMAGER_RUN_SUMMARY=1 (set by the benchmark scripts). Implemented in 64aed47."
+  },
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14",
+    "casa_source_tag": "6.7.6.14",
+    "casa_source_commit": "9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2"
+  },
+  "native_revision": "719b105477b2076591bf4672a2f63a1a89450dd4",
+  "native_code_revision": "64aed474310ce48d6f900ebfb2f1d6f3b4146b54",
+  "binary_sha256": "3a495835b3debbd3f4fa28c73151d4715e40562e06703057cc1e5e817730f320",
+  "host": {
+    "name": "bg-mac-mini",
+    "os": "macOS 27.0.1",
+    "cpu": "Apple M2",
+    "rustc": "1.99.0 (b940084d7 2026-09-28)",
+    "python": "casars package installed editable into a Python 3.14.1 venv; CASA's own Python runs the driver",
+    "fftw": "Homebrew /opt/homebrew/Cellar/fftw/3.3.11/lib static; correctness comparisons only, no timing claims"
+  },
+  "scan_observation": {
+    "driver": "tools/casa-compat/tclean_scan_observation_replay.py",
+    "route": "public Python: casars.tasks.tclean(**kwargs) in a separate interpreter, CASARS_IMAGER_BIN naming the binary above, CASA_RS_IMAGER_RUN_SUMMARY unset",
+    "inputs": "NAS casa-rs/tclean/20261031/scan-observation-engine-20261101.tar (SHA256 recorded in tclean-scan-observation-engine-20261101.json): input.ms (52,650 rows; four coincident fields, two observations, two scans each), CASA's oracle-science products and its three oracle-grammar receipts",
+    "limits": "exact image-product inventory, masks and finite support; NRMS <= 1e-3, .sumwt within 5e-5 of CASA's peak; WCS, rest frequency, units, Stokes and frames; beam axes 1e-3, position angle 0.01 deg; exact iterdone/nmajordone/stopcode; maxpsfsidelobe and cyclethreshold 1e-6 relative plus 1e-8 absolute. Grammar: refused by casa-rs exactly when CASA refused, with no image written; CASA's product inventory otherwise",
+    "results": {
+      "cpu-f64": "36/36: 13 science (worst NRMS image 1.8e-7, residual 2.6e-7, psf 1.7e-7, model 8.7e-8, pb 0), 23 grammar (20 refusals, 3 accepted incl. padded IDs)",
+      "cpu-f32": "36/36: 13 science (worst NRMS psf 1.4e-6, residual 1.3e-6, image 1.2e-6), 23 grammar",
+      "gpu-f32": "36/36 on Metal: 13 science (worst NRMS psf 1.4e-6, residual 1.3e-6, image 1.3e-6), 23 grammar"
+    },
+    "clean_conjunction": "scan 1 and observation 1, niter 10: iterdone 10, nmajordone 2, stopcode 1 on every backend; maxpsfsidelobe equals CASA's 0.185397669672966; cyclethreshold CASA 0.05784747377038002 vs cpu-f64 0.057847484946250916, cpu-f32 0.05784749612212181, gpu-f32 0.057847488671541214, all within the limit. The two f32 raw failures recorded at 291e107 (0.05784754455089569) no longer occur.",
+    "refusal": "A refused selector raises casars.TaskExecutionError (\"tclean failed: imaging application preparation failed: invalid input: ...\") and writes no image; CASA raises RuntimeError from selectData()",
+    "sidecar": "Each science folder holds image products and the driver's stderr.log only"
+  },
+  "handoff_replay": {
+    "driver": "tools/casa-compat/tclean_cloud_replay.py (exact image-product inventory)",
+    "inputs": "as resources/casa-compat/evidence/tclean-cloud-continuation-20261102.json",
+    "result": "6/6 cases pass products, counts and both selected scalars with an exact image-directory inventory; each native folder holds products plus the driver's request.json, stdout.json and stderr.log, and no .summary.json"
+  },
+  "linux": "Cloud container at 64aed47: cargo nextest -p casa-provider-contracts -p casa-task-runtime -p casa-imaging-application -p casars-imager -p casars-python: 554 passed, 21 skipped; clippy -D warnings on the touched crates; parameter history, generated reference and Python wrapper checks pass.",
+  "archive": {
+    "nas_share_relative": "casa-rs/tclean/20261102/tclean-decisions-20261102.tar",
+    "bytes": 205546496,
+    "members": 4698,
+    "sha256": "d4eb14106391e0f27e0f34633638b7f7f411d0b4579df11c9674bcb76361e9b0",
+    "verified": "shasum reread on the NAS"
+  },
+  "limits": "Standard single-term Stokes I MFS on one fixture; scan comparison grammar (for example >1), antenna, timerange, multi-MS and the wider #980 gaps remain open. No numerical waiver is requested or implied."
+}

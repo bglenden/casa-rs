@@ -5,8 +5,10 @@
 //! `Mode::Weight` places every sample's weight taps at the uv origin
 //! (`CpuBackend`'s gridding, the Metal records), so a sample's contribution
 //! is fixed by its kernel cell, plane, spectral factor, pointing gradient
-//! and the sign of its w, and scales with its weights alone. Samples that
-//! agree on those five add the same taps scaled by their weights: summing
+//! and the sign of its w, and, for a mosaic sample whose support overruns
+//! the grid, by the taps its support keeps on it ([`Reach`]); it scales
+//! with its weights alone. Samples that agree on those add the same taps
+//! scaled by their weights: summing
 //! their weights in f64 first and gridding each group once gives the same
 //! image, to rounding, for a lookup and an add per sample rather than a
 //! kernel stamp.
@@ -29,7 +31,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use casa_imaging_operator::{CfKey, Placement, SampleBlock, SampleBuffer};
+use casa_imaging_operator::{
+    CellBox, CfKey, ConvolutionFunctionSet, GridEdge, GridGeometry, Mode, Placement, Reach,
+    SampleBlock, SampleBuffer,
+};
 use num_complex::Complex32;
 
 /// Groups an owner's table holds before it grids them and starts again: a
@@ -44,10 +49,11 @@ const MAX_POL: usize = 4;
 /// weights: every input `Mode::Weight` reads but the weights.
 ///
 /// Both backends locate the weight taps at the uv origin, so the sample's
-/// `u` and `v` are not read. Only the sign of `w` is read (the Mueller table
-/// and the tap conjugation), and `phase` and `prediction_w_positive` are
-/// read only by prediction. Floats are kept as their bits, so two samples
-/// share a group only when their contributions are the same bits.
+/// `u` and `v` are read only for the taps a clipping set keeps
+/// (`clipped`). Only the sign of `w` is read (the Mueller table and the tap
+/// conjugation), and `phase` and `prediction_w_positive` are read only by
+/// prediction. Floats are kept as their bits, so two samples share a group
+/// only when their contributions are the same bits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Contribution {
     cf: CfKey,
@@ -55,25 +61,34 @@ struct Contribution {
     spectral: u32,
     gradient: [u32; 2],
     w_positive: bool,
+    /// The cells a mosaic sample whose support overruns the grid keeps
+    /// (`Reach::Clipped`).
+    clipped: Option<CellBox>,
 }
 
 impl Contribution {
-    fn of(placement: &Placement) -> Self {
+    fn of(
+        placement: &Placement,
+        (cf, geometry): (&dyn ConvolutionFunctionSet, &GridGeometry),
+    ) -> Self {
         Self {
             cf: placement.cf,
             plane: placement.plane,
             spectral: placement.spectral.to_bits(),
             gradient: placement.gradient.map(f32::to_bits),
             w_positive: placement.w > 0.0,
+            clipped: weight_cells(placement, cf, geometry),
         }
     }
 
-    /// A placement with this contribution: at the uv origin, as
-    /// `Mode::Weight` grids every sample, with a w of the group's sign.
-    fn placement(self) -> Placement {
+    /// A placement with this contribution: at `uv` (a sample of the group's,
+    /// whose support fixes the taps a clipping set keeps; any for the
+    /// others, which place the taps at the uv origin), with a w of the
+    /// group's sign.
+    fn placement(self, uv: [f64; 2]) -> Placement {
         Placement {
-            u: 0.0,
-            v: 0.0,
+            u: uv[0],
+            v: uv[1],
             w: if self.w_positive { 1.0 } else { -1.0 },
             prediction_w_positive: self.w_positive,
             phase: 0.0,
@@ -82,6 +97,34 @@ impl Contribution {
             cf: self.cf,
             gradient: self.gradient.map(f32::from_bits),
         }
+    }
+}
+
+/// The cells `placement`'s weight taps keep under a set that clips
+/// supports to the grid, when its support overruns it; `None` for every
+/// other placement and set.
+fn weight_cells(
+    placement: &Placement,
+    cf: &dyn ConvolutionFunctionSet,
+    geometry: &GridGeometry,
+) -> Option<CellBox> {
+    if cf.grid_edge() == GridEdge::Whole {
+        return None;
+    }
+    let half = cf
+        .weight_half_support(placement.cf)
+        .expect("a set that clips has weight cells");
+    let oversampling = cf.gridding_oversampling(placement.cf);
+    let origin = geometry.locate(0.0, 0.0, oversampling);
+    match Reach::of(
+        cf,
+        geometry,
+        (Mode::Weight, placement),
+        origin,
+        (half, oversampling),
+    ) {
+        Reach::Clipped { cells, .. } => Some(cells),
+        Reach::Whole | Reach::Off => None,
     }
 }
 
@@ -117,10 +160,14 @@ impl GroupCount {
     }
 
     /// Whether `placement` starts a group that [`WeightSums::add`] would
-    /// grid: its contribution is not among those held since the last time
-    /// the table filled.
-    pub(in crate::pass) fn starts(&mut self, placement: &Placement) -> bool {
-        let key = Contribution::of(placement);
+    /// grid for `cf` on `geometry`: its contribution is not among those
+    /// held since the last time the table filled.
+    pub(in crate::pass) fn starts(
+        &mut self,
+        placement: &Placement,
+        operator: (&dyn ConvolutionFunctionSet, &GridGeometry),
+    ) -> bool {
+        let key = Contribution::of(placement, operator);
         if self.last == Some(key) {
             return false;
         }
@@ -147,7 +194,8 @@ pub(in crate::pass) struct WeightSums {
     npol: usize,
     capacity: usize,
     index: HashMap<Contribution, usize>,
-    groups: Vec<Contribution>,
+    /// Each group's contribution and the uv of its first placement.
+    groups: Vec<(Contribution, [f64; 2])>,
     /// `npol` weights per group.
     sums: Vec<f64>,
     /// The groups as placements, for the backend.
@@ -190,7 +238,9 @@ impl WeightSums {
     pub(in crate::pass) fn bytes(npol: usize, capacity: usize) -> u64 {
         let buckets = (capacity * 8).div_ceil(7).next_power_of_two().max(4);
         let index = buckets * (size_of::<(Contribution, usize)>() + 1) + 16;
-        (index + capacity * size_of::<Contribution>() + capacity * npol * size_of::<f64>()) as u64
+        (index
+            + capacity * size_of::<(Contribution, [f64; 2])>()
+            + capacity * npol * size_of::<f64>()) as u64
             + SampleBuffer::bytes(npol, capacity)
     }
 
@@ -201,17 +251,18 @@ impl WeightSums {
         let buckets = (index * 8).div_ceil(7).next_power_of_two().max(4);
         (buckets * (size_of::<(Contribution, usize)>() + 1)
             + 16
-            + self.groups.capacity() * size_of::<Contribution>()
+            + self.groups.capacity() * size_of::<(Contribution, [f64; 2])>()
             + self.sums.capacity() * size_of::<f64>()) as u64
             + self.buffer.capacity_bytes()
     }
 
-    /// Add the weights of every placement of `block` to its group, gridding
-    /// the groups through `grid` first whenever a new group finds the
-    /// table full.
+    /// Add the weights of every placement of `block` to its group for
+    /// `operator`'s set and grid, gridding the groups through `grid` first
+    /// whenever a new group finds the table full.
     pub(in crate::pass) fn add<E>(
         &mut self,
         block: &SampleBlock<'_>,
+        operator: (&dyn ConvolutionFunctionSet, &GridGeometry),
         grid: &mut dyn FnMut(&SampleBlock<'_>) -> Result<(), E>,
     ) -> Result<(), E> {
         debug_assert_eq!(block.npol, self.npol, "the table's correlations");
@@ -220,7 +271,7 @@ impl WeightSums {
         // a group almost always: look the hash up only when it changes.
         let mut last: Option<(Contribution, usize)> = None;
         for (index, placement) in block.placements.iter().enumerate() {
-            let key = Contribution::of(placement);
+            let key = Contribution::of(placement, operator);
             let group = match last {
                 Some((held, group)) if held == key => group,
                 _ => {
@@ -232,7 +283,7 @@ impl WeightSums {
                             }
                             let group = self.groups.len();
                             self.index.insert(key, group);
-                            self.groups.push(key);
+                            self.groups.push((key, [placement.u, placement.v]));
                             self.sums.resize(self.sums.len() + self.npol, 0.0);
                             group
                         }
@@ -261,13 +312,16 @@ impl WeightSums {
         self.buffer.clear();
         let values = [Complex32::default(); MAX_POL];
         let mut weights = [0.0_f32; MAX_POL];
-        for (group, key) in self.groups.iter().enumerate() {
+        for (group, (key, uv)) in self.groups.iter().enumerate() {
             let sums = &self.sums[group * self.npol..(group + 1) * self.npol];
             for (weight, sum) in weights.iter_mut().zip(sums) {
                 *weight = *sum as f32;
             }
-            self.buffer
-                .push(key.placement(), &values[..self.npol], &weights[..self.npol]);
+            self.buffer.push(
+                key.placement(*uv),
+                &values[..self.npol],
+                &weights[..self.npol],
+            );
         }
         self.totals[1] += self.groups.len() as u64;
         self.totals[2] += 1;
@@ -336,15 +390,22 @@ mod tests {
         for placement in variants.iter().chain([&same]) {
             buffer.push(*placement, &[Complex32::default(); 2], &[1.5, 2.5]);
         }
+        let operator = spheroidal_operator();
+        let set = (operator.cf(), operator.geometry());
         let mut sums = WeightSums::new(2, 16);
-        sums.add(&buffer.block(), &mut |_: &SampleBlock<'_>| Ok::<_, ()>(()))
-            .expect("add");
+        sums.add(&buffer.block(), set, &mut |_: &SampleBlock<'_>| {
+            Ok::<_, ()>(())
+        })
+        .expect("add");
         let groups = flushed(&mut sums);
         assert_eq!(groups.len(), variants.len());
         assert_eq!(groups[0].1, [3.0, 5.0], "the base merged with its twin");
         for (group, variant) in groups.iter().zip(&variants).skip(1) {
             assert_eq!(group.1, [1.5, 2.5]);
-            assert_eq!(Contribution::of(&group.0), Contribution::of(variant));
+            assert_eq!(
+                Contribution::of(&group.0, set),
+                Contribution::of(variant, set)
+            );
         }
         assert!(flushed(&mut sums).is_empty(), "a flush empties the table");
     }
@@ -371,10 +432,48 @@ mod tests {
             total += block.weights.iter().map(|w| f64::from(*w)).sum::<f64>();
             Ok::<_, ()>(())
         };
-        sums.add(&buffer.block(), &mut grid).expect("add");
+        let operator = spheroidal_operator();
+        sums.add(
+            &buffer.block(),
+            (operator.cf(), operator.geometry()),
+            &mut grid,
+        )
+        .expect("add");
         sums.flush(&mut grid).expect("flush");
         assert!(grids > 1, "the table filled and gridded early");
         assert_eq!(total, 64.0);
+    }
+
+    /// The spheroidal set on a padded 64² grid, which clips no support.
+    fn spheroidal_operator() -> casa_imaging_operator::MeasurementOperator {
+        use casa_imaging_model::PolarizationCoordinate;
+        use casa_imaging_operator::{
+            Basis, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
+            PaddingFactor, PolarizationRouting, Spheroidal,
+        };
+        use casa_types::Correlation;
+        let geometry = GridGeometry::new(
+            ImageExtent {
+                shape: [64, 64],
+                increment_rad: [-1.0e-5, 1.0e-5],
+                reference_pixel: [32, 32],
+            },
+            GridPadding::CasaComposite(PaddingFactor::TCLEAN),
+        )
+        .expect("geometry");
+        let routing = PolarizationRouting::compile(
+            &[Correlation::XX, Correlation::YY],
+            &[PolarizationCoordinate::StokesI],
+        )
+        .expect("routing");
+        let cf = Spheroidal::new(&geometry, &routing);
+        MeasurementOperator::new(
+            geometry,
+            Basis::Constant,
+            routing,
+            Box::new(cf),
+            GridPrecision::F64,
+        )
     }
 
     /// The ALMA 12 m mosaic set on a 64² grid, on a two-term Taylor basis,
@@ -385,7 +484,7 @@ mod tests {
         use casa_imaging_model::PolarizationCoordinate;
         use casa_imaging_operator::{
             AiryDish, Basis, GridGeometry, GridPadding, ImageExtent, MeasurementOperator, MosaicPb,
-            MosaicRules, MosaicWindow, PolarizationRouting,
+            MosaicRules, MosaicWindow, PolarizationRouting, PrimaryBeam,
         };
         use casa_types::Correlation;
         let geometry = GridGeometry::new(
@@ -408,7 +507,7 @@ mod tests {
             channel_width_hz: 1.0e6,
             selected_frequencies_hz: vec![1.0e11],
         };
-        let dishes = [AiryDish::casa_alma(12.0, &geometry)];
+        let dishes = [PrimaryBeam::from(AiryDish::casa_alma(12.0, &geometry))];
         let cf = MosaicPb::new(
             MosaicRules::Tclean,
             &geometry,
@@ -506,7 +605,8 @@ mod tests {
             grid(&samples.block()).expect("grid");
         } else {
             let mut sums = WeightSums::new(2, WEIGHT_GROUPS);
-            sums.add(&samples.block(), &mut grid).expect("add");
+            sums.add(&samples.block(), (cf, operator.geometry()), &mut grid)
+                .expect("add");
             sums.flush(&mut grid).expect("flush");
         }
         let images = operator.finish(acc).expect("finish");
@@ -566,8 +666,8 @@ mod tests {
         let each_f32 = relative(&weight_image(&f32_operator, &samples, true), &reference);
         assert!(summed_f32 <= 1.0e-6, "summed on f32 grids: {summed_f32}");
         assert!(
-            each_f32 > 10.0 * summed_f32,
-            "per sample on f32 grids drifts: {each_f32} against {summed_f32}"
+            each_f32 <= 1.0e-6,
+            "compensated per-sample f32 grids: {each_f32}"
         );
     }
 
@@ -903,7 +1003,8 @@ mod tests {
             }
             Some(capacity) => {
                 let mut sums = WeightSums::new(samples.block().npol, capacity);
-                sums.add(&samples.block(), &mut grid).expect("add");
+                sums.add(&samples.block(), (cf, operator.geometry()), &mut grid)
+                    .expect("add");
                 sums.flush(&mut grid).expect("flush");
                 sums.totals()[2]
             }

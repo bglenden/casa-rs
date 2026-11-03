@@ -239,6 +239,18 @@ impl GridGeometry {
             && location.y + hy < self.grid_shape[1] as i64
     }
 
+    /// Whether a kernel with `half_support` taps on each side of the anchor
+    /// reaches the padded grid at all ([`crate::GridEdge::Clipped`]).
+    #[must_use]
+    pub fn reaches(&self, location: CellLocation, half_support: [u16; 2]) -> bool {
+        let hx = i64::from(half_support[0]);
+        let hy = i64::from(half_support[1]);
+        location.x + hx >= 0
+            && location.x - hx < self.grid_shape[0] as i64
+            && location.y + hy >= 0
+            && location.y - hy < self.grid_shape[1] as i64
+    }
+
     /// The pointing phase gradient in radians per grid cell `[g_x, g_y]`
     /// of a pointing `offset_rad` (direction cosines `[Δl, Δm]` along the
     /// image axes) from the image centre: CASA's `pixFieldDir` per
@@ -357,6 +369,20 @@ mod tests {
         let sample = geometry.locate(-0.6 * cell, 0.0, 100);
         assert_eq!(sample.x, 39);
         assert_eq!(sample.ox, 10);
+    }
+
+    #[test]
+    fn a_clipped_support_reaches_the_grid_with_one_tap() {
+        let geometry = geometry(64, 64);
+        let [nx, ny] = geometry.grid_shape().map(|n| n as i64);
+        let at = |x, y| CellLocation { x, y, ox: 0, oy: 0 };
+        // `onmosgrid`: a support whose last tap is the grid's first cell
+        // reaches it; one cell further does not.
+        assert!(geometry.reaches(at(-3, 10), [3, 3]));
+        assert!(!geometry.reaches(at(-4, 10), [3, 3]));
+        assert!(geometry.reaches(at(10, ny + 2), [3, 3]));
+        assert!(!geometry.reaches(at(10, ny + 3), [3, 3]));
+        assert!(geometry.reaches(at(nx + 2, -3), [3, 3]));
     }
 
     #[test]

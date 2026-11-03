@@ -11,7 +11,8 @@
 //! the paraboloid, so off axis the two agree only to several per cent;
 //! T1.5 `refim_mawproject` carries the CASA parity. A two-window track
 //! checks that a native cache generated for another SPW selection is
-//! regenerated, not reused (#735, #741).
+//! regenerated, not reused (#735, #741), and that tclean's `conjbeams`,
+//! `wbawp` and `wprojplanes` reach the cells (#980).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -431,6 +432,54 @@ fn a_native_cache_reused_across_an_spw_selection_change_gives_a_fresh_caches_pro
         "A images both windows"
     );
     assert_same_products(&reused, &fresh);
+}
+
+/// tclean's AW terms reach the native cells and their lookup (#980). With
+/// cells at each window's frequency, `conjbeams` grids each window with the
+/// other's beam and weighs with the conjugate pair, so the products differ;
+/// at the reference frequency alone (`wbawp=False`) every row takes the one
+/// cell whatever `conjbeams` says (`AWConvFunc::makeFreqValList`), and the
+/// products agree. A co-planar run (`wprojplanes=1`) makes one plane.
+#[test]
+fn aw_terms_select_the_native_cells_tclean_names() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let dirty = |name: &str, terms: Value| {
+        let mut controls =
+            cached_clean("0,1", &observation.scratch(&format!("{name}-cf")), &surface);
+        controls["niter"] = json!(0);
+        for (term, value) in terms.as_object().expect("terms") {
+            controls[term] = value.clone();
+        }
+        observation.image(name, controls).1
+    };
+    let conjugate = dirty("aw-conjugate", json!({ "conjbeams": true }));
+    let direct = dirty("aw-direct", json!({ "conjbeams": false }));
+    assert_ne!(
+        conjugate.get(".pb").values(),
+        direct.get(".pb").values(),
+        "conjbeams changes the wideband weight cells"
+    );
+    let narrow = |name, conjbeams| dirty(name, json!({ "wbawp": false, "conjbeams": conjbeams }));
+    assert_same_products(
+        &narrow("aw-narrow-conjugate", true),
+        &narrow("aw-narrow-direct", false),
+    );
+    let co_planar = observation.scratch("aw-co-planar-cf");
+    let mut controls = cached_clean("0,1", &co_planar, &surface);
+    controls["niter"] = json!(0);
+    controls["wprojplanes"] = json!(1);
+    observation.image("aw-co-planar", controls);
+    // Two windows' cells, one plane, two Mueller elements, imaging and
+    // weight images, beside the manifest and the lock.
+    assert_eq!(
+        entries(&co_planar)
+            .iter()
+            .filter(|name| name.starts_with("CFS_") || name.starts_with("WTCFS_"))
+            .count(),
+        2 * 2 * 2
+    );
 }
 
 /// Under `usepointing` each row's antenna pointing and its AW pointing

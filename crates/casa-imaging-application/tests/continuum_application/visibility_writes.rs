@@ -244,7 +244,7 @@ fn dirty_continuum_residual_persistence_is_independent_of_model_writeback() {
         &root.path().join("dirty-persisted-continuum-residual"),
         json!({ "niter": 0, "save_continuum_residual": true }),
     );
-    assert!(!imaging.savemodel);
+    assert_eq!(imaging.savemodel, casa_imaging_application::SaveModel::None);
 
     let result = execute_writing(&imaging);
     assert_eq!(result.major_cycle_count, 1);

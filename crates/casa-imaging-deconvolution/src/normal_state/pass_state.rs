@@ -122,14 +122,15 @@ impl PassNormalState {
     /// A residual refresh of `previous`, with `previous`'s imaging weights:
     /// the PSF, `sumwt` and validity carry over; every residual plane must be
     /// appended again, and [`Self::finish`] requires the refresh to have
-    /// placed the samples `previous` placed.
+    /// placed the samples `previous` placed, when a pass placed them (a
+    /// state read from products placed none).
     pub(crate) fn refresh(
         problem: &CompiledProblem,
         previous: FinalNormalState,
         storage: NormalStoragePlan,
     ) -> Result<Self, NormalStateError> {
         let mut state = Self::initial(problem, storage)?;
-        state.refreshed_samples = Some(previous.sample_count());
+        state.refreshed_samples = Some(previous.sample_count()).filter(|&samples| samples > 0);
         match previous.primitives() {
             NormalStatePrimitives::ChannelLocal(domains) => {
                 for (target, domain) in state.domains.iter_mut().zip(domains.iter()) {
@@ -216,6 +217,13 @@ impl PassNormalState {
         }
     }
 
+    /// The completed state of images read rather than gridded, and the
+    /// samples it stands for: those of the state it refreshed, or none.
+    pub(crate) fn finish_read(mut self) -> Result<(NormalStatePrimitives, u64), NormalStateError> {
+        let samples = self.refreshed_samples.take().unwrap_or(0);
+        Ok((self.finish(samples)?, samples))
+    }
+
     /// The completed state of a pass that placed `samples`. Every domain's
     /// images must be complete, and a refresh must have formed every
     /// residual again and placed the samples the refreshed state placed.
@@ -285,7 +293,11 @@ impl PassNormalState {
         {
             return Err(NormalStateError::InvalidSlab);
         }
-        let validity = sum_weights.iter().map(|weight| validity(*weight)).collect();
+        let validity = sum_weights
+            .iter()
+            .zip(&published_sum_weights)
+            .map(|(weight, published)| validity(*weight, *published))
+            .collect();
         Ok(SpectralDomainPrimitives::new(
             domain,
             self.roles[domain].clone(),
@@ -364,7 +376,8 @@ impl PassNormalState {
         };
         let validity = sum_weights[..polarizations]
             .iter()
-            .map(|weight| validity(*weight))
+            .zip(&published_sum_weights[..polarizations])
+            .map(|(weight, published)| validity(*weight, *published))
             .collect();
         Ok(SpectralDomainPrimitives::new(
             domain,
@@ -405,9 +418,11 @@ fn all_finite(images: &PassImages) -> bool {
 }
 
 /// A plane whose accumulated weight is zero is unmapped whether or not
-/// samples reached it: nothing downstream distinguishes the two cases.
-fn validity(sum_weight: f64) -> SpectralChannelValidity {
-    if sum_weight > 0.0 {
+/// samples reached it: nothing downstream distinguishes the two cases. So
+/// is a plane whose published `.sumwt` is at most CASA's empty-plane bound,
+/// which CASA zeroes rather than divides ([`super::casa_divides_plane`]).
+fn validity(sum_weight: f64, published_sum_weight: f64) -> SpectralChannelValidity {
+    if sum_weight > 0.0 && super::casa_divides_plane(published_sum_weight) {
         SpectralChannelValidity::Valid
     } else {
         SpectralChannelValidity::Unmapped

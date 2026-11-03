@@ -436,8 +436,12 @@ impl PlannedContinuumGeneration {
                 | ProductBeamRule::Restoring(RestoringBeamPolicy::None)
                 | ProductBeamRule::Metadata(RestoringBeamPolicy::None) => 0,
                 ProductBeamRule::Fitted => fitted / domains,
-                ProductBeamRule::Restoring(RestoringBeamPolicy::Common)
-                | ProductBeamRule::Metadata(RestoringBeamPolicy::Common) => 1,
+                ProductBeamRule::Restoring(
+                    RestoringBeamPolicy::Common | RestoringBeamPolicy::Fixed(_),
+                )
+                | ProductBeamRule::Metadata(
+                    RestoringBeamPolicy::Common | RestoringBeamPolicy::Fixed(_),
+                ) => 1,
                 _ => restoring / domains,
             };
             let beam_bytes = bytes_for::<Option<RestoringBeam>>(beams, "member beams")?;
@@ -620,7 +624,8 @@ struct TaylorParts {
     /// family, and the normal solve.
     transient: u64,
     /// The restoring kernel and one FFT convolution's workspace, when the
-    /// products restore.
+    /// products restore, and a plane more when a given restoring beam
+    /// rescales the residuals.
     restoration: Option<u64>,
 }
 
@@ -690,18 +695,28 @@ impl TaylorParts {
             size_of::<f64>() as u64,
             "Taylor solve bytes",
         )?;
-        let restoration = if shapes.problem.products().restoring_beam() != RestoringBeamPolicy::None
-        {
-            Some(checked_add(
-                checked_mul(cells, size_of::<f32>() as u64, "Taylor restoring kernel")?,
-                fft_convolution_workspace_bytes(shape)?,
-                "Taylor convolution scratch",
-            )?)
-        } else {
-            None
+        let plane = checked_mul(cells, size_of::<f32>() as u64, "Taylor plane bytes")?;
+        let restoration = match shapes.problem.products().restoring_beam() {
+            RestoringBeamPolicy::None => None,
+            policy => {
+                // A given beam first brings each term's residual to its
+                // resolution: the smoothing kernel, then the rescaled
+                // residual, lives beside the restoring kernel and one
+                // convolution's workspace.
+                let kernels = if matches!(policy, RestoringBeamPolicy::Fixed(_)) {
+                    2
+                } else {
+                    1
+                };
+                Some(checked_add(
+                    checked_mul(plane, kernels, "Taylor restoring kernels")?,
+                    fft_convolution_workspace_bytes(shape)?,
+                    "Taylor convolution scratch",
+                )?)
+            }
         };
         Ok(Self {
-            plane: checked_mul(cells, size_of::<f32>() as u64, "Taylor plane bytes")?,
+            plane,
             terms,
             moments,
             retained,

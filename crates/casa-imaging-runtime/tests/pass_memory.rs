@@ -26,8 +26,9 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_imaging_operator::{
-    Basis, GridPrecision, MeasurementOperator, ModeSet, PlaneRange, SpectralAxis, SpectralKernel,
-    SpectralResampler, WeightingGeneration,
+    Basis, CfKey, GridBackend, GridPrecision, MeasurementOperator, Mode, ModeSet, Placement,
+    PlaneRange, SampleBuffer, SpectralAxis, SpectralKernel, SpectralResampler, WeightingGeneration,
+    Work,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BlockPredictor, BoundedSource, CHUNK_PLACEMENTS, Cancel, DeviceNoise,
@@ -246,6 +247,113 @@ fn the_row_work_pass_holds_at_most_its_admission_over_unequal_domains() {
              against {admitted} admitted"
         );
     }
+}
+
+/// #991: count actual allocations of the lazy CPU correction, independently
+/// of its Vec length. Inputs, grids and backend scratch exist before each
+/// measured operation. The surrounding clean window releases its fixtures.
+#[test]
+fn cpu_f32_corrections_allocate_once_for_spread_and_host_merge() {
+    use casa_imaging_operator::{CpuBackend, GridAccumulator};
+    if !alone("cpu_f32_corrections_allocate_once_for_spread_and_host_merge") {
+        return;
+    }
+    let operator = operator_of(32, GridPrecision::F32, Basis::Constant);
+    let layout = operator.accumulator_layout(PlaneRange::single(0), None, ModeSet::DATA);
+    let expected = GridAccumulator::cpu_correction_bytes(layout.cells() as u64, GridPrecision::F32);
+    let mut input = SampleBuffer::with_capacity(2, 1);
+    input.push(
+        Placement {
+            u: 0.0,
+            v: 0.0,
+            w: 0.0,
+            phase: 0.0,
+            plane: 0,
+            spectral: 0.0,
+            cf: CfKey::default(),
+            gradient: [0.0; 2],
+            prediction_w_positive: false,
+        },
+        &[Complex32::new(0.3, -0.2); 2],
+        &[1.0; 2],
+    );
+    let mut backend = CpuBackend::new();
+    let apply = |backend: &mut CpuBackend, acc: &mut GridAccumulator| {
+        backend
+            .apply(
+                &input.block(),
+                operator.cf(),
+                Work::Grid {
+                    mode: Mode::Data,
+                    acc,
+                },
+            )
+            .expect("spread");
+    };
+    let mut warm = GridAccumulator::new(layout.clone(), GridPrecision::F64);
+    apply(&mut backend, &mut warm);
+    let (_, (first, reuse)) = held_in_a_clean_window("CPU correction spread", || {
+        let mut acc = GridAccumulator::new(layout.clone(), GridPrecision::F32);
+        let first = counted_operation(|| apply(&mut backend, &mut acc));
+        let reuse = counted_operation(|| {
+            acc.reset();
+            apply(&mut backend, &mut acc);
+            apply(&mut backend, &mut acc);
+        });
+        drop(acc);
+        (first, reuse)
+    });
+    assert_eq!(
+        first,
+        (expected, expected),
+        "only one correction allocation"
+    );
+    assert_eq!(
+        reuse,
+        (0, 0),
+        "reset and repeated apply retain the allocation"
+    );
+
+    let mut source = GridAccumulator::new(layout.clone(), GridPrecision::F32);
+    apply(&mut backend, &mut source);
+    let (_, (first, reuse, invalid)) = held_in_a_clean_window("CPU correction host merge", || {
+        let mut target = GridAccumulator::new(layout.clone(), GridPrecision::F32);
+        let invalid = counted_operation(|| {
+            assert!(target.merge_from(&warm).is_err(), "precision mismatch");
+        });
+        let first = counted_operation(|| target.merge_from(&source).expect("merge"));
+        let reuse = counted_operation(|| {
+            target.reset();
+            target.merge_from(&source).expect("merge after reset");
+            target.merge_from(&source).expect("merge again");
+        });
+        drop(target);
+        (first, reuse, invalid)
+    });
+    assert_eq!(
+        first,
+        (expected, expected),
+        "host merge allocates one correction"
+    );
+    assert_eq!(
+        reuse,
+        (0, 0),
+        "reset and repeated merge retain the allocation"
+    );
+    assert_eq!(invalid, (0, 0), "invalid merge allocates nothing");
+}
+
+/// Isolate an operation's peak and retained heap inside a clean window.
+/// Resetting the peak keeps the already-live fixture in the outer window's
+/// baseline; the inner result excludes that fixture's earlier allocation.
+fn counted_operation(run: impl FnOnce()) -> (u64, u64) {
+    let baseline = LIVE.load(Ordering::Relaxed);
+    PEAK.store(baseline, Ordering::Relaxed);
+    run();
+    (
+        PEAK.load(Ordering::Relaxed) - baseline,
+        LIVE.load(Ordering::Relaxed) - baseline,
+    )
 }
 
 #[test]
@@ -501,6 +609,81 @@ fn held_in_a_clean_window<T>(label: &str, mut run: impl FnMut() -> T) -> (u64, T
     }
 }
 
+/// The native spread backend's actual host allocations and live device
+/// buffers fit its charged ring/kernel storage. Enough samples fill the ring.
+#[test]
+fn a_metal_spread_backend_holds_at_most_its_charged_scratch() {
+    if !alone("a_metal_spread_backend_holds_at_most_its_charged_scratch") {
+        return;
+    }
+    if !casa_imaging_metal::available() {
+        eprintln!("skipped: no Metal device");
+        return;
+    }
+    let operator = operator_of(32, GridPrecision::F32, Basis::Constant);
+    let npol = operator.polarization().correlations().len();
+    let mut buffer = SampleBuffer::with_capacity(npol, 1 << 18);
+    let placement = Placement {
+        u: 0.0,
+        v: 0.0,
+        w: 0.0,
+        phase: 0.0,
+        plane: 0,
+        spectral: 0.0,
+        cf: CfKey { group: 0, cube: 0 },
+        gradient: [0.0; 2],
+        prediction_w_positive: false,
+    };
+    for _ in 0..(1 << 18) {
+        buffer.push(placement, &[Complex32::new(1.0, 0.0); 2], &[1.0; 2]);
+    }
+    let layout = operator.accumulator_layout(PlaneRange::single(0), None, ModeSet::DATA_PSF);
+    let admitted_grid = layout.cells() as u64 * size_of::<Complex32>() as u64
+        + casa_imaging_metal::accumulator_extra_bytes(layout.cells() as u64);
+    let before_grid = casa_imaging_metal::device_bytes();
+    let mut acc = casa_imaging_metal::MetalBackend::accumulator(layout).unwrap();
+    assert_eq!(
+        casa_imaging_metal::device_bytes() - before_grid,
+        admitted_grid
+    );
+    let apply = |backend: &mut casa_imaging_metal::MetalBackend<'_>, acc: &mut _| {
+        backend
+            .apply(
+                &buffer.block(),
+                operator.cf(),
+                Work::Grid {
+                    mode: Mode::Psf,
+                    acc,
+                },
+            )
+            .unwrap();
+        backend.complete().unwrap();
+    };
+    // Warm process-wide device/kernel state before measuring a fresh owner.
+    {
+        let mut backend = casa_imaging_metal::MetalBackend::new(operator.cf(), false).unwrap();
+        apply(&mut backend, &mut acc);
+    }
+    let admitted =
+        casa_imaging_metal::ring_bytes(npol) + casa_imaging_metal::kernel_bytes(operator.cf());
+    let (heap, device) = held_in_a_clean_window("Metal spread scratch", || {
+        acc.reset();
+        let before = casa_imaging_metal::device_bytes();
+        // The backend is released when the closure returns, after the
+        // device bytes are read and inside the measured window.
+        let mut backend = casa_imaging_metal::MetalBackend::new(operator.cf(), false).unwrap();
+        apply(&mut backend, &mut acc);
+        casa_imaging_metal::device_bytes().saturating_sub(before)
+    });
+    assert!(acc.sumwt().iter().any(|weight| *weight > 0.0));
+    eprintln!("Metal spread scratch: heap={heap}, device={device}, admitted={admitted}");
+    assert!(
+        heap + device <= admitted,
+        "held {} against {admitted}",
+        heap + device
+    );
+}
+
 /// #449: a region pass on the CPU whose owners pipeline over two sets of
 /// chunks holds at most its admission at two sets
 /// ([`WaveDemand::chunk_sets`]): the second set of chunks, the owners'
@@ -575,6 +758,66 @@ fn a_pipelined_pass_holds_at_most_its_admission_at_two_sets() {
         assert!(
             held <= admitted,
             "{name}, {workers} workers: the pass held {held} bytes against {admitted} admitted"
+        );
+    }
+}
+
+/// The density pass holds at most its charge, the grid it returns and its
+/// chunks' buffers ([`density_pass_bytes`]), and the source's blocks, on
+/// every grid CASA's `npixels` makes (#980): the image's own cells, an
+/// `npixels`-square continuum grid smaller and larger than the image, and
+/// superuniform's box, which adds cells to no buffer.
+#[test]
+fn the_density_pass_holds_at_most_its_charge_on_every_npixels_grid() {
+    use casa_imaging_operator::{DensityCellRule, DensityGridShape};
+    use casa_imaging_runtime::pass::{density_pass_bytes, run_density_pass};
+    if !alone("the_density_pass_holds_at_most_its_charge_on_every_npixels_grid") {
+        return;
+    }
+    let resampler = SpectralResampler::direct(Basis::Constant).expect("direct");
+    let operator = operator_of(64, GridPrecision::F64, Basis::Constant);
+    let shape = |side: usize, box_half_width: usize| DensityGridShape {
+        width: side,
+        height: side,
+        planes: 1,
+        padding: 0,
+        box_half_width,
+        increment_rad: [-1.0e-5, 1.0e-5],
+        rule: DensityCellRule::Standard,
+        first_field: None,
+    };
+    // The teams live for the whole law: a team dropped between cases ends
+    // its threads while the next case is measured, and on macOS a thread
+    // ending allocates (a few to a few hundred bytes the pass never holds).
+    let teams = [1, 3].map(|workers| WorkerTeam::new(workers).expect("team"));
+    for ((side, box_half_width), team) in [(64, 0), (8, 0), (300, 0), (64, 3)]
+        .into_iter()
+        .flat_map(|case| teams.iter().map(move |team| (case, team)))
+    {
+        let workers = team.workers();
+        let shape = shape(side, box_half_width);
+        let mut rows = Rows::random(300, 23, operator.geometry());
+        let admitted = density_pass_bytes(&resampler, &shape, rows.maximum_block(), workers)
+            + source_block_bytes(rows.maximum_block());
+        let baseline = LIVE.load(Ordering::Relaxed);
+        PEAK.store(baseline, Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let result = run_density_pass(
+            &operator,
+            &resampler,
+            shape,
+            &mut rows,
+            team,
+            &Cancel::new(),
+        );
+        MEASURING.store(false, Ordering::Relaxed);
+        let grid = result.expect("density pass");
+        assert!(grid.cells().iter().any(|cell| *cell > 0.0), "{side}");
+        let held = PEAK.load(Ordering::Relaxed) - baseline;
+        assert!(
+            held <= admitted,
+            "{side}² cells, box {box_half_width}, {workers} workers: the density pass held \
+             {held} bytes against {admitted} admitted"
         );
     }
 }

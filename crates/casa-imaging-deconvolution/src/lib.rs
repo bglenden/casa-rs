@@ -35,6 +35,7 @@ mod mask;
 mod model_lifecycle;
 mod model_storage;
 mod multiscale;
+mod noise;
 mod normal_state;
 mod normal_values;
 mod patch;
@@ -51,9 +52,10 @@ pub use major_cycle::{
     MajorCycleCompletion, MajorCycleError, PassAppender, normal_state_window_residency_bytes,
 };
 pub use mask::{
-    AutoMaskBeam, AutoMultithreshControls, AutoMultithreshEvidence, ImageDomainMaskMaterialization,
-    ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MaskBox, MaskError,
-    ReconstructionMask, ReconstructionMaskPlan, ReconstructionMaskSet, auto_multithresh,
+    AutoMaskBeam, AutoMaskCycle, AutoMaskThreshold, AutoMultithreshControls,
+    AutoMultithreshEvidence, ImageDomainMaskMaterialization, ImageDomainReconstructionMaskPlans,
+    ImageDomainReconstructionMasks, MaskBox, MaskError, NoiseMaskExclusion, ReconstructionMask,
+    ReconstructionMaskPlan, ReconstructionMaskSet, auto_multithresh, auto_multithresh_bytes,
     direction_world_to_pixel, reproject_mask_support,
 };
 pub(crate) use model_lifecycle::validate_model_value;
@@ -63,13 +65,14 @@ pub use model_lifecycle::{
 pub use model_storage::{
     ModelSampleStorage, ModelSampleUpdate, ModelStorageFactory, ModelStoragePlan,
 };
+pub use noise::{CASA_MAD_TO_RMS, NoiseEstimate, chauvenet_noise, classical_noise, plane_noise};
 pub(crate) use normal_state::PassNormalState;
 pub use normal_state::storage::{
     FinalNormalPlaneReader, NormalArrayStorage, NormalStorageFactory, NormalStoragePlan,
 };
 pub use normal_state::{
-    NormalBasis, NormalStateError, PassImages, SpectralChannelValidity, SpectralSlabPlan,
-    resident_bytes_per_cell,
+    EMPTY_PLANE_SUM_WEIGHT, NormalBasis, NormalStateError, PassImages, SpectralChannelValidity,
+    SpectralSlabPlan, casa_divides_plane, resident_bytes_per_cell,
 };
 pub use normal_values::{NormalValues, SensitivityValues};
 

@@ -402,6 +402,12 @@ pub enum MissingPointingPolicy {
     Reject,
     /// Explicitly substitute the phase-tracking centre.
     UsePhaseTrackingCentre,
+    /// Point every row at its field's direction when the store holds no
+    /// pointing sample at all (no POINTING table, or an empty one), as
+    /// CASA's mosaic does (`SimplePBConvFunc::pointingDirAnt1` takes the
+    /// phase centre unless the table is readable and has rows); reject an
+    /// antenna without samples in a store that has some.
+    FieldCentreWithoutPointingTable,
 }
 
 /// MeasurementSet POINTING column selected as the direction source.
@@ -689,6 +695,19 @@ pub enum FrequencyFrame {
     Lsrk,
 }
 
+impl FrequencyFrame {
+    /// Whether a cube in this output frame is gridded through LSRK, as
+    /// CASA grids it: `SIImageStore` gives the grid of an image in any
+    /// frame but LSRK and REST an LSRK conversion layer at the image's
+    /// epoch, and `FTMachine::matchChannel` converts each row to LSRK at
+    /// its own time. Such a cube's channels are fixed in LSRK, so even one
+    /// in its rows' own frame needs a [`SpectralFrameAnchor::Conversion`].
+    #[must_use]
+    pub const fn gridded_through_lsrk(self) -> bool {
+        matches!(self, Self::Topocentric | Self::Barycentric)
+    }
+}
+
 /// Time scale attached to a spectral-frame epoch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeScale {
@@ -735,12 +754,17 @@ pub struct ItrfPosition {
     metres: [f64; 3],
 }
 
-/// Context required to convert between distinct spectral frequency frames.
+/// Context required to convert between distinct spectral frequency frames,
+/// or to grid a cube through LSRK
+/// ([`FrequencyFrame::gridded_through_lsrk`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SpectralFrameAnchor {
-    /// Source and output frames are identical, so conversion is not applicable.
+    /// Source and output frames are identical and the rows grid at their
+    /// own frequencies, so conversion is not applicable.
     NotApplicable,
-    /// Exact Measures-frame context for a requested conversion.
+    /// Exact Measures-frame context for a requested conversion: the image's
+    /// epoch, reference direction and observatory, at which an output frame
+    /// gridded through LSRK is fixed to LSRK.
     Conversion {
         /// Conversion epoch and time scale.
         epoch: Epoch,
@@ -1425,13 +1449,14 @@ fn canonicalize_centres(centres: &mut CentreLaws) -> Result<(), CompileGeometryE
 fn canonicalize_spectral(
     spectral: &mut SpectralCoordinateSpec,
 ) -> Result<(), CompileGeometryError> {
-    match (
-        &mut spectral.anchor,
-        spectral.source_frame == spectral.output_frame,
-    ) {
-        (SpectralFrameAnchor::NotApplicable, true) => {}
-        (SpectralFrameAnchor::Conversion { .. }, true)
-        | (SpectralFrameAnchor::NotApplicable, false) => {
+    // Distinct frames need a conversion; one frame allows one only to be
+    // gridded through LSRK.
+    let converts = spectral.source_frame != spectral.output_frame;
+    let allowed = converts || spectral.output_frame.gridded_through_lsrk();
+    match (&mut spectral.anchor, allowed) {
+        (SpectralFrameAnchor::NotApplicable, _) if !converts => {}
+        (SpectralFrameAnchor::Conversion { .. }, false)
+        | (SpectralFrameAnchor::NotApplicable, _) => {
             return Err(CompileGeometryError::InconsistentSpectralAnchor);
         }
         (
@@ -1440,7 +1465,7 @@ fn canonicalize_spectral(
                 direction,
                 observatory_position,
             },
-            false,
+            true,
         ) => {
             if !epoch.mjd_days.is_finite()
                 || observatory_position

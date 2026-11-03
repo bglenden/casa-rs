@@ -187,6 +187,15 @@ NaN everywhere. SIGINT becomes the run's `Cancel`: the run stops at the next
 block boundary or phase, removes its staging and paged state, publishes
 nothing and exits with status 130.
 
+A run that continues an earlier run's products (`restart=True`, the
+application's `restart` module) starts from that run's model, every Taylor
+term, channel and Stokes plane of it, and reuses its mask when no new mask
+is given. Under `calcpsf=False` or `calcres=False` the earlier PSF, sums of
+weights or residual are read back as the unnormalized images a pass would
+have formed, so the same minor cycle and products normalize them again; a
+run that reads both runs no initial pass, and a residual read is not a
+major cycle.
+
 `backend` (`auto`, `cpu`, `gpu`) resolves once the problem is compiled.
 `auto` takes the GPU only for problems a T1 Metal law compares with the CPU
 and `availability::check` admits; extending it needs such a law first.

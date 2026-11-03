@@ -153,14 +153,15 @@ pub(super) fn resolve_centre(
 /// from a domain's centre adds nothing there; CASA's `toPixel` fails for it
 /// and `PBMath1D::apply` uses whatever pixel the failed call left.
 ///
+/// Under a moving phase centre CASA shifts each field's beam with the source
+/// ([`moving_pointings`]).
+///
 /// # Errors
 ///
-/// A moving phase centre or a selected field that follows an ephemeris,
-/// whose beams CASA shifts with the source
-/// (`SynthesisImagerVi2::getMovingDirection`); a selected field whose
-/// `PHASE_DIR` polynomial has a nonzero rate, which CASA evaluates at the
-/// field's first selected time; unreadable field directions, frame
-/// conversions or projections.
+/// A selected field that follows an ephemeris under a fixed phase centre;
+/// a selected field whose `PHASE_DIR` polynomial has a nonzero rate, which
+/// CASA evaluates at the field's first selected time; unreadable field
+/// directions or ephemerides, frame conversions or projections.
 pub(super) fn primary_beam_centres(
     domains: &[PreparedImageDomain],
     store: &OpenedStore,
@@ -168,31 +169,13 @@ pub(super) fn primary_beam_centres(
     centre: &Centre,
     engine: &casa_ms::derived::engine::MsCalEngine,
 ) -> Result<PrimaryBeamCentres, PrepareError> {
-    if centre.ephemeris.is_some() {
-        return Err(PrepareError::MovingAnalyticPrimaryBeam);
-    }
-    // Only an MSv2 states a field's direction as a polynomial in time; the
-    // catalogue keeps its constant term.
-    let field = store
-        .msv2()
-        .map(|observation| observation.measurement_set().field())
-        .transpose()?;
-    let pointings = survey
-        .fields
-        .iter()
-        .map(|field_id| {
-            let field_id = usize::try_from(*field_id).expect("selected FIELD_IDs are nonnegative");
-            if engine.field_moves(field_id) {
-                return Err(PrepareError::MovingAnalyticPrimaryBeam);
-            }
-            if let Some(field) = &field
-                && phase_direction_varies(field.phase_dir(field_id)?)
-            {
-                return Err(PrepareError::PolynomialFieldPrimaryBeam { field_id });
-            }
-            Ok((field_id, engine.field_direction_j2000(field_id)?.clone()))
-        })
-        .collect::<Result<Vec<(usize, MDirection)>, PrepareError>>()?;
+    let pointings = match (&centre.ephemeris, &centre.law) {
+        (Some(ephemeris), PhaseCentreLaw::Ephemeris(name)) => {
+            moving_pointings(survey, centre, (name, ephemeris), engine)?
+        }
+        (Some(_), _) => return Err(PrepareError::MovingAnalyticPrimaryBeam),
+        (None, _) => fixed_pointings(store, survey, engine)?,
+    };
     domains
         .iter()
         .map(|domain| {
@@ -231,6 +214,97 @@ pub(super) fn primary_beam_centres(
             Ok((domain.role.clone(), centres))
         })
         .collect()
+}
+
+/// Each selected field's fixed phase direction, in J2000.
+fn fixed_pointings(
+    store: &OpenedStore,
+    survey: &Survey,
+    engine: &casa_ms::derived::engine::MsCalEngine,
+) -> Result<Vec<(usize, MDirection)>, PrepareError> {
+    // Only an MSv2 states a field's direction as a polynomial in time; the
+    // catalogue keeps its constant term.
+    let field = store
+        .msv2()
+        .map(|observation| observation.measurement_set().field())
+        .transpose()?;
+    survey
+        .fields
+        .iter()
+        .map(|field_id| {
+            let field_id = usize::try_from(*field_id).expect("selected FIELD_IDs are nonnegative");
+            if engine.field_moves(field_id) {
+                return Err(PrepareError::MovingAnalyticPrimaryBeam);
+            }
+            if let Some(field) = &field
+                && phase_direction_varies(field.phase_dir(field_id)?)
+            {
+                return Err(PrepareError::PolynomialFieldPrimaryBeam { field_id });
+            }
+            Ok((field_id, engine.field_direction_j2000(field_id)?.clone()))
+        })
+        .collect()
+}
+
+/// Each selected field's beam centre under a moving phase centre, as
+/// `SynthesisImagerVi2::makePrimaryBeam` places it: the field's phase
+/// centre at its first selected time, shifted by the source's motion
+/// between then and the image epoch (`getMovingDirection` at both, their
+/// difference of longitude and latitude added as `MDirection::shift` with
+/// `trueAngle=False` adds it). For a field that tracks the source this is
+/// the source at the image epoch, plus the field's offset from it.
+fn moving_pointings(
+    survey: &Survey,
+    centre: &Centre,
+    (name, ephemeris): (&str, &PhaseCentreEphemeris),
+    engine: &casa_ms::derived::engine::MsCalEngine,
+) -> Result<Vec<(usize, MDirection)>, PrepareError> {
+    let image_epoch = survey.first_time_mjd_seconds;
+    let (origin_longitude, origin_latitude) = engine
+        .ephemeris_direction_j2000(image_epoch, centre.field_id, name, ephemeris)?
+        .as_angles();
+    survey
+        .fields
+        .iter()
+        .map(|field_id| {
+            let time = survey.first_time_of(*field_id).unwrap_or(image_epoch);
+            let field_id = usize::try_from(*field_id).expect("selected FIELD_IDs are nonnegative");
+            let (longitude, latitude) = engine
+                .observation_direction_j2000(time, field_id)?
+                .as_angles();
+            let (moved_longitude, moved_latitude) = engine
+                .ephemeris_direction_j2000(time, field_id, name, ephemeris)?
+                .as_angles();
+            let [longitude, latitude] = shifted_angles(
+                [longitude, latitude],
+                [
+                    origin_longitude - moved_longitude,
+                    origin_latitude - moved_latitude,
+                ],
+            );
+            Ok((
+                field_id,
+                MDirection::from_angles(longitude, latitude, DirectionRef::J2000),
+            ))
+        })
+        .collect()
+}
+
+/// casacore's `MVDirection::shift(lng, lat, False)`: the offsets added to
+/// longitude and latitude, a latitude past a pole folded back over it.
+fn shifted_angles(
+    [longitude, latitude]: [f64; 2],
+    [d_longitude, d_latitude]: [f64; 2],
+) -> [f64; 2] {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    let (longitude, latitude) = (longitude + d_longitude, latitude + d_latitude);
+    if latitude > FRAC_PI_2 {
+        [longitude + PI, PI - latitude]
+    } else if latitude < -FRAC_PI_2 {
+        [longitude + PI, -PI - latitude]
+    } else {
+        [longitude, latitude]
+    }
 }
 
 /// Whether a `PHASE_DIR` polynomial, shaped `[2, NUM_POLY + 1]`, has a
@@ -426,12 +500,20 @@ pub(super) fn direction_spec(
 }
 
 /// The spectral axis an image header records.
-#[derive(Clone, Copy)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct ImageSpectralCoordinate {
     pub(super) frequency_reference: FrequencyRef,
     pub(super) reference_frequency_hz: f64,
     pub(super) increment_hz: f64,
     pub(super) rest_frequency_hz: f64,
+    /// The rest frequencies CASA lists after the active one: tclean's
+    /// `restfreq` entries after its first (`buildCoordinateSystemCore`'s
+    /// `setRestFrequencies(..., 0, true)`).
+    pub(super) additional_rest_frequencies_hz: Vec<f64>,
+    /// Whether the axis declares no frame (`MFrequency::Undefined`), as
+    /// CASA's `buildCoordinateSystemCore` writes a `cubedata` cube's axis
+    /// unless it is in the rest frame: the data's frequencies, uncorrected.
+    pub(super) undefined_frame: bool,
 }
 
 /// The coordinate system of one image domain's products.
@@ -439,7 +521,7 @@ pub(super) fn image_coordinates(
     direction: DirectionCoordinateSpec,
     image_size: [usize; 2],
     polarizations: &[PolarizationCoordinate],
-    spectral: ImageSpectralCoordinate,
+    spectral: &ImageSpectralCoordinate,
     observation: &ObsInfo,
 ) -> CoordinateSystem {
     let reference = direction.reference_direction();
@@ -454,13 +536,22 @@ pub(super) fn image_coordinates(
     coordinates.add_coordinate(StokesCoordinate::new(
         polarizations.iter().copied().map(stokes_type).collect(),
     ));
-    coordinates.add_coordinate(SpectralCoordinate::new(
+    let mut axis = SpectralCoordinate::new(
         spectral.frequency_reference,
         spectral.reference_frequency_hz,
         spectral.increment_hz,
         0.0,
         spectral.rest_frequency_hz,
-    ));
+    )
+    .with_rest_frequencies(
+        std::iter::once(spectral.rest_frequency_hz)
+            .chain(spectral.additional_rest_frequencies_hz.iter().copied())
+            .collect(),
+    );
+    if spectral.undefined_frame {
+        axis = axis.with_undefined_frame();
+    }
+    coordinates.add_coordinate(axis);
     *coordinates.obs_info_mut() = observation.clone();
     coordinates
 }
@@ -562,6 +653,20 @@ mod tests {
 
     use super::*;
 
+    /// `MVDirection::shift(lng, lat, False)` adds the offsets and folds a
+    /// latitude past a pole back over it, half a turn round.
+    #[test]
+    fn a_shift_adds_the_offsets_and_folds_over_a_pole() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        assert_eq!(shifted_angles([1.0, 0.5], [0.25, -0.125]), [1.25, 0.375]);
+        let [longitude, latitude] = shifted_angles([1.0, FRAC_PI_2 - 0.1], [0.0, 0.3]);
+        assert!((longitude - (1.0 + PI)).abs() < 1e-15);
+        assert!((latitude - (FRAC_PI_2 - 0.2)).abs() < 1e-15);
+        let [longitude, latitude] = shifted_angles([0.0, -FRAC_PI_2 + 0.1], [0.0, -0.3]);
+        assert!((longitude - PI).abs() < 1e-15);
+        assert!((latitude - (-FRAC_PI_2 + 0.2)).abs() < 1e-15);
+    }
+
     #[test]
     fn casa_direction_reference_pixel_uses_half_the_image_extent() {
         assert_eq!(image_reference_pixel([16, 16]), [8.0, 8.0]);
@@ -607,11 +712,13 @@ mod tests {
             direction_spec([64, 64], [8.0, 8.0], DirectionFrame::J2000, 0.0, 0.0),
             [64, 64],
             &[PolarizationCoordinate::StokesQ],
-            ImageSpectralCoordinate {
+            &ImageSpectralCoordinate {
                 frequency_reference: FrequencyRef::LSRK,
                 reference_frequency_hz: 1.0e9,
                 increment_hz: 1.0,
                 rest_frequency_hz: 1.0e9,
+                additional_rest_frequencies_hz: Vec::new(),
+                undefined_frame: false,
             },
             &ObsInfo::default(),
         );

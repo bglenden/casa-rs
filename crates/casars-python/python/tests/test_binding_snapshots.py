@@ -541,14 +541,19 @@ def test_contract_dictionaries_keep_their_shape(
 
 def test_definitions_and_bundles_agree_with_the_catalog() -> None:
     catalog = parameters.catalog()
-    concepts = {concept["id"]: concept for concept in catalog["catalog"]["concepts"]}
+    # A concept is identified by its id and semantic revision: tclean binds
+    # revision 2 of the scan and observation selectors, other tasks revision 1.
+    concepts = {
+        (concept["id"], concept["semantic_revision"]): concept
+        for concept in catalog["catalog"]["concepts"]
+    }
     for surface in catalog["surfaces"]:
         assert parameters.definition(surface["id"]) == surface
         bundle = parameters.contract_bundle(surface["id"])
         assert bundle["surface"] == surface
         assert bundle["schema_version"] == catalog["schema_version"]
         for concept in bundle["catalog"]["concepts"]:
-            assert concept == concepts[concept["id"]]
+            assert concept == concepts[(concept["id"], concept["semantic_revision"])]
 
 
 def test_parameter_states_keep_their_types(

@@ -38,7 +38,19 @@
 //! the last two give; under any other phase centre a batch that needs one
 //! is refused.
 //!
+//! A cube gridded through LSRK ([`FrequencyFrame::gridded_through_lsrk`])
+//! is gridded as CASA grids it: CASA fixes the image's channels in LSRK at
+//! the image's anchor (an LSRK conversion layer on the grid's coordinates,
+//! `SIImageStore::forwardGrid`) and takes each row to LSRK at its own time
+//! (`FTMachine::matchChannel`). A time's frequencies are therefore its LSRK
+//! frequencies over `A`, the output frame's LSRK factor at the anchor, so a
+//! row at the anchor keeps its own frequencies exactly, as CASA's equal
+//! output and native channels convert alike; and its projected baselines
+//! are scaled by `A`, so `uvw · ν / c` and the phase-centre phase are those
+//! of the LSRK frequency CASA grids at (`GridFT::put`).
+//!
 //! [`FieldEntry::ephemeris`]: casa_observation::FieldEntry::ephemeris
+//! [`FrequencyFrame::gridded_through_lsrk`]: crate::FrequencyFrame::gridded_through_lsrk
 
 mod frames;
 mod pointing;
@@ -52,6 +64,7 @@ use casa_observation::{
     AntennaId, Catalogue, FieldEphemeris, FieldId, PointingSeries, VisibilityBatch,
 };
 use casa_types::measures::direction::MDirection;
+use casa_types::measures::epoch::MEpoch;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::radial_velocity::MRadialVelocity;
 use casa_types::measures::{
@@ -65,6 +78,7 @@ use crate::aw_pointing::{AwPointingEpochs, AwPointingError, AwPointingGrouping};
 use crate::compiled_problem::{CompiledProblem, InstrumentModel};
 use crate::geometry::{
     DirectionFrame, PhaseCentreLaw, PointingCentreLaw, PointingTimeSampling, SkyDirection,
+    SpectralCoordinateSpec, SpectralFrameAnchor,
 };
 use crate::pointing_law::PointingLawError;
 use crate::sample_antennas::{
@@ -178,6 +192,9 @@ pub struct GeometryPlan {
     charts: Vec<Chart>,
     mosaic: bool,
     output_frame: FrequencyRef,
+    /// `A`, the factor that takes an output-frame frequency to LSRK at the
+    /// image's anchor, for a cube gridded through LSRK.
+    output_in_lsrk: Option<f64>,
     parallactic: bool,
     responses: Responses,
     aw: Option<AwPointingGrouping>,
@@ -192,6 +209,7 @@ impl fmt::Debug for GeometryPlan {
             .field("charts", &self.charts.len())
             .field("mosaic", &self.mosaic)
             .field("output_frame", &self.output_frame)
+            .field("output_in_lsrk", &self.output_in_lsrk)
             .field("parallactic", &self.parallactic)
             .field("aw", &self.aw.is_some())
             .finish_non_exhaustive()
@@ -268,7 +286,8 @@ const TRACKFIELD: &str = "TRACKFIELD";
 /// The aperture classes the instrument model assigns.
 enum Responses {
     None,
-    Aca7m,
+    /// One class for every antenna.
+    Uniform(AntennaResponseClass),
     Heterogeneous {
         classes: Vec<Option<AntennaResponseClass>>,
         envelope: Option<AntennaResponseClass>,
@@ -415,22 +434,29 @@ impl GeometryPlan {
         let (charts, mosaic) = projection::charts(problem)?;
         let responses = match problem.science().instrument_model() {
             None | Some(InstrumentModel::CasaEvlaWidebandAwV1) => Responses::None,
-            Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => Responses::Aca7m,
+            Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => {
+                Responses::Uniform(AntennaResponseClass::CasaAca7m)
+            }
+            Some(InstrumentModel::CasaEvlaCommonInterferometricResponseV1) => {
+                Responses::Uniform(AntennaResponseClass::CasaEvla)
+            }
             Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1) => {
                 let classes = frames.alma_aca_classes(catalogue);
                 let envelope = AntennaResponseClass::family_envelope(&classes);
                 Responses::Heterogeneous { classes, envelope }
             }
         };
+        let spectral = problem.geometry().spectral();
         Ok(Self {
             catalogue: Arc::clone(catalogue),
+            output_in_lsrk: output_in_lsrk(spectral, &frames)?,
             frames,
             phase,
             anchor,
             pointing: centres.pointing().clone(),
             charts,
             mosaic,
-            output_frame: problem.geometry().spectral().output_frame().frequency_ref(),
+            output_frame: spectral.output_frame().frequency_ref(),
             parallactic: problem.requires_parallactic_angles(),
             responses,
             aw: AwPointingGrouping::new(problem)?,
@@ -509,17 +535,19 @@ impl GeometryPlan {
         samples * per_sample + times * channels * size_of::<f64>()
     }
 
-    /// CASA's aperture classes of the observation's antennas, sorted and
-    /// without repeats: the dishes a heterogeneous mosaic's kernel set
-    /// keys on (`HetArrayConvFunc::findAntennaSizes`).
+    /// CASA's aperture classes of the observation's antennas under the
+    /// instrument model, sorted and without repeats: the dishes a mosaic's
+    /// kernel set keys on (`HetArrayConvFunc::findAntennaSizes`); none
+    /// without an aperture response.
     #[must_use]
     pub fn aperture_classes(&self) -> Vec<AntennaResponseClass> {
-        let mut classes = self
-            .frames
-            .alma_aca_classes(&self.catalogue)
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let mut classes = match &self.responses {
+            Responses::None => Vec::new(),
+            Responses::Uniform(class) => vec![*class],
+            Responses::Heterogeneous { classes, .. } => {
+                classes.iter().copied().flatten().collect::<Vec<_>>()
+            }
+        };
         classes.sort_unstable();
         classes.dedup();
         classes
@@ -615,14 +643,16 @@ impl GeometryPlan {
                 reprojections = Some((field, self.reprojections(&context, &field_direction)?));
             }
             let machines = &reprojections.as_ref().expect("reprojections formed").1;
+            // Exactly 1 but for a cube gridded through LSRK.
+            let in_lsrk = self.output_in_lsrk.unwrap_or(1.0);
             for sample in context.row_samples() {
                 let raw = uvw.metres_at(sample);
                 for (chart, machine) in machines.iter().enumerate() {
                     let (uvw_m, phase_shift_m) =
                         machine.map_or((raw, 0.0), |machine| machine.apply(raw));
                     out.projections[sample * out.charts + chart] = ChartProjection {
-                        uvw_m,
-                        phase_shift_m,
+                        uvw_m: uvw_m.map(|metres| metres * in_lsrk),
+                        phase_shift_m: phase_shift_m * in_lsrk,
                     };
                 }
             }
@@ -865,10 +895,10 @@ impl GeometryPlan {
     ) -> Result<Option<SelectedAntennaResponses>, BatchGeometryError> {
         Ok(match &self.responses {
             Responses::None => None,
-            Responses::Aca7m => Some(SelectedAntennaResponses {
-                antenna1: AntennaResponseClass::CasaAca7m,
-                antenna2: AntennaResponseClass::CasaAca7m,
-                family_envelope: AntennaResponseClass::CasaAca7m,
+            Responses::Uniform(class) => Some(SelectedAntennaResponses {
+                antenna1: *class,
+                antenna2: *class,
+                family_envelope: *class,
             }),
             Responses::Heterogeneous { classes, envelope } => {
                 let class = |antenna: AntennaId| {
@@ -900,11 +930,30 @@ impl GeometryPlan {
         field: FieldId,
         direction: &MDirection,
         source: FrequencyRef,
-    ) -> Result<PreparedFrequencyConversion, BatchGeometryError> {
+    ) -> Result<RowFrequencies, BatchGeometryError> {
+        if let Some(output_in_lsrk) = self.output_in_lsrk
+            && source != FrequencyRef::REST
+        {
+            // The row in LSRK at its own time, over the output channels'
+            // LSRK factor at the anchor: one factor, exactly 1 at the anchor.
+            let frame = self
+                .frames
+                .observatory_at(time_mjd_s, scale)
+                .with_direction(direction.clone());
+            let lsrk = PreparedFrequencyConversion::new(
+                source,
+                FrequencyRef::LSRK,
+                Some(&frame),
+                Some(&frame),
+            )?;
+            return Ok(RowFrequencies::ThroughLsrk(
+                lsrk.convert_hz(1.0) / output_in_lsrk,
+            ));
+        }
         if source == self.output_frame {
-            return Ok(PreparedFrequencyConversion::new(
+            return Ok(RowFrequencies::Direct(PreparedFrequencyConversion::new(
                 source, source, None, None,
-            )?);
+            )?));
         }
         let mut frame = self
             .frames
@@ -916,11 +965,67 @@ impl GeometryPlan {
                 .ok_or(BatchGeometryError::RestFrameWithoutVelocity)?;
             frame = frame.with_radial_velocity(velocity);
         }
-        Ok(PreparedFrequencyConversion::new(
+        Ok(RowFrequencies::Direct(PreparedFrequencyConversion::new(
             source,
             self.output_frame,
             Some(&frame),
             Some(&frame),
-        )?)
+        )?))
     }
+}
+
+/// How one time's channel frequencies reach the output frame.
+enum RowFrequencies {
+    /// Straight to the output frame, hop by hop.
+    Direct(PreparedFrequencyConversion),
+    /// To LSRK at the time, then to the output frame by the factor at the
+    /// image's anchor: one factor.
+    ThroughLsrk(f64),
+}
+
+impl RowFrequencies {
+    fn convert_hz(&self, frequency_hz: f64) -> f64 {
+        match self {
+            Self::Direct(conversion) => conversion.convert_hz(frequency_hz),
+            Self::ThroughLsrk(factor) => frequency_hz * factor,
+        }
+    }
+}
+
+/// `A`, the factor that takes `spectral`'s output frame to LSRK at its
+/// anchor, for a cube gridded through LSRK: CASA's LSRK conversion layer at
+/// the image's epoch and reference direction, from the observatory the rows
+/// convert from, as CASA's grid and rows share one.
+fn output_in_lsrk(
+    spectral: &SpectralCoordinateSpec,
+    frames: &Frames,
+) -> Result<Option<f64>, BatchGeometryError> {
+    let output = spectral.output_frame();
+    let SpectralFrameAnchor::Conversion {
+        epoch, direction, ..
+    } = spectral.anchor()
+    else {
+        return Ok(None);
+    };
+    if !output.gridded_through_lsrk() {
+        return Ok(None);
+    }
+    let frame = frames
+        .observatory_at_epoch(MEpoch::from_mjd(
+            epoch.mjd_days(),
+            epoch.scale().epoch_ref(),
+        ))
+        .with_direction(MDirection::from_angles(
+            direction.longitude_rad(),
+            direction.latitude_rad(),
+            direction.frame().direction_ref(),
+        ));
+    let factor = PreparedFrequencyConversion::new(
+        output.frequency_ref(),
+        FrequencyRef::LSRK,
+        Some(&frame),
+        Some(&frame),
+    )?
+    .convert_hz(1.0);
+    Ok(Some(factor))
 }

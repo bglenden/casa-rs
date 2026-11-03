@@ -161,6 +161,7 @@ fn a_minor_cycle_holds_at_most_its_admission_whatever_its_planes() {
             accounting: HogbomIterationAccounting::Strict,
             response: None,
             nsigma: 0.0,
+            noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
             automask: false,
         };
         let masks = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::FullPlane {

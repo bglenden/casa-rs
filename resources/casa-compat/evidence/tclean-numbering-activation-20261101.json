@@ -1,0 +1,227 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-01",
+  "record": "tclean-public-restart-false-activation",
+  "native_revision": "99b1cfad559bf92de9ac070a387b4d2c9165ec97",
+  "binary_sha256": "dd3d846c36713de75347e204e4cd6d9163d72e9add93cd712da11d4bd227aad4",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "state": "Owner-approved activation and prior-history policy; bounded products pass; one scalar output accepted by identity-bound owner review; whole task unfinished",
+  "contract": {
+    "from": 31,
+    "to": 32,
+    "owner_decision": "Approve activation",
+    "all_114_binding_names_order_defaults_unchanged": true,
+    "other_task_surfaces_unchanged": true,
+    "migration": "No changed defaults or value rewrites",
+    "proof": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/numbering-20261101/checks/defaults-proof.json"
+  },
+  "scope": "Five standard single-term Stokes-I MFS False calls: fresh image, image_2, image_3, gap sentinel image_7.image -> image_8, explicit common frozen CASA string startmodel -> image_9; CPU64/CPU32/Metal32 CLI and CPU64 public Python. Absolute and relative native names; relative CASA avoids approved path bug.",
+  "checks": {
+    "product_rows_passed": 20,
+    "selected_scalar_rows_strict_passed": 19,
+    "selected_scalar_rows_total": 20,
+    "products": "All seven products: exact inventories/masks/finite support; recorded WCS/restfreq/units/frames/Stokes, beam and numeric limits. Native old-file preservation exact, excluding locks.",
+    "returns": "maxpsfsidelobe and cyclethreshold; exact iterdone/nmajordone/stopcode. Other return keys including seeded modelFlux remain unfinished.",
+    "limits": "NRMS1e-3; sumwt5e-5; beam axes1e-3/PA0.01; two selected scalars1e-6 relative+1e-8 absolute; no limits changed."
+  },
+  "raw_receipts": {
+    "oracle": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/numbering-activation-20261101/oracle/receipt.json",
+      "sha256": "caa63298a0499cee1e019b5b28046b6c82c27ad7d70918822c1e86bd9b5d9152",
+      "rows": 5
+    },
+    "cli-cpu64": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/numbering-activation-20261101/cli-cpu64/receipt.json",
+      "sha256": "595c746256d132349ffb6f28b05b974327f7cdb1990a7694fb844118fab8ca9e",
+      "rows": 5,
+      "strict_passed": 5,
+      "all_old_native_files_preserved": true,
+      "all_product_checks_passed": true
+    },
+    "cli-cpu32": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/numbering-activation-20261101/cli-cpu32/receipt.json",
+      "sha256": "c1b6567f59e1e594e8c49d34b3efa28c264b21c30ddf9bc2f017d4a9d367517d",
+      "rows": 5,
+      "strict_passed": 5,
+      "all_old_native_files_preserved": true,
+      "all_product_checks_passed": true
+    },
+    "cli-gpu32": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/numbering-activation-20261101/cli-gpu32/receipt.json",
+      "sha256": "255917f110351bcf9dbd62ba61daebac68f556d0ad8905ea4917a685a1d1ed57",
+      "rows": 5,
+      "strict_passed": 4,
+      "all_old_native_files_preserved": true,
+      "all_product_checks_passed": true
+    },
+    "python-cpu64": {
+      "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/numbering-activation-20261101/python-cpu64/receipt.json",
+      "sha256": "6a20783b8de95ea41b62b959f7620c0ce7aa716b90f4aed7496852acf811474d",
+      "rows": 5,
+      "strict_passed": 5,
+      "all_old_native_files_preserved": true,
+      "all_product_checks_passed": true
+    }
+  },
+  "diagnostic": {
+    "path": "/Volumes/GLENDENNING/casa-rs-evidence/tclean-20261031/numbering-activation-20261101/metal32-cyclethreshold-review.json",
+    "sha256": "b4393fb709f37017f3177ced196d51ab9aeab73ff79e9b70d44051e9a1369df5",
+    "owner_status": "Accepted this specific output, owner2026-11-01; raw failed verdict unchanged; no future-output waiver"
+  },
+  "python_package": {
+    "source_head": "99b1cfad559bf92de9ac070a387b4d2c9165ec97",
+    "python_version": "3.13.5 (main, Jul  3 2025, 16:40:12) [Clang 17.0.0 (clang-1700.0.13.5)]",
+    "venv": "/Volumes/GLENDENNING/casa-rs-build/numbering-python-activation.XrGRWEWs/venv",
+    "core_path": "/Users/brianglendenning/SoftwareProjects/casa-rs/crates/casars-python/python/casars/_core.cpython-313-darwin.so",
+    "core_sha256": "ded9e180001502c083df0ce377620deacfef4afe36ae037e940fd9a1b9354ba7",
+    "imager_sha256": "dd3d846c36713de75347e204e4cd6d9163d72e9add93cd712da11d4bd227aad4",
+    "snapshot": {
+      "regenerated_tests_passed": 84,
+      "original_fixture_tests_passed": 84,
+      "tracked_fixture_changed": false,
+      "regenerated_float_only_plot_changes": 44,
+      "contract_snapshot_changes": 0,
+      "inspection": "snapshot-inspection.json",
+      "coverage_explanation": "Contract snapshot pins scalar types and merged shapes across all surfaces, not raw per-surface versions, defaults, note text or marker presence per binding. Explicit activated-runtime-assertions-final.json proves version32, no restart unimplemented, defaultTrue and acceptedFalse.",
+      "names_order_and_defaults_unchanged": true
+    },
+    "package_gate": {
+      "command": "scripts/test-python-package.sh",
+      "exit_code": 0,
+      "log": "full-python-package-attempt1.log",
+      "editable": {
+        "passed": 632,
+        "skipped": 15,
+        "seconds": 46.35
+      },
+      "wheel": {
+        "passed": 632,
+        "skipped": 15,
+        "seconds": 37.16
+      },
+      "fresh_sdist": {
+        "passed": 99,
+        "seconds": 5.28
+      }
+    },
+    "environment": {
+      "TMPDIR": "/Volumes/GLENDENNING/casa-rs-build/numbering-python-activation.XrGRWEWs/tmp",
+      "PIP_CACHE_DIR": "/Volumes/GLENDENNING/casa-rs-build/numbering-python-activation.XrGRWEWs/pip-cache",
+      "CARGO_TARGET_DIR": "/Volumes/GLENDENNING/casa-rs-build/primary-target",
+      "CARGO_INCREMENTAL": "0",
+      "CASARS_IMAGER_BIN": "/Users/brianglendenning/SoftwareProjects/casa-rs/target/release/casars-imager"
+    },
+    "commands": [
+      "venv/bin/python -m pip install -e crates/casars-python[test]",
+      "venv/bin/python crates/casars-python/python/tests/test_binding_snapshots.py",
+      "venv/bin/python inspect_snapshot.py",
+      "venv/bin/python -m pytest crates/casars-python/python/tests/test_binding_snapshots.py -q",
+      "preserve generated fixture as evidence; restore unchanged original fixture; repeat snapshot pytest",
+      "scripts/test-python-package.sh",
+      "venv/bin/python -m pip install -e crates/casars-python[test] after gate cleanup",
+      "venv/bin/python python_provenance.py",
+      "venv/bin/python check_activated_python.py"
+    ],
+    "tracked_diff": "",
+    "rust_contract_changes_by_this_agent": false,
+    "commits_by_this_agent": false
+  },
+  "focused_native": "Provider library70 plus remaining suite/doctests; restart/return T1 nine; current32 default migration and Python Rust provider conformance pass",
+  "full_native_gate": {
+    "native_revision": "086a67f1d425035e206f77bf58329f59dddf9d5a",
+    "passed": 4710,
+    "skipped": 45,
+    "nextest_seconds": 500.26,
+    "checks": "Workspace clippy,arch/SPDX/fmt,workspace nextest,doctests,21CLIhostsgreen",
+    "perf_tools": {
+      "passed": 875,
+      "subtests_passed": 307,
+      "seconds": 11.7,
+      "python": "/Volumes/GLENDENNING/casa-rs-build/perf-tools-venv/bin/python",
+      "note": "DefaultPython skip is retained in main log; this separately required real run is green."
+    },
+    "logs": {
+      "restart-mask-quick-20261101.log": {
+        "path": "/Volumes/home/casa-rs/tclean/20261031/restart-mask-quick-20261101.log",
+        "sha256": "b2fb750fcf67073f3831ad1ae1a767c831ceca35d865016151bde9650a4998f1",
+        "bytes": 560950
+      },
+      "restart-mask-perf-tools-20261101.log": {
+        "path": "/Volumes/home/casa-rs/tclean/20261031/restart-mask-perf-tools-20261101.log",
+        "sha256": "04fd7de98527102a6de0090c66b8325a81fb0d9be7dfb943f6a5871ca50ea423",
+        "bytes": 1079
+      }
+    },
+    "verification": "Both completed logs copied toNAS and rereadSHA256 matches"
+  },
+  "fixture_repairs": [
+    "Singleton startmodel array refused by existing Path catalog: original failed input/log retained; string form used and list-form gap remains unfinished.",
+    "Each implementation initially used its own slightly different model; original own-seed failure retained. Final paired case uses a common frozen CASA seed; CPU64 first four unaffected rows reused.",
+    "CASA changes only old logtable files on later numbered calls. Oracle records those mutations; native byte-preservation is independently strict. Owner separately agreed preserving prior histories."
+  ],
+  "unfinished": [
+    "Coordinated outlier and occupied chosen orphan numbering",
+    "calcres/calcpsf reuse and broader restart modes",
+    "Singleton-list startmodel input",
+    "New image history completeness",
+    "Remaining return keys, metadata, selection/modes and representative/runtime prediction acceptance"
+  ],
+  "archive": {
+    "path": "/Volumes/home/casa-rs/tclean/20261031/restart-numbering-activation-20261101.tar",
+    "bytes": 78704640,
+    "sha256": "a5fb603f18b91a839c77f280038a8cbbffaded403d714efbe3ff754f781e3257",
+    "manifest_entries": 4848,
+    "manifest_sha256": "e3ca8f413bf1019e237d1d9c2c65e1bb41319bcc1a1b1c5e5632061628749673",
+    "verification": "Every TAR member checked; NAS archive reread hash matches",
+    "full_native_gate": "Active log deliberately excluded; copy and verify separately when complete",
+    "source_bundle_revision": "c57fe84ab46dd17827e67539f585bcae30ca2f35"
+  },
+  "authority": "Explicit owner activation approval; no scientific comparison reduction or history exception inferred",
+  "scalar_case_disposition": {
+    "approved": true,
+    "owner_decision": "Accept this specific output",
+    "disposition": "accepted_by_identity_bound_owner_review",
+    "raw_passed": false,
+    "raw_receipt_sha256": "255917f110351bcf9dbd62ba61daebac68f556d0ad8905ea4917a685a1d1ed57",
+    "measurement_sha256": "b4393fb709f37017f3177ced196d51ab9aeab73ff79e9b70d44051e9a1369df5",
+    "native_revision": "99b1cfad559bf92de9ac070a387b4d2c9165ec97",
+    "binary_sha256": "dd3d846c36713de75347e204e4cd6d9163d72e9add93cd712da11d4bd227aad4",
+    "case": "cli-gpu32/explicit_startmodel",
+    "native": 0.07878153771162033,
+    "casa": 0.07878141850233078,
+    "absolute_difference": 1.1920928955078125e-07,
+    "relative_limit": 2e-06,
+    "absolute_limit_jy_per_beam": 1e-08,
+    "other_checks": "All original guards pass and remain required",
+    "scope": "Only unchanged bound output; no future output inherits this acceptance"
+  },
+  "recipe_correction": {
+    "path": "/Volumes/home/casa-rs/tclean/20261031/tclean_numbering_acceptance_20261101.py",
+    "sha256": "f1e5fa08c9f458c470afd03fed441c8d9ca509c910395928144caf0b0c2b061f",
+    "note": "After archival, fixed oracle-mode seed reference inadvertently changed during native shared-seed fixture repair. Restores recorded oracle one-element list using its original first model. No outputs or raw receipts changed; corrected recipe compiled and NAS reread verified."
+  },
+  "history_disposition": {
+    "approved": true,
+    "owner_decision": "Preserve prior histories",
+    "date": "2026-11-01",
+    "scope": "Prior matching numbered outputs during restart=False fresh runs only",
+    "behavior": "Leave old files and histories unchanged, excluding locks",
+    "casa_difference": "CASA appends later task calls to old prefix-matching image logtables",
+    "new_image_history": "Correct new-image history remains required, completeness unfinished"
+  },
+  "supplement": {
+    "path": "/Volumes/home/casa-rs/tclean/20261031/clipped-empty-masks-20261101.tar",
+    "bytes": 58931200,
+    "sha256": "c1d153de304c01a3f9c1c135931610f7550cb78ec891866d13b535fcfa722958",
+    "manifest_entries": 4234,
+    "manifest_sha256": "8797dc36cff49183572036ca2bd8d0c0987322e0971327f07019dfd47bd7014a",
+    "verification": "Every local TAR member checked and NAS archive reread hash matches",
+    "source_bundle_head": "10703971e6bfe94ae7120339b7f23f3e8617a117",
+    "active_log": "Combined full-gate log excluded; save separately on completion",
+    "numbering_note": "Includes corrected oracle recipe, approved scalar/history dispositions and final plots; original raw activation archive unchanged"
+  },
+  "visual": "All20 numbering rows/seven products inspected in shared-scale CASA/native/difference contact sheets; final sheets and corrected recipe in verified mask supplement."
+}

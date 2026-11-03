@@ -76,6 +76,7 @@ pub mod task_contract;
 mod task_front_end;
 pub mod transform;
 pub mod validate;
+pub mod virtual_model;
 pub mod visibility_buffer;
 pub mod write_session;
 
@@ -147,12 +148,17 @@ pub(crate) use selected_pointing::{
 };
 pub use selection::syntax::{
     ChannelSelection, ChannelSelectionSegment, IntentSelector, SpwSelector, parse_intent_selector,
-    parse_numeric_id_selector, parse_spw_selector,
+    parse_numeric_id_selector, parse_numeric_row_id_ranges, parse_spw_selector,
 };
 pub use selection::{
-    MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget, MsSelectionRowBlock,
-    MsSelectorEditContext, ResolvedMsSelection, ResolvedMsSelectionRow, UvDistanceInterval,
-    UvDistanceLimit, parse_uv_distance_intervals, validate_ms_selector_edit,
+    AntennaRow, BaselineSelection, ChannelFrequencyRange, ChannelRange, DataDescriptionRow,
+    FieldSelectorRow, LogicalRowFilter, MsReadPlan, MsSelection, MsSelectionError,
+    MsSelectionIoBudget, MsSelectionRowBlock, MsSelectorEditContext, ResolvedMsSelection,
+    ResolvedMsSelectionRow, SpectralWindowRow, SpwSelection, TimeCondition, TimeDefaults,
+    TimeListEntry, TimeSelection, TimeSelector, TimeSelectorDefaults, TimeTerm, UvDistanceInterval,
+    UvDistanceLimit, msselection_first_logical_row, parse_uv_distance_intervals,
+    resolve_antenna_selector, resolve_field_selector_rows, resolve_spw_selector,
+    resolve_time_selector, validate_ms_selector_edit,
 };
 pub use simulation::{
     SyntheticAnalyticComponent, SyntheticAnalyticComponentModel, SyntheticAnalyticSpectrum,
@@ -193,6 +199,11 @@ pub use task_contract::{
 pub use task_front_end::{ms_task_success, task_flag_merge, task_selection_text};
 pub use transform::{
     MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
+};
+pub use virtual_model::{
+    VirtualModelCombinations, VirtualModelEntry, VirtualModelKind, VirtualModelRecord,
+    VirtualModelRow, VirtualModelSelection, clear_virtual_model, put_virtual_model, virtual_model,
+    virtual_model_clear_ids, virtual_model_image_path, virtual_model_index_combination,
 };
 pub use visibility_buffer::{
     SourcePartition, SourcePartitionId, VisibilityBuffer, VisibilityBufferAllocationReport,
