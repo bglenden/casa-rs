@@ -51,10 +51,11 @@ impl ObservatoryEntry {
         if observatory_type.eq_ignore_ascii_case("ITRF") {
             let (sin_lon, cos_lon) = longitude_rad.sin_cos();
             let (sin_lat, cos_lat) = latitude_rad.sin_cos();
+            // casacore's MVPosition order: the unit vector, then its length.
             Some(ObservatoryPosition::Itrf {
-                x_m: self.height_m * cos_lat * cos_lon,
-                y_m: self.height_m * cos_lat * sin_lon,
-                z_m: self.height_m * sin_lat,
+                x_m: cos_lon * cos_lat * self.height_m,
+                y_m: sin_lon * cos_lat * self.height_m,
+                z_m: sin_lat * self.height_m,
             })
         } else if observatory_type.eq_ignore_ascii_case("WGS84") {
             Some(ObservatoryPosition::Wgs84 {
@@ -138,8 +139,8 @@ mod tests {
 
     /// The SMA row of the measures data's `Observatories` table, whose `X`,
     /// `Y`, `Z` lie 13.8 km from its `Long`, `Lat`, `Height`, and the
-    /// position CASA 6.7.6.14's `me.observatory('SMA')` gives for it
-    /// (`crates/casars-python/python/tests/data/casa_observatories.json`).
+    /// Cartesian position CASA 6.7.6.14 gives SMA
+    /// (`crates/casa-simulation/tests/data/readantenna_casa.json`).
     #[test]
     fn an_itrf_entry_is_where_casacore_places_it() {
         let sma = entry(
@@ -150,11 +151,14 @@ mod tests {
         let Some(ObservatoryPosition::Itrf { x_m, y_m, z_m }) = sma.position() else {
             panic!("an ITRF position");
         };
-        let radius = (x_m * x_m + y_m * y_m + z_m * z_m).sqrt();
-        let casa = [-2.713_594_675_620_428, 0.345_997_658_536_596_2, 6_382_248.0];
-        assert!((y_m.atan2(x_m) - casa[0]).abs() < 1e-14);
-        assert!(((z_m / radius).asin() - casa[1]).abs() < 1e-14);
-        assert!((radius - casa[2]).abs() < 1e-8);
+        let casa = [
+            -5_462_448.949_394_94,
+            -2_491_969.916_598_48,
+            2_164_446.105_479_709,
+        ];
+        for (found, casa) in [x_m, y_m, z_m].into_iter().zip(casa) {
+            assert!((found - casa).abs() < 1e-6, "{found} {casa}");
+        }
     }
 
     #[test]
