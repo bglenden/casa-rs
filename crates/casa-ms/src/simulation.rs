@@ -4620,18 +4620,10 @@ fn observatory_position_from_name(
     name: &str,
     measures: &dyn MeasuresProvider,
 ) -> Option<MPosition> {
+    // The provider finds `ALMASD` as ALMA, as casacore does.
     MPosition::from_observatory_name(name, measures)
         .ok()
         .flatten()
-        .or_else(|| {
-            if name.eq_ignore_ascii_case("ALMASD") {
-                MPosition::from_observatory_name("ALMA", measures)
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            }
-        })
 }
 
 fn antenna_centroid_position(antennas: &[SyntheticAntenna]) -> MPosition {

@@ -33,7 +33,8 @@ against 170).
 A step CASA refuses must be one its test expects to fail (`expect_error`,
 `tolerates_error`; any other refusal fails the case) and must be refused by
 casa-rs too, and an image name only refused steps wrote is not compared;
-every other step must
+a step CASA's task declines (it warns and returns None, imaging nothing)
+must be refused by casa-rs; every other step must
 succeed with exact iterdone, nmajordone and stopcode, and, for the return
 values CASA reports, maxpsfsidelobe and cyclethreshold within 1e-4 relative
 plus 1e-8 absolute (`SCALAR_RTOL`). Each image name's products must match
@@ -46,6 +47,7 @@ import contextlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -211,6 +213,13 @@ def compare_step(casa, native, case):
             "casa_refused": True,
             "casa_refusal_expected": expected,
         }
+    if casa["result"] is None:
+        # CASA's task declined to image (it warns and returns None, as for
+        # mtmfs with a cube): casa-rs must refuse it too, as a refusal CASA
+        # shares. One naming an issue is work casa-rs has not done yet.
+        message = native.get("refused", {}).get("message", "")
+        shared = "refused" in native and not re.search(r"#\d+", message)
+        return {"passed": shared, "casa_declined": True}
     if "result" not in native:
         return {"passed": False}
     expected, actual = casa["result"], native["result"]

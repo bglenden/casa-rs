@@ -22,7 +22,10 @@ use:
 - `itrf2loc`, `baselineLengths` and `approxBeam`;
 - the sky-model helpers `modifymodel` and `flatimage`;
 - the analysis helpers `simanalyze` uses: `ismstp`, `cellsize`, `statim`
-  (whose plot is not drawn yet) and `convimage`.
+  (whose plot is not drawn yet) and `convimage`;
+- the geodesy helpers, `getdatum` through `itrf2locname`;
+- `msg`, the report file (`isreport`, `openreport`, `closereport`),
+  `dir_s2m`, `is4d`, `spectral` and `setcfg`.
 
 CASA's other public methods exist with CASA's signatures and raise
 `NotImplementedError` naming issue #1053, which records which ones casa-rs

@@ -68,12 +68,11 @@
    ]
   },
   "closereport": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Closes self.report; AttributeError when none was opened, as in CASA.",
    "evidence": [
     "signature",
-    "refusals"
+    "helpers-casa"
    ]
   },
   "convimage": {
@@ -95,12 +94,11 @@
    ]
   },
   "dir_s2m": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "CASA's direction measure for a string (J2000 when it names no frame, degrees for bare numbers), a list's mean, or self.direction; the verbose J2000 message.",
    "evidence": [
     "signature",
-    "refusals"
+    "helpers-casa"
    ]
   },
   "direction_splitter": {
@@ -203,12 +201,11 @@
    ]
   },
   "is4d": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Whether a CASA image or FITS file has direction, Stokes and spectral axes in CASA's order; casa-rs leaves no image open (recorded deviation).",
    "evidence": [
     "signature",
-    "refusals"
+    "helpers-casa"
    ]
   },
   "isEven": {
@@ -246,12 +243,11 @@
    ]
   },
   "isreport": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Whether self.report is the file self.reportfile names; true after closereport, as in CASA.",
    "evidence": [
     "signature",
-    "refusals"
+    "helpers-casa"
    ]
   },
   "itrf2loc": {
@@ -308,12 +304,11 @@
    ]
   },
   "msg": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Logs at the level CASA's log shows (INFO, WARNING, DEBUG) on casars.<origin>; priority='error' raises RuntimeError with the message; with verbose, writes the open report as CASA does and logs once at INFO (recorded deviation).",
    "evidence": [
     "signature",
-    "refusals"
+    "helpers-casa"
    ]
   },
   "needsFiller": {
@@ -353,12 +348,11 @@
    ]
   },
   "openreport": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Opens self.reportfile as self.report, a Python file object, appending to one that exists; CASA's refusal when reportfile is not set.",
    "evidence": [
     "signature",
-    "refusals"
+    "helpers-casa"
    ]
   },
   "plotants": {
@@ -407,12 +401,11 @@
    ]
   },
   "setcfg": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Calls the simulator's setconfig as CASA does (global coordinates, CASA's mount guess, diam.tolist()), returns the mount; a refused configuration closes the simulator and raises ValueError.",
    "evidence": [
     "signature",
-    "refusals"
+    "helpers-casa"
    ]
   },
   "sfBeam1d": {
@@ -425,12 +418,11 @@
    ]
   },
   "spectral": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "(nchan as a one-element int64 array, width as CASA's string) or 0.0 without a spectral axis, for CASA images and FITS files.",
    "evidence": [
     "signature",
-    "refusals"
+    "helpers-casa"
    ]
   },
   "statim": {
@@ -681,6 +673,30 @@
    "evidence": [
     "geodesy-casa"
    ]
+  },
+  {
+   "id": "msg-verbose-single-post",
+   "state": "Proposed",
+   "inputs": "simutil(verbose=True).msg(s, origin=..., priority=...)",
+   "casa": "Posts the message twice to its log: once with ANSI colour codes around [origin], WARNING and ERROR, once with WARNING and ERROR coloured; both at INFO.",
+   "ours": "Logs it once at INFO on casars.<origin>, without colour codes; the report file is written as CASA writes it.",
+   "rationale": "Colour codes in a log record are terminal noise, and Python logging shows the message once to every handler.",
+   "impact": "A script that counts or parses CASA's duplicated, coloured lines sees one plain line.",
+   "evidence": [
+    "helpers-casa"
+   ]
+  },
+  {
+   "id": "is4d-leaves-image-open",
+   "state": "Proposed",
+   "inputs": "simutil.is4d on an image that is not CASA's 4-D order.",
+   "casa": "Returns False before ia.done(), leaving the shared image tool open; the next ia.open warns 'Another image is already open, closing first'.",
+   "ours": "Opens nothing that outlives the call; no warning follows.",
+   "rationale": "The warning reports CASA's leaked state, not anything about the image.",
+   "impact": "None on results.",
+   "evidence": [
+    "helpers-casa"
+   ]
   }
  ],
  "evidence": {
@@ -783,6 +799,15 @@
    "state": "measured",
    "result": "Recorded from CASA 6.7.6-14 by simutil_geodesy_oracle.py: getdatum of all 24 datums and an unknown one, tconpc and tmgeod of three ellipsoids and five UTM points, the UTM and geodetic conversions on four datums, locxyz2itrf about three points and itrf2locname about five observatories. The Python tests agree to 1e-12 (positions to 1e-6 m), and where CASA slips on a datum's offsets casa-rs inverts long2xyz instead.",
    "scope": "The geodesy helpers.",
+   "links": [
+    "crates/casars-python/python/tests/test_simutil.py"
+   ]
+  },
+  "helpers-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Recorded from CASA 6.7.6-14 by simutil_helpers_oracle.py: is4d and spectral on the 22 sky-model input images, dir_s2m on 13 directions, msg at 9 priorities with and without verbose and an origin, the report helpers through a task's sequence and the report file they write, and setcfg on 8 telescopes with a stand-in simulator. The Python tests agree on every return value, raised error, log level and the report's text, and on the arguments setcfg passes.",
+   "scope": "msg, isreport, openreport, closereport, dir_s2m, is4d, spectral and setcfg.",
    "links": [
     "crates/casars-python/python/tests/test_simutil.py"
    ]

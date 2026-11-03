@@ -1,0 +1,81 @@
+{
+  "source": {
+    "purpose": "casa-rs's own tclean cases of polarized MT-MFS families (#1065)",
+    "casa_version": "6.7.6.14",
+    "tool": "tools/casa-compat/tclean_case_matrix.py"
+  },
+  "format": "tclean_case_matrix.py's case matrix (resources/casa-compat/tclean-casa-test-cases.json documents it)",
+  "inputs": {
+    "refim_point_linRL.ms": "unittest/tclean/refim_point_linRL.ms",
+    "refim_mawproject.ms": "unittest/tclean/refim_mawproject.ms"
+  },
+  "common": {},
+  "cases": {
+    "mtmfs_polarized.point_IQUV": {
+      "vis": "refim_point_linRL.ms",
+      "imagename": "tst",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "parallel": false,
+        "stokes": "IQUV"
+      },
+      "note": "refim_point_linRL.ms's polarized point (test_stokes) imaged as test_stokes_mtmfs_Q images it, in IQUV: test_stokes_mtmfs_IQUV without its pbmask (#1061)",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.point_IV": {
+      "vis": "refim_point_linRL.ms",
+      "imagename": "tst",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "parallel": false,
+        "stokes": "IV"
+      },
+      "note": "refim_point_linRL.ms's polarized point (test_stokes) imaged as test_stokes_mtmfs_Q images it, in IV: V's family on the second plane",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.point_IQUV_common": {
+      "vis": "refim_point_linRL.ms",
+      "imagename": "tst",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "parallel": false,
+        "stokes": "IQUV",
+        "restoringbeam": "common"
+      },
+      "note": "refim_point_linRL.ms's polarized point (test_stokes) imaged as test_stokes_mtmfs_Q images it, in IQUV with restoringbeam='common': one beam for every plane",
+      "skip_scalars": false
+    },
+    "mtmfs_polarized.mosaic_IQUV": {
+      "vis": "refim_mawproject.ms",
+      "imagename": "tst",
+      "params": {
+        "spw": "1",
+        "field": "*",
+        "imsize": 512,
+        "cell": "10.0arcsec",
+        "phasecenter": "J2000 19:59:28.500 +40.44.01.50",
+        "niter": 30,
+        "gridder": "mosaic",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "pblimit": 0.3,
+        "parallel": false,
+        "stokes": "IQUV"
+      },
+      "note": "test_widefield_mosaicft_mfs's mosaic as MT-MFS in IQUV: each Stokes plane's weight, pb and pb-corrected Taylor family",
+      "skip_scalars": false
+    }
+  }
+}

@@ -1,0 +1,7030 @@
+{
+ "casa_version": "6.7.6-14",
+ "generator": "tools/casa-compat/measures_names_oracle.py",
+ "observatory": {
+  "A": {},
+  "a": {},
+  "AL": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1825465955049892
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4018251640113072
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5056.8
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "al": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1825465955049892
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4018251640113072
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5056.8
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ALM": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1825465955049892
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4018251640113072
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5056.8
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "alm": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1825465955049892
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4018251640113072
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5056.8
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ALMA": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1825465955049892
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4018251640113072
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5056.8
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "alma": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1825465955049892
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4018251640113072
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5056.8
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "AR": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1650653951703065
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.32015150427985156
+   },
+   "m2": {
+    "unit": "m",
+    "value": 495.99999999999994
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ar": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1650653951703065
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.32015150427985156
+   },
+   "m2": {
+    "unit": "m",
+    "value": 495.99999999999994
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ARE": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1650653951703065
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.32015150427985156
+   },
+   "m2": {
+    "unit": "m",
+    "value": 495.99999999999994
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "are": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1650653951703065
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.32015150427985156
+   },
+   "m2": {
+    "unit": "m",
+    "value": 495.99999999999994
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "AREC": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1650653951703065
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.32015150427985156
+   },
+   "m2": {
+    "unit": "m",
+    "value": 495.99999999999994
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "arec": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1650653951703065
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.32015150427985156
+   },
+   "m2": {
+    "unit": "m",
+    "value": 495.99999999999994
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ARECI": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1650653951703065
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.32015150427985156
+   },
+   "m2": {
+    "unit": "m",
+    "value": 495.99999999999994
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "areci": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1650653951703065
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.32015150427985156
+   },
+   "m2": {
+    "unit": "m",
+    "value": 495.99999999999994
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ARECIB": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1650653951703065
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.32015150427985156
+   },
+   "m2": {
+    "unit": "m",
+    "value": 495.99999999999994
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "arecib": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1650653951703065
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.32015150427985156
+   },
+   "m2": {
+    "unit": "m",
+    "value": 495.99999999999994
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ARECIBO": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1650653951703065
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.32015150427985156
+   },
+   "m2": {
+    "unit": "m",
+    "value": 495.99999999999994
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "arecibo": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1650653951703065
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.32015150427985156
+   },
+   "m2": {
+    "unit": "m",
+    "value": 495.99999999999994
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "AT": {},
+  "at": {},
+  "ATC": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6101423190348916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5261379196128062
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6372960.257723439
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "atc": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6101423190348916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5261379196128062
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6372960.257723439
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "ATCA": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6101423190348916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5261379196128062
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6372960.257723439
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "atca": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6101423190348916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5261379196128062
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6372960.257723439
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "B": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.1200320498502676
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7123949192959743
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1020.9999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "b": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.1200320498502676
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7123949192959743
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1020.9999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "BI": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.1200320498502676
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7123949192959743
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1020.9999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "bi": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.1200320498502676
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7123949192959743
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1020.9999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "BIM": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.1200320498502676
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7123949192959743
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1020.9999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "bim": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.1200320498502676
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7123949192959743
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1020.9999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "BIMA": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.1200320498502676
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7123949192959743
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1020.9999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "bima": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.1200320498502676
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7123949192959743
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1020.9999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "C": {},
+  "c": {},
+  "CL": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.029643433781618
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5819218771041114
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373612.793434663
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "cl": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.029643433781618
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5819218771041114
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373612.793434663
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "CLR": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.029643433781618
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5819218771041114
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373612.793434663
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "clr": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.029643433781618
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5819218771041114
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373612.793434663
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "CLRO": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.029643433781618
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5819218771041114
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373612.793434663
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "clro": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.029643433781618
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5819218771041114
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373612.793434663
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "D": {},
+  "d": {},
+  "DR": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.076925811021776
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8608545647253365
+   },
+   "m2": {
+    "unit": "m",
+    "value": 545.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "dr": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.076925811021776
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8608545647253365
+   },
+   "m2": {
+    "unit": "m",
+    "value": 545.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "DRA": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.076925811021776
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8608545647253365
+   },
+   "m2": {
+    "unit": "m",
+    "value": 545.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "dra": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.076925811021776
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8608545647253365
+   },
+   "m2": {
+    "unit": "m",
+    "value": 545.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "DRAO": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.076925811021776
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8608545647253365
+   },
+   "m2": {
+    "unit": "m",
+    "value": 545.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "drao": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.076925811021776
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8608545647253365
+   },
+   "m2": {
+    "unit": "m",
+    "value": 545.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "DW": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11164653058851229
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9217602530420842
+   },
+   "m2": {
+    "unit": "m",
+    "value": 24.999999999999996
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "dw": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11164653058851229
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9217602530420842
+   },
+   "m2": {
+    "unit": "m",
+    "value": 24.999999999999996
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "DWL": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11164653058851229
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9217602530420842
+   },
+   "m2": {
+    "unit": "m",
+    "value": 24.999999999999996
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "dwl": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11164653058851229
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9217602530420842
+   },
+   "m2": {
+    "unit": "m",
+    "value": 24.999999999999996
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "G": {},
+  "g": {},
+  "GB": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3934054249453227
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6708706275089427
+   },
+   "m2": {
+    "unit": "m",
+    "value": 823.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "gb": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3934054249453227
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6708706275089427
+   },
+   "m2": {
+    "unit": "m",
+    "value": 823.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "GBT": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3934679600924218
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707844683607905
+   },
+   "m2": {
+    "unit": "m",
+    "value": 824.595
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "gbt": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3934679600924218
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707844683607905
+   },
+   "m2": {
+    "unit": "m",
+    "value": 824.595
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "GM": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.292415825900269
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.33319474771507457
+   },
+   "m2": {
+    "unit": "m",
+    "value": 640.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "gm": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.292415825900269
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.33319474771507457
+   },
+   "m2": {
+    "unit": "m",
+    "value": 640.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "GMR": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.292415825900269
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.33319474771507457
+   },
+   "m2": {
+    "unit": "m",
+    "value": 640.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "gmr": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.292415825900269
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.33319474771507457
+   },
+   "m2": {
+    "unit": "m",
+    "value": 640.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "GMRT": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.292415825900269
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.33319474771507457
+   },
+   "m2": {
+    "unit": "m",
+    "value": 640.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "gmrt": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.292415825900269
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.33319474771507457
+   },
+   "m2": {
+    "unit": "m",
+    "value": 640.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "I": {},
+  "i": {},
+  "IR": {},
+  "ir": {},
+  "IRA": {},
+  "ira": {},
+  "IRAM": {},
+  "iram": {},
+  "IRAM ": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282669
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370258.0
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "iram ": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282669
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370258.0
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "IRAM P": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282669
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370258.0
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "iram p": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282669
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370258.0
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "IRAM PD": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282669
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370258.0
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "iram pd": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282669
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370258.0
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "IRAM PDB": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282669
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370258.0
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "iram pdb": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282669
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370258.0
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "IRAM_": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282665
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370242.61901
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "iram_": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282665
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370242.61901
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "IRAM_P": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282665
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370242.61901
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "iram_p": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282665
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370242.61901
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "IRAM_PD": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282665
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370242.61901
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "iram_pd": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282665
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370242.61901
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "IRAM_PDB": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282665
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370242.61901
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "iram_pdb": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10309153883282665
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7756481013100227
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6370242.61901
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "J": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.71363307286397
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.346026068618309
+   },
+   "m2": {
+    "unit": "m",
+    "value": 4111.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "j": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.71363307286397
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.346026068618309
+   },
+   "m2": {
+    "unit": "m",
+    "value": 4111.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "JC": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.71363307286397
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.346026068618309
+   },
+   "m2": {
+    "unit": "m",
+    "value": 4111.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "jc": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.71363307286397
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.346026068618309
+   },
+   "m2": {
+    "unit": "m",
+    "value": 4111.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "JCM": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.71363307286397
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.346026068618309
+   },
+   "m2": {
+    "unit": "m",
+    "value": 4111.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "jcm": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.71363307286397
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.346026068618309
+   },
+   "m2": {
+    "unit": "m",
+    "value": 4111.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "JCMT": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.71363307286397
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.346026068618309
+   },
+   "m2": {
+    "unit": "m",
+    "value": 4111.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "jcmt": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.71363307286397
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.346026068618309
+   },
+   "m2": {
+    "unit": "m",
+    "value": 4111.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "M": {},
+  "m": {},
+  "MO": {},
+  "mo": {},
+  "MOP": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6022798256364226
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.542752310963902
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373280.224650414
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "mop": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6022798256364226
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.542752310963902
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373280.224650414
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "MOPR": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6022798256364226
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.542752310963902
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373280.224650414
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "mopr": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6022798256364226
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.542752310963902
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373280.224650414
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "MOPRA": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6022798256364226
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.542752310963902
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373280.224650414
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "mopra": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6022798256364226
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.542752310963902
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373280.224650414
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "MOS": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6079291401538964
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.6173520458330373
+   },
+   "m2": {
+    "unit": "m",
+    "value": 732.0000000000002
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "mos": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6079291401538964
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.6173520458330373
+   },
+   "m2": {
+    "unit": "m",
+    "value": 732.0000000000002
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "MOST": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6079291401538964
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.6173520458330373
+   },
+   "m2": {
+    "unit": "m",
+    "value": 732.0000000000002
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "most": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.6079291401538964
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.6173520458330373
+   },
+   "m2": {
+    "unit": "m",
+    "value": 732.0000000000002
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "N": {},
+  "n": {},
+  "NR": {},
+  "nr": {},
+  "NRA": {},
+  "nra": {},
+  "NRAO": {},
+  "nrao": {},
+  "NRAO1": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.948046699341645
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5576908251725533
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1914.0000000000005
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "nrao1": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.948046699341645
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5576908251725533
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1914.0000000000005
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NRAO12": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.948046699341645
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5576908251725533
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1914.0000000000005
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "nrao12": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.948046699341645
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5576908251725533
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1914.0000000000005
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NRAO12M": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.948046699341645
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5576908251725533
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1914.0000000000005
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "nrao12m": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.948046699341645
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5576908251725533
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1914.0000000000005
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NRAO_": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3934679653284094
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707844753421078
+   },
+   "m2": {
+    "unit": "m",
+    "value": 807.4349999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "nrao_": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3934679653284094
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707844753421078
+   },
+   "m2": {
+    "unit": "m",
+    "value": 807.4349999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NRAO_G": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3934679653284094
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707844753421078
+   },
+   "m2": {
+    "unit": "m",
+    "value": 807.4349999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "nrao_g": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3934679653284094
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707844753421078
+   },
+   "m2": {
+    "unit": "m",
+    "value": 807.4349999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NRAO_GB": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3934679653284094
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707844753421078
+   },
+   "m2": {
+    "unit": "m",
+    "value": 807.4349999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "nrao_gb": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3934679653284094
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707844753421078
+   },
+   "m2": {
+    "unit": "m",
+    "value": 807.4349999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NRAO_GBT": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3934679653284094
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707844753421078
+   },
+   "m2": {
+    "unit": "m",
+    "value": 807.4349999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "nrao_gbt": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3934679653284094
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707844753421078
+   },
+   "m2": {
+    "unit": "m",
+    "value": 807.4349999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "P": {},
+  "p": {},
+  "PK": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.587686425505059
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5728671915208409
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6372246.307925967
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "pk": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.587686425505059
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5728671915208409
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6372246.307925967
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "PKS": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.587686425505059
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5728671915208409
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6372246.307925967
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "pks": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.587686425505059
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5728671915208409
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6372246.307925967
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "S": {},
+  "s": {},
+  "SA": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594671741919
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976593122979
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "sa": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594671741919
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976593122979
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "SAO": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594671741919
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976593122979
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "sao": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594671741919
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976593122979
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "SAO ": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594671741919
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976593122979
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "sao ": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594671741919
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976593122979
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "SAO S": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594671741919
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976593122979
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "sao s": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594671741919
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976593122979
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "SAO SM": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594671741919
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976593122979
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "sao sm": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594671741919
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976593122979
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "SAO SMA": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594671741919
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976593122979
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "sao sma": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594671741919
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976593122979
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "SM": {},
+  "sm": {},
+  "SMA": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594675620428
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976585365962
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.0
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "sma": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.713594675620428
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.3459976585365962
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6382248.0
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "V": {},
+  "v": {},
+  "VL": {},
+  "vl": {},
+  "VLA": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8782942581394362
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5916750987501983
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373576.280915651
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "vla": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8782942581394362
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5916750987501983
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373576.280915651
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "VLB": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1e-06
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "vlb": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1e-06
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "VLBA": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1e-06
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "vlba": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1e-06
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "W": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11526445268379215
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.923574425836796
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "w": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11526445268379215
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.923574425836796
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "WS": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11526445268379215
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.923574425836796
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ws": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11526445268379215
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.923574425836796
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "WSR": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11526445268379215
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.923574425836796
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "wsr": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11526445268379215
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.923574425836796
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "WSRT": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11526445268379215
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.923574425836796
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "wsrt": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11526445268379215
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.923574425836796
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ATF": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8783058877037775
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5916072752315099
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373598.8868
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "atf": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8783058877037775
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5916072752315099
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373598.8868
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "ATA": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.120086348982552
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7123980221035334
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1043.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ata": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.120086348982552
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7123980221035334
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1043.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "CA": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0619606435937357
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6506653773946438
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2196.265
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ca": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0619606435937357
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6506653773946438
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2196.265
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "CAR": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0619606435937357
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6506653773946438
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2196.265
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "car": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0619606435937357
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6506653773946438
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2196.265
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "CARM": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0619606435937357
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6506653773946438
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2196.265
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "carm": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0619606435937357
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6506653773946438
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2196.265
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "CARMA": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0619606435937357
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6506653773946438
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2196.265
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "carma": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0619606435937357
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6506653773946438
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2196.265
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "AC": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1825456819705693
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40191120447707007
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5056.8
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ac": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1825456819705693
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40191120447707007
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5056.8
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ACA": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1825456819705693
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40191120447707007
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5056.8
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "aca": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1825456819705693
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40191120447707007
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5056.8
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "O": {},
+  "o": {},
+  "OS": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1864715335774112
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40029454394216285
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6377850.471125258
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "os": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1864715335774112
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40029454394216285
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6377850.471125258
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "OSF": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1864715335774112
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40029454394216285
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6377850.471125258
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "osf": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1864715335774112
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40029454394216285
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6377850.471125258
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "OV": {},
+  "ov": {},
+  "OVR": {},
+  "ovr": {},
+  "OVRO": {},
+  "ovro": {},
+  "OVRO_": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064427799136453
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498455107238486
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1188.0519
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "ovro_": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064427799136453
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498455107238486
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1188.0519
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "OVRO_M": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064427799136453
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498455107238486
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1188.0519
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "ovro_m": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064427799136453
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498455107238486
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1188.0519
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "OVRO_MM": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064427799136453
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498455107238486
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1188.0519
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "ovro_mm": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064427799136453
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498455107238486
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1188.0519
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "OVRO_MMA": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064427799136453
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498455107238486
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1188.0519
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "ovro_mma": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064427799136453
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498455107238486
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1188.0519
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "E": {},
+  "e": {},
+  "EV": {},
+  "ev": {},
+  "EVL": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8782884344112576
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5916753430723376
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373580.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "evl": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8782884344112576
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5916753430723376
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373580.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "EVLA": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8782884344112576
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5916753430723376
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373580.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "evla": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8782884344112576
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5916753430723376
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373580.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "AS": {},
+  "as": {},
+  "ASK": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.036080161425561
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.46607446878181774
+   },
+   "m2": {
+    "unit": "m",
+    "value": 125.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ask": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.036080161425561
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.46607446878181774
+   },
+   "m2": {
+    "unit": "m",
+    "value": 125.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ASKA": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.036080161425561
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.46607446878181774
+   },
+   "m2": {
+    "unit": "m",
+    "value": 125.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "aska": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.036080161425561
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.46607446878181774
+   },
+   "m2": {
+    "unit": "m",
+    "value": 125.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ASKAP": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.036080161425561
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.46607446878181774
+   },
+   "m2": {
+    "unit": "m",
+    "value": 125.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "askap": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.036080161425561
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.46607446878181774
+   },
+   "m2": {
+    "unit": "m",
+    "value": 125.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "AP": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.182621138517342
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40152521172605954
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5104.999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ap": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.182621138517342
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40152521172605954
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5104.999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "APE": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.182621138517342
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40152521172605954
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5104.999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ape": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.182621138517342
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40152521172605954
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5104.999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "APEX": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.182621138517342
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40152521172605954
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5104.999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "apex": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.182621138517342
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.40152521172605954
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5104.999999999999
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "SMT": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.9179597683090888
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5707505906701776
+   },
+   "m2": {
+    "unit": "m",
+    "value": 3186.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "smt": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.9179597683090888
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5707505906701776
+   },
+   "m2": {
+    "unit": "m",
+    "value": 3186.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NRO": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.4168563172274946
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.627297997919223
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6372221.7
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "nro": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.4168563172274946
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.627297997919223
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6372221.7
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "AST": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.181647144263764
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4009297368012055
+   },
+   "m2": {
+    "unit": "m",
+    "value": 4861.9
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ast": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.181647144263764
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4009297368012055
+   },
+   "m2": {
+    "unit": "m",
+    "value": 4861.9
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ASTE": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.181647144263764
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4009297368012055
+   },
+   "m2": {
+    "unit": "m",
+    "value": 4861.9
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "aste": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.181647144263764
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4009297368012055
+   },
+   "m2": {
+    "unit": "m",
+    "value": 4861.9
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "L": {},
+  "l": {},
+  "LO": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11990122009652411
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9235424921292488
+   },
+   "m2": {
+    "unit": "m",
+    "value": 48.88147134
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "lo": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11990122009652411
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9235424921292488
+   },
+   "m2": {
+    "unit": "m",
+    "value": 48.88147134
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "LOF": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11990122009652411
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9235424921292488
+   },
+   "m2": {
+    "unit": "m",
+    "value": 48.88147134
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "lof": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11990122009652411
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9235424921292488
+   },
+   "m2": {
+    "unit": "m",
+    "value": 48.88147134
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "LOFA": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11990122009652411
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9235424921292488
+   },
+   "m2": {
+    "unit": "m",
+    "value": 48.88147134
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "lofa": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11990122009652411
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9235424921292488
+   },
+   "m2": {
+    "unit": "m",
+    "value": 48.88147134
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "LOFAR": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11990122009652411
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9235424921292488
+   },
+   "m2": {
+    "unit": "m",
+    "value": 48.88147134
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "lofar": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.11990122009652411
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9235424921292488
+   },
+   "m2": {
+    "unit": "m",
+    "value": 48.88147134
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "Me": {},
+  "me": {},
+  "Mee": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1050.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "mee": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1050.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "Meer": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1050.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "meer": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1050.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "MeerK": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1050.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "meerk": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1050.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "MeerKA": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1050.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "meerka": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1050.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "MeerKAT": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1050.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "meerkat": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1050.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "K": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1038.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "k": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1038.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "KA": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1038.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ka": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1038.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "KAT": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1038.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "kat": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1038.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "KAT-": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1038.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "kat-": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1038.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "KAT-7": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1038.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "kat-7": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.374266659468412
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360464638235224
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1038.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "EVN": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1e-06
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "evn": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1e-06
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "LW": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8784580106013815
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5946144810233548
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2124.2642
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "lw": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8784580106013815
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5946144810233548
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2124.2642
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "LWA": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8784580106013815
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5946144810233548
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2124.2642
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "lwa": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8784580106013815
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5946144810233548
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2124.2642
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "LWA1": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8784580106013815
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5946144810233548
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2124.2642
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "lwa1": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8784580106013815
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5946144810233548
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2124.2642
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "PA": {},
+  "pa": {},
+  "PAP": {},
+  "pap": {},
+  "PAPE": {},
+  "pape": {},
+  "PAPER": {},
+  "paper": {},
+  "PAPER_": {},
+  "paper_": {},
+  "PAPER_S": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3739901207750798
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.536189387090639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1500.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "paper_s": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3739901207750798
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.536189387090639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1500.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "PAPER_SA": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3739901207750798
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.536189387090639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1500.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "paper_sa": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3739901207750798
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.536189387090639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1500.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "PAPER_G": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3936555829870112
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707845242113266
+   },
+   "m2": {
+    "unit": "m",
+    "value": 807.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "paper_g": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3936555829870112
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707845242113266
+   },
+   "m2": {
+    "unit": "m",
+    "value": 807.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "PAPER_GB": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3936555829870112
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707845242113266
+   },
+   "m2": {
+    "unit": "m",
+    "value": 807.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "paper_gb": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.3936555829870112
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6707845242113266
+   },
+   "m2": {
+    "unit": "m",
+    "value": 807.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "e-": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "e-M": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "e-m": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "e-ME": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "e-me": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "e-MER": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "e-mer": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "e-MERL": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "e-merl": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "e-MERLI": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "e-merli": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "e-MERLIN": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "e-merlin": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "ME": {},
+  "MER": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "mer": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "MERL": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "merl": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "MERLI": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "merli": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "MERLIN": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "merlin": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "MERLIN2": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "merlin2": {
+   "m0": {
+    "unit": "rad",
+    "value": -0.045321837351162755
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.9226037318844784
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6357690.000000001
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "Ef": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ef": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "Eff": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "eff": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "Effe": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "effe": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "Effel": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "effel": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "Effels": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "effels": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "Effelsb": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "effelsb": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "Effelsbe": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "effelsbe": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "Effelsber": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "effelsber": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "Effelsberg": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "effelsberg": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.12014165892320686
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.8818246375104067
+   },
+   "m2": {
+    "unit": "m",
+    "value": 416.70726
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "MW": {},
+  "mw": {},
+  "MWA": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.036289866923978
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.46606084474167664
+   },
+   "m2": {
+    "unit": "m",
+    "value": 377.83000000000004
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "mwa": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.036289866923978
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.46606084474167664
+   },
+   "m2": {
+    "unit": "m",
+    "value": 377.83000000000004
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "MWA3": {},
+  "mwa3": {},
+  "MWA32": {},
+  "mwa32": {},
+  "MWA32T": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.03628984334458
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.46606084550962157
+   },
+   "m2": {
+    "unit": "m",
+    "value": 377.83
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "mwa32t": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.03628984334458
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.46606084550962157
+   },
+   "m2": {
+    "unit": "m",
+    "value": 377.83
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "AM": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.9105347801069377
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0010326589585274851
+   },
+   "m2": {
+    "unit": "m",
+    "value": 15.999999999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "am": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.9105347801069377
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0010326589585274851
+   },
+   "m2": {
+    "unit": "m",
+    "value": 15.999999999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "AMI": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.9105347801069377
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0010326589585274851
+   },
+   "m2": {
+    "unit": "m",
+    "value": 15.999999999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ami": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.9105347801069377
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0010326589585274851
+   },
+   "m2": {
+    "unit": "m",
+    "value": 15.999999999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "AMI-": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.9105347801069377
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0010326589585274851
+   },
+   "m2": {
+    "unit": "m",
+    "value": 15.999999999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ami-": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.9105347801069377
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0010326589585274851
+   },
+   "m2": {
+    "unit": "m",
+    "value": 15.999999999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "AMI-L": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.9105347801069377
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0010326589585274851
+   },
+   "m2": {
+    "unit": "m",
+    "value": 15.999999999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ami-l": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.9105347801069377
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0010326589585274851
+   },
+   "m2": {
+    "unit": "m",
+    "value": 15.999999999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "AMI-LA": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.9105347801069377
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0010326589585274851
+   },
+   "m2": {
+    "unit": "m",
+    "value": 15.999999999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ami-la": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.9105347801069377
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0010326589585274851
+   },
+   "m2": {
+    "unit": "m",
+    "value": 15.999999999999998
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "H": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3739901207750798
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.536189387090639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1500.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "h": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3739901207750798
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.536189387090639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1500.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "HE": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3739901207750798
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.536189387090639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1500.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "he": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3739901207750798
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.536189387090639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1500.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "HER": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3739901207750798
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.536189387090639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1500.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "her": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3739901207750798
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.536189387090639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1500.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "HERA": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3739901207750798
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.536189387090639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1500.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "hera": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3739901207750798
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.536189387090639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1500.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NG": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8786902406209933
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5948599261524639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2126.713514
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ng": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8786902406209933
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5948599261524639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2126.713514
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NGV": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8786902406209933
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5948599261524639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2126.713514
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ngv": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8786902406209933
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5948599261524639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2126.713514
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NGVL": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8786902406209933
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5948599261524639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2126.713514
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ngvl": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8786902406209933
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5948599261524639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2126.713514
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NGVLA": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8786902406209933
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5948599261524639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2126.713514
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ngvla": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8786902406209933
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5948599261524639
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2126.713514
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NO": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10311260073965915
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7790083289085676
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2560.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "no": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10311260073965915
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7790083289085676
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2560.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NOE": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10311260073965915
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7790083289085676
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2560.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "noe": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10311260073965915
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7790083289085676
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2560.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NOEM": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10311260073965915
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7790083289085676
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2560.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "noem": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10311260073965915
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7790083289085676
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2560.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "NOEMA": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10311260073965915
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7790083289085676
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2560.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "noema": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.10311260073965915
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7790083289085676
+   },
+   "m2": {
+    "unit": "m",
+    "value": 2560.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "MU": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.011509416215985
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7367348931933423
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1365.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "mu": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.011509416215985
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7367348931933423
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1365.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "MUS": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.011509416215985
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7367348931933423
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1365.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "mus": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.011509416215985
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7367348931933423
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1365.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "MUSE": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.011509416215985
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7367348931933423
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1365.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "muse": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.011509416215985
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7367348931933423
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1365.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "MUSER": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.011509416215985
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7367348931933423
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1365.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "muser": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.011509416215985
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.7367348931933423
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1365.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "DS": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0291450258295916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6713927505116956
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1700.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ds": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0291450258295916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6713927505116956
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1700.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "DSA": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0291450258295916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6713927505116956
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1700.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "dsa": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0291450258295916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6713927505116956
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1700.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "DSA2": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0291450258295916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6713927505116956
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1700.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "dsa2": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0291450258295916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6713927505116956
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1700.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "DSA20": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0291450258295916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6713927505116956
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1700.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "dsa20": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0291450258295916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6713927505116956
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1700.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "DSA200": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0291450258295916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6713927505116956
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1700.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "dsa200": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0291450258295916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6713927505116956
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1700.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "DSA2000": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0291450258295916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6713927505116956
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1700.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "dsa2000": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.0291450258295916
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6713927505116956
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1700.0
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "F": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.8650006644331032
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.44772847186236864
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1110.028801000677
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "f": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.8650006644331032
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.44772847186236864
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1110.028801000677
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "FA": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.8650006644331032
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.44772847186236864
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1110.028801000677
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "fa": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.8650006644331032
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.44772847186236864
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1110.028801000677
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "FAS": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.8650006644331032
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.44772847186236864
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1110.028801000677
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "fas": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.8650006644331032
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.44772847186236864
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1110.028801000677
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "FAST": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.8650006644331032
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.44772847186236864
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1110.028801000677
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "fast": {
+   "m0": {
+    "unit": "rad",
+    "value": 1.8650006644331032
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.44772847186236864
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1110.028801000677
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "EO": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064496790133671
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498414055367057
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1207.1339
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "eo": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064496790133671
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498414055367057
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1207.1339
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "EOV": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064496790133671
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498414055367057
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1207.1339
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "eov": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064496790133671
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498414055367057
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1207.1339
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "EOVS": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064496790133671
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498414055367057
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1207.1339
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "eovs": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064496790133671
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498414055367057
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1207.1339
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "EOVSA": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064496790133671
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498414055367057
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1207.1339
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "eovsa": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064496790133671
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6498414055367057
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1207.1339
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "OVRO-": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064404528661536
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6499567260708453
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1183.48
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ovro-": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064404528661536
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6499567260708453
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1183.48
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "OVRO-L": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064404528661536
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6499567260708453
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1183.48
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ovro-l": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064404528661536
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6499567260708453
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1183.48
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "OVRO-LW": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064404528661536
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6499567260708453
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1183.48
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ovro-lw": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064404528661536
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6499567260708453
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1183.48
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "OVRO-LWA": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064404528661536
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6499567260708453
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1183.48
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ovro-lwa": {
+   "m0": {
+    "unit": "rad",
+    "value": -2.064404528661536
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.6499567260708453
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1183.48
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "SU": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 742.9311863
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "su": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 742.9311863
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "SUN": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 742.9311863
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "sun": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 742.9311863
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "SUNR": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 742.9311863
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "sunr": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 742.9311863
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "SUNRI": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 742.9311863
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "sunri": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 742.9311863
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "SUNRIS": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 742.9311863
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "sunris": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 742.9311863
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "SUNRISE": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 742.9311863
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "sunrise": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.0
+   },
+   "m2": {
+    "unit": "m",
+    "value": 742.9311863
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "SK": {},
+  "sk": {},
+  "SKA": {},
+  "ska": {},
+  "SKA-": {},
+  "ska-": {},
+  "SKA-L": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.0379240703643666
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4681797212284216
+   },
+   "m2": {
+    "unit": "m",
+    "value": 364.9999999987051
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ska-l": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.0379240703643666
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4681797212284216
+   },
+   "m2": {
+    "unit": "m",
+    "value": 364.9999999987051
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "SKA-LO": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.0379240703643666
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4681797212284216
+   },
+   "m2": {
+    "unit": "m",
+    "value": 364.9999999987051
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ska-lo": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.0379240703643666
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4681797212284216
+   },
+   "m2": {
+    "unit": "m",
+    "value": 364.9999999987051
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "SKA-LOW": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.0379240703643666
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4681797212284216
+   },
+   "m2": {
+    "unit": "m",
+    "value": 364.9999999987051
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ska-low": {
+   "m0": {
+    "unit": "rad",
+    "value": 2.0379240703643666
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4681797212284216
+   },
+   "m2": {
+    "unit": "m",
+    "value": 364.9999999987051
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "SKA-M": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3742649600413195
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360416639935466
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1095.9670000001215
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ska-m": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3742649600413195
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360416639935466
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1095.9670000001215
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "SKA-MI": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3742649600413195
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360416639935466
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1095.9670000001215
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ska-mi": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3742649600413195
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360416639935466
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1095.9670000001215
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "SKA-MID": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3742649600413195
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360416639935466
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1095.9670000001215
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ska-mid": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.3742649600413195
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.5360416639935466
+   },
+   "m2": {
+    "unit": "m",
+    "value": 1095.9670000001215
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "ALMAX": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1825465955049892
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4018251640113072
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5056.8
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "VLA2": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8782942581394362
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5916750987501983
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373576.280915651
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  "VLA-X": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.8782942581394362
+   },
+   "m1": {
+    "unit": "rad",
+    "value": 0.5916750987501983
+   },
+   "m2": {
+    "unit": "m",
+    "value": 6373576.280915651
+   },
+   "refer": "ITRF",
+   "type": "position"
+  },
+  " ALMA": {},
+  "ALMA ": {
+   "m0": {
+    "unit": "rad",
+    "value": -1.1825465955049892
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.4018251640113072
+   },
+   "m2": {
+    "unit": "m",
+    "value": 5056.8
+   },
+   "refer": "WGS84",
+   "type": "position"
+  },
+  "": {},
+  " ": {},
+  "BOGUS": {},
+  "HI ": {},
+  " HI": {},
+  "HIX": {}
+ },
+ "spectralline": {
+  "C": {},
+  "c": {},
+  "C1": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5011423600.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "c1": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5011423600.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "C10": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5011423600.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "c10": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5011423600.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "C109": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5011423600.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "c109": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5011423600.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "C109A": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5011423600.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "c109a": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5011423600.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "CI": {
+   "m0": {
+    "unit": "Hz",
+    "value": 328759800.00000006
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "ci": {
+   "m0": {
+    "unit": "Hz",
+    "value": 328759800.00000006
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "CII": {},
+  "cii": {},
+  "CII1": {},
+  "cii1": {},
+  "CII16": {},
+  "cii16": {},
+  "CII166": {},
+  "cii166": {},
+  "CII166A": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1425445000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "cii166a": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1425445000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "D": {
+   "m0": {
+    "unit": "Hz",
+    "value": 327384352.00000006
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "d": {
+   "m0": {
+    "unit": "Hz",
+    "value": 327384352.00000006
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "DI": {
+   "m0": {
+    "unit": "Hz",
+    "value": 327384352.00000006
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "di": {
+   "m0": {
+    "unit": "Hz",
+    "value": 327384352.00000006
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H": {},
+  "h": {},
+  "H1": {},
+  "h1": {},
+  "H10": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5293733000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h10": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5293733000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H107": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5293733000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h107": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5293733000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H107A": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5293733000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h107a": {
+   "m0": {
+    "unit": "Hz",
+    "value": 5293733000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H11": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4874157000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h11": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4874157000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H110": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4874157000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h110": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4874157000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H110A": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4874157000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h110a": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4874157000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H13": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4897779000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h13": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4897779000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H138": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4897779000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h138": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4897779000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H138B": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4897779000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h138b": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4897779000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H16": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1424734000.0000002
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h16": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1424734000.0000002
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H166": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1424734000.0000002
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h166": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1424734000.0000002
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H166A": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1424734000.0000002
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h166a": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1424734000.0000002
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H2": {},
+  "h2": {},
+  "H24": {
+   "m0": {
+    "unit": "Hz",
+    "value": 472827900.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h24": {
+   "m0": {
+    "unit": "Hz",
+    "value": 472827900.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H240": {
+   "m0": {
+    "unit": "Hz",
+    "value": 472827900.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h240": {
+   "m0": {
+    "unit": "Hz",
+    "value": 472827900.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H240A": {
+   "m0": {
+    "unit": "Hz",
+    "value": 472827900.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h240a": {
+   "m0": {
+    "unit": "Hz",
+    "value": 472827900.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H27": {
+   "m0": {
+    "unit": "Hz",
+    "value": 324991500.00000006
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h27": {
+   "m0": {
+    "unit": "Hz",
+    "value": 324991500.00000006
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H272": {
+   "m0": {
+    "unit": "Hz",
+    "value": 324991500.00000006
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h272": {
+   "m0": {
+    "unit": "Hz",
+    "value": 324991500.00000006
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H272A": {
+   "m0": {
+    "unit": "Hz",
+    "value": 324991500.00000006
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h272a": {
+   "m0": {
+    "unit": "Hz",
+    "value": 324991500.00000006
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H2C": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4829660000.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h2c": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4829660000.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "H2CO": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4829660000.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "h2co": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4829660000.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "HE": {},
+  "he": {},
+  "HE1": {},
+  "he1": {},
+  "HE11": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4876144000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "he11": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4876144000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "HE110": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4876144000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "he110": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4876144000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "HE110A": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4876144000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "he110a": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4876144000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "HE13": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4899774000.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "he13": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4899774000.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "HE138": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4899774000.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "he138": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4899774000.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "HE138B": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4899774000.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "he138b": {
+   "m0": {
+    "unit": "Hz",
+    "value": 4899774000.000001
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "HI": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1420405751.786
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "hi": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1420405751.786
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "O": {},
+  "o": {},
+  "OH": {},
+  "oh": {},
+  "OH1": {},
+  "oh1": {},
+  "OH16": {},
+  "oh16": {},
+  "OH161": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1612231000.0000002
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "oh161": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1612231000.0000002
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "OH1612": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1612231000.0000002
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "oh1612": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1612231000.0000002
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "OH166": {},
+  "oh166": {},
+  "OH1665": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1665401800.0000002
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "oh1665": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1665401800.0000002
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "OH1667": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1667359000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "oh1667": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1667359000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "OH17": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1720530000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "oh17": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1720530000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "OH172": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1720530000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "oh172": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1720530000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "OH1720": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1720530000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "oh1720": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1720530000.0
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  "ALMAX": {},
+  "VLA2": {},
+  "VLA-X": {},
+  " ALMA": {},
+  "ALMA ": {},
+  "": {},
+  " ": {},
+  "BOGUS": {},
+  "HI ": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1420405751.786
+   },
+   "refer": "REST",
+   "type": "frequency"
+  },
+  " HI": {},
+  "HIX": {
+   "m0": {
+    "unit": "Hz",
+    "value": 1420405751.786
+   },
+   "refer": "REST",
+   "type": "frequency"
+  }
+ },
+ "source": {
+  "0002-478": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.02004624063228046
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.8308717646901654
+   },
+   "refer": "ICRS",
+   "type": "direction"
+  },
+  "0002-47": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.02004624063228046
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.8308717646901654
+   },
+   "refer": "ICRS",
+   "type": "direction"
+  },
+  "0002": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.02004624063228046
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.8308717646901654
+   },
+   "refer": "ICRS",
+   "type": "direction"
+  },
+  "0002-478X": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.02004624063228046
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.8308717646901654
+   },
+   "refer": "ICRS",
+   "type": "direction"
+  },
+  "3C273": {},
+  "3c27": {},
+  "3C": {},
+  " 0002-478": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.02004624063228046
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.8308717646901654
+   },
+   "refer": "ICRS",
+   "type": "direction"
+  },
+  "0002-478 ": {
+   "m0": {
+    "unit": "rad",
+    "value": 0.02004624063228046
+   },
+   "m1": {
+    "unit": "rad",
+    "value": -0.8308717646901654
+   },
+   "refer": "ICRS",
+   "type": "direction"
+  },
+  "\t0002-478": {},
+  "BOGUS": {}
+ }
+}

@@ -1104,16 +1104,8 @@ fn geodetic_to_ecef(
 
 fn config_observatory_position(name: &str) -> Result<Option<MPosition>, String> {
     let measures = crate::open_measures_runtime().map_err(|error| error.to_string())?;
-    MPosition::from_observatory_name(name, measures.as_ref())
-        .map_err(|error| error.to_string())
-        .and_then(|position| {
-            if position.is_some() || !name.eq_ignore_ascii_case("ALMASD") {
-                Ok(position)
-            } else {
-                MPosition::from_observatory_name("ALMA", measures.as_ref())
-                    .map_err(|error| error.to_string())
-            }
-        })
+    // The provider finds `ALMASD` as ALMA, as casacore does.
+    MPosition::from_observatory_name(name, measures.as_ref()).map_err(|error| error.to_string())
 }
 
 fn parse_config_f64(value: &str, path: &Path) -> Result<f64, String> {

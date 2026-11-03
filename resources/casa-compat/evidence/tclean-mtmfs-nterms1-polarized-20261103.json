@@ -1,0 +1,1565 @@
+{
+ "schema": "tclean-evidence-receipt/1",
+ "title": "tclean mtmfs with nterms=1, and Taylor families of every Stokes plane (#1065)",
+ "work_issue": 1065,
+ "date": "2026-11-03",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "native_revision": "356aa9bba082223dcf6dc8df0d6b357333cc3708",
+ "binary_sha256": "8388add3956d36166888e2b712754e2df83dbb9ebc462d1149ae0c2af7f07810",
+ "host": "macOS-27.0.1-arm64-arm-64bit",
+ "backend": "cpu",
+ "precision": "f64",
+ "driver": "tools/casa-compat/tclean_case_matrix.py (each case's CASA steps in their own CASA process)",
+ "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
+ "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
+ "selection": "#1065's cases (test_onefield_mtmfs_nterms1, test_onefield_mtmfs_smallscalebias, test_stokes_mtmfs_Q, test_stokes_mtmfs_IQUV, test_stokes_weighting.8, and the CASA-skipped test_cube_mtmfs_nterms1 and test_cubedata_mtmfs_nterms1 with --include-skipped), plus seven MT-MFS regression cases",
+ "limits": "exact image-product inventory, masks and finite support; NRMS <= 1e-3, .sumwt within 5e-5; WCS, units, beams (axes 1e-3, position angle 0.01 deg); exact iterdone/nmajordone/stopcode; maxpsfsidelobe and cyclethreshold 1e-4 relative plus 1e-8 absolute",
+ "archive": {
+  "nas": "/Volumes/home/casa-rs/tclean/20261103/tclean-mtmfs-nterms1-polarized-356aa9bba0.tar",
+  "sha256": "72320200637410a957fd200c3b8366cc6d400a4cbeb8a9c09a89e01d8dcd0e64"
+ },
+ "summary": {
+  "passed": 13,
+  "total": 14
+ },
+ "cases": {
+  "test_onefield.test_onefield_mtmfs.1": {
+   "passed": true,
+   "steps": [
+    {
+     "counts": {
+      "iterdone": {
+       "native": 10,
+       "casa": 10
+      },
+      "nmajordone": {
+       "native": 2,
+       "casa": 2
+      },
+      "stopcode": {
+       "native": 1,
+       "casa": 1
+      }
+     },
+     "scalars": {
+      "maxpsfsidelobe": {
+       "native": 0.14136677980422974,
+       "casa": 0.14136679470539093
+      },
+      "cyclethreshold": {
+       "native": 0.0554535835981369,
+       "casa": 0.05545356869697571
+      }
+     },
+     "passed": true
+    }
+   ],
+   "products": {
+    "tst.alpha": {
+     "passed": true,
+     "nrms": 2.9735883083045344e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.alpha.error": {
+     "passed": true,
+     "nrms": 5.534869917881739e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.image.tt0": {
+     "passed": true,
+     "nrms": 3.18056980136083e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.image.tt1": {
+     "passed": true,
+     "nrms": 5.929822294120519e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.mask": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.model.tt0": {
+     "passed": true,
+     "nrms": 4.880655764908573e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.model.tt1": {
+     "passed": true,
+     "nrms": 8.947855800911185e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.pb.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt0": {
+     "passed": true,
+     "nrms": 9.230373776473567e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt1": {
+     "passed": true,
+     "nrms": 1.0288552390669164e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt2": {
+     "passed": true,
+     "nrms": 8.749530143053046e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.residual.tt0": {
+     "passed": true,
+     "nrms": 1.101811631057163e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.residual.tt1": {
+     "passed": true,
+     "nrms": 1.3616359506751668e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt2": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    }
+   }
+  },
+  "test_onefield.test_onefield_weighting.8": {
+   "passed": true,
+   "steps": [
+    {
+     "counts": {
+      "iterdone": {
+       "native": 10,
+       "casa": 10
+      },
+      "nmajordone": {
+       "native": 2,
+       "casa": 2
+      },
+      "stopcode": {
+       "native": 1,
+       "casa": 1
+      }
+     },
+     "scalars": {
+      "maxpsfsidelobe": {
+       "native": 0.03994259238243103,
+       "casa": 0.03994259238243103
+      },
+      "cyclethreshold": {
+       "native": 0.017850741744041443,
+       "casa": 0.017850738018751144
+      }
+     },
+     "passed": true
+    }
+   ],
+   "products": {
+    "tst7.alpha": {
+     "passed": true,
+     "nrms": 1.3779573747693302e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.alpha.error": {
+     "passed": true,
+     "nrms": 3.001567342359047e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.image.tt0": {
+     "passed": true,
+     "nrms": 2.4791828193684276e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.image.tt1": {
+     "passed": true,
+     "nrms": 4.359408537324593e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.mask": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.model.tt0": {
+     "passed": true,
+     "nrms": 4.067213468268292e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.model.tt1": {
+     "passed": true,
+     "nrms": 4.067209167294237e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.pb.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.psf.tt0": {
+     "passed": true,
+     "nrms": 1.7909620348595408e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.psf.tt1": {
+     "passed": true,
+     "nrms": 1.946387648491051e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.psf.tt2": {
+     "passed": true,
+     "nrms": 1.4353820760086528e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.residual.tt0": {
+     "passed": true,
+     "nrms": 8.688289415192028e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.residual.tt1": {
+     "passed": true,
+     "nrms": 8.810036577399474e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.sumwt.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.sumwt.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.sumwt.tt2": {
+     "passed": true,
+     "nrms": 6.130735732429189e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    }
+   }
+  },
+  "test_onefield.test_onefield_all_outputs_mtmfs.1": {
+   "passed": true,
+   "steps": [
+    {
+     "counts": {
+      "iterdone": {
+       "native": 0,
+       "casa": 0
+      },
+      "nmajordone": {
+       "native": 1,
+       "casa": 1
+      },
+      "stopcode": {
+       "native": 3,
+       "casa": 3
+      }
+     },
+     "scalars": {
+      "maxpsfsidelobe": {
+       "native": 0,
+       "casa": 0
+      },
+      "cyclethreshold": {
+       "native": 0,
+       "casa": 0
+      }
+     },
+     "passed": true
+    }
+   ],
+   "products": {
+    "tst2.alpha": {
+     "passed": true,
+     "nrms": 9.993555748386074e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.alpha.error": {
+     "passed": true,
+     "nrms": 1.0817585952007514e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.image.tt0": {
+     "passed": true,
+     "nrms": 7.984597240226684e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.image.tt1": {
+     "passed": true,
+     "nrms": 8.507857224694436e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.model.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.model.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.pb.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.psf.tt0": {
+     "passed": true,
+     "nrms": 9.230373776473567e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.psf.tt1": {
+     "passed": true,
+     "nrms": 1.0288552390669164e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.psf.tt2": {
+     "passed": true,
+     "nrms": 8.749530143053046e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.residual.tt0": {
+     "passed": true,
+     "nrms": 7.792167302304413e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.residual.tt1": {
+     "passed": true,
+     "nrms": 7.393627115155914e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.sumwt.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.sumwt.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst2.sumwt.tt2": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    }
+   }
+  },
+  "test_onefield.test_onefield_restore_mtmfs_niter0.1+2": {
+   "passed": true,
+   "steps": [
+    {
+     "counts": {
+      "iterdone": {
+       "native": 0,
+       "casa": 0
+      },
+      "nmajordone": {
+       "native": 1,
+       "casa": 1
+      },
+      "stopcode": {
+       "native": 3,
+       "casa": 3
+      }
+     },
+     "scalars": {
+      "maxpsfsidelobe": {
+       "native": 0,
+       "casa": 0
+      },
+      "cyclethreshold": {
+       "native": 0,
+       "casa": 0
+      }
+     },
+     "passed": true
+    },
+    {
+     "counts": {
+      "iterdone": {
+       "native": 0,
+       "casa": 0
+      },
+      "nmajordone": {
+       "native": 1,
+       "casa": 1
+      },
+      "stopcode": {
+       "native": 3,
+       "casa": 3
+      }
+     },
+     "scalars": {
+      "maxpsfsidelobe": {
+       "native": 0,
+       "casa": 0
+      },
+      "cyclethreshold": {
+       "native": 0,
+       "casa": 0
+      }
+     },
+     "passed": true
+    }
+   ],
+   "products": {
+    "tst.alpha": {
+     "passed": true,
+     "nrms": 1.0074664197750402e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.alpha.error": {
+     "passed": true,
+     "nrms": 1.1259945797857628e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.image.tt0": {
+     "passed": true,
+     "nrms": 7.984597240226684e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.image.tt1": {
+     "passed": true,
+     "nrms": 8.505710265719507e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.model.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.model.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.pb.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt0": {
+     "passed": true,
+     "nrms": 9.283724394062429e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt1": {
+     "passed": true,
+     "nrms": 1.0548453964681807e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt2": {
+     "passed": true,
+     "nrms": 8.852729035426683e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.residual.tt0": {
+     "passed": true,
+     "nrms": 7.792167302304413e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.residual.tt1": {
+     "passed": true,
+     "nrms": 7.393627115155914e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt2": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    }
+   }
+  },
+  "test_onefield.test_onefield_mtmfs_nterms1.1": {
+   "passed": true,
+   "steps": [
+    {
+     "counts": {
+      "iterdone": {
+       "native": 10,
+       "casa": 10
+      },
+      "nmajordone": {
+       "native": 2,
+       "casa": 2
+      },
+      "stopcode": {
+       "native": 1,
+       "casa": 1
+      }
+     },
+     "scalars": {
+      "maxpsfsidelobe": {
+       "native": 0.12308543175458908,
+       "casa": 0.12308542430400848
+      },
+      "cyclethreshold": {
+       "native": 0.04543718323111534,
+       "casa": 0.04543713107705116
+      }
+     },
+     "passed": true
+    }
+   ],
+   "products": {
+    "tst.image.tt0": {
+     "passed": true,
+     "nrms": 3.078794583914606e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.mask": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.model.tt0": {
+     "passed": true,
+     "nrms": 8.643787942987649e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.pb.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt0": {
+     "passed": true,
+     "nrms": 8.963206571278698e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.residual.tt0": {
+     "passed": true,
+     "nrms": 1.5834278614326468e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    }
+   }
+  },
+  "test_onefield.test_onefield_mtmfs_smallscalebias.1": {
+   "passed": true,
+   "steps": [
+    {
+     "counts": {
+      "iterdone": {
+       "native": 10,
+       "casa": 10
+      },
+      "nmajordone": {
+       "native": 2,
+       "casa": 2
+      },
+      "stopcode": {
+       "native": 1,
+       "casa": 1
+      }
+     },
+     "scalars": {
+      "maxpsfsidelobe": {
+       "native": 0.13044804334640503,
+       "casa": 0.13044807314872742
+      },
+      "cyclethreshold": {
+       "native": 0.09542657434940338,
+       "casa": 0.09542657434940338
+      }
+     },
+     "passed": true
+    }
+   ],
+   "products": {
+    "tst.image.tt0": {
+     "passed": true,
+     "nrms": 3.790772453252035e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.mask": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.model.tt0": {
+     "passed": true,
+     "nrms": 6.962205100408278e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.pb.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt0": {
+     "passed": true,
+     "nrms": 1.7822812913226723e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.residual.tt0": {
+     "passed": true,
+     "nrms": 7.408591766927881e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    }
+   }
+  },
+  "test_onefield.test_onefield_mtmfs_restoringbeam.1": {
+   "passed": true,
+   "steps": [
+    {
+     "counts": {
+      "iterdone": {
+       "native": 0,
+       "casa": 0
+      },
+      "nmajordone": {
+       "native": 1,
+       "casa": 1
+      },
+      "stopcode": {
+       "native": 3,
+       "casa": 3
+      }
+     },
+     "scalars": {
+      "maxpsfsidelobe": {
+       "native": 0,
+       "casa": 0
+      },
+      "cyclethreshold": {
+       "native": 0,
+       "casa": 0
+      }
+     },
+     "passed": true
+    }
+   ],
+   "products": {
+    "tst.alpha": {
+     "passed": true,
+     "nrms": 2.3247249316095464e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.alpha.error": {
+     "passed": true,
+     "nrms": 2.5218832474264317e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.image.tt0": {
+     "passed": true,
+     "nrms": 5.7078409969439946e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.image.tt1": {
+     "passed": true,
+     "nrms": 1.9120403956325394e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.model.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.model.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.pb.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt0": {
+     "passed": true,
+     "nrms": 7.639088435212086e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt1": {
+     "passed": true,
+     "nrms": 8.763105794644637e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt2": {
+     "passed": true,
+     "nrms": 7.966297124678769e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.residual.tt0": {
+     "passed": true,
+     "nrms": 5.11642438577111e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.residual.tt1": {
+     "passed": true,
+     "nrms": 7.534388845397503e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt2": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    }
+   }
+  },
+  "test_onefield.test_onefield_mtmfs_restoringbeam.2": {
+   "passed": true,
+   "steps": [
+    {
+     "counts": {
+      "iterdone": {
+       "native": 0,
+       "casa": 0
+      },
+      "nmajordone": {
+       "native": 1,
+       "casa": 1
+      },
+      "stopcode": {
+       "native": 3,
+       "casa": 3
+      }
+     },
+     "scalars": {
+      "maxpsfsidelobe": {
+       "native": 0,
+       "casa": 0
+      },
+      "cyclethreshold": {
+       "native": 0,
+       "casa": 0
+      }
+     },
+     "passed": true
+    }
+   ],
+   "products": {
+    "tst.rest.alpha": {
+     "passed": true,
+     "nrms": 3.178606626699335e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.alpha.error": {
+     "passed": true,
+     "nrms": 3.781686878597615e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.image.tt0": {
+     "passed": true,
+     "nrms": 3.5640868628319683e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.image.tt1": {
+     "passed": true,
+     "nrms": 3.344088789929338e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.model.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.model.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.pb.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.psf.tt0": {
+     "passed": true,
+     "nrms": 7.639088435212086e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.psf.tt1": {
+     "passed": true,
+     "nrms": 8.763105794644637e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.psf.tt2": {
+     "passed": true,
+     "nrms": 7.966297124678769e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.residual.tt0": {
+     "passed": true,
+     "nrms": 5.11642438577111e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.residual.tt1": {
+     "passed": true,
+     "nrms": 7.534388845397503e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.sumwt.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.sumwt.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.rest.sumwt.tt2": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    }
+   }
+  },
+  "test_stokes.test_stokes_mtmfs_Q.1": {
+   "passed": true,
+   "steps": [
+    {
+     "counts": {
+      "iterdone": {
+       "native": 10,
+       "casa": 10
+      },
+      "nmajordone": {
+       "native": 2,
+       "casa": 2
+      },
+      "stopcode": {
+       "native": 1,
+       "casa": 1
+      }
+     },
+     "scalars": {
+      "maxpsfsidelobe": {
+       "native": 0.18299652636051178,
+       "casa": 0.18299654126167297
+      },
+      "cyclethreshold": {
+       "native": 0.127644881606102,
+       "casa": 0.1276448518037796
+      }
+     },
+     "passed": true
+    }
+   ],
+   "products": {
+    "tst.image.tt0": {
+     "passed": true,
+     "nrms": 4.1689400245257524e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.image.tt1": {
+     "passed": true,
+     "nrms": 8.087221269107439e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.mask": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.model.tt0": {
+     "passed": true,
+     "nrms": 4.574550349147981e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.model.tt1": {
+     "passed": true,
+     "nrms": 5.3069079641905016e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.pb.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt0": {
+     "passed": true,
+     "nrms": 1.4633527026256525e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt1": {
+     "passed": true,
+     "nrms": 1.7204123002104185e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt2": {
+     "passed": true,
+     "nrms": 1.6305104021180608e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.residual.tt0": {
+     "passed": true,
+     "nrms": 1.0099885305048894e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.residual.tt1": {
+     "passed": true,
+     "nrms": 1.0155044755877097e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt2": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    }
+   }
+  },
+  "test_stokes.test_stokes_mtmfs_IQUV.1+2": {
+   "passed": false,
+   "steps": [
+    {
+     "native_refused": "reason='resolve parameter session: parameter \"pbmask\" is not implemented by casa-rs yet (#1061); only CASA\\'s default 0.0 is accepted'",
+     "passed": false
+    },
+    {
+     "native_refused": "reason='resolve parameter session: parameter \"pbmask\" is not implemented by casa-rs yet (#1061); only CASA\\'s default 0.0 is accepted'",
+     "passed": false
+    }
+   ],
+   "products": {
+    "tst inventory": {
+     "casa_only": [
+      "tst.image.tt0",
+      "tst.image.tt1",
+      "tst.mask",
+      "tst.model.tt0",
+      "tst.model.tt1",
+      "tst.pb.tt0",
+      "tst.psf.tt0",
+      "tst.psf.tt1",
+      "tst.psf.tt2",
+      "tst.residual.tt0",
+      "tst.residual.tt1",
+      "tst.sumwt.tt0",
+      "tst.sumwt.tt1",
+      "tst.sumwt.tt2"
+     ],
+     "native_only": [],
+     "passed": false
+    }
+   }
+  },
+  "test_stokes.test_stokes_weighting.8": {
+   "passed": true,
+   "steps": [
+    {
+     "counts": {
+      "iterdone": {
+       "native": 10,
+       "casa": 10
+      },
+      "nmajordone": {
+       "native": 2,
+       "casa": 2
+      },
+      "stopcode": {
+       "native": 1,
+       "casa": 1
+      }
+     },
+     "scalars": {
+      "maxpsfsidelobe": {
+       "native": 0.03994259238243103,
+       "casa": 0.03994259238243103
+      },
+      "cyclethreshold": {
+       "native": 0.017850741744041443,
+       "casa": 0.017850738018751144
+      }
+     },
+     "passed": true
+    }
+   ],
+   "products": {
+    "tst7.image.tt0": {
+     "passed": true,
+     "nrms": 2.4791828193684276e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.image.tt1": {
+     "passed": true,
+     "nrms": 4.359408481633309e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.mask": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.model.tt0": {
+     "passed": true,
+     "nrms": 4.067213468268292e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.model.tt1": {
+     "passed": true,
+     "nrms": 4.067209167294237e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.pb.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.psf.tt0": {
+     "passed": true,
+     "nrms": 1.7909612749930227e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.psf.tt1": {
+     "passed": true,
+     "nrms": 1.946387648491051e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.psf.tt2": {
+     "passed": true,
+     "nrms": 1.435382076008653e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.residual.tt0": {
+     "passed": true,
+     "nrms": 8.688289415192028e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.residual.tt1": {
+     "passed": true,
+     "nrms": 8.810036495819971e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.sumwt.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.sumwt.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst7.sumwt.tt2": {
+     "passed": true,
+     "nrms": 6.130735732429189e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    }
+   }
+  },
+  "test_cube.test_cube_mtmfs_nterms1.1": {
+   "passed": true,
+   "steps": [
+    {
+     "native_refused": "tclean refused its parameters (parameter 'deconvolver'): deconvolver='mtmfs' with specmode='cube' is not supported: CASA's tclean images nothing for it, and so does casa-rs",
+     "casa_declined": true,
+     "passed": true
+    }
+   ],
+   "products": {}
+  },
+  "test_cube.test_cubedata_mtmfs_nterms1.1": {
+   "passed": true,
+   "steps": [
+    {
+     "native_refused": "tclean refused its parameters (parameter 'deconvolver'): deconvolver='mtmfs' with specmode='cubedata' is not supported: CASA's tclean images nothing for it, and so does casa-rs",
+     "casa_declined": true,
+     "passed": true
+    }
+   ],
+   "products": {}
+  },
+  "test_widefield.test_widefield_mosaicft_mtmfs.1": {
+   "passed": true,
+   "steps": [
+    {
+     "counts": {
+      "iterdone": {
+       "native": 60,
+       "casa": 60
+      },
+      "nmajordone": {
+       "native": 3,
+       "casa": 3
+      },
+      "stopcode": {
+       "native": 1,
+       "casa": 1
+      }
+     },
+     "scalars": {
+      "maxpsfsidelobe": {
+       "native": 0.12560461461544037,
+       "casa": 0.12560461461544037
+      },
+      "cyclethreshold": {
+       "native": 0.0053118872456252575,
+       "casa": 0.005311879795044661
+      }
+     },
+     "passed": true
+    }
+   ],
+   "products": {
+    "tst.alpha": {
+     "passed": true,
+     "nrms": 2.4536335615567795e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.alpha.error": {
+     "passed": true,
+     "nrms": 2.8674330137325984e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.image.tt0": {
+     "passed": true,
+     "nrms": 2.3477228218582735e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.image.tt1": {
+     "passed": true,
+     "nrms": 2.683108915010662e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.mask": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.model.tt0": {
+     "passed": true,
+     "nrms": 6.72288644812739e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.model.tt1": {
+     "passed": true,
+     "nrms": 9.705219229213853e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.pb.tt0": {
+     "passed": true,
+     "nrms": 7.749719867897413e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt0": {
+     "passed": true,
+     "nrms": 8.477613651918986e-08,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt1": {
+     "passed": true,
+     "nrms": 1.3265725266381788e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.psf.tt2": {
+     "passed": true,
+     "nrms": 1.0173938766219491e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.residual.tt0": {
+     "passed": true,
+     "nrms": 2.221289642812318e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.residual.tt1": {
+     "passed": true,
+     "nrms": 2.2751834508047615e-06,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt0": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt1": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.sumwt.tt2": {
+     "passed": true,
+     "nrms": 0.0,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.weight.tt0": {
+     "passed": true,
+     "nrms": 1.2186190033220496e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.weight.tt1": {
+     "passed": true,
+     "nrms": 4.0841709919274824e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    },
+    "tst.weight.tt2": {
+     "passed": true,
+     "nrms": 2.779407497087606e-07,
+     "mask_mismatch": 0,
+     "beam_passed": true,
+     "numeric_passed": true
+    }
+   }
+  }
+ },
+ "notes": {
+  "test_stokes.test_stokes_mtmfs_IQUV.1+2": "casa-rs refuses usemask='pb' (pbmask, #1061); the polarized Taylor family it needs is this change's",
+  "test_cube.test_cube_mtmfs_nterms1.1": "CASA's task declines mtmfs with a cube (warns, returns None, images nothing); casa-rs refuses it, a refusal CASA shares",
+  "test_cube.test_cubedata_mtmfs_nterms1.1": "as test_cube_mtmfs_nterms1",
+  "first_round": "an earlier round at def8eca (in the archive, m1-def8eca) differed on test_stokes_weighting.8 alone: Stokes Q and U .sumwt.ttN were zero where CASA writes Stokes I's (MultiTermFTNew's ToStokesSumWt), and one beam was recorded where CASA records one per plane; 356aa9b corrects both"
+ }
+}

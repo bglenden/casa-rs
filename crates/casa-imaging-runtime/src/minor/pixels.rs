@@ -206,7 +206,8 @@ pub(super) fn domain_beams(
 }
 
 /// Whether plane `key`'s `.pb` exceeds its cutoff anywhere: the weight
-/// image's Float beam under a response (a Taylor family's principal one),
+/// image's Float beam under a response (its polarization's Taylor family's
+/// principal one),
 /// else the analytic beam at the plane's channel; true for a run without
 /// a beam, which never falls back.
 fn beam_keeps_a_pixel(
@@ -226,7 +227,7 @@ fn beam_keeps_a_pixel(
     let (sensitivity, sum_weight) = if taylor {
         let window = normal.read_window(normal.slab().core_range())?;
         let principal = window
-            .normal_moment(0)
+            .normal_moment(0, key.polarization)
             .expect("a Taylor family has its zeroth moment");
         (
             Cow::Owned(principal.sensitivity().to_vec()),

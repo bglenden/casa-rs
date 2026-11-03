@@ -714,10 +714,12 @@ impl ImagingRequest {
                  main field's overlap with no start model of its own",
             );
         }
-        if self.nterms == 0 || (self.nterms > 1) != (self.deconvolver == Deconvolver::Mtmfs) {
+        // CASA's `mtmfs` takes one Taylor term or more; every other
+        // deconvolver images one.
+        if self.nterms == 0 || (self.nterms > 1 && self.deconvolver != Deconvolver::Mtmfs) {
             return invalid(
                 "nterms, deconvolver",
-                "nterms > 1 exactly when deconvolver = mtmfs",
+                "nterms is at least one, and more than one only with deconvolver = mtmfs",
             );
         }
         if self.deconvolver == Deconvolver::Mtmfs && self.specmode != SpecMode::Mfs {
@@ -1422,6 +1424,7 @@ fn normalization<'de, D: Deserializer<'de>>(
     match choice(deserializer)?.as_str() {
         "flatnoise" => Ok(ProductNormalization::FlatNoise),
         "flatsky" => Ok(ProductNormalization::FlatSky),
+        "pbsquare" => Ok(ProductNormalization::PbSquare),
         other => Err(D::Error::custom(format!("normtype {other:?}"))),
     }
 }

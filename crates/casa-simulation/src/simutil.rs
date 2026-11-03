@@ -12,7 +12,8 @@
 //! | `noisetemp`, `bandname`, `polsettings` | [`receivers::noise_temperature`], [`receivers::band_name`], [`receivers::polarization_settings`] |
 //! | `itrf2loc`, `baselineLengths`, `approxBeam` | [`baselines::itrf_to_local`], [`baselines::baseline_lengths`], [`baselines::approximate_beam`] |
 //! | `dir_s2m` | [`direction::direction_measure`] |
-//! | `modifymodel`, `flatimage`, `ia.modify`, the component-only model | [`skymodel`] |
+//! | `setcfg`'s mount | [`config::default_mount`] |
+//! | `modifymodel`, `flatimage`, `is4d`, `spectral`, `ia.modify`, the component-only model | [`skymodel`] |
 //! | `cellsize`, `statim`, `ismstp`, `convimage`, `simanalyze`'s fidelity | [`analysis`] |
 //!
 //! **CASA's numbers to the last bit.** Pointing lists are compared with
@@ -47,6 +48,7 @@
 
 pub mod analysis;
 pub mod baselines;
+pub mod config;
 pub mod direction;
 pub mod pointings;
 pub(crate) mod qa;
