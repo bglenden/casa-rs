@@ -311,16 +311,24 @@ class Refusals:
             self.add(f"weighting={weighting!r}", NOT_YET, 980)
         if weighting == "briggsbwtaper" and not cube:
             self.add("weighting='briggsbwtaper' with specmode='mfs'", PARITY)
+        if (
+            specmode == "cubesource"
+            and weighting not in ("natural", "radial", "superuniform")
+            and self.flag("perchanweightdensity") is not False
+        ):
+            self.add(
+                "perchanweightdensity=True with specmode='cubesource' and a density weighting",
+                NOT_YET,
+                980,
+            )
         usemask = self.text("usemask")
         if usemask == "pb":
             self.add("usemask='pb'", NOT_YET, 1061)
         return {
             "cube": cube,
             "gridder": gridder,
-            "per_field_density": name == "mosaic",
             "deconvolver": deconvolver,
             "weighting": weighting,
-            "density": weighting != "natural",
             "user_mask": usemask == "user",
         }
 
@@ -434,22 +442,6 @@ class Refusals:
         normtype = self.text("normtype")
         if gridder in ("mosaic", "awproject") and normtype == "pbsquare":
             self.add("normtype='pbsquare'", NOT_YET, 1061)
-        per_channel = (
-            modes["cube"]
-            and self.flag("perchanweightdensity") is not False
-            and modes["weighting"] != "superuniform"
-        )
-        if (
-            self.flag("mosweight")
-            and modes["per_field_density"]
-            and modes["density"]
-            and per_channel
-        ):
-            self.add(
-                "mosweight=True with gridder='mosaic' and a cube's per-channel density",
-                NOT_YET,
-                818,
-            )
         if gridder == "awproject":
             # `AwProjection::validate`: CASA's `AWConvFunc` refuses both
             # terms off; deriving the planes waits for #980.

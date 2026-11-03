@@ -4,13 +4,13 @@
 
 use casa_imaging_model::{
     AntennaResponseClass, CompiledImageDomain, CompiledProblem, DensityCells, InstrumentModel,
-    ReconstructionBasis, SpectralKernel, SpectralWcs, WeightDensityScope,
+    ReconstructionBasis, SpectralKernel, SpectralWcs,
 };
 use casa_imaging_operator::{
     AiryDish, AwCatalog, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet, DensityCellRule,
-    DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
-    MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting, PrimaryBeam,
-    SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    DensityFields, DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent,
+    MeasurementOperator, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting,
+    PrimaryBeam, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
@@ -606,58 +606,41 @@ pub(crate) fn native_spacing_hz(problem: &CompiledProblem) -> f64 {
 }
 
 /// Shape of the weight-density grid of `domain`: one global plane on CASA's
-/// `VisImagingWeight` cells, one such plane per field under `mosweight`, or
-/// one plane per output channel, plus the compiled padding planes on each
-/// side, on `BriggsCubeWeightor` cells.
+/// `VisImagingWeight` cells, or one plane per output channel plus the
+/// compiled padding planes on each side on `BriggsCubeWeightor` cells;
+/// under `mosweight` those planes for each field the density spans.
 pub(crate) fn density_shape(
     problem: &CompiledProblem,
     domain: &CompiledImageDomain,
 ) -> Result<DensityGridShape, ImagingError> {
     let [width, height] = domain.shape().pixels();
-    let mut first_field = None;
-    let (planes, padding, rule) = match problem.weighting().density_scope() {
-        WeightDensityScope::PerOutputChannel => {
-            // CASA always pads the cube density axis
-            // (`BriggsCubeWeightor::estimateSwingChanPad`); a contract without
-            // the padding cannot reproduce it.
-            let padding = problem.weighting().casa_cube_density_padding().ok_or(
-                ImagingError::Unsupported {
-                    reason: "a per-channel weight density needs its compiled padding",
-                },
-            )?;
-            let planes = padding
-                .checked_mul(2)
-                .and_then(|padding| {
-                    padding.checked_add(problem.geometry().spectral().output_channels())
-                })
-                .ok_or(ImagingError::Unsupported {
-                    reason: "the padded density axis overflows",
-                })?;
-            let padding = u32::try_from(padding).map_err(|_| ImagingError::Unsupported {
-                reason: "the padded density axis overflows",
-            })?;
-            (planes, padding, DensityCellRule::Cube)
-        }
-        WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-            (1, 0, DensityCellRule::Standard)
-        }
-        WeightDensityScope::PerField {
-            first_field: first,
-            fields,
-        } => {
-            first_field = Some(first);
-            (fields.get() as usize, 0, DensityCellRule::Standard)
-        }
+    let scope = problem.weighting().density_scope();
+    let (planes, padding, rule) = if scope.is_per_channel() {
+        let (planes, padding) = padded_channel_planes(problem)?;
+        (planes, padding, DensityCellRule::Cube)
+    } else {
+        (1, 0, DensityCellRule::Standard)
     };
+    let fields = scope
+        .fields()
+        .map(|(first, count)| DensityFields { first, count });
     let increment = domain.direction().increment_rad();
     let cells = problem.weighting().density_cells();
     let ([width, height], increment_rad, box_half_width) =
         density_cells(cells, rule, [width, height], increment);
-    // The grid is charged by its bytes ([`DensityGridShape::bytes`]).
-    width
-        .checked_mul(height)
-        .and_then(|plane| plane.checked_mul(planes))
-        .and_then(|cells| cells.checked_add(planes))
+    // The grid is charged by its bytes ([`DensityGridShape::bytes`]): every
+    // field's planes, each numbered in `u32`.
+    fields
+        .map_or(Some(planes), |fields| {
+            planes.checked_mul(fields.count.get() as usize)
+        })
+        .filter(|planes| u32::try_from(*planes).is_ok())
+        .and_then(|planes| {
+            width
+                .checked_mul(height)
+                .and_then(|plane| plane.checked_mul(planes))
+                .and_then(|cells| cells.checked_add(planes))
+        })
         .and_then(|values| values.checked_mul(size_of::<f64>()))
         .ok_or(ImagingError::Unsupported {
             reason: "the weight-density grid overflows",
@@ -670,8 +653,30 @@ pub(crate) fn density_shape(
         box_half_width,
         increment_rad,
         rule,
-        first_field,
+        fields,
     })
+}
+
+/// The planes of one per-channel density and the padding planes on each
+/// side among them: CASA always pads the cube density axis
+/// (`BriggsCubeWeightor::estimateSwingChanPad`, or a fixed swing pad under
+/// `multiField`), and a contract without the padding cannot reproduce it.
+fn padded_channel_planes(problem: &CompiledProblem) -> Result<(usize, u32), ImagingError> {
+    let overflow = || ImagingError::Unsupported {
+        reason: "the padded density axis overflows",
+    };
+    let padding =
+        problem
+            .weighting()
+            .casa_cube_density_padding()
+            .ok_or(ImagingError::Unsupported {
+                reason: "a per-channel weight density needs its compiled padding",
+            })?;
+    let planes = padding
+        .checked_mul(2)
+        .and_then(|padding| padding.checked_add(problem.geometry().spectral().output_channels()))
+        .ok_or_else(overflow)?;
+    Ok((planes, u32::try_from(padding).map_err(|_| overflow())?))
 }
 
 /// The cells, cell increments and box half-width of a density grid over an

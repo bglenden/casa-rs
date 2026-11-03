@@ -311,9 +311,10 @@ fn weighting(request: &ImagingRequest, fields: Option<(u32, NonZeroU32)>) -> Wei
 /// stay `f2 = 1, d2 = 0` and `weightUniform` divides each weight by its
 /// cell's density alone (`VisImagingWeight.cc`).
 ///
-/// Under `mosweight` (`fields`), `VisImagingWeight` grids one such
-/// continuum density per field (`multiField`); the reader refuses it with
-/// a per-channel density.
+/// Under `mosweight` (`fields`), CASA grids each field's density apart
+/// (`multiField`): one such continuum density per field
+/// (`VisImagingWeight`), or with a per-channel density, the per-channel
+/// density cube of each field's rows alone (`BriggsCubeWeightor`).
 fn density_weighting(
     request: &ImagingRequest,
     fields: Option<(u32, NonZeroU32)>,
@@ -351,10 +352,13 @@ fn density_weighting(
     let per_channel = request.specmode != SpecMode::Mfs
         && request.perchanweightdensity
         && request.weighting.per_channel_density();
-    let scope = if per_channel {
-        WeightDensityScope::PerOutputChannel
-    } else {
-        continuum
+    let scope = match (per_channel, fields) {
+        (true, Some((first_field, fields))) => WeightDensityScope::PerFieldAndOutputChannel {
+            first_field,
+            fields,
+        },
+        (true, None) => WeightDensityScope::PerOutputChannel,
+        (false, _) => continuum,
     };
     let cells = match NonZeroUsize::new(request.npixels) {
         None => DensityCells::Image,
@@ -557,9 +561,46 @@ pub(super) fn cube_density_padded(request: &ImagingRequest) -> bool {
         && request.perchanweightdensity
 }
 
+/// Refuse a source-frame cube's per-channel density, whose padding CASA
+/// estimates in the source's frame: every surface's request reaches
+/// compile, so the refusal holds beyond tclean's.
+pub(super) fn refuse_source_frame_cube_density(
+    request: &ImagingRequest,
+) -> Result<(), PrepareError> {
+    if request.specmode == SpecMode::Cubesource
+        && request.weighting.per_channel_density()
+        && request.perchanweightdensity
+    {
+        return Err(PrepareError::SourceFrameCubeDensity);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A source-frame cube's per-channel density is refused, naming #980,
+    /// whatever surface made the request; its continuum density, natural
+    /// weighting and a frequency cube's per-channel density are not.
+    #[test]
+    fn a_source_frame_cube_density_is_refused_by_name() {
+        let cube = |weighting: &str, perchanweightdensity: bool, specmode: SpecMode| {
+            let mut request = crate::request::tests::request(json_cube(weighting, true));
+            request.perchanweightdensity = perchanweightdensity;
+            request.specmode = specmode;
+            refuse_source_frame_cube_density(&request)
+        };
+        for weighting in ["uniform", "briggs", "briggsbwtaper"] {
+            let error = cube(weighting, true, SpecMode::Cubesource).expect_err(weighting);
+            assert!(matches!(error, PrepareError::SourceFrameCubeDensity));
+            assert!(error.to_string().contains("(#980)"), "{error}");
+        }
+        assert!(cube("briggs", false, SpecMode::Cubesource).is_ok());
+        assert!(cube("natural", true, SpecMode::Cubesource).is_ok());
+        assert!(cube("superuniform", true, SpecMode::Cubesource).is_ok());
+        assert!(cube("briggs", true, SpecMode::Cube).is_ok());
+    }
 
     /// `SynthesisImagerVi2::weight`'s readings of tclean's weighting:
     /// superuniform is uniform over a box on one density, a cube's
@@ -668,10 +709,11 @@ mod tests {
 
     /// `mosweight` weighs each selected field's continuum density on its
     /// own, over the span of FIELD_IDs from the first to the last with data;
-    /// a cube without `perchanweightdensity` and `briggsbwtaper`'s uniform
-    /// fallback do too.
+    /// a cube without `perchanweightdensity`, `briggsbwtaper`'s uniform
+    /// fallback and a superuniform cube do too. A cube's per-channel density
+    /// is each field's density cube (`BriggsCubeWeightor`'s `multiField`).
     #[test]
-    fn mosweight_weighs_a_continuum_density_per_field() {
+    fn mosweight_weighs_each_fields_density_apart() {
         let fields = density_fields(&BTreeSet::from([3, 5, 4, 7]));
         let span = NonZeroU32::new(5).expect("non-zero");
         assert_eq!(fields, Some((3, span)));
@@ -690,8 +732,20 @@ mod tests {
         for overrides in [
             json_cube("briggs", false),
             json_cube("briggsbwtaper", false),
+            json_cube("superuniform", true),
         ] {
             assert_eq!(mosaic(overrides).density_scope(), per_field);
+        }
+        let per_field_channel = WeightDensityScope::PerFieldAndOutputChannel {
+            first_field: 3,
+            fields: span,
+        };
+        for weighting in ["uniform", "briggs", "briggsabs", "briggsbwtaper"] {
+            assert_eq!(
+                mosaic(json_cube(weighting, true)).density_scope(),
+                per_field_channel,
+                "{weighting}"
+            );
         }
         assert_eq!(
             mosaic(serde_json::json!({ "weighting": "natural" })).density_scope(),

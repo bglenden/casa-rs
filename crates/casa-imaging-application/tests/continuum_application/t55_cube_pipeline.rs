@@ -149,6 +149,58 @@ fn t55_shifted_cube_density_retains_native_endpoint_weights() {
     );
 }
 
+/// `mosweight` on a cube mosaic (#818): `BriggsCubeWeightor`'s `multiField`
+/// keeps its swing pad of four planes, two a side, and estimates none, so
+/// the executed problem's padding is 2 where one density over every field
+/// takes the frames' estimate (no swing in the data's own frame, plus
+/// `max(min(4, nchan/10), 1)`: 1).
+#[test]
+fn t55_a_mosweight_cube_mosaic_pads_its_density_by_two_planes() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = synthetic_observation::observation_as(root.path(), 4, "ALMA");
+    for mosweight in [true, false] {
+        let imaging = request(
+            &measurement_set,
+            &root.path().join(format!("mosweight-{mosweight}")),
+            json!({
+                "niter": 0,
+                "imsize": 64,
+                "cell": format!("{}arcsec", synthetic_observation::CELL_ARCSEC),
+                "gridder": "mosaic",
+                "mosweight": mosweight,
+                "weighting": "briggs",
+                "robust": 0.5,
+                "channel_count": 4,
+                "specmode": "cube",
+                "outframe": "TOPO",
+                "perchanweightdensity": true,
+            }),
+        );
+        let outcome = execute(&imaging).expect("mosaic cube density execution");
+        let weighting = outcome.problem.weighting();
+        let (padding, scope) = if mosweight {
+            (
+                2,
+                WeightDensityScope::PerFieldAndOutputChannel {
+                    first_field: 0,
+                    fields: std::num::NonZeroU32::MIN,
+                },
+            )
+        } else {
+            (1, WeightDensityScope::PerOutputChannel)
+        };
+        assert_eq!(
+            (
+                weighting.casa_cube_density_padding(),
+                weighting.density_scope()
+            ),
+            (Some(padding), scope),
+            "mosweight={mosweight}"
+        );
+    }
+}
+
 #[test]
 fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");

@@ -504,6 +504,12 @@ fn specification_inputs(
         .map(|store| store.survey.w)
         .reduce(survey::WRange::union)
         .expect("a request images at least one MeasurementSet");
+    let density_fields = match request.gridder {
+        Gridder::Mosaic {
+            mosweight: true, ..
+        } => specification::density_fields(&density_field_keys(surveyed.stores)),
+        _ => None,
+    };
     Ok(SpecificationInputs {
         instrument,
         primary_beam,
@@ -524,13 +530,8 @@ fn specification_inputs(
                 ..
             }
         ) && surveyed.spectral.output_channels == 1,
-        density_fields: match request.gridder {
-            Gridder::Mosaic {
-                mosweight: true, ..
-            } => specification::density_fields(&density_field_keys(surveyed.stores)),
-            _ => None,
-        },
-        cube_density_padding: cube_density_padding(request, surveyed)?,
+        density_fields,
+        cube_density_padding: cube_density_padding(request, surveyed, density_fields.is_some())?,
         continuum_transform,
     })
 }
@@ -653,17 +654,32 @@ fn primary_beam_model(
     })
 }
 
+/// The density planes on each side of a cube's axis under `mosweight`:
+/// `BriggsCubeWeightor::initImgWeightCol` keeps its `allSwingPad` of 4
+/// with `multiField`, since each field's density is its own, and
+/// `fillImgWeightCol` adds half of it at each end (`refpix[3] += swingpad
+/// / 2`). It estimates no swing then (`estimateSwingChanPad`) unless
+/// several MeasurementSets are weighed apart, which one store excludes.
+const PER_FIELD_CUBE_DENSITY_PADDING: usize = 2;
+
 /// CASA's padded per-channel density grid of a cube with per-channel
-/// density.
+/// density, in planes on each side: under `mosweight` (`per_field`) a
+/// fixed [`PER_FIELD_CUBE_DENSITY_PADDING`], else the swing the data's
+/// frames give ([`envelope::cube_density_padding`]).
 fn cube_density_padding(
     request: &ImagingRequest,
     surveyed: &Surveyed<'_>,
+    per_field: bool,
 ) -> Result<Option<usize>, PrepareError> {
     let (survey, spectral) = (surveyed.survey, surveyed.spectral);
+    specification::refuse_source_frame_cube_density(request)?;
     if !specification::cube_density_padded(request) {
         return Ok(None);
     }
     stores::one_store(surveyed.stores, "a cube's per-channel density weighting")?;
+    if per_field {
+        return Ok(Some(PER_FIELD_CUBE_DENSITY_PADDING));
+    }
     Ok(Some(envelope::cube_density_padding(
         (surveyed.catalogue, surveyed.engine),
         survey,
