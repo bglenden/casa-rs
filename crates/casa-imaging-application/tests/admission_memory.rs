@@ -536,6 +536,16 @@ fn continuum_runs_stay_within_their_admission() {
         ),
         ("mtmfs", json!({ "deconvolver": "mtmfs", "nterms": 2 })),
         (
+            "mtmfs one term",
+            json!({ "deconvolver": "mtmfs", "nterms": 1 }),
+        ),
+        // A Taylor family per Stokes plane, in the minor cycle and the
+        // products.
+        (
+            "mtmfs IQUV",
+            json!({ "deconvolver": "mtmfs", "nterms": 2, "stokes": "IQUV" }),
+        ),
+        (
             "hogbom uniform",
             json!({ "deconvolver": "hogbom", "weighting": "uniform" }),
         ),
@@ -1308,7 +1318,8 @@ fn mtmfs_controls() -> Value {
     })
 }
 
-/// #738: MT-MFS at 1024² and 2048² on one worker, and at 1024² on four,
+/// #738: MT-MFS at 1024² and 2048² on one worker, at 1024² on four, and of
+/// full Stokes at 1024² on one,
 /// whose per-worker charges (chunks, transform planes, minor-cycle loads)
 /// grow with the workers, is admitted close to what it holds. Before the
 /// charges followed their owners' footprints the 2048² run reserved 2.25 GB
@@ -1324,16 +1335,28 @@ fn mtmfs_is_admitted_close_to_what_it_holds() {
     let measurement_set = observation(root.path(), 4);
     warm(&measurement_set, root.path());
     let mut breaches = Vec::new();
-    for (imsize, workers) in [(1024, 1), (1024, 4), (2048, 1)] {
-        let label = format!("mtmfs {imsize} px {workers} workers");
+    // A Taylor family per Stokes plane: the products and minor cycle hold
+    // four.
+    let mut full_stokes = mtmfs_controls();
+    full_stokes["stokes"] = json!("IQUV");
+    for (imsize, workers, controls) in [
+        (1024, 1, mtmfs_controls()),
+        (1024, 4, mtmfs_controls()),
+        (2048, 1, mtmfs_controls()),
+        (1024, 1, full_stokes),
+    ] {
+        let stokes = controls["stokes"].as_str().unwrap_or("I");
+        let label = format!("mtmfs {stokes} {imsize} px {workers} workers");
         let measured = check(
             &mut breaches,
             &label,
             &request(
                 &measurement_set,
-                &root.path().join(format!("mtmfs-{imsize}-{workers}")),
+                &root
+                    .path()
+                    .join(format!("mtmfs-{stokes}-{imsize}-{workers}")),
                 imsize,
-                mtmfs_controls(),
+                controls,
             ),
             workers,
             AMPLE,

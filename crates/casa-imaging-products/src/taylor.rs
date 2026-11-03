@@ -7,12 +7,12 @@ use std::borrow::Cow;
 use casa_imaging_deconvolution::FinalNormalStateWindow;
 use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
-    ProductTerm, ProductValidityRule, RestoringBeamPolicy, TaylorSupportReference,
+    ProductTerm, ProductValidityRule, TaylorSupportReference,
 };
 use casa_numerics::{EvlaBand, EvlaPowerPattern, VlaBand, solve_symmetric_ldlt_casacore_dynamic};
 
 use crate::AnalyticPrimaryBeamModel;
-use crate::beam::{RestoringBeam, fit_restoring_beam, fixed_restoring_beam};
+use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::error::ProductsError;
 use crate::normalization::{
     MosaicSensitivity, ResidualFamily, normalize_plane, normalized_psf_value, psf_peak,
@@ -21,8 +21,17 @@ use crate::restore::{fft_convolve, gaussian_beam_image, rescale_residual_to_beam
 use crate::source::ContinuumProductInputs;
 use casa_numerics::AnnularApertureVoltageTable;
 
+/// The products of a Taylor reconstruction: one family per polarization,
+/// in the reconstruction's order. CASA cleans and restores each Stokes
+/// plane as a Taylor family of its own (`SDAlgorithmMSMFS::restore` loops
+/// over polarization planes), so each has its own beam.
 pub(crate) struct TaylorProducts {
     shape: [usize; 2],
+    planes: Vec<TaylorPlane>,
+}
+
+/// One polarization's Taylor family of products.
+struct TaylorPlane {
     psf: Vec<Vec<f32>>,
     principal_psf_peak: f32,
     residual: Vec<Vec<f32>>,
@@ -33,8 +42,9 @@ pub(crate) struct TaylorProducts {
     sum_weights: Vec<f32>,
     primary_beam: Vec<Vec<f32>>,
     pb_corrected: Vec<Vec<f32>>,
-    /// `None` for one Taylor term, which has no spectral index
-    /// (`SIImageStoreMultiTerm::calculateAlphaBeta` needs `itsNTerms > 1`).
+    /// `None` unless the products publish one: CASA's
+    /// `SIImageStoreMultiTerm::calculateAlphaBeta` forms it only for two
+    /// terms or more of a Stokes I image.
     spectral_index: Option<SpectralIndexProducts>,
     primary_beam_validity: Vec<bool>,
     clean_mask: Vec<f32>,
@@ -124,24 +134,40 @@ struct TaylorFamily {
 }
 
 impl TaylorFamily {
+    /// Polarization `polarization`'s family. An empty family, a Stokes
+    /// plane no correlation feeds (zero `sumwt`, as Q and U of parallel
+    /// hands), keeps its PSF moments unnormalized, which publication divides
+    /// by the zeroth's peak as `SIImageStore::normPSF` does, and has zero
+    /// residuals, as the single-term planes do.
     fn read(
         inputs: &ContinuumProductInputs<'_>,
-        state: &FinalNormalStateWindow<'_>,
+        (state, polarization): (&FinalNormalStateWindow<'_>, usize),
         primary_beam_model: Option<AnalyticPrimaryBeamModel>,
         directional: Option<MosaicSensitivity<'_>>,
         residual_sum_weight: f64,
     ) -> Result<Self, ProductsError> {
-        let principal_sum_weight = state
-            .normal_moment(0)
-            .expect("the zeroth normal moment")
-            .sum_weight();
-        let published_sums = state.published_sum_weights();
+        let empty = empty_family(state, polarization);
+        let mosaic = primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity);
+        let cells = state.shape()[0] * state.shape()[1];
+        let principal_sum_weight = if empty {
+            1.0
+        } else {
+            state
+                .normal_moment(0, polarization)
+                .expect("the zeroth normal moment")
+                .sum_weight()
+        };
         let moments = state.normal_moment_count();
         let mut psf = Vec::with_capacity(moments);
         let mut weight = Vec::with_capacity(moments);
         let mut sum_weights = Vec::with_capacity(moments);
-        for (moment, published) in published_sums.iter().copied().enumerate().take(moments) {
-            let source = state.normal_moment(moment).expect("every normal moment");
+        for moment in 0..moments {
+            let source = state
+                .normal_moment(moment, polarization)
+                .expect("every normal moment");
+            let published = state
+                .published_sum_weight(moment, polarization)
+                .expect("every normal moment's published sum of weights");
             let approximation = source
                 .normal_approximation()
                 .iter()
@@ -158,20 +184,22 @@ impl TaylorFamily {
             // `docs/CASA (C++) bugs.md`). CASA's values on
             // `refim_alma_mosaic` agree: weight.ttN / sumwt.ttN is 0.6913
             // for N = 0, 1 and 2.
-            let scale = if moment == 0
-                && primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
-            {
+            let scale = if moment == 0 && mosaic {
                 principal_sum_weight
             } else {
                 1.0
             };
-            weight.push(
+            // CASA publishes an empty plane's weight as zeros
+            // (`SIImageStore::divideImageByWeightVal`).
+            weight.push(if empty && mosaic {
+                vec![0.0; cells]
+            } else {
                 source
                     .sensitivity()
                     .iter()
                     .map(|value| (*value / scale) as f32)
-                    .collect(),
-            );
+                    .collect()
+            });
             if !published.is_finite() {
                 return Err(ProductsError::GeneratedNonfinite);
             }
@@ -182,8 +210,11 @@ impl TaylorFamily {
             (products.normalization(), products.validity().primary_beam());
         let residual = (0..state.coefficient_term_count())
             .map(|term| {
+                if empty {
+                    return Ok(vec![0.0; cells]);
+                }
                 let residual = state
-                    .coefficient_term(term)
+                    .coefficient_term(term, polarization)
                     .expect("every coefficient term")
                     .residual();
                 match directional {
@@ -212,7 +243,7 @@ impl TaylorFamily {
             })
             .collect::<Result<Vec<_>, ProductsError>>()?;
         let mut model = (0..state.coefficient_term_count())
-            .map(|term| model_term(inputs, term, state.shape()))
+            .map(|term| model_term(inputs, (term, polarization), state.shape()))
             .collect::<Result<Vec<_>, _>>()?;
         // CASA restores and publishes the flat-noise model in apparent units
         // (`SynthesisNormalizer::multiplyModelByWeight`).
@@ -452,44 +483,60 @@ fn principal_primary_beam(
     })
 }
 
-impl TaylorProducts {
-    pub(crate) fn build(
+/// One polarization's Taylor family, read and solved for its principal
+/// residuals, with its fitted beam: what restoring it needs.
+struct SolvedFamily<'a> {
+    polarization: usize,
+    family: TaylorFamily,
+    directional: Option<MosaicSensitivity<'a>>,
+    sensitivity: Vec<f32>,
+    inverse: Vec<f64>,
+    principal_residual: Vec<Vec<f32>>,
+    fitted_beam: Option<RestoringBeam>,
+}
+
+impl<'a> SolvedFamily<'a> {
+    /// Read polarization `polarization`'s family from `state`, solve its
+    /// principal residuals and fit its PSF's beam when a member records one.
+    fn read(
         inputs: &ContinuumProductInputs<'_>,
+        state: &'a FinalNormalStateWindow<'_>,
+        polarization: usize,
         psf_cutoff: f32,
         primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     ) -> Result<Self, ProductsError> {
-        let state = inputs.normal_state();
-        // Binding the inputs established one domain, `terms` coefficient
-        // terms and 2·terms − 1 normal moments.
-        let state = &state.read_window(state.slab().core_range())?;
-        let domain_role = state
-            .domain(0)
-            .expect("a Taylor run images one domain")
-            .role();
-        let shape = state.shape();
-        let cells = shape[0] * shape[1];
-        let terms = state.coefficient_term_count();
-        let principal_normal = state.normal_moment(0).expect("the zeroth normal moment");
+        let principal_normal = state
+            .normal_moment(0, polarization)
+            .expect("the zeroth normal moment");
         let principal_sum_weight = principal_normal.sum_weight();
         // Direct CASA AW Taylor completion keeps two principal sums: the
         // WTCF normal sum scales PSF/sensitivity products, while the CFS
         // publication sum scales dirty/residual image products. They are
         // equal for non-AW direct Taylor reconstruction.
-        let residual_sum_weight = state.published_sum_weights()[0];
-        for sum_weight in [principal_sum_weight, residual_sum_weight] {
-            if !(sum_weight.is_finite() && sum_weight > 0.0) {
-                return Err(ProductsError::PrincipalSumWeight { sum_weight });
+        let residual_sum_weight = state
+            .published_sum_weight(0, polarization)
+            .expect("the zeroth published sum of weights");
+        let empty = empty_family(state, polarization);
+        if !empty {
+            for sum_weight in [principal_sum_weight, residual_sum_weight] {
+                if !(sum_weight.is_finite() && sum_weight > 0.0) {
+                    return Err(ProductsError::PrincipalSumWeight { sum_weight });
+                }
             }
         }
-        let directional = directional_response(
-            inputs,
-            primary_beam_model,
-            principal_normal.sensitivity(),
-            principal_sum_weight,
-        )?;
+        let directional = if empty {
+            None
+        } else {
+            directional_response(
+                inputs,
+                primary_beam_model,
+                principal_normal.sensitivity(),
+                principal_sum_weight,
+            )?
+        };
         let family = TaylorFamily::read(
             inputs,
-            state,
+            (state, polarization),
             primary_beam_model,
             directional,
             residual_sum_weight,
@@ -499,28 +546,71 @@ impl TaylorProducts {
             .iter()
             .map(|value| *value as f32)
             .collect::<Vec<_>>();
-        let (inverse, principal_residual) = principal_residuals(&family.psf, &family.residual)?;
-
-        let cell_size = inputs.cell_size_rad_for_domain(domain_role);
-        let list = inputs.problem().product_list();
-        let fitted_beam = list
-            .publication()
-            .members()
-            .iter()
-            .any(|id| {
-                list.entries()[id.ordinal()].beam() != casa_imaging_model::ProductBeamRule::None
-            })
-            .then(|| fit_restoring_beam(&family.psf[0], shape, cell_size, psf_cutoff))
-            .transpose()?;
-        let restoring_beam = match inputs.problem().products().restoring_beam() {
-            RestoringBeamPolicy::None => None,
-            RestoringBeamPolicy::PerPlane | RestoringBeamPolicy::Common => fitted_beam,
-            RestoringBeamPolicy::Fixed(beam) => Some(fixed_restoring_beam(beam)?),
+        // A family with no PSF (`normPSF` zeroes it) has no beam, and its
+        // zero residuals solve to zero.
+        let has_psf = crate::plane::psf_normalizes(psf_peak(family.psf[0].iter().copied())?);
+        let (inverse, principal_residual) = if has_psf {
+            principal_residuals(&family.psf, &family.residual)?
+        } else {
+            let terms = family.residual.len();
+            (vec![0.0; terms * terms], family.residual.clone())
         };
+        let list = inputs.problem().product_list();
+        let fitted_beam = (has_psf
+            && list.publication().members().iter().any(|id| {
+                list.entries()[id.ordinal()].beam() != casa_imaging_model::ProductBeamRule::None
+            }))
+        .then(|| {
+            fit_restoring_beam(
+                &family.psf[0],
+                state.shape(),
+                inputs.cell_size_rad_for_domain(domain_role(state)),
+                psf_cutoff,
+            )
+        })
+        .transpose()?;
+        Ok(Self {
+            polarization,
+            family,
+            directional,
+            sensitivity,
+            inverse,
+            principal_residual,
+            fitted_beam,
+        })
+    }
+
+    /// Restore every term with `restoring_beam` (none when the products
+    /// restore nothing) and form the PB, PB-corrected and spectral-index
+    /// planes.
+    fn restore(
+        self,
+        inputs: &ContinuumProductInputs<'_>,
+        state: &FinalNormalStateWindow<'_>,
+        restoring_beam: Option<RestoringBeam>,
+        primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+    ) -> Result<TaylorPlane, ProductsError> {
+        let Self {
+            polarization,
+            family,
+            directional,
+            sensitivity,
+            inverse,
+            principal_residual,
+            fitted_beam,
+        } = self;
+        let domain_role = domain_role(state);
+        let shape = state.shape();
+        let cells = shape[0] * shape[1];
+        let terms = state.coefficient_term_count();
         let restored = match fitted_beam.zip(restoring_beam) {
-            Some(beams) => {
-                restored_terms(&family.model, &principal_residual, beams, shape, cell_size)?
-            }
+            Some(beams) => restored_terms(
+                &family.model,
+                &principal_residual,
+                beams,
+                shape,
+                inputs.cell_size_rad_for_domain(domain_role),
+            )?,
             None => vec![vec![0.0; cells]; terms],
         };
 
@@ -537,31 +627,30 @@ impl TaylorProducts {
         let mut primary_beam = vec![vec![0.0; cells]; terms];
         primary_beam[0] = pb0;
 
-        let alpha = (terms >= 2)
+        let spectral_index = publishes(inputs, |role| role == ProductRole::SpectralIndex)
             .then(|| {
                 let (alpha, alpha_error, alpha_validity) = spectral_index(
                     inputs.problem().products().validity(),
                     &principal_residual,
                     &restored,
                 )?;
-                let alpha_pbcor = if publishes(inputs, |role| {
-                    role == ProductRole::PbCorrectedSpectralIndex
-                }) {
-                    if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
-                        return Err(ProductsError::UnsupportedProblem);
-                    }
-                    primary_beam_correct_spectral_index(
-                        &alpha,
-                        &sensitivity,
-                        &family.weight,
-                        &inverse,
-                        terms,
-                        &alpha_validity,
-                        &primary_beam_validity,
-                    )?
-                } else {
-                    vec![0.0; cells]
-                };
+                let alpha_pbcor =
+                    if publishes(inputs, |role| role == ProductRole::PbCorrectedSpectralIndex) {
+                        if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
+                            return Err(ProductsError::UnsupportedProblem);
+                        }
+                        primary_beam_correct_spectral_index(
+                            &alpha,
+                            &sensitivity,
+                            &family.weight,
+                            &inverse,
+                            terms,
+                            &alpha_validity,
+                            &primary_beam_validity,
+                        )?
+                    } else {
+                        vec![0.0; cells]
+                    };
                 Ok(SpectralIndexProducts {
                     alpha,
                     alpha_pbcor,
@@ -571,8 +660,7 @@ impl TaylorProducts {
             })
             .transpose()?;
 
-        Ok(Self {
-            shape,
+        Ok(TaylorPlane {
             principal_psf_peak: psf_peak(family.psf[0].iter().copied())?,
             psf: family.psf,
             residual: family.residual,
@@ -583,28 +671,124 @@ impl TaylorProducts {
             sum_weights: family.sum_weights,
             primary_beam,
             pb_corrected,
-            spectral_index: alpha,
+            spectral_index,
             primary_beam_validity,
-            // A Taylor family is one channel of Stokes I.
+            // A Taylor family is one channel.
             clean_mask: crate::plane::reconstruction_support_plane(
                 inputs,
                 domain_role,
-                (0, 0),
+                (0, polarization),
                 cells,
             ),
             fitted_beam,
             restoring_beam,
         })
     }
+}
 
-    pub(crate) const fn fitted_beam(&self) -> Option<RestoringBeam> {
-        self.fitted_beam
+/// Whether `polarization`'s family is empty: a Stokes plane no correlation
+/// feeds, whose sums of weights are zero.
+fn empty_family(state: &FinalNormalStateWindow<'_>, polarization: usize) -> bool {
+    state.support_validity(polarization)
+        != Some(casa_imaging_deconvolution::SpectralChannelValidity::Valid)
+}
+
+/// The role of a Taylor run's one image domain.
+fn domain_role<'a>(
+    state: &'a FinalNormalStateWindow<'_>,
+) -> &'a casa_imaging_model::ImageDomainRole {
+    state
+        .domain(0)
+        .expect("a Taylor run images one domain")
+        .role()
+}
+
+impl TaylorProducts {
+    pub(crate) fn build(
+        inputs: &ContinuumProductInputs<'_>,
+        psf_cutoff: f32,
+        primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+    ) -> Result<Self, ProductsError> {
+        let state = inputs.normal_state();
+        // Binding the inputs established one domain, `terms` coefficient
+        // terms and 2·terms − 1 normal moments per polarization.
+        let state = &state.read_window(state.slab().core_range())?;
+        let solved = (0..state.polarization_count())
+            .map(|polarization| {
+                SolvedFamily::read(inputs, state, polarization, psf_cutoff, primary_beam_model)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // The restoring-beam policy applies across the polarizations as
+        // across any image's planes: each its own, one enclosing them all,
+        // or the one the request gives.
+        let fitted = solved
+            .iter()
+            .map(|family| family.fitted_beam)
+            .collect::<Vec<_>>();
+        let restoring = crate::generation::restoring_beams(inputs, &fitted)?;
+        let planes = solved
+            .into_iter()
+            .enumerate()
+            .map(|(polarization, family)| {
+                let beam = restoring.get(polarization).copied().flatten();
+                family.restore(inputs, state, beam, primary_beam_model)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            shape: state.shape(),
+            planes,
+        })
     }
 
-    pub(crate) const fn restoring_beam(&self) -> Option<RestoringBeam> {
-        self.restoring_beam
+    /// Each polarization's fitted beam, in the reconstruction's order.
+    pub(crate) fn fitted_beams(&self) -> Box<[Option<RestoringBeam>]> {
+        self.planes.iter().map(|plane| plane.fitted_beam).collect()
     }
 
+    /// Each polarization's restoring beam, in the reconstruction's order.
+    pub(crate) fn restoring_beams(&self) -> Box<[Option<RestoringBeam>]> {
+        self.planes
+            .iter()
+            .map(|plane| plane.restoring_beam)
+            .collect()
+    }
+
+    /// `role`'s values in storage order: x-major, the polarization fastest
+    /// (a Taylor image's axes are direction, polarization and its one
+    /// channel).
+    pub(crate) fn payload(&self, role: ProductRole) -> Result<Vec<f32>, ProductsError> {
+        Ok(interleave(
+            self.planes
+                .iter()
+                .map(|plane| plane.payload(role))
+                .collect::<Result<_, _>>()?,
+        ))
+    }
+
+    /// The pixels `rule` holds valid, in [`Self::payload`]'s order.
+    pub(crate) fn validity(&self, rule: ProductValidityRule) -> Result<Vec<bool>, ProductsError> {
+        Ok(interleave(
+            self.planes
+                .iter()
+                .map(|plane| plane.validity(rule, self.shape))
+                .collect::<Result<_, _>>()?,
+        ))
+    }
+}
+
+/// One plane per polarization merged into storage order: a cell's
+/// polarizations side by side.
+fn interleave<T: Copy>(mut planes: Vec<Vec<T>>) -> Vec<T> {
+    if planes.len() == 1 {
+        return planes.pop().expect("one plane");
+    }
+    let cells = planes.first().map_or(0, Vec::len);
+    (0..cells)
+        .flat_map(|cell| planes.iter().map(move |plane| plane[cell]))
+        .collect()
+}
+
+impl TaylorPlane {
     /// The spectral index's support; planning names it only for a family of
     /// two or more terms.
     fn spectral_index_validity(&self) -> Result<&[bool], ProductsError> {
@@ -614,7 +798,7 @@ impl TaylorProducts {
             .ok_or(ProductsError::UnsupportedProblem)
     }
 
-    pub(crate) fn payload(&self, role: ProductRole) -> Result<Vec<f32>, ProductsError> {
+    fn payload(&self, role: ProductRole) -> Result<Vec<f32>, ProductsError> {
         let term = |term: ProductTerm| match term {
             ProductTerm::Taylor(term) => Ok(term),
             ProductTerm::Single => Err(ProductsError::UnsupportedProductRole { role }),
@@ -650,10 +834,14 @@ impl TaylorProducts {
         .ok_or(ProductsError::UnsupportedProductRole { role })
     }
 
-    pub(crate) fn validity(&self, rule: ProductValidityRule) -> Result<Vec<bool>, ProductsError> {
+    fn validity(
+        &self,
+        rule: ProductValidityRule,
+        shape: [usize; 2],
+    ) -> Result<Vec<bool>, ProductsError> {
         match rule {
             ProductValidityRule::All | ProductValidityRule::FinalNormalState => {
-                Ok(vec![true; self.shape[0] * self.shape[1]])
+                Ok(vec![true; shape[0] * shape[1]])
             }
             ProductValidityRule::PrimaryBeam(_) => Ok(self.primary_beam_validity.clone()),
             ProductValidityRule::Taylor(_) => Ok(self.spectral_index_validity()?.to_vec()),
@@ -950,15 +1138,18 @@ fn evla_common_pattern(frequency_hz: f64) -> Option<EvlaPowerPattern> {
     .then(|| EvlaPowerPattern::at(frequency_hz))
 }
 
+/// Model term `coefficient` of polarization `polarization`, x-major. A
+/// Taylor run images one domain (the availability gate and the inputs'
+/// binding).
 fn model_term(
     inputs: &ContinuumProductInputs<'_>,
-    coefficient: usize,
+    (coefficient, polarization): (usize, usize),
     shape: [usize; 2],
 ) -> Result<Vec<f32>, ProductsError> {
-    // A Taylor run images Stokes I on one domain (the availability gate and
-    // the inputs' binding).
     let mut plane = vec![0.0; shape[0] * shape[1]];
-    let samples = inputs.final_model().read_plane(0, coefficient, 0)?;
+    let samples = inputs
+        .final_model()
+        .read_plane(0, coefficient, polarization)?;
     for y in 0..shape[1] {
         for x in 0..shape[0] {
             plane[x * shape[1] + y] = samples[y * shape[0] + x].value().value() as f32;

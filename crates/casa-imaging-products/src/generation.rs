@@ -149,8 +149,9 @@ fn fit_beams(
 /// The beams each plane is restored with, by the problem's restoring-beam
 /// policy: none, each plane's fitted beam, one beam enclosing a domain's
 /// fitted beams, or the beam the request gives. A plane with no fitted beam
-/// holds no data and restores with none.
-fn restoring_beams(
+/// holds no data and restores with none. A Taylor family's planes are its
+/// polarizations.
+pub(crate) fn restoring_beams(
     inputs: &ContinuumProductInputs<'_>,
     fitted_beams: &[Option<RestoringBeam>],
 ) -> Result<Box<[Option<RestoringBeam>]>, ProductsError> {
@@ -428,7 +429,7 @@ fn produce_taylor_members(
 ) -> Result<PublishedContinuumGeneration, ProductsError> {
     let products = TaylorProducts::build(inputs, planned.psf_cutoff, planned.primary_beam_model)?;
     let fitted_beams = if planned.requires_beam() {
-        vec![products.fitted_beam()].into_boxed_slice()
+        products.fitted_beams()
     } else {
         Box::new([])
     };
@@ -436,7 +437,7 @@ fn produce_taylor_members(
         RestoringBeamPolicy::None => Box::new([]),
         RestoringBeamPolicy::PerPlane
         | RestoringBeamPolicy::Common
-        | RestoringBeamPolicy::Fixed(_) => vec![products.restoring_beam()].into_boxed_slice(),
+        | RestoringBeamPolicy::Fixed(_) => products.restoring_beams(),
     };
     for member in &planned.members {
         let mut payload = products.payload(member.role)?;

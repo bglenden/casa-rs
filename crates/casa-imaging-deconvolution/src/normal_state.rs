@@ -38,7 +38,9 @@ enum SpectralBasisPlan {
     /// CASA's `mtmfs` with `nterms=1`, a Taylor family like any other
     /// (`SIImageStoreMultiTerm`). `2·terms` fits in `usize` (checked where
     /// the plan is made).
-    Taylor { terms: usize },
+    Taylor {
+        terms: usize,
+    },
 }
 
 impl SpectralBasisPlan {

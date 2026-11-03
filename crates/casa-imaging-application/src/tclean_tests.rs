@@ -400,6 +400,15 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "cell": [] }), "cell"),
         // CASA's tclean refuses these itself.
         (json!({ "weighting": "briggsbwtaper" }), "weighting"),
+        // `test_cube_mtmfs_nterms1`, `test_cubedata_mtmfs_nterms1`.
+        (
+            json!({ "specmode": "cube", "deconvolver": "mtmfs", "nterms": 1 }),
+            "deconvolver",
+        ),
+        (
+            json!({ "specmode": "cubedata", "deconvolver": "mtmfs", "nterms": 1 }),
+            "deconvolver",
+        ),
         (
             json!({ "gridder": "wproject", "wprojplanes": 0 }),
             "wprojplanes",

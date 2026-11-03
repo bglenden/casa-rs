@@ -6,8 +6,8 @@
 use serde_json::json;
 
 use super::fixture::{
-    CELL_ARCSEC, Component, Geometry, Observation, ProductContract, Products, Setup,
-    SpectralAxis, component_pixel, peak,
+    CELL_ARCSEC, Component, Geometry, Observation, ProductContract, Products, Setup, SpectralAxis,
+    component_pixel, peak,
 };
 
 const CHANNELS: usize = 16;
@@ -226,4 +226,98 @@ fn one_taylor_term_is_hogbom_where_its_patch_covers_the_image() {
         "tt0 peak {peak_jy} Jy, S {} Jy",
         FLAT.flux_jy
     );
+}
+
+/// The `[x, y]` plane of Stokes plane `stokes` of `values`.
+fn stokes_plane(values: &ndarray::ArrayD<f32>, stokes: usize) -> ndarray::ArrayD<f32> {
+    values.index_axis(ndarray::Axis(2), stokes).to_owned()
+}
+
+/// CASA's `mtmfs` cleans and restores each Stokes plane as a Taylor family
+/// of its own (`SDAlgorithmMSMFS` loops over polarization planes;
+/// `test_stokes_mtmfs_Q`, `test_stokes_weighting`). Of parallel-hand data,
+/// `stokes='IQUV'` images Stokes I's family as an I-only run does, to
+/// rounding, in every term; Q and U are empty families of zero `sumwt` and
+/// V a family of its own; every plane is restored with its own PSF's beam
+/// (all Stokes I's here, as CASA's test checks); and no spectral index is
+/// written, as for anything but Stokes I alone (`calculateAlphaBeta` needs
+/// `isOnlyStokesI`).
+#[test]
+fn full_stokes_taylor_families_image_each_stokes_plane_on_its_own() {
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
+    let controls = |stokes: &str| {
+        json!({
+            "weighting": "natural",
+            "deconvolver": "mtmfs",
+            "nterms": 2,
+            "niter": 1000,
+            "threshold": THRESHOLD,
+            "stokes": stokes,
+        })
+    };
+    let (i_run, i_only) = observation.image("i", controls("I"));
+    let (full_run, full) = observation.image("iquv", controls("IQUV"));
+    assert!(i_only.suffixes().contains(".alpha"));
+    let inventory = full.suffixes();
+    assert!(
+        !inventory.iter().any(|suffix| suffix.starts_with(".alpha")),
+        "{inventory:?}"
+    );
+    for term in [".sumwt.tt0", ".sumwt.tt1", ".sumwt.tt2"] {
+        let sumwt = full.get(term).channel_values();
+        assert_eq!(sumwt.len(), 4, "{term}");
+        assert_ne!(sumwt[0], 0.0, "{term}");
+        assert_eq!(sumwt, [sumwt[0], 0.0, 0.0, sumwt[0]], "{term}");
+        assert_eq!(sumwt[0], i_only.get(term).channel_values()[0], "{term}");
+    }
+    for suffix in [
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".model.tt0",
+        ".model.tt1",
+        ".image.tt0",
+        ".image.tt1",
+    ] {
+        let values = full.get(suffix).values();
+        let i = stokes_plane(&i_only.get(suffix).values(), 0);
+        let (error, power) = stokes_plane(&values, 0).iter().zip(&i).fold(
+            (0.0_f64, 0.0_f64),
+            |(error, power), (a, b)| {
+                let (a, b) = (f64::from(*a), f64::from(*b));
+                (error + (a - b).powi(2), power + b * b)
+            },
+        );
+        let nrms = (error / power).sqrt();
+        assert!(nrms < 1e-6, "{suffix} Stokes I NRMS {nrms:e}");
+        if !suffix.starts_with(".psf") {
+            for stokes in [1, 2] {
+                assert!(
+                    stokes_plane(&values, stokes)
+                        .iter()
+                        .all(|value| *value == 0.0),
+                    "{suffix} Stokes plane {stokes} is empty"
+                );
+            }
+        }
+    }
+    // Stokes V's family is cleaned too, to the same threshold.
+    assert!(full_run.actual_minor_iterations >= i_run.actual_minor_iterations);
+    let beams = &full
+        .get(".image.tt0")
+        .image
+        .image_info()
+        .expect("image info")
+        .beam_set;
+    assert_eq!(beams.n_stokes(), 4);
+    let i_beam = i_only.get(".image.tt0").restoring_beam();
+    for stokes in 0..4 {
+        assert_eq!(
+            *beams.beam(0, stokes),
+            i_beam,
+            "Stokes plane {stokes}'s beam"
+        );
+    }
 }

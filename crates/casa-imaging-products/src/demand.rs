@@ -402,7 +402,8 @@ impl PlannedContinuumGeneration {
             0
         } else {
             match shapes.basis {
-                NormalBasis::Taylor => 1,
+                // One beam per polarization's family.
+                NormalBasis::Taylor => shapes.polarizations,
                 _ => domains
                     .checked_mul(shapes.channels)
                     .and_then(|count| count.checked_mul(shapes.polarizations))
@@ -414,7 +415,7 @@ impl PlannedContinuumGeneration {
         let restoring_policy = shapes.problem.products().restoring_beam();
         let restoring = match (restoring_policy, shapes.basis) {
             (RestoringBeamPolicy::None, _) => 0,
-            (_, NormalBasis::Taylor) => 1,
+            (_, NormalBasis::Taylor) => shapes.polarizations,
             _ => fitted,
         };
         let mut retained = checked_add(
@@ -562,7 +563,11 @@ fn generic_scratch_bytes(
 fn taylor_scratch_bytes(shapes: &Shapes<'_>) -> Result<u64, ProductsError> {
     let parts = TaylorParts::of(shapes)?;
     checked_add(
-        checked_add(parts.retained, parts.transient, "Taylor algorithm scratch")?,
+        checked_add(
+            parts.all_retained()?,
+            parts.transient,
+            "Taylor algorithm scratch",
+        )?,
         parts.restoration.unwrap_or(0),
         "Taylor restoration scratch",
     )
@@ -576,26 +581,38 @@ struct TaylorStages {
     retained: u64,
 }
 
-/// The stages of the coupled Taylor family (#738). It reads its PSF and
-/// weight moments, residual and model terms and sensitivity first, solves
-/// the principal residuals, fits the beam and restores each term; the PB,
-/// PB-corrected, spectral-index and mask planes come after the
-/// restoration's FFT workspace is gone. Building peaks at the largest of:
-/// the read family and the principal residuals beside the beam fit
-/// (`beam_scratch`) or beside restoration (its kernel, the restored terms
-/// and one FFT convolution's workspace); or every retained plane beside
-/// the principal residuals, the PB0 source and the normal solve.
+/// The stages of the coupled Taylor families, one per polarization (#738).
+/// Each reads its PSF and weight moments, residual and model terms and
+/// sensitivity, solves the principal residuals and fits the beam; then each
+/// restores its terms, and the PB, PB-corrected, spectral-index and mask
+/// planes come after the restoration's FFT workspace is gone. Building
+/// peaks at the largest of: the other polarizations' families (read or
+/// built, the built one larger) beside one's read family and principal
+/// residuals and the beam fit (`beam_scratch`) or restoration (its kernel,
+/// the restored terms and one FFT convolution's workspace); or every
+/// family's retained planes beside one's principal residuals, PB0 source
+/// and normal solve.
 fn taylor_stages(shapes: &Shapes<'_>, beam_scratch: u64) -> Result<TaylorStages, ProductsError> {
     let parts = TaylorParts::of(shapes)?;
     let planes = |count: u64| checked_mul(count, parts.plane, "Taylor stage planes");
+    let others = checked_mul(
+        parts.retained,
+        parts.polarizations.saturating_sub(1),
+        "Taylor other polarizations",
+    )?;
     // PSF and weight moments, residual and model terms, the sensitivity.
     let read = checked_add(
         planes(2 * parts.moments + 2 * parts.terms + 1)?,
         checked_mul(parts.moments, size_of::<f32>() as u64, "Taylor sum weights")?,
         "Taylor read family",
     )?;
-    let solved = checked_add(read, planes(parts.terms)?, "Taylor principal residuals")?;
-    let mut building = checked_add(parts.retained, parts.transient, "Taylor built family")?
+    let solved = checked_add(
+        checked_add(read, planes(parts.terms)?, "Taylor principal residuals")?,
+        others,
+        "Taylor families beside one solved",
+    )?;
+    let retained = parts.all_retained()?;
+    let mut building = checked_add(retained, parts.transient, "Taylor built family")?
         .max(checked_add(solved, beam_scratch, "Taylor beam fit")?);
     if let Some(restoration) = parts.restoration {
         // The kernel and the workspace's output are in `restoration`; the
@@ -606,19 +623,19 @@ fn taylor_stages(shapes: &Shapes<'_>, beam_scratch: u64) -> Result<TaylorStages,
             "Taylor restored terms",
         )?);
     }
-    Ok(TaylorStages {
-        building,
-        retained: parts.retained,
-    })
+    Ok(TaylorStages { building, retained })
 }
 
-/// The pieces of the coupled Taylor family's demand.
+/// The pieces of the coupled Taylor families' demand.
 struct TaylorParts {
     /// One `f32` plane.
     plane: u64,
     terms: u64,
     moments: u64,
-    /// Every plane the built family keeps, its validity and sum weights.
+    /// The families, one per polarization.
+    polarizations: u64,
+    /// Every plane one polarization's built family keeps, its validity and
+    /// sum weights.
     retained: u64,
     /// The principal residuals and PB0 source the build keeps beside the
     /// family, and the normal solve.
@@ -719,10 +736,17 @@ impl TaylorParts {
             plane,
             terms,
             moments,
+            polarizations: u64::try_from(shapes.polarizations)
+                .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor polarizations"))?,
             retained,
             transient: checked_add(transient_planes, solve, "Taylor transient scratch")?,
             restoration,
         })
+    }
+
+    /// Every polarization's built family.
+    fn all_retained(&self) -> Result<u64, ProductsError> {
+        checked_mul(self.retained, self.polarizations, "Taylor families")
     }
 }
 

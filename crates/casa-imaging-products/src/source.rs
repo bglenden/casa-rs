@@ -84,8 +84,10 @@ impl<'a> ContinuumProductInputs<'a> {
                         && normal.coefficient_term_count() == terms
                         && normal.normal_moment_count() == 2 * terms - 1
                         && model.coefficients() == terms
+                        && model.polarizations() == normal.polarization_count()
                         && domains.len() == 1,
-                    "a Taylor completion has its problem's terms, 2·terms − 1 moments and one domain"
+                    "a Taylor completion has its problem's terms, 2·terms − 1 moments, \
+                     polarizations and one domain"
                 );
             }
             NormalBasis::Constant | NormalBasis::ChannelLocal => {

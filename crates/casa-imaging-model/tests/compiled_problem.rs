@@ -952,7 +952,11 @@ fn one_taylor_term_is_an_mtmfs_family_and_needs_mtmfs() {
     let mut with_alpha = images.clone();
     with_alpha.push(ProductKind::SpectralIndex);
     assert!(matches!(
-        one_term(ReconstructionBasis::Taylor { terms: 1 }, mtmfs.clone(), with_alpha),
+        one_term(
+            ReconstructionBasis::Taylor { terms: 1 },
+            mtmfs.clone(),
+            with_alpha
+        ),
         Err(CompileProblemError::InvalidProductCombination { .. })
     ));
     assert!(matches!(

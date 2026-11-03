@@ -290,7 +290,7 @@ fn principal_residuals(join: &MajorCycleCompletion) -> [Vec<f32>; TERMS] {
         .expect("coupled Taylor fixture window");
     let cells = SHAPE[0] * SHAPE[1];
     let moments = (0..3)
-        .map(|term| window.normal_moment(term).expect("Taylor normal moment"))
+        .map(|term| window.normal_moment(term, 0).expect("Taylor normal moment"))
         .collect::<Vec<_>>();
     let peak = moments[0]
         .normal_approximation()
@@ -306,8 +306,14 @@ fn principal_residuals(join: &MajorCycleCompletion) -> [Vec<f32>; TERMS] {
     let h11 = moments[2].normal_approximation()[peak].re / psf_peak;
     let determinant = h00 * h11 - h01 * h01;
     assert!(determinant.is_finite() && determinant.abs() > f64::EPSILON);
-    let residual0 = window.coefficient_term(0).expect("residual tt0").residual();
-    let residual1 = window.coefficient_term(1).expect("residual tt1").residual();
+    let residual0 = window
+        .coefficient_term(0, 0)
+        .expect("residual tt0")
+        .residual();
+    let residual1 = window
+        .coefficient_term(1, 0)
+        .expect("residual tt1")
+        .residual();
     let mut principal = [vec![0.0; cells], vec![0.0; cells]];
     for index in 0..cells {
         let [r0, r1] = [residual0[index].re, residual1[index].re].map(|r| r / sum_weight);
@@ -385,9 +391,12 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
     let window = normal
         .read_window(normal.slab().core_range())
         .expect("coupled Taylor fixture window");
-    let principal_weight = window.normal_moment(0).expect("moment zero").sum_weight();
+    let principal_weight = window
+        .normal_moment(0, 0)
+        .expect("moment zero")
+        .sum_weight();
     let principal_peak = window
-        .normal_moment(0)
+        .normal_moment(0, 0)
         .unwrap()
         .normal_approximation()
         .iter()
@@ -398,7 +407,7 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
         let sumwt = member(&generated, &format!(".sumwt.tt{term}"));
         assert_eq!(psf.contract().unit(), ProductUnit::JyPerBeam);
         assert_eq!(sumwt.contract().unit(), ProductUnit::VisibilityWeight);
-        let moment = window.normal_moment(term).expect("normal moment");
+        let moment = window.normal_moment(term, 0).expect("normal moment");
         assert_eq!(sumwt.payload(), &[moment.sum_weight() as f32]);
         for (actual, raw) in psf.payload().iter().zip(moment.normal_approximation()) {
             assert_eq!(
@@ -418,7 +427,7 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
     );
     for term in 0..TERMS {
         let raw = window
-            .coefficient_term(term)
+            .coefficient_term(term, 0)
             .expect("raw Taylor residual")
             .residual();
         let residual = member(&generated, &format!(".residual.tt{term}"));
@@ -651,11 +660,11 @@ fn t47_mosaic_taylor_products_publish_weight_and_pb_corrected_alpha() {
         .read_window(normal.slab().core_range())
         .expect("coupled Taylor fixture window");
     let principal_sum_weight = window
-        .normal_moment(0)
+        .normal_moment(0, 0)
         .expect("principal normal moment")
         .sum_weight() as f32;
     let raw_sensitivity = window
-        .normal_moment(0)
+        .normal_moment(0, 0)
         .expect("principal normal moment")
         .sensitivity();
     for (index, raw) in raw_sensitivity.iter().copied().enumerate() {
@@ -672,7 +681,7 @@ fn t47_mosaic_taylor_products_publish_weight_and_pb_corrected_alpha() {
         "normalized Weight must not alias raw Sensitivity"
     );
     let raw_weight1 = window
-        .normal_moment(1)
+        .normal_moment(1, 0)
         .expect("first signed normal moment")
         .sensitivity();
     assert_eq!(

@@ -20,8 +20,6 @@ pub enum Unsupported {
     /// The major-cycle pass has no implementation of a capability the
     /// problem requires.
     Capability(RequiredCapability),
-    /// A Taylor basis reconstructs Stokes I only.
-    PolarizedTaylorBasis,
     /// A Taylor basis reconstructs one image domain: the Taylor products
     /// have no outlier fields.
     MultiDomainTaylorBasis,
@@ -60,9 +58,6 @@ impl fmt::Display for Unsupported {
                 formatter,
                 "the major-cycle pass has no implementation of {capability:?}"
             ),
-            Self::PolarizedTaylorBasis => {
-                formatter.write_str("a Taylor basis reconstructs Stokes I only (#1065)")
-            }
             Self::MultiDomainTaylorBasis => {
                 formatter.write_str("a Taylor basis reconstructs one image domain, no outliers")
             }
@@ -190,15 +185,9 @@ pub fn check(
     if matches!(
         problem.reconstruction().basis(),
         ReconstructionBasis::Taylor { .. }
-    ) {
-        if problem.reconstruction().polarization().coordinates()
-            != [PolarizationCoordinate::StokesI]
-        {
-            unsupported.push(Unsupported::PolarizedTaylorBasis);
-        }
-        if problem.geometry().domains().len() != 1 {
-            unsupported.push(Unsupported::MultiDomainTaylorBasis);
-        }
+    ) && problem.geometry().domains().len() != 1
+    {
+        unsupported.push(Unsupported::MultiDomainTaylorBasis);
     }
     if problem
         .required_capabilities()

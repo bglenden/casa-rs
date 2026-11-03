@@ -2290,14 +2290,17 @@ fn validate_products(
             reason: "a Taylor coefficient set requires at least one Taylor image product",
         });
     }
+    // CASA forms a spectral index only for a Stokes I image
+    // (`SIImageStoreMultiTerm::calculateAlphaBeta`'s `isOnlyStokesI`).
     if products.contains(ProductKind::SpectralIndex)
         && !(taylor_terms >= 2
+            && reconstruction.polarization.coordinates() == [PolarizationCoordinate::StokesI]
             && products.contains(ProductKind::TaylorTerms)
             && products.contains(ProductKind::Residual)
             && products.contains(ProductKind::RestoredImage))
     {
         return Err(CompileProblemError::InvalidProductCombination {
-            reason: "spectral index requires at least two Taylor terms plus Taylor, residual, and restored-image products",
+            reason: "spectral index requires at least two Taylor terms of Stokes I alone plus Taylor, residual, and restored-image products",
         });
     }
     if products.contains(ProductKind::SpectralIndexError)

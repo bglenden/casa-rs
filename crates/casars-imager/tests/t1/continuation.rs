@@ -153,10 +153,7 @@ fn taylor_family_continues(terms: usize) {
         "niter": 0, "calcpsf": false, "calcres": false,
     }));
     assert_eq!(restored_report.major_cycles, 0);
-    let (_, dirty) = observation.image(
-        &format!("{label}-dirty"),
-        with(&base, json!({"niter": 0})),
-    );
+    let (_, dirty) = observation.image(&format!("{label}-dirty"), with(&base, json!({"niter": 0})));
     let images = [family(".residual", terms), family(".image", terms)].concat();
     for suffix in images.iter().chain(&family(".psf", moments)) {
         let error = nrms(&restored, &dirty, suffix);
@@ -168,10 +165,8 @@ fn taylor_family_continues(terms: usize) {
         "niter": 10, "calcpsf": false, "calcres": false,
     }));
     assert_eq!(cleaned_report.major_cycles, 1);
-    let (_, reference) = observation.image(
-        &format!("{label}-once"),
-        with(&base, json!({"niter": 10})),
-    );
+    let (_, reference) =
+        observation.image(&format!("{label}-once"), with(&base, json!({"niter": 10})));
     for suffix in [family(".model", terms), images].concat() {
         let error = nrms(&cleaned, &reference, &suffix);
         assert!(error < 1e-5, "{terms} terms, {suffix}: {error}");

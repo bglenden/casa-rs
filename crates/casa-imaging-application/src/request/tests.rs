@@ -183,7 +183,10 @@ fn nterms_is_one_or_more_and_more_than_one_only_with_mtmfs() {
     let mut hogbom = request(json!({ "deconvolver": "hogbom" }));
     hogbom.nterms = 2;
     assert_eq!(
-        hogbom.validate().expect_err("two terms need mtmfs").parameters,
+        hogbom
+            .validate()
+            .expect_err("two terms need mtmfs")
+            .parameters,
         "nterms, deconvolver"
     );
 }

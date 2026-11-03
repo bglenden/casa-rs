@@ -306,6 +306,8 @@ class Refusals:
         if deconvolver not in ("hogbom", "clark", "multiscale", "mtmfs"):
             issue = 223 if deconvolver == "asp" else 1060
             self.add(f"deconvolver={deconvolver!r}", NOT_YET, issue)
+        if deconvolver == "mtmfs" and specmode in ("cube", "cubedata"):
+            self.add("deconvolver='mtmfs' with specmode='cube' or 'cubedata'", PARITY)
         weighting = self.text("weighting")
         if weighting not in ("natural", "uniform", "briggs", "briggsbwtaper"):
             self.add(f"weighting={weighting!r}", NOT_YET, 980)
@@ -513,8 +515,6 @@ class Refusals:
     def gate(self, modes):
         """`availability::check`, for what the parameters alone decide."""
         taylor = modes["deconvolver"] == "mtmfs"
-        if taylor and str(self.values.get("stokes", "I")).strip() != "I":
-            self.add("a Taylor basis (mtmfs) of polarizations other than Stokes I", GATE)
         facets = self.values.get("facets")
         faceted = isinstance(facets, int) and facets > 1
         if faceted and modes["gridder"] in ("standard", "wproject") and (taylor or modes["cube"]):
