@@ -1,0 +1,50 @@
+{
+ "schema": "casa-fixture-receipt/1",
+ "title": "Component lists and the cl tool against CASA 6.7.6.14: CASA-written tables and recorded call sequences",
+ "work_issue": 1053,
+ "date": "2026-11-03",
+ "native_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "host": "Linux-6.18.44-fc-v230-x86_64-with-glibc2.39",
+ "fixtures": [
+  {
+   "path": "crates/casars-python/python/tests/data/casa_componentlist_tool.json",
+   "sha256": "64be92847c4420dddd7b40dc634e82b34adc67b2aa1bc3cea20b7c5fd1736dd1",
+   "casa_version": "6.7.6-14"
+  }
+ ],
+ "commands": [
+  "cargo nextest run --no-fail-fast -p casa-components --test casa_fixture",
+  "python -m pytest -q -rA -p no:cacheprovider crates/casars-python/python/tests/test_tools_componentlist.py"
+ ],
+ "summary": {
+  "passed": 22,
+  "skipped": 2
+ },
+ "all_passed": true,
+ "tests": {
+  "[1] crates/casars-python/python/tests/test_tools_componentlist.py:458: could not import 'casatools': No module named 'casatools'": "skipped",
+  "[1] crates/casars-python/python/tests/test_tools_componentlist.py:86: could not import 'casatools': No module named 'casatools'": "skipped",
+  "casa-components::casa_fixture reads_casa_component_lists_as_casa_reads_them": "passed",
+  "casa-components::casa_fixture reads_lists_from_before_the_error_columns": "passed",
+  "casa-components::casa_fixture writes_casa_lists_back_in_casa_layout": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_a_dropped_tool_waits_for_the_write_lock_without_the_gil": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_a_dropped_tool_writes_its_list": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_a_list_keeps_its_table_when_the_working_directory_changes": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_a_shape_casa_cannot_construct_raises_and_adds_nothing": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_a_spaced_frequency_keeps_its_value": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_addcomponent_follows_casa_call_by_call": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_an_empty_list_has_no_record": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_an_open_of_its_own_table_writes_the_list_before_reading_it": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_an_open_releases_the_list_it_replaces": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_an_update_rewrites_and_a_read_only_list_is_never_written": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_complex_fluxes_keep_their_real_parts": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_every_casa_method_exists_with_casas_signature": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_index_errors_are_casas": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_methods_casa_rs_does_not_implement_yet_raise": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_open_refuses_what_is_not_a_component_list": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_records_and_accessors_are_casas": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_rename_writes_at_once_and_close_writes_the_rest": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_the_bundle_describes_the_class": "passed",
+  "crates/casars-python/python/tests/test_tools_componentlist.py::test_the_class_is_casas_componentlist": "passed"
+ }
+}

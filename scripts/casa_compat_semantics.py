@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import urllib.parse
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,8 @@ EVIDENCE_STATES = {
     "planned", "recorded", "inspected", "measured", "passed", "failed", "superseded", "owner decision",
 }
 DECISION_STATES = {"Agreed for now", "Previously agreed", "Proposed", "Unfinished"}
+# Where deviations are recorded; a decision's `record` names its heading there.
+DEVIATIONS = "docs/CASA (C++) bugs.md"
 # Files whose evidence states predate EVIDENCE_STATES and are free text.
 # This list only shrinks.
 FREE_TEXT_STATES = frozenset({"tclean"})
@@ -136,6 +139,8 @@ def validate_records(data: dict[str, Any], subject: str, rows: Any) -> None:
         for key in ("inputs", "casa", "ours", "rationale", "impact"):
             if not entry.get(key):
                 raise ValueError(f"decision lacks {key}")
+        if "record" in entry and not entry["record"]:
+            raise ValueError(f"decision {entry['id']}: an empty record")
 
 
 def validate_tool(data: dict[str, Any], signatures: dict[str, Any]) -> None:
@@ -156,6 +161,16 @@ def validate_tool(data: dict[str, Any], signatures: dict[str, Any]) -> None:
         if status in {"Partial", "Not implemented"} and not isinstance(entry.get("issue"), int):
             raise ValueError(f"{name}: a {status} method names the issue its refusals cite")
     validate_records(data, data["tool"], methods.values())
+
+
+def blob(revision: str, path: str) -> str:
+    """A repository file at an exact revision on GitHub."""
+    return f"https://github.com/bglenden/casa-rs/blob/{revision}/{urllib.parse.quote(path)}"
+
+
+def heading_anchor(heading: str) -> str:
+    """GitHub's anchor for a Markdown heading."""
+    return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
 
 
 def evidence_links(ids: list[str], subject: str = "tclean") -> str:
@@ -217,7 +232,8 @@ def render_records(data: dict[str, Any], subject: str, kind: str) -> list[str]:
         lines.extend([f"<a id=\"{subject}-behavior-{entry['id']}\"></a>", f"##### {entry['title']}", "", f"**{entry['status']}** — {entry['scope']}", "", entry["gap"], "", "Evidence: " + evidence_links(entry["evidence"], subject) + ".", ""])
     lines.extend([f"#### {subject} deviations and unfinished work", ""])
     for entry in data["decisions"]:
-        lines.extend([f"##### {entry['id']}: {entry['state']}", "", f"- Inputs: {entry['inputs']}", f"- CASA: {entry['casa']}", f"- casa-rs: {entry['ours']}", f"- Rationale: {entry['rationale']}", f"- User impact: {entry['impact']}", f"- Owner decision: {entry.get('owner_decision', 'Pending; not an accepted deviation.')}", f"- Evidence: {evidence_links(entry['evidence'], subject)}.", ""])
+        record = [f"- Record: [{entry['record']}]({blob(data['audit_revision'], DEVIATIONS)}#{heading_anchor(entry['record'])})"] if entry.get("record") else []
+        lines.extend([f"##### {entry['id']}: {entry['state']}", "", *record, f"- Inputs: {entry['inputs']}", f"- CASA: {entry['casa']}", f"- casa-rs: {entry['ours']}", f"- Rationale: {entry['rationale']}", f"- User impact: {entry['impact']}", f"- Owner decision: {entry.get('owner_decision', 'Pending; not an accepted deviation.')}", f"- Evidence: {evidence_links(entry['evidence'], subject)}.", ""])
     lines.extend([f"#### {subject} evidence", "", "Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.", ""])
     for key, entry in data["evidence"].items():
         result = f" {entry['result']}" if entry.get("result") else ""
@@ -226,7 +242,7 @@ def render_records(data: dict[str, Any], subject: str, kind: str) -> list[str]:
             lines.append(f"- Superseded by {evidence_links([entry['superseded_by']], subject)}.")
         for link in entry["links"]:
             revision = entry.get("source_revision", data["audit_revision"])
-            target = link if link.startswith("https://") else f"https://github.com/bglenden/casa-rs/blob/{revision}/{link}"
+            target = link if link.startswith("https://") else blob(revision, link)
             lines.append(f"- [{link}]({target})")
         if entry.get("receipt"):
             lines.extend([f"- Revision: `{entry['revision']}`; CASA: `{entry['casa_version']}`.", f"- Command: `{entry['command']}`.", f"- Receipt: `{entry['receipt']}`."])
@@ -291,3 +307,10 @@ def validate_source_links(root: Path, data: dict[str, Any]) -> None:
     )
     if any(line.endswith(" missing") for line in result.stdout.splitlines()):
         raise ValueError("semantic evidence links a file absent at its pinned revision")
+    records = {entry["record"] for entry in data["decisions"] if entry.get("record")}
+    if records:
+        text = subprocess.run(["git", "-C", str(root), "show", f"{data['audit_revision']}:{DEVIATIONS}"],
+                              capture_output=True, text=True, check=True).stdout
+        headings = {line[3:].strip() for line in text.splitlines() if line.startswith("## ")}
+        if records - headings:
+            raise ValueError(f"decision records name no heading of {DEVIATIONS}: {sorted(records - headings)}")

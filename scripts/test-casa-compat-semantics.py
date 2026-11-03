@@ -148,5 +148,28 @@ class EvidenceStateTests(unittest.TestCase):
         self.assertEqual(semantics.FREE_TEXT_STATES, {"tclean"})
 
 
+class DecisionRecordTests(unittest.TestCase):
+    def test_a_record_links_to_its_heading_in_the_deviations_document(self):
+        # The document's own index links its headings this way.
+        text = (ROOT / semantics.DEVIATIONS).read_text(encoding="utf-8")
+        self.assertIn("(#smpredict-phases-a-moved-observemany-pointing-on-its-field)", text)
+        self.assertEqual(semantics.heading_anchor("`sm.predict` phases a moved `observemany` pointing on its field"),
+                         "smpredict-phases-a-moved-observemany-pointing-on-its-field")
+        self.assertEqual(semantics.blob("0" * 40, semantics.DEVIATIONS),
+                         f"https://github.com/bglenden/casa-rs/blob/{'0' * 40}/docs/CASA%20%28C%2B%2B%29%20bugs.md")
+
+    def test_a_record_must_name_a_heading_at_the_audit_revision(self):
+        data, _ = quanta_review()
+        data["audit_revision"] = semantics.subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        data["evidence"]["signature"]["links"] = []
+        data["decisions"] = [{"id": "x", "state": "Proposed", "record": "The tools convert quantities whose units do not conform",
+                              "inputs": "i", "casa": "c", "ours": "o", "rationale": "r", "impact": "m", "evidence": []}]
+        semantics.validate_source_links(ROOT, data)
+        data["decisions"][0]["record"] = "A heading the document lacks"
+        with self.assertRaisesRegex(ValueError, "name no heading"):
+            semantics.validate_source_links(ROOT, data)
+
+
 if __name__ == "__main__":
     unittest.main()
