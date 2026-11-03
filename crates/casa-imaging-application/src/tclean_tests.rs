@@ -333,6 +333,13 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "veltype",
             "#980",
         ),
+        // A source-frame cube's per-channel density, mosaic or not.
+        (
+            json!({ "specmode": "cubesource", "weighting": "briggsbwtaper",
+                    "gridder": "mosaic" }),
+            "perchanweightdensity",
+            "#980",
+        ),
         (
             json!({ "gridder": "wproject", "wprojplanes": -1, "facets": 2 }),
             "facets",

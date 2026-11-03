@@ -311,6 +311,16 @@ class Refusals:
             self.add(f"weighting={weighting!r}", NOT_YET, 980)
         if weighting == "briggsbwtaper" and not cube:
             self.add("weighting='briggsbwtaper' with specmode='mfs'", PARITY)
+        if (
+            specmode == "cubesource"
+            and weighting not in ("natural", "radial", "superuniform")
+            and self.flag("perchanweightdensity") is not False
+        ):
+            self.add(
+                "perchanweightdensity=True with specmode='cubesource' and a density weighting",
+                NOT_YET,
+                980,
+            )
         usemask = self.text("usemask")
         if usemask == "pb":
             self.add("usemask='pb'", NOT_YET, 1061)

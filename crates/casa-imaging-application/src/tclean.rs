@@ -368,6 +368,25 @@ impl<'a> Tclean<'a> {
                  refuses it with specmode='mfs', and so does casa-rs",
             ));
         }
+        // A source-frame cube's per-channel density pads its axis by the
+        // swing CASA estimates in the source's frame
+        // (`BriggsCubeWeightor::estimateSwingChanPad` with the ephemeris).
+        let per_channel_density = !matches!(weighting, "natural" | "radial" | "superuniform")
+            && self
+                .values
+                .get("perchanweightdensity")
+                .and_then(Value::as_bool)
+                != Some(false);
+        if specmode == "cubesource" && per_channel_density {
+            return Err(TcleanRefusal::not_yet(
+                "perchanweightdensity",
+                format!(
+                    "True with specmode='cubesource' and weighting='{weighting}' (a source-frame \
+                     cube's per-channel density)"
+                ),
+                980,
+            ));
+        }
         self.set("weighting", weighting);
         let usemask = self.text("usemask")?;
         if usemask == "pb" {
