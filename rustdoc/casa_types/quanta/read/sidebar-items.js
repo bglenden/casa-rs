@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["casacore_unit_name","unique_prefix_index"],"struct":["QuantityReadError"]};
+window.SIDEBAR_ITEMS = {"fn":["casacore_unit_name","unique_prefix_index","unique_prefix_position"],"struct":["QuantityReadError"]};

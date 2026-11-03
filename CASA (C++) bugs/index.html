@@ -1786,6 +1786,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mdirectionfrom_source_name-trims-a-source-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MDirection::from_source_name trims a source name
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#direction_splitter-cannot-split-a-direction-without-an-epoch" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4528,6 +4539,23 @@ every observatory alike, including the three that casacore puts inside the
 Earth. Choosing the other column per row would need knowing which one was
 meant, and would make casa-rs and CASA disagree about the same data; the
 correction belongs in the table.</p>
+<h2 id="mdirectionfrom_source_name-trims-a-source-name"><code>MDirection::from_source_name</code> trims a source name<a class="headerlink" href="#mdirectionfrom_source_name-trims-a-source-name" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: casa-rs is more lenient (#1110)</li>
+<li>Affected code: casacore <code>MeasTable::Source</code>; casa-types
+  <code>measures/direction.rs</code> (<code>parse_named_direction</code>)</li>
+</ul>
+<p>casacore finds a source by name with <code>MUString::minimaxNC</code>, which keeps
+spaces, and so does casa-rs's measures data. CASA 6.7.6.14's <code>me.source</code>
+reads its argument as a direction string first, splitting it at spaces:
+it finds <code>'  0002-478'</code>, with leading spaces, but not <code>'\t0002-478'</code>, with a
+tab. casa-rs's <code>me.source</code> splits the same way and agrees on both.
+casa-rs's Rust <code>MDirection::from_source_name</code>, which TaQL's measures
+functions and the derived MeasurementSet columns use, trims every kind of
+surrounding white space, a tab too, before it looks a name up, as it does
+for planets and <code>ZENITH</code>; there a name with leading white space finds a
+source that casacore's <code>MeasTable::Source</code> would not.</p>
 <h2 id="direction_splitter-cannot-split-a-direction-without-an-epoch"><code>direction_splitter</code> cannot split a direction without an epoch<a class="headerlink" href="#direction_splitter-cannot-split-a-direction-without-an-epoch" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-26</li>

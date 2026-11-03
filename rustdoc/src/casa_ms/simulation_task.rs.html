@@ -1104,664 +1104,656 @@
 <a href=#1104 id=1104 data-nosnippet>1104</a>
 <a href=#1105 id=1105 data-nosnippet>1105</a><span class="kw">fn </span>config_observatory_position(name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;MPosition&gt;, String&gt; {
 <a href=#1106 id=1106 data-nosnippet>1106</a>    <span class="kw">let </span>measures = <span class="kw">crate</span>::open_measures_runtime().map_err(|error| error.to_string())<span class="question-mark">?</span>;
-<a href=#1107 id=1107 data-nosnippet>1107</a>    MPosition::from_observatory_name(name, measures.as_ref())
-<a href=#1108 id=1108 data-nosnippet>1108</a>        .map_err(|error| error.to_string())
-<a href=#1109 id=1109 data-nosnippet>1109</a>        .and_then(|position| {
-<a href=#1110 id=1110 data-nosnippet>1110</a>            <span class="kw">if </span>position.is_some() || !name.eq_ignore_ascii_case(<span class="string">"ALMASD"</span>) {
-<a href=#1111 id=1111 data-nosnippet>1111</a>                <span class="prelude-val">Ok</span>(position)
-<a href=#1112 id=1112 data-nosnippet>1112</a>            } <span class="kw">else </span>{
-<a href=#1113 id=1113 data-nosnippet>1113</a>                MPosition::from_observatory_name(<span class="string">"ALMA"</span>, measures.as_ref())
-<a href=#1114 id=1114 data-nosnippet>1114</a>                    .map_err(|error| error.to_string())
-<a href=#1115 id=1115 data-nosnippet>1115</a>            }
-<a href=#1116 id=1116 data-nosnippet>1116</a>        })
-<a href=#1117 id=1117 data-nosnippet>1117</a>}
-<a href=#1118 id=1118 data-nosnippet>1118</a>
-<a href=#1119 id=1119 data-nosnippet>1119</a><span class="kw">fn </span>parse_config_f64(value: <span class="kw-2">&amp;</span>str, path: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;f64, String&gt; {
-<a href=#1120 id=1120 data-nosnippet>1120</a>    value.parse::&lt;f64&gt;().map_err(|error| {
-<a href=#1121 id=1121 data-nosnippet>1121</a>        <span class="macro">format!</span>(
-<a href=#1122 id=1122 data-nosnippet>1122</a>            <span class="string">"array_config {} has invalid floating-point value {value:?}: {error}"</span>,
-<a href=#1123 id=1123 data-nosnippet>1123</a>            path.display()
-<a href=#1124 id=1124 data-nosnippet>1124</a>        )
-<a href=#1125 id=1125 data-nosnippet>1125</a>    })
-<a href=#1126 id=1126 data-nosnippet>1126</a>}
-<a href=#1127 id=1127 data-nosnippet>1127</a>
-<a href=#1128 id=1128 data-nosnippet>1128</a><span class="kw">fn </span>resolve_band_frequency_hz(telescope: <span class="kw-2">&amp;</span>str, band: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;f64, String&gt; {
-<a href=#1129 id=1129 data-nosnippet>1129</a>    <span class="kw">let </span>band = band.trim().to_ascii_lowercase().replace(<span class="string">' '</span>, <span class="string">""</span>);
-<a href=#1130 id=1130 data-nosnippet>1130</a>    <span class="kw">match </span>(telescope, band.as_str()) {
-<a href=#1131 id=1131 data-nosnippet>1131</a>        (<span class="string">"vla"</span>, <span class="string">"l"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">1.5e9</span>),
-<a href=#1132 id=1132 data-nosnippet>1132</a>        (<span class="string">"vla"</span>, <span class="string">"s"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">3.0e9</span>),
-<a href=#1133 id=1133 data-nosnippet>1133</a>        (<span class="string">"vla"</span>, <span class="string">"c"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">6.0e9</span>),
-<a href=#1134 id=1134 data-nosnippet>1134</a>        (<span class="string">"vla"</span>, <span class="string">"x"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">10.0e9</span>),
-<a href=#1135 id=1135 data-nosnippet>1135</a>        (<span class="string">"vla"</span>, <span class="string">"ku"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">15.0e9</span>),
-<a href=#1136 id=1136 data-nosnippet>1136</a>        (<span class="string">"vla"</span>, <span class="string">"k"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">22.0e9</span>),
-<a href=#1137 id=1137 data-nosnippet>1137</a>        (<span class="string">"vla"</span>, <span class="string">"ka"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">33.0e9</span>),
-<a href=#1138 id=1138 data-nosnippet>1138</a>        (<span class="string">"vla"</span>, <span class="string">"q"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">44.0e9</span>),
-<a href=#1139 id=1139 data-nosnippet>1139</a>        (<span class="string">"alma" </span>| <span class="string">"aca"</span>, <span class="string">"3" </span>| <span class="string">"band3" </span>| <span class="string">"band_3"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">100.0e9</span>),
-<a href=#1140 id=1140 data-nosnippet>1140</a>        (<span class="string">"alma" </span>| <span class="string">"aca"</span>, <span class="string">"6" </span>| <span class="string">"band6" </span>| <span class="string">"band_6"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">230.0e9</span>),
-<a href=#1141 id=1141 data-nosnippet>1141</a>        (<span class="string">"alma" </span>| <span class="string">"aca"</span>, <span class="string">"7" </span>| <span class="string">"band7" </span>| <span class="string">"band_7"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">345.0e9</span>),
-<a href=#1142 id=1142 data-nosnippet>1142</a>        (<span class="string">"alma" </span>| <span class="string">"aca"</span>, <span class="string">"9" </span>| <span class="string">"band9" </span>| <span class="string">"band_9"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">690.0e9</span>),
-<a href=#1143 id=1143 data-nosnippet>1143</a>        (<span class="string">"vla"</span>, other) =&gt; <span class="prelude-val">Err</span>(<span class="macro">format!</span>(
-<a href=#1144 id=1144 data-nosnippet>1144</a>            <span class="string">"unsupported VLA band {other:?}; expected L, S, C, X, Ku, K, Ka, or Q"
-<a href=#1145 id=1145 data-nosnippet>1145</a>        </span>)),
-<a href=#1146 id=1146 data-nosnippet>1146</a>        (<span class="kw">_</span>, other) =&gt; <span class="prelude-val">Err</span>(<span class="macro">format!</span>(
-<a href=#1147 id=1147 data-nosnippet>1147</a>            <span class="string">"unsupported ALMA/ACA band {other:?}; expected Band 3, 6, 7, or 9"
-<a href=#1148 id=1148 data-nosnippet>1148</a>        </span>)),
-<a href=#1149 id=1149 data-nosnippet>1149</a>    }
-<a href=#1150 id=1150 data-nosnippet>1150</a>}
-<a href=#1151 id=1151 data-nosnippet>1151</a>
-<a href=#1152 id=1152 data-nosnippet>1152</a><span class="kw">fn </span>family_channel_width_hz(imaging_mode: <span class="kw-2">&amp;</span>str, preset: <span class="kw-2">&amp;</span>FamilyPreset) -&gt; f64 {
-<a href=#1153 id=1153 data-nosnippet>1153</a>    <span class="kw">let </span>mode = imaging_mode.trim().to_ascii_lowercase();
-<a href=#1154 id=1154 data-nosnippet>1154</a>    <span class="kw">if </span><span class="macro">matches!</span>(
-<a href=#1155 id=1155 data-nosnippet>1155</a>        mode.as_str(),
-<a href=#1156 id=1156 data-nosnippet>1156</a>        <span class="string">"mfs" </span>| <span class="string">"continuum" </span>| <span class="string">"continuum_mfs" </span>| <span class="string">"single_field" </span>| <span class="string">"mt_mfs" </span>| <span class="string">"mtmfs"
-<a href=#1157 id=1157 data-nosnippet>1157</a>    </span>) {
-<a href=#1158 id=1158 data-nosnippet>1158</a>        preset.channel_width_hz.max(<span class="number">32.0e6</span>)
-<a href=#1159 id=1159 data-nosnippet>1159</a>    } <span class="kw">else </span>{
-<a href=#1160 id=1160 data-nosnippet>1160</a>        preset.channel_width_hz
-<a href=#1161 id=1161 data-nosnippet>1161</a>    }
-<a href=#1162 id=1162 data-nosnippet>1162</a>}
-<a href=#1163 id=1163 data-nosnippet>1163</a>
-<a href=#1164 id=1164 data-nosnippet>1164</a><span class="kw">fn </span>family_row_pair_count(
-<a href=#1165 id=1165 data-nosnippet>1165</a>    antenna_count: usize,
-<a href=#1166 id=1166 data-nosnippet>1166</a>    observation_mode: SyntheticObservationMode,
-<a href=#1167 id=1167 data-nosnippet>1167</a>) -&gt; usize {
-<a href=#1168 id=1168 data-nosnippet>1168</a>    <span class="kw">match </span>observation_mode {
-<a href=#1169 id=1169 data-nosnippet>1169</a>        SyntheticObservationMode::Interferometric =&gt; {
-<a href=#1170 id=1170 data-nosnippet>1170</a>            antenna_count * antenna_count.saturating_sub(<span class="number">1</span>) / <span class="number">2
-<a href=#1171 id=1171 data-nosnippet>1171</a>        </span>}
-<a href=#1172 id=1172 data-nosnippet>1172</a>        SyntheticObservationMode::TotalPower =&gt; antenna_count,
-<a href=#1173 id=1173 data-nosnippet>1173</a>    }
-<a href=#1174 id=1174 data-nosnippet>1174</a>    .max(<span class="number">1</span>)
-<a href=#1175 id=1175 data-nosnippet>1175</a>}
-<a href=#1176 id=1176 data-nosnippet>1176</a>
-<a href=#1177 id=1177 data-nosnippet>1177</a><span class="kw">fn </span>family_antennas_for_mode(
-<a href=#1178 id=1178 data-nosnippet>1178</a>    antennas: Vec&lt;SyntheticAntenna&gt;,
-<a href=#1179 id=1179 data-nosnippet>1179</a>    observation_mode: SyntheticObservationMode,
-<a href=#1180 id=1180 data-nosnippet>1180</a>    total_power_antenna_index: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-<a href=#1181 id=1181 data-nosnippet>1181</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;SyntheticAntenna&gt;, String&gt; {
-<a href=#1182 id=1182 data-nosnippet>1182</a>    <span class="kw">match </span>observation_mode {
-<a href=#1183 id=1183 data-nosnippet>1183</a>        SyntheticObservationMode::Interferometric =&gt; <span class="prelude-val">Ok</span>(antennas),
-<a href=#1184 id=1184 data-nosnippet>1184</a>        SyntheticObservationMode::TotalPower =&gt; {
-<a href=#1185 id=1185 data-nosnippet>1185</a>            <span class="kw">let </span>selected_index = total_power_antenna_index.unwrap_or(<span class="number">0</span>);
-<a href=#1186 id=1186 data-nosnippet>1186</a>            antennas
-<a href=#1187 id=1187 data-nosnippet>1187</a>                .into_iter()
-<a href=#1188 id=1188 data-nosnippet>1188</a>                .nth(selected_index)
-<a href=#1189 id=1189 data-nosnippet>1189</a>                .map(|antenna| <span class="macro">vec!</span>[antenna])
-<a href=#1190 id=1190 data-nosnippet>1190</a>                .ok_or_else(|| {
-<a href=#1191 id=1191 data-nosnippet>1191</a>                    <span class="macro">format!</span>(
-<a href=#1192 id=1192 data-nosnippet>1192</a>                        <span class="string">"total_power_antenna_index {selected_index} is out of range for array_config"
-<a href=#1193 id=1193 data-nosnippet>1193</a>                    </span>)
-<a href=#1194 id=1194 data-nosnippet>1194</a>                })
-<a href=#1195 id=1195 data-nosnippet>1195</a>        }
-<a href=#1196 id=1196 data-nosnippet>1196</a>    }
-<a href=#1197 id=1197 data-nosnippet>1197</a>}
-<a href=#1198 id=1198 data-nosnippet>1198</a>
-<a href=#1199 id=1199 data-nosnippet>1199</a><span class="kw">fn </span>validate_family_imaging_mode(imaging_mode: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;(), String&gt; {
-<a href=#1200 id=1200 data-nosnippet>1200</a>    <span class="kw">let </span>mode = imaging_mode.trim().to_ascii_lowercase();
-<a href=#1201 id=1201 data-nosnippet>1201</a>    <span class="kw">if </span><span class="macro">matches!</span>(
-<a href=#1202 id=1202 data-nosnippet>1202</a>        mode.as_str(),
-<a href=#1203 id=1203 data-nosnippet>1203</a>        <span class="string">"single_field"
-<a href=#1204 id=1204 data-nosnippet>1204</a>            </span>| <span class="string">"mfs"
-<a href=#1205 id=1205 data-nosnippet>1205</a>            </span>| <span class="string">"continuum"
-<a href=#1206 id=1206 data-nosnippet>1206</a>            </span>| <span class="string">"continuum_mfs"
-<a href=#1207 id=1207 data-nosnippet>1207</a>            </span>| <span class="string">"mosaic"
-<a href=#1208 id=1208 data-nosnippet>1208</a>            </span>| <span class="string">"mosaic_mfs"
-<a href=#1209 id=1209 data-nosnippet>1209</a>            </span>| <span class="string">"spectral_cube"
-<a href=#1210 id=1210 data-nosnippet>1210</a>            </span>| <span class="string">"cube"
-<a href=#1211 id=1211 data-nosnippet>1211</a>            </span>| <span class="string">"cubedata"
-<a href=#1212 id=1212 data-nosnippet>1212</a>            </span>| <span class="string">"mt_mfs"
-<a href=#1213 id=1213 data-nosnippet>1213</a>            </span>| <span class="string">"mtmfs"
-<a href=#1214 id=1214 data-nosnippet>1214</a>            </span>| <span class="string">"simalma"
-<a href=#1215 id=1215 data-nosnippet>1215</a>            </span>| <span class="string">"aca"
-<a href=#1216 id=1216 data-nosnippet>1216</a>    </span>) {
-<a href=#1217 id=1217 data-nosnippet>1217</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#1218 id=1218 data-nosnippet>1218</a>    }
-<a href=#1219 id=1219 data-nosnippet>1219</a>    <span class="prelude-val">Err</span>(<span class="macro">format!</span>(
-<a href=#1220 id=1220 data-nosnippet>1220</a>        <span class="string">"unsupported imaging_mode {imaging_mode:?}; expected single_field, mfs, mosaic, spectral_cube, cubedata, mt_mfs, simalma, or aca"
-<a href=#1221 id=1221 data-nosnippet>1221</a>    </span>))
-<a href=#1222 id=1222 data-nosnippet>1222</a>}
-<a href=#1223 id=1223 data-nosnippet>1223</a>
-<a href=#1224 id=1224 data-nosnippet>1224</a><span class="kw">fn </span>scaled_vla_antennas(scale: f64) -&gt; Vec&lt;SyntheticAntenna&gt; {
-<a href=#1225 id=1225 data-nosnippet>1225</a>    <span class="kw">let </span>antennas = tutorial_vla_a_antennas();
-<a href=#1226 id=1226 data-nosnippet>1226</a>    <span class="kw">if </span>(scale - <span class="number">1.0</span>).abs() &lt; f64::EPSILON {
-<a href=#1227 id=1227 data-nosnippet>1227</a>        <span class="kw">return </span>antennas;
-<a href=#1228 id=1228 data-nosnippet>1228</a>    }
-<a href=#1229 id=1229 data-nosnippet>1229</a>    <span class="kw">let </span>center = antenna_centroid(<span class="kw-2">&amp;</span>antennas);
-<a href=#1230 id=1230 data-nosnippet>1230</a>    antennas
-<a href=#1231 id=1231 data-nosnippet>1231</a>        .into_iter()
-<a href=#1232 id=1232 data-nosnippet>1232</a>        .map(|antenna| SyntheticAntenna {
-<a href=#1233 id=1233 data-nosnippet>1233</a>            position_m: [
-<a href=#1234 id=1234 data-nosnippet>1234</a>                center[<span class="number">0</span>] + (antenna.position_m[<span class="number">0</span>] - center[<span class="number">0</span>]) * scale,
-<a href=#1235 id=1235 data-nosnippet>1235</a>                center[<span class="number">1</span>] + (antenna.position_m[<span class="number">1</span>] - center[<span class="number">1</span>]) * scale,
-<a href=#1236 id=1236 data-nosnippet>1236</a>                center[<span class="number">2</span>] + (antenna.position_m[<span class="number">2</span>] - center[<span class="number">2</span>]) * scale,
-<a href=#1237 id=1237 data-nosnippet>1237</a>            ],
-<a href=#1238 id=1238 data-nosnippet>1238</a>            ..antenna
-<a href=#1239 id=1239 data-nosnippet>1239</a>        })
-<a href=#1240 id=1240 data-nosnippet>1240</a>        .collect()
-<a href=#1241 id=1241 data-nosnippet>1241</a>}
-<a href=#1242 id=1242 data-nosnippet>1242</a>
-<a href=#1243 id=1243 data-nosnippet>1243</a><span class="kw">fn </span>antenna_centroid(antennas: <span class="kw-2">&amp;</span>[SyntheticAntenna]) -&gt; [f64; <span class="number">3</span>] {
-<a href=#1244 id=1244 data-nosnippet>1244</a>    <span class="kw">let </span><span class="kw-2">mut </span>sum = [<span class="number">0.0</span>; <span class="number">3</span>];
-<a href=#1245 id=1245 data-nosnippet>1245</a>    <span class="kw">for </span>antenna <span class="kw">in </span>antennas {
-<a href=#1246 id=1246 data-nosnippet>1246</a>        sum[<span class="number">0</span>] += antenna.position_m[<span class="number">0</span>];
-<a href=#1247 id=1247 data-nosnippet>1247</a>        sum[<span class="number">1</span>] += antenna.position_m[<span class="number">1</span>];
-<a href=#1248 id=1248 data-nosnippet>1248</a>        sum[<span class="number">2</span>] += antenna.position_m[<span class="number">2</span>];
-<a href=#1249 id=1249 data-nosnippet>1249</a>    }
-<a href=#1250 id=1250 data-nosnippet>1250</a>    <span class="kw">let </span>count = antennas.len().max(<span class="number">1</span>) <span class="kw">as </span>f64;
-<a href=#1251 id=1251 data-nosnippet>1251</a>    [sum[<span class="number">0</span>] / count, sum[<span class="number">1</span>] / count, sum[<span class="number">2</span>] / count]
-<a href=#1252 id=1252 data-nosnippet>1252</a>}
-<a href=#1253 id=1253 data-nosnippet>1253</a>
-<a href=#1254 id=1254 data-nosnippet>1254</a><span class="kw">fn </span>synthetic_alma_antennas(
-<a href=#1255 id=1255 data-nosnippet>1255</a>    name_prefix: <span class="kw-2">&amp;</span>str,
-<a href=#1256 id=1256 data-nosnippet>1256</a>    count: usize,
-<a href=#1257 id=1257 data-nosnippet>1257</a>    dish_diameter_m: f64,
-<a href=#1258 id=1258 data-nosnippet>1258</a>    max_radius_m: f64,
-<a href=#1259 id=1259 data-nosnippet>1259</a>) -&gt; Vec&lt;SyntheticAntenna&gt; {
-<a href=#1260 id=1260 data-nosnippet>1260</a>    <span class="kw">let </span>center = [-<span class="number">2_223_990.194</span>, -<span class="number">5_440_045.461</span>, -<span class="number">2_481_682.086</span>];
-<a href=#1261 id=1261 data-nosnippet>1261</a>    (<span class="number">0</span>..count)
-<a href=#1262 id=1262 data-nosnippet>1262</a>        .map(|index| {
-<a href=#1263 id=1263 data-nosnippet>1263</a>            <span class="kw">let </span>radius = <span class="kw">if </span>count &lt;= <span class="number">1 </span>{
-<a href=#1264 id=1264 data-nosnippet>1264</a>                <span class="number">0.0
-<a href=#1265 id=1265 data-nosnippet>1265</a>            </span>} <span class="kw">else </span>{
-<a href=#1266 id=1266 data-nosnippet>1266</a>                max_radius_m * ((index + <span class="number">1</span>) <span class="kw">as </span>f64 / count <span class="kw">as </span>f64).sqrt()
-<a href=#1267 id=1267 data-nosnippet>1267</a>            };
-<a href=#1268 id=1268 data-nosnippet>1268</a>            <span class="kw">let </span>angle = index <span class="kw">as </span>f64 * <span class="number">2.399_963_229_728_653</span>;
-<a href=#1269 id=1269 data-nosnippet>1269</a>            <span class="kw">let </span>east_m = radius * angle.cos();
-<a href=#1270 id=1270 data-nosnippet>1270</a>            <span class="kw">let </span>north_m = radius * angle.sin();
-<a href=#1271 id=1271 data-nosnippet>1271</a>            <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"{name_prefix}{:02}"</span>, index + <span class="number">1</span>);
-<a href=#1272 id=1272 data-nosnippet>1272</a>            SyntheticAntenna {
-<a href=#1273 id=1273 data-nosnippet>1273</a>                name: name.clone(),
-<a href=#1274 id=1274 data-nosnippet>1274</a>                station: name,
-<a href=#1275 id=1275 data-nosnippet>1275</a>                position_m: offset_itrf_position(center, east_m, north_m),
-<a href=#1276 id=1276 data-nosnippet>1276</a>                dish_diameter_m,
-<a href=#1277 id=1277 data-nosnippet>1277</a>            }
-<a href=#1278 id=1278 data-nosnippet>1278</a>        })
-<a href=#1279 id=1279 data-nosnippet>1279</a>        .collect()
-<a href=#1280 id=1280 data-nosnippet>1280</a>}
-<a href=#1281 id=1281 data-nosnippet>1281</a>
-<a href=#1282 id=1282 data-nosnippet>1282</a><span class="kw">fn </span>offset_itrf_position(center: [f64; <span class="number">3</span>], east_m: f64, north_m: f64) -&gt; [f64; <span class="number">3</span>] {
-<a href=#1283 id=1283 data-nosnippet>1283</a>    offset_itrf_position_enu(center, east_m, north_m, <span class="number">0.0</span>)
-<a href=#1284 id=1284 data-nosnippet>1284</a>}
-<a href=#1285 id=1285 data-nosnippet>1285</a>
-<a href=#1286 id=1286 data-nosnippet>1286</a><span class="kw">fn </span>offset_itrf_position_enu(center: [f64; <span class="number">3</span>], east_m: f64, north_m: f64, up_m: f64) -&gt; [f64; <span class="number">3</span>] {
-<a href=#1287 id=1287 data-nosnippet>1287</a>    <span class="kw">let </span>up = normalized(center);
-<a href=#1288 id=1288 data-nosnippet>1288</a>    <span class="kw">let </span>east = normalized([-center[<span class="number">1</span>], center[<span class="number">0</span>], <span class="number">0.0</span>]);
-<a href=#1289 id=1289 data-nosnippet>1289</a>    <span class="kw">let </span>north = [
-<a href=#1290 id=1290 data-nosnippet>1290</a>        up[<span class="number">1</span>] * east[<span class="number">2</span>] - up[<span class="number">2</span>] * east[<span class="number">1</span>],
-<a href=#1291 id=1291 data-nosnippet>1291</a>        up[<span class="number">2</span>] * east[<span class="number">0</span>] - up[<span class="number">0</span>] * east[<span class="number">2</span>],
-<a href=#1292 id=1292 data-nosnippet>1292</a>        up[<span class="number">0</span>] * east[<span class="number">1</span>] - up[<span class="number">1</span>] * east[<span class="number">0</span>],
-<a href=#1293 id=1293 data-nosnippet>1293</a>    ];
-<a href=#1294 id=1294 data-nosnippet>1294</a>    [
-<a href=#1295 id=1295 data-nosnippet>1295</a>        center[<span class="number">0</span>] + east[<span class="number">0</span>] * east_m + north[<span class="number">0</span>] * north_m + up[<span class="number">0</span>] * up_m,
-<a href=#1296 id=1296 data-nosnippet>1296</a>        center[<span class="number">1</span>] + east[<span class="number">1</span>] * east_m + north[<span class="number">1</span>] * north_m + up[<span class="number">1</span>] * up_m,
-<a href=#1297 id=1297 data-nosnippet>1297</a>        center[<span class="number">2</span>] + east[<span class="number">2</span>] * east_m + north[<span class="number">2</span>] * north_m + up[<span class="number">2</span>] * up_m,
-<a href=#1298 id=1298 data-nosnippet>1298</a>    ]
-<a href=#1299 id=1299 data-nosnippet>1299</a>}
-<a href=#1300 id=1300 data-nosnippet>1300</a>
-<a href=#1301 id=1301 data-nosnippet>1301</a><span class="kw">fn </span>offset_itrf_position_geodetic_enu(
-<a href=#1302 id=1302 data-nosnippet>1302</a>    position: <span class="kw-2">&amp;</span>MPosition,
-<a href=#1303 id=1303 data-nosnippet>1303</a>    east_m: f64,
-<a href=#1304 id=1304 data-nosnippet>1304</a>    north_m: f64,
-<a href=#1305 id=1305 data-nosnippet>1305</a>    up_m: f64,
-<a href=#1306 id=1306 data-nosnippet>1306</a>) -&gt; <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">3</span>]&gt; {
-<a href=#1307 id=1307 data-nosnippet>1307</a>    <span class="kw">let </span>center = position.as_itrf();
-<a href=#1308 id=1308 data-nosnippet>1308</a>    <span class="kw">let </span>longitude_rad = position.longitude_rad();
-<a href=#1309 id=1309 data-nosnippet>1309</a>    <span class="kw">let </span>latitude_rad = position.latitude_rad();
-<a href=#1310 id=1310 data-nosnippet>1310</a>    <span class="kw">if </span>!longitude_rad.is_finite()
-<a href=#1311 id=1311 data-nosnippet>1311</a>        || !latitude_rad.is_finite()
-<a href=#1312 id=1312 data-nosnippet>1312</a>        || center.iter().any(|value| !value.is_finite())
-<a href=#1313 id=1313 data-nosnippet>1313</a>    {
-<a href=#1314 id=1314 data-nosnippet>1314</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#1315 id=1315 data-nosnippet>1315</a>    }
-<a href=#1316 id=1316 data-nosnippet>1316</a>    <span class="kw">let </span>(sin_lon, cos_lon) = longitude_rad.sin_cos();
-<a href=#1317 id=1317 data-nosnippet>1317</a>    <span class="kw">let </span>(sin_lat, cos_lat) = latitude_rad.sin_cos();
-<a href=#1318 id=1318 data-nosnippet>1318</a>    <span class="kw">let </span>east = [-sin_lon, cos_lon, <span class="number">0.0</span>];
-<a href=#1319 id=1319 data-nosnippet>1319</a>    <span class="kw">let </span>north = [-sin_lat * cos_lon, -sin_lat * sin_lon, cos_lat];
-<a href=#1320 id=1320 data-nosnippet>1320</a>    <span class="kw">let </span>up = [cos_lat * cos_lon, cos_lat * sin_lon, sin_lat];
-<a href=#1321 id=1321 data-nosnippet>1321</a>    <span class="prelude-val">Some</span>([
-<a href=#1322 id=1322 data-nosnippet>1322</a>        center[<span class="number">0</span>] + east[<span class="number">0</span>] * east_m + north[<span class="number">0</span>] * north_m + up[<span class="number">0</span>] * up_m,
-<a href=#1323 id=1323 data-nosnippet>1323</a>        center[<span class="number">1</span>] + east[<span class="number">1</span>] * east_m + north[<span class="number">1</span>] * north_m + up[<span class="number">1</span>] * up_m,
-<a href=#1324 id=1324 data-nosnippet>1324</a>        center[<span class="number">2</span>] + east[<span class="number">2</span>] * east_m + north[<span class="number">2</span>] * north_m + up[<span class="number">2</span>] * up_m,
-<a href=#1325 id=1325 data-nosnippet>1325</a>    ])
+<a href=#1107 id=1107 data-nosnippet>1107</a>    <span class="comment">// The provider finds `ALMASD` as ALMA, as casacore does.
+<a href=#1108 id=1108 data-nosnippet>1108</a>    </span>MPosition::from_observatory_name(name, measures.as_ref()).map_err(|error| error.to_string())
+<a href=#1109 id=1109 data-nosnippet>1109</a>}
+<a href=#1110 id=1110 data-nosnippet>1110</a>
+<a href=#1111 id=1111 data-nosnippet>1111</a><span class="kw">fn </span>parse_config_f64(value: <span class="kw-2">&amp;</span>str, path: <span class="kw-2">&amp;</span>Path) -&gt; <span class="prelude-ty">Result</span>&lt;f64, String&gt; {
+<a href=#1112 id=1112 data-nosnippet>1112</a>    value.parse::&lt;f64&gt;().map_err(|error| {
+<a href=#1113 id=1113 data-nosnippet>1113</a>        <span class="macro">format!</span>(
+<a href=#1114 id=1114 data-nosnippet>1114</a>            <span class="string">"array_config {} has invalid floating-point value {value:?}: {error}"</span>,
+<a href=#1115 id=1115 data-nosnippet>1115</a>            path.display()
+<a href=#1116 id=1116 data-nosnippet>1116</a>        )
+<a href=#1117 id=1117 data-nosnippet>1117</a>    })
+<a href=#1118 id=1118 data-nosnippet>1118</a>}
+<a href=#1119 id=1119 data-nosnippet>1119</a>
+<a href=#1120 id=1120 data-nosnippet>1120</a><span class="kw">fn </span>resolve_band_frequency_hz(telescope: <span class="kw-2">&amp;</span>str, band: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;f64, String&gt; {
+<a href=#1121 id=1121 data-nosnippet>1121</a>    <span class="kw">let </span>band = band.trim().to_ascii_lowercase().replace(<span class="string">' '</span>, <span class="string">""</span>);
+<a href=#1122 id=1122 data-nosnippet>1122</a>    <span class="kw">match </span>(telescope, band.as_str()) {
+<a href=#1123 id=1123 data-nosnippet>1123</a>        (<span class="string">"vla"</span>, <span class="string">"l"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">1.5e9</span>),
+<a href=#1124 id=1124 data-nosnippet>1124</a>        (<span class="string">"vla"</span>, <span class="string">"s"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">3.0e9</span>),
+<a href=#1125 id=1125 data-nosnippet>1125</a>        (<span class="string">"vla"</span>, <span class="string">"c"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">6.0e9</span>),
+<a href=#1126 id=1126 data-nosnippet>1126</a>        (<span class="string">"vla"</span>, <span class="string">"x"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">10.0e9</span>),
+<a href=#1127 id=1127 data-nosnippet>1127</a>        (<span class="string">"vla"</span>, <span class="string">"ku"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">15.0e9</span>),
+<a href=#1128 id=1128 data-nosnippet>1128</a>        (<span class="string">"vla"</span>, <span class="string">"k"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">22.0e9</span>),
+<a href=#1129 id=1129 data-nosnippet>1129</a>        (<span class="string">"vla"</span>, <span class="string">"ka"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">33.0e9</span>),
+<a href=#1130 id=1130 data-nosnippet>1130</a>        (<span class="string">"vla"</span>, <span class="string">"q"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">44.0e9</span>),
+<a href=#1131 id=1131 data-nosnippet>1131</a>        (<span class="string">"alma" </span>| <span class="string">"aca"</span>, <span class="string">"3" </span>| <span class="string">"band3" </span>| <span class="string">"band_3"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">100.0e9</span>),
+<a href=#1132 id=1132 data-nosnippet>1132</a>        (<span class="string">"alma" </span>| <span class="string">"aca"</span>, <span class="string">"6" </span>| <span class="string">"band6" </span>| <span class="string">"band_6"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">230.0e9</span>),
+<a href=#1133 id=1133 data-nosnippet>1133</a>        (<span class="string">"alma" </span>| <span class="string">"aca"</span>, <span class="string">"7" </span>| <span class="string">"band7" </span>| <span class="string">"band_7"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">345.0e9</span>),
+<a href=#1134 id=1134 data-nosnippet>1134</a>        (<span class="string">"alma" </span>| <span class="string">"aca"</span>, <span class="string">"9" </span>| <span class="string">"band9" </span>| <span class="string">"band_9"</span>) =&gt; <span class="prelude-val">Ok</span>(<span class="number">690.0e9</span>),
+<a href=#1135 id=1135 data-nosnippet>1135</a>        (<span class="string">"vla"</span>, other) =&gt; <span class="prelude-val">Err</span>(<span class="macro">format!</span>(
+<a href=#1136 id=1136 data-nosnippet>1136</a>            <span class="string">"unsupported VLA band {other:?}; expected L, S, C, X, Ku, K, Ka, or Q"
+<a href=#1137 id=1137 data-nosnippet>1137</a>        </span>)),
+<a href=#1138 id=1138 data-nosnippet>1138</a>        (<span class="kw">_</span>, other) =&gt; <span class="prelude-val">Err</span>(<span class="macro">format!</span>(
+<a href=#1139 id=1139 data-nosnippet>1139</a>            <span class="string">"unsupported ALMA/ACA band {other:?}; expected Band 3, 6, 7, or 9"
+<a href=#1140 id=1140 data-nosnippet>1140</a>        </span>)),
+<a href=#1141 id=1141 data-nosnippet>1141</a>    }
+<a href=#1142 id=1142 data-nosnippet>1142</a>}
+<a href=#1143 id=1143 data-nosnippet>1143</a>
+<a href=#1144 id=1144 data-nosnippet>1144</a><span class="kw">fn </span>family_channel_width_hz(imaging_mode: <span class="kw-2">&amp;</span>str, preset: <span class="kw-2">&amp;</span>FamilyPreset) -&gt; f64 {
+<a href=#1145 id=1145 data-nosnippet>1145</a>    <span class="kw">let </span>mode = imaging_mode.trim().to_ascii_lowercase();
+<a href=#1146 id=1146 data-nosnippet>1146</a>    <span class="kw">if </span><span class="macro">matches!</span>(
+<a href=#1147 id=1147 data-nosnippet>1147</a>        mode.as_str(),
+<a href=#1148 id=1148 data-nosnippet>1148</a>        <span class="string">"mfs" </span>| <span class="string">"continuum" </span>| <span class="string">"continuum_mfs" </span>| <span class="string">"single_field" </span>| <span class="string">"mt_mfs" </span>| <span class="string">"mtmfs"
+<a href=#1149 id=1149 data-nosnippet>1149</a>    </span>) {
+<a href=#1150 id=1150 data-nosnippet>1150</a>        preset.channel_width_hz.max(<span class="number">32.0e6</span>)
+<a href=#1151 id=1151 data-nosnippet>1151</a>    } <span class="kw">else </span>{
+<a href=#1152 id=1152 data-nosnippet>1152</a>        preset.channel_width_hz
+<a href=#1153 id=1153 data-nosnippet>1153</a>    }
+<a href=#1154 id=1154 data-nosnippet>1154</a>}
+<a href=#1155 id=1155 data-nosnippet>1155</a>
+<a href=#1156 id=1156 data-nosnippet>1156</a><span class="kw">fn </span>family_row_pair_count(
+<a href=#1157 id=1157 data-nosnippet>1157</a>    antenna_count: usize,
+<a href=#1158 id=1158 data-nosnippet>1158</a>    observation_mode: SyntheticObservationMode,
+<a href=#1159 id=1159 data-nosnippet>1159</a>) -&gt; usize {
+<a href=#1160 id=1160 data-nosnippet>1160</a>    <span class="kw">match </span>observation_mode {
+<a href=#1161 id=1161 data-nosnippet>1161</a>        SyntheticObservationMode::Interferometric =&gt; {
+<a href=#1162 id=1162 data-nosnippet>1162</a>            antenna_count * antenna_count.saturating_sub(<span class="number">1</span>) / <span class="number">2
+<a href=#1163 id=1163 data-nosnippet>1163</a>        </span>}
+<a href=#1164 id=1164 data-nosnippet>1164</a>        SyntheticObservationMode::TotalPower =&gt; antenna_count,
+<a href=#1165 id=1165 data-nosnippet>1165</a>    }
+<a href=#1166 id=1166 data-nosnippet>1166</a>    .max(<span class="number">1</span>)
+<a href=#1167 id=1167 data-nosnippet>1167</a>}
+<a href=#1168 id=1168 data-nosnippet>1168</a>
+<a href=#1169 id=1169 data-nosnippet>1169</a><span class="kw">fn </span>family_antennas_for_mode(
+<a href=#1170 id=1170 data-nosnippet>1170</a>    antennas: Vec&lt;SyntheticAntenna&gt;,
+<a href=#1171 id=1171 data-nosnippet>1171</a>    observation_mode: SyntheticObservationMode,
+<a href=#1172 id=1172 data-nosnippet>1172</a>    total_power_antenna_index: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#1173 id=1173 data-nosnippet>1173</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;SyntheticAntenna&gt;, String&gt; {
+<a href=#1174 id=1174 data-nosnippet>1174</a>    <span class="kw">match </span>observation_mode {
+<a href=#1175 id=1175 data-nosnippet>1175</a>        SyntheticObservationMode::Interferometric =&gt; <span class="prelude-val">Ok</span>(antennas),
+<a href=#1176 id=1176 data-nosnippet>1176</a>        SyntheticObservationMode::TotalPower =&gt; {
+<a href=#1177 id=1177 data-nosnippet>1177</a>            <span class="kw">let </span>selected_index = total_power_antenna_index.unwrap_or(<span class="number">0</span>);
+<a href=#1178 id=1178 data-nosnippet>1178</a>            antennas
+<a href=#1179 id=1179 data-nosnippet>1179</a>                .into_iter()
+<a href=#1180 id=1180 data-nosnippet>1180</a>                .nth(selected_index)
+<a href=#1181 id=1181 data-nosnippet>1181</a>                .map(|antenna| <span class="macro">vec!</span>[antenna])
+<a href=#1182 id=1182 data-nosnippet>1182</a>                .ok_or_else(|| {
+<a href=#1183 id=1183 data-nosnippet>1183</a>                    <span class="macro">format!</span>(
+<a href=#1184 id=1184 data-nosnippet>1184</a>                        <span class="string">"total_power_antenna_index {selected_index} is out of range for array_config"
+<a href=#1185 id=1185 data-nosnippet>1185</a>                    </span>)
+<a href=#1186 id=1186 data-nosnippet>1186</a>                })
+<a href=#1187 id=1187 data-nosnippet>1187</a>        }
+<a href=#1188 id=1188 data-nosnippet>1188</a>    }
+<a href=#1189 id=1189 data-nosnippet>1189</a>}
+<a href=#1190 id=1190 data-nosnippet>1190</a>
+<a href=#1191 id=1191 data-nosnippet>1191</a><span class="kw">fn </span>validate_family_imaging_mode(imaging_mode: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;(), String&gt; {
+<a href=#1192 id=1192 data-nosnippet>1192</a>    <span class="kw">let </span>mode = imaging_mode.trim().to_ascii_lowercase();
+<a href=#1193 id=1193 data-nosnippet>1193</a>    <span class="kw">if </span><span class="macro">matches!</span>(
+<a href=#1194 id=1194 data-nosnippet>1194</a>        mode.as_str(),
+<a href=#1195 id=1195 data-nosnippet>1195</a>        <span class="string">"single_field"
+<a href=#1196 id=1196 data-nosnippet>1196</a>            </span>| <span class="string">"mfs"
+<a href=#1197 id=1197 data-nosnippet>1197</a>            </span>| <span class="string">"continuum"
+<a href=#1198 id=1198 data-nosnippet>1198</a>            </span>| <span class="string">"continuum_mfs"
+<a href=#1199 id=1199 data-nosnippet>1199</a>            </span>| <span class="string">"mosaic"
+<a href=#1200 id=1200 data-nosnippet>1200</a>            </span>| <span class="string">"mosaic_mfs"
+<a href=#1201 id=1201 data-nosnippet>1201</a>            </span>| <span class="string">"spectral_cube"
+<a href=#1202 id=1202 data-nosnippet>1202</a>            </span>| <span class="string">"cube"
+<a href=#1203 id=1203 data-nosnippet>1203</a>            </span>| <span class="string">"cubedata"
+<a href=#1204 id=1204 data-nosnippet>1204</a>            </span>| <span class="string">"mt_mfs"
+<a href=#1205 id=1205 data-nosnippet>1205</a>            </span>| <span class="string">"mtmfs"
+<a href=#1206 id=1206 data-nosnippet>1206</a>            </span>| <span class="string">"simalma"
+<a href=#1207 id=1207 data-nosnippet>1207</a>            </span>| <span class="string">"aca"
+<a href=#1208 id=1208 data-nosnippet>1208</a>    </span>) {
+<a href=#1209 id=1209 data-nosnippet>1209</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#1210 id=1210 data-nosnippet>1210</a>    }
+<a href=#1211 id=1211 data-nosnippet>1211</a>    <span class="prelude-val">Err</span>(<span class="macro">format!</span>(
+<a href=#1212 id=1212 data-nosnippet>1212</a>        <span class="string">"unsupported imaging_mode {imaging_mode:?}; expected single_field, mfs, mosaic, spectral_cube, cubedata, mt_mfs, simalma, or aca"
+<a href=#1213 id=1213 data-nosnippet>1213</a>    </span>))
+<a href=#1214 id=1214 data-nosnippet>1214</a>}
+<a href=#1215 id=1215 data-nosnippet>1215</a>
+<a href=#1216 id=1216 data-nosnippet>1216</a><span class="kw">fn </span>scaled_vla_antennas(scale: f64) -&gt; Vec&lt;SyntheticAntenna&gt; {
+<a href=#1217 id=1217 data-nosnippet>1217</a>    <span class="kw">let </span>antennas = tutorial_vla_a_antennas();
+<a href=#1218 id=1218 data-nosnippet>1218</a>    <span class="kw">if </span>(scale - <span class="number">1.0</span>).abs() &lt; f64::EPSILON {
+<a href=#1219 id=1219 data-nosnippet>1219</a>        <span class="kw">return </span>antennas;
+<a href=#1220 id=1220 data-nosnippet>1220</a>    }
+<a href=#1221 id=1221 data-nosnippet>1221</a>    <span class="kw">let </span>center = antenna_centroid(<span class="kw-2">&amp;</span>antennas);
+<a href=#1222 id=1222 data-nosnippet>1222</a>    antennas
+<a href=#1223 id=1223 data-nosnippet>1223</a>        .into_iter()
+<a href=#1224 id=1224 data-nosnippet>1224</a>        .map(|antenna| SyntheticAntenna {
+<a href=#1225 id=1225 data-nosnippet>1225</a>            position_m: [
+<a href=#1226 id=1226 data-nosnippet>1226</a>                center[<span class="number">0</span>] + (antenna.position_m[<span class="number">0</span>] - center[<span class="number">0</span>]) * scale,
+<a href=#1227 id=1227 data-nosnippet>1227</a>                center[<span class="number">1</span>] + (antenna.position_m[<span class="number">1</span>] - center[<span class="number">1</span>]) * scale,
+<a href=#1228 id=1228 data-nosnippet>1228</a>                center[<span class="number">2</span>] + (antenna.position_m[<span class="number">2</span>] - center[<span class="number">2</span>]) * scale,
+<a href=#1229 id=1229 data-nosnippet>1229</a>            ],
+<a href=#1230 id=1230 data-nosnippet>1230</a>            ..antenna
+<a href=#1231 id=1231 data-nosnippet>1231</a>        })
+<a href=#1232 id=1232 data-nosnippet>1232</a>        .collect()
+<a href=#1233 id=1233 data-nosnippet>1233</a>}
+<a href=#1234 id=1234 data-nosnippet>1234</a>
+<a href=#1235 id=1235 data-nosnippet>1235</a><span class="kw">fn </span>antenna_centroid(antennas: <span class="kw-2">&amp;</span>[SyntheticAntenna]) -&gt; [f64; <span class="number">3</span>] {
+<a href=#1236 id=1236 data-nosnippet>1236</a>    <span class="kw">let </span><span class="kw-2">mut </span>sum = [<span class="number">0.0</span>; <span class="number">3</span>];
+<a href=#1237 id=1237 data-nosnippet>1237</a>    <span class="kw">for </span>antenna <span class="kw">in </span>antennas {
+<a href=#1238 id=1238 data-nosnippet>1238</a>        sum[<span class="number">0</span>] += antenna.position_m[<span class="number">0</span>];
+<a href=#1239 id=1239 data-nosnippet>1239</a>        sum[<span class="number">1</span>] += antenna.position_m[<span class="number">1</span>];
+<a href=#1240 id=1240 data-nosnippet>1240</a>        sum[<span class="number">2</span>] += antenna.position_m[<span class="number">2</span>];
+<a href=#1241 id=1241 data-nosnippet>1241</a>    }
+<a href=#1242 id=1242 data-nosnippet>1242</a>    <span class="kw">let </span>count = antennas.len().max(<span class="number">1</span>) <span class="kw">as </span>f64;
+<a href=#1243 id=1243 data-nosnippet>1243</a>    [sum[<span class="number">0</span>] / count, sum[<span class="number">1</span>] / count, sum[<span class="number">2</span>] / count]
+<a href=#1244 id=1244 data-nosnippet>1244</a>}
+<a href=#1245 id=1245 data-nosnippet>1245</a>
+<a href=#1246 id=1246 data-nosnippet>1246</a><span class="kw">fn </span>synthetic_alma_antennas(
+<a href=#1247 id=1247 data-nosnippet>1247</a>    name_prefix: <span class="kw-2">&amp;</span>str,
+<a href=#1248 id=1248 data-nosnippet>1248</a>    count: usize,
+<a href=#1249 id=1249 data-nosnippet>1249</a>    dish_diameter_m: f64,
+<a href=#1250 id=1250 data-nosnippet>1250</a>    max_radius_m: f64,
+<a href=#1251 id=1251 data-nosnippet>1251</a>) -&gt; Vec&lt;SyntheticAntenna&gt; {
+<a href=#1252 id=1252 data-nosnippet>1252</a>    <span class="kw">let </span>center = [-<span class="number">2_223_990.194</span>, -<span class="number">5_440_045.461</span>, -<span class="number">2_481_682.086</span>];
+<a href=#1253 id=1253 data-nosnippet>1253</a>    (<span class="number">0</span>..count)
+<a href=#1254 id=1254 data-nosnippet>1254</a>        .map(|index| {
+<a href=#1255 id=1255 data-nosnippet>1255</a>            <span class="kw">let </span>radius = <span class="kw">if </span>count &lt;= <span class="number">1 </span>{
+<a href=#1256 id=1256 data-nosnippet>1256</a>                <span class="number">0.0
+<a href=#1257 id=1257 data-nosnippet>1257</a>            </span>} <span class="kw">else </span>{
+<a href=#1258 id=1258 data-nosnippet>1258</a>                max_radius_m * ((index + <span class="number">1</span>) <span class="kw">as </span>f64 / count <span class="kw">as </span>f64).sqrt()
+<a href=#1259 id=1259 data-nosnippet>1259</a>            };
+<a href=#1260 id=1260 data-nosnippet>1260</a>            <span class="kw">let </span>angle = index <span class="kw">as </span>f64 * <span class="number">2.399_963_229_728_653</span>;
+<a href=#1261 id=1261 data-nosnippet>1261</a>            <span class="kw">let </span>east_m = radius * angle.cos();
+<a href=#1262 id=1262 data-nosnippet>1262</a>            <span class="kw">let </span>north_m = radius * angle.sin();
+<a href=#1263 id=1263 data-nosnippet>1263</a>            <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"{name_prefix}{:02}"</span>, index + <span class="number">1</span>);
+<a href=#1264 id=1264 data-nosnippet>1264</a>            SyntheticAntenna {
+<a href=#1265 id=1265 data-nosnippet>1265</a>                name: name.clone(),
+<a href=#1266 id=1266 data-nosnippet>1266</a>                station: name,
+<a href=#1267 id=1267 data-nosnippet>1267</a>                position_m: offset_itrf_position(center, east_m, north_m),
+<a href=#1268 id=1268 data-nosnippet>1268</a>                dish_diameter_m,
+<a href=#1269 id=1269 data-nosnippet>1269</a>            }
+<a href=#1270 id=1270 data-nosnippet>1270</a>        })
+<a href=#1271 id=1271 data-nosnippet>1271</a>        .collect()
+<a href=#1272 id=1272 data-nosnippet>1272</a>}
+<a href=#1273 id=1273 data-nosnippet>1273</a>
+<a href=#1274 id=1274 data-nosnippet>1274</a><span class="kw">fn </span>offset_itrf_position(center: [f64; <span class="number">3</span>], east_m: f64, north_m: f64) -&gt; [f64; <span class="number">3</span>] {
+<a href=#1275 id=1275 data-nosnippet>1275</a>    offset_itrf_position_enu(center, east_m, north_m, <span class="number">0.0</span>)
+<a href=#1276 id=1276 data-nosnippet>1276</a>}
+<a href=#1277 id=1277 data-nosnippet>1277</a>
+<a href=#1278 id=1278 data-nosnippet>1278</a><span class="kw">fn </span>offset_itrf_position_enu(center: [f64; <span class="number">3</span>], east_m: f64, north_m: f64, up_m: f64) -&gt; [f64; <span class="number">3</span>] {
+<a href=#1279 id=1279 data-nosnippet>1279</a>    <span class="kw">let </span>up = normalized(center);
+<a href=#1280 id=1280 data-nosnippet>1280</a>    <span class="kw">let </span>east = normalized([-center[<span class="number">1</span>], center[<span class="number">0</span>], <span class="number">0.0</span>]);
+<a href=#1281 id=1281 data-nosnippet>1281</a>    <span class="kw">let </span>north = [
+<a href=#1282 id=1282 data-nosnippet>1282</a>        up[<span class="number">1</span>] * east[<span class="number">2</span>] - up[<span class="number">2</span>] * east[<span class="number">1</span>],
+<a href=#1283 id=1283 data-nosnippet>1283</a>        up[<span class="number">2</span>] * east[<span class="number">0</span>] - up[<span class="number">0</span>] * east[<span class="number">2</span>],
+<a href=#1284 id=1284 data-nosnippet>1284</a>        up[<span class="number">0</span>] * east[<span class="number">1</span>] - up[<span class="number">1</span>] * east[<span class="number">0</span>],
+<a href=#1285 id=1285 data-nosnippet>1285</a>    ];
+<a href=#1286 id=1286 data-nosnippet>1286</a>    [
+<a href=#1287 id=1287 data-nosnippet>1287</a>        center[<span class="number">0</span>] + east[<span class="number">0</span>] * east_m + north[<span class="number">0</span>] * north_m + up[<span class="number">0</span>] * up_m,
+<a href=#1288 id=1288 data-nosnippet>1288</a>        center[<span class="number">1</span>] + east[<span class="number">1</span>] * east_m + north[<span class="number">1</span>] * north_m + up[<span class="number">1</span>] * up_m,
+<a href=#1289 id=1289 data-nosnippet>1289</a>        center[<span class="number">2</span>] + east[<span class="number">2</span>] * east_m + north[<span class="number">2</span>] * north_m + up[<span class="number">2</span>] * up_m,
+<a href=#1290 id=1290 data-nosnippet>1290</a>    ]
+<a href=#1291 id=1291 data-nosnippet>1291</a>}
+<a href=#1292 id=1292 data-nosnippet>1292</a>
+<a href=#1293 id=1293 data-nosnippet>1293</a><span class="kw">fn </span>offset_itrf_position_geodetic_enu(
+<a href=#1294 id=1294 data-nosnippet>1294</a>    position: <span class="kw-2">&amp;</span>MPosition,
+<a href=#1295 id=1295 data-nosnippet>1295</a>    east_m: f64,
+<a href=#1296 id=1296 data-nosnippet>1296</a>    north_m: f64,
+<a href=#1297 id=1297 data-nosnippet>1297</a>    up_m: f64,
+<a href=#1298 id=1298 data-nosnippet>1298</a>) -&gt; <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">3</span>]&gt; {
+<a href=#1299 id=1299 data-nosnippet>1299</a>    <span class="kw">let </span>center = position.as_itrf();
+<a href=#1300 id=1300 data-nosnippet>1300</a>    <span class="kw">let </span>longitude_rad = position.longitude_rad();
+<a href=#1301 id=1301 data-nosnippet>1301</a>    <span class="kw">let </span>latitude_rad = position.latitude_rad();
+<a href=#1302 id=1302 data-nosnippet>1302</a>    <span class="kw">if </span>!longitude_rad.is_finite()
+<a href=#1303 id=1303 data-nosnippet>1303</a>        || !latitude_rad.is_finite()
+<a href=#1304 id=1304 data-nosnippet>1304</a>        || center.iter().any(|value| !value.is_finite())
+<a href=#1305 id=1305 data-nosnippet>1305</a>    {
+<a href=#1306 id=1306 data-nosnippet>1306</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#1307 id=1307 data-nosnippet>1307</a>    }
+<a href=#1308 id=1308 data-nosnippet>1308</a>    <span class="kw">let </span>(sin_lon, cos_lon) = longitude_rad.sin_cos();
+<a href=#1309 id=1309 data-nosnippet>1309</a>    <span class="kw">let </span>(sin_lat, cos_lat) = latitude_rad.sin_cos();
+<a href=#1310 id=1310 data-nosnippet>1310</a>    <span class="kw">let </span>east = [-sin_lon, cos_lon, <span class="number">0.0</span>];
+<a href=#1311 id=1311 data-nosnippet>1311</a>    <span class="kw">let </span>north = [-sin_lat * cos_lon, -sin_lat * sin_lon, cos_lat];
+<a href=#1312 id=1312 data-nosnippet>1312</a>    <span class="kw">let </span>up = [cos_lat * cos_lon, cos_lat * sin_lon, sin_lat];
+<a href=#1313 id=1313 data-nosnippet>1313</a>    <span class="prelude-val">Some</span>([
+<a href=#1314 id=1314 data-nosnippet>1314</a>        center[<span class="number">0</span>] + east[<span class="number">0</span>] * east_m + north[<span class="number">0</span>] * north_m + up[<span class="number">0</span>] * up_m,
+<a href=#1315 id=1315 data-nosnippet>1315</a>        center[<span class="number">1</span>] + east[<span class="number">1</span>] * east_m + north[<span class="number">1</span>] * north_m + up[<span class="number">1</span>] * up_m,
+<a href=#1316 id=1316 data-nosnippet>1316</a>        center[<span class="number">2</span>] + east[<span class="number">2</span>] * east_m + north[<span class="number">2</span>] * north_m + up[<span class="number">2</span>] * up_m,
+<a href=#1317 id=1317 data-nosnippet>1317</a>    ])
+<a href=#1318 id=1318 data-nosnippet>1318</a>}
+<a href=#1319 id=1319 data-nosnippet>1319</a>
+<a href=#1320 id=1320 data-nosnippet>1320</a><span class="kw">fn </span>normalized(vector: [f64; <span class="number">3</span>]) -&gt; [f64; <span class="number">3</span>] {
+<a href=#1321 id=1321 data-nosnippet>1321</a>    <span class="kw">let </span>norm = (vector[<span class="number">0</span>] * vector[<span class="number">0</span>] + vector[<span class="number">1</span>] * vector[<span class="number">1</span>] + vector[<span class="number">2</span>] * vector[<span class="number">2</span>]).sqrt();
+<a href=#1322 id=1322 data-nosnippet>1322</a>    <span class="kw">if </span>norm == <span class="number">0.0 </span>{
+<a href=#1323 id=1323 data-nosnippet>1323</a>        <span class="kw">return </span>[<span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>];
+<a href=#1324 id=1324 data-nosnippet>1324</a>    }
+<a href=#1325 id=1325 data-nosnippet>1325</a>    [vector[<span class="number">0</span>] / norm, vector[<span class="number">1</span>] / norm, vector[<span class="number">2</span>] / norm]
 <a href=#1326 id=1326 data-nosnippet>1326</a>}
 <a href=#1327 id=1327 data-nosnippet>1327</a>
-<a href=#1328 id=1328 data-nosnippet>1328</a><span class="kw">fn </span>normalized(vector: [f64; <span class="number">3</span>]) -&gt; [f64; <span class="number">3</span>] {
-<a href=#1329 id=1329 data-nosnippet>1329</a>    <span class="kw">let </span>norm = (vector[<span class="number">0</span>] * vector[<span class="number">0</span>] + vector[<span class="number">1</span>] * vector[<span class="number">1</span>] + vector[<span class="number">2</span>] * vector[<span class="number">2</span>]).sqrt();
-<a href=#1330 id=1330 data-nosnippet>1330</a>    <span class="kw">if </span>norm == <span class="number">0.0 </span>{
-<a href=#1331 id=1331 data-nosnippet>1331</a>        <span class="kw">return </span>[<span class="number">0.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>];
-<a href=#1332 id=1332 data-nosnippet>1332</a>    }
-<a href=#1333 id=1333 data-nosnippet>1333</a>    [vector[<span class="number">0</span>] / norm, vector[<span class="number">1</span>] / norm, vector[<span class="number">2</span>] / norm]
-<a href=#1334 id=1334 data-nosnippet>1334</a>}
-<a href=#1335 id=1335 data-nosnippet>1335</a>
-<a href=#1336 id=1336 data-nosnippet>1336</a><span class="kw">fn </span>family_fields(
-<a href=#1337 id=1337 data-nosnippet>1337</a>    pointing_count: usize,
-<a href=#1338 id=1338 data-nosnippet>1338</a>    phase_center_rad: [f64; <span class="number">2</span>],
-<a href=#1339 id=1339 data-nosnippet>1339</a>    field_phase_centers_rad: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[[f64; <span class="number">2</span>]]&gt;,
-<a href=#1340 id=1340 data-nosnippet>1340</a>    imaging_mode: <span class="kw-2">&amp;</span>str,
-<a href=#1341 id=1341 data-nosnippet>1341</a>    reference_frequency_hz: f64,
-<a href=#1342 id=1342 data-nosnippet>1342</a>    dish_diameter_m: f64,
-<a href=#1343 id=1343 data-nosnippet>1343</a>) -&gt; Vec&lt;SyntheticField&gt; {
-<a href=#1344 id=1344 data-nosnippet>1344</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(field_phase_centers_rad) = field_phase_centers_rad {
-<a href=#1345 id=1345 data-nosnippet>1345</a>        <span class="kw">if </span>field_phase_centers_rad.len() == <span class="number">1 </span>{
-<a href=#1346 id=1346 data-nosnippet>1346</a>            <span class="kw">return </span>Vec::new();
-<a href=#1347 id=1347 data-nosnippet>1347</a>        }
-<a href=#1348 id=1348 data-nosnippet>1348</a>        <span class="kw">return </span>field_phase_centers_rad
-<a href=#1349 id=1349 data-nosnippet>1349</a>            .iter()
-<a href=#1350 id=1350 data-nosnippet>1350</a>            .enumerate()
-<a href=#1351 id=1351 data-nosnippet>1351</a>            .map(|(index, phase_center_rad)| SyntheticField {
-<a href=#1352 id=1352 data-nosnippet>1352</a>                name: <span class="macro">format!</span>(<span class="string">"P{:03}"</span>, index),
-<a href=#1353 id=1353 data-nosnippet>1353</a>                phase_center_rad: <span class="kw-2">*</span>phase_center_rad,
-<a href=#1354 id=1354 data-nosnippet>1354</a>            })
-<a href=#1355 id=1355 data-nosnippet>1355</a>            .collect();
-<a href=#1356 id=1356 data-nosnippet>1356</a>    }
-<a href=#1357 id=1357 data-nosnippet>1357</a>    <span class="kw">if </span>pointing_count &lt;= <span class="number">1 </span>|| !mode_uses_mosaic(imaging_mode) {
-<a href=#1358 id=1358 data-nosnippet>1358</a>        <span class="kw">return </span>Vec::new();
-<a href=#1359 id=1359 data-nosnippet>1359</a>    }
-<a href=#1360 id=1360 data-nosnippet>1360</a>    <span class="kw">let </span>wavelength_m = <span class="number">299_792_458.0 </span>/ reference_frequency_hz;
-<a href=#1361 id=1361 data-nosnippet>1361</a>    <span class="kw">let </span>primary_beam_fwhm_rad = <span class="number">1.13 </span>* wavelength_m / dish_diameter_m;
-<a href=#1362 id=1362 data-nosnippet>1362</a>    <span class="kw">let </span>spacing_rad = <span class="number">0.45 </span>* primary_beam_fwhm_rad;
-<a href=#1363 id=1363 data-nosnippet>1363</a>    mosaic_offsets(pointing_count, spacing_rad)
-<a href=#1364 id=1364 data-nosnippet>1364</a>        .into_iter()
-<a href=#1365 id=1365 data-nosnippet>1365</a>        .enumerate()
-<a href=#1366 id=1366 data-nosnippet>1366</a>        .map(|(index, [l_rad, m_rad])| SyntheticField {
-<a href=#1367 id=1367 data-nosnippet>1367</a>            name: <span class="macro">format!</span>(<span class="string">"P{:03}"</span>, index),
-<a href=#1368 id=1368 data-nosnippet>1368</a>            phase_center_rad: [
-<a href=#1369 id=1369 data-nosnippet>1369</a>                phase_center_rad[<span class="number">0</span>] + l_rad / phase_center_rad[<span class="number">1</span>].cos().max(<span class="number">1.0e-6</span>),
-<a href=#1370 id=1370 data-nosnippet>1370</a>                phase_center_rad[<span class="number">1</span>] + m_rad,
-<a href=#1371 id=1371 data-nosnippet>1371</a>            ],
-<a href=#1372 id=1372 data-nosnippet>1372</a>        })
-<a href=#1373 id=1373 data-nosnippet>1373</a>        .collect()
+<a href=#1328 id=1328 data-nosnippet>1328</a><span class="kw">fn </span>family_fields(
+<a href=#1329 id=1329 data-nosnippet>1329</a>    pointing_count: usize,
+<a href=#1330 id=1330 data-nosnippet>1330</a>    phase_center_rad: [f64; <span class="number">2</span>],
+<a href=#1331 id=1331 data-nosnippet>1331</a>    field_phase_centers_rad: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[[f64; <span class="number">2</span>]]&gt;,
+<a href=#1332 id=1332 data-nosnippet>1332</a>    imaging_mode: <span class="kw-2">&amp;</span>str,
+<a href=#1333 id=1333 data-nosnippet>1333</a>    reference_frequency_hz: f64,
+<a href=#1334 id=1334 data-nosnippet>1334</a>    dish_diameter_m: f64,
+<a href=#1335 id=1335 data-nosnippet>1335</a>) -&gt; Vec&lt;SyntheticField&gt; {
+<a href=#1336 id=1336 data-nosnippet>1336</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(field_phase_centers_rad) = field_phase_centers_rad {
+<a href=#1337 id=1337 data-nosnippet>1337</a>        <span class="kw">if </span>field_phase_centers_rad.len() == <span class="number">1 </span>{
+<a href=#1338 id=1338 data-nosnippet>1338</a>            <span class="kw">return </span>Vec::new();
+<a href=#1339 id=1339 data-nosnippet>1339</a>        }
+<a href=#1340 id=1340 data-nosnippet>1340</a>        <span class="kw">return </span>field_phase_centers_rad
+<a href=#1341 id=1341 data-nosnippet>1341</a>            .iter()
+<a href=#1342 id=1342 data-nosnippet>1342</a>            .enumerate()
+<a href=#1343 id=1343 data-nosnippet>1343</a>            .map(|(index, phase_center_rad)| SyntheticField {
+<a href=#1344 id=1344 data-nosnippet>1344</a>                name: <span class="macro">format!</span>(<span class="string">"P{:03}"</span>, index),
+<a href=#1345 id=1345 data-nosnippet>1345</a>                phase_center_rad: <span class="kw-2">*</span>phase_center_rad,
+<a href=#1346 id=1346 data-nosnippet>1346</a>            })
+<a href=#1347 id=1347 data-nosnippet>1347</a>            .collect();
+<a href=#1348 id=1348 data-nosnippet>1348</a>    }
+<a href=#1349 id=1349 data-nosnippet>1349</a>    <span class="kw">if </span>pointing_count &lt;= <span class="number">1 </span>|| !mode_uses_mosaic(imaging_mode) {
+<a href=#1350 id=1350 data-nosnippet>1350</a>        <span class="kw">return </span>Vec::new();
+<a href=#1351 id=1351 data-nosnippet>1351</a>    }
+<a href=#1352 id=1352 data-nosnippet>1352</a>    <span class="kw">let </span>wavelength_m = <span class="number">299_792_458.0 </span>/ reference_frequency_hz;
+<a href=#1353 id=1353 data-nosnippet>1353</a>    <span class="kw">let </span>primary_beam_fwhm_rad = <span class="number">1.13 </span>* wavelength_m / dish_diameter_m;
+<a href=#1354 id=1354 data-nosnippet>1354</a>    <span class="kw">let </span>spacing_rad = <span class="number">0.45 </span>* primary_beam_fwhm_rad;
+<a href=#1355 id=1355 data-nosnippet>1355</a>    mosaic_offsets(pointing_count, spacing_rad)
+<a href=#1356 id=1356 data-nosnippet>1356</a>        .into_iter()
+<a href=#1357 id=1357 data-nosnippet>1357</a>        .enumerate()
+<a href=#1358 id=1358 data-nosnippet>1358</a>        .map(|(index, [l_rad, m_rad])| SyntheticField {
+<a href=#1359 id=1359 data-nosnippet>1359</a>            name: <span class="macro">format!</span>(<span class="string">"P{:03}"</span>, index),
+<a href=#1360 id=1360 data-nosnippet>1360</a>            phase_center_rad: [
+<a href=#1361 id=1361 data-nosnippet>1361</a>                phase_center_rad[<span class="number">0</span>] + l_rad / phase_center_rad[<span class="number">1</span>].cos().max(<span class="number">1.0e-6</span>),
+<a href=#1362 id=1362 data-nosnippet>1362</a>                phase_center_rad[<span class="number">1</span>] + m_rad,
+<a href=#1363 id=1363 data-nosnippet>1363</a>            ],
+<a href=#1364 id=1364 data-nosnippet>1364</a>        })
+<a href=#1365 id=1365 data-nosnippet>1365</a>        .collect()
+<a href=#1366 id=1366 data-nosnippet>1366</a>}
+<a href=#1367 id=1367 data-nosnippet>1367</a>
+<a href=#1368 id=1368 data-nosnippet>1368</a><span class="kw">fn </span>mode_uses_mosaic(imaging_mode: <span class="kw-2">&amp;</span>str) -&gt; bool {
+<a href=#1369 id=1369 data-nosnippet>1369</a>    <span class="kw">let </span>mode = imaging_mode.trim().to_ascii_lowercase();
+<a href=#1370 id=1370 data-nosnippet>1370</a>    <span class="macro">matches!</span>(
+<a href=#1371 id=1371 data-nosnippet>1371</a>        mode.as_str(),
+<a href=#1372 id=1372 data-nosnippet>1372</a>        <span class="string">"mosaic" </span>| <span class="string">"mosaic_mfs" </span>| <span class="string">"mosaic_cube" </span>| <span class="string">"simalma" </span>| <span class="string">"aca"
+<a href=#1373 id=1373 data-nosnippet>1373</a>    </span>)
 <a href=#1374 id=1374 data-nosnippet>1374</a>}
 <a href=#1375 id=1375 data-nosnippet>1375</a>
-<a href=#1376 id=1376 data-nosnippet>1376</a><span class="kw">fn </span>mode_uses_mosaic(imaging_mode: <span class="kw-2">&amp;</span>str) -&gt; bool {
-<a href=#1377 id=1377 data-nosnippet>1377</a>    <span class="kw">let </span>mode = imaging_mode.trim().to_ascii_lowercase();
-<a href=#1378 id=1378 data-nosnippet>1378</a>    <span class="macro">matches!</span>(
-<a href=#1379 id=1379 data-nosnippet>1379</a>        mode.as_str(),
-<a href=#1380 id=1380 data-nosnippet>1380</a>        <span class="string">"mosaic" </span>| <span class="string">"mosaic_mfs" </span>| <span class="string">"mosaic_cube" </span>| <span class="string">"simalma" </span>| <span class="string">"aca"
-<a href=#1381 id=1381 data-nosnippet>1381</a>    </span>)
-<a href=#1382 id=1382 data-nosnippet>1382</a>}
-<a href=#1383 id=1383 data-nosnippet>1383</a>
-<a href=#1384 id=1384 data-nosnippet>1384</a><span class="kw">fn </span>mosaic_offsets(pointing_count: usize, spacing_rad: f64) -&gt; Vec&lt;[f64; <span class="number">2</span>]&gt; {
-<a href=#1385 id=1385 data-nosnippet>1385</a>    <span class="kw">let </span><span class="kw-2">mut </span>offsets = <span class="macro">vec!</span>[[<span class="number">0.0</span>, <span class="number">0.0</span>]];
-<a href=#1386 id=1386 data-nosnippet>1386</a>    <span class="kw">let </span><span class="kw-2">mut </span>ring = <span class="number">1usize</span>;
-<a href=#1387 id=1387 data-nosnippet>1387</a>    <span class="kw">while </span>offsets.len() &lt; pointing_count {
-<a href=#1388 id=1388 data-nosnippet>1388</a>        <span class="kw">let </span>samples = ring * <span class="number">6</span>;
-<a href=#1389 id=1389 data-nosnippet>1389</a>        <span class="kw">for </span>sample <span class="kw">in </span><span class="number">0</span>..samples {
-<a href=#1390 id=1390 data-nosnippet>1390</a>            <span class="kw">if </span>offsets.len() == pointing_count {
-<a href=#1391 id=1391 data-nosnippet>1391</a>                <span class="kw">break</span>;
-<a href=#1392 id=1392 data-nosnippet>1392</a>            }
-<a href=#1393 id=1393 data-nosnippet>1393</a>            <span class="kw">let </span>angle = std::f64::consts::TAU * sample <span class="kw">as </span>f64 / samples <span class="kw">as </span>f64;
-<a href=#1394 id=1394 data-nosnippet>1394</a>            offsets.push([
-<a href=#1395 id=1395 data-nosnippet>1395</a>                ring <span class="kw">as </span>f64 * spacing_rad * angle.cos(),
-<a href=#1396 id=1396 data-nosnippet>1396</a>                ring <span class="kw">as </span>f64 * spacing_rad * angle.sin(),
-<a href=#1397 id=1397 data-nosnippet>1397</a>            ]);
-<a href=#1398 id=1398 data-nosnippet>1398</a>        }
-<a href=#1399 id=1399 data-nosnippet>1399</a>        ring += <span class="number">1</span>;
-<a href=#1400 id=1400 data-nosnippet>1400</a>    }
-<a href=#1401 id=1401 data-nosnippet>1401</a>    offsets
-<a href=#1402 id=1402 data-nosnippet>1402</a>}
-<a href=#1403 id=1403 data-nosnippet>1403</a>
-<a href=#1404 id=1404 data-nosnippet>1404</a><span class="kw">fn </span>family_manifest_path(output_ms: <span class="kw-2">&amp;</span>Path) -&gt; PathBuf {
-<a href=#1405 id=1405 data-nosnippet>1405</a>    <span class="kw">let </span><span class="kw-2">mut </span>path = output_ms.to_path_buf();
-<a href=#1406 id=1406 data-nosnippet>1406</a>    path.set_extension(<span class="string">"synthetic-family.json"</span>);
-<a href=#1407 id=1407 data-nosnippet>1407</a>    path
-<a href=#1408 id=1408 data-nosnippet>1408</a>}
-<a href=#1409 id=1409 data-nosnippet>1409</a>
-<a href=#1410 id=1410 data-nosnippet>1410</a><span class="kw">fn </span>directory_size_bytes(path: <span class="kw-2">&amp;</span>Path) -&gt; std::io::Result&lt;u64&gt; {
-<a href=#1411 id=1411 data-nosnippet>1411</a>    <span class="kw">let </span>metadata = fs::metadata(path)<span class="question-mark">?</span>;
-<a href=#1412 id=1412 data-nosnippet>1412</a>    <span class="kw">if </span>metadata.is_file() {
-<a href=#1413 id=1413 data-nosnippet>1413</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(metadata.len());
-<a href=#1414 id=1414 data-nosnippet>1414</a>    }
-<a href=#1415 id=1415 data-nosnippet>1415</a>    <span class="kw">let </span><span class="kw-2">mut </span>total = <span class="number">0</span>;
-<a href=#1416 id=1416 data-nosnippet>1416</a>    <span class="kw">for </span>entry <span class="kw">in </span>fs::read_dir(path)<span class="question-mark">? </span>{
-<a href=#1417 id=1417 data-nosnippet>1417</a>        total += directory_size_bytes(<span class="kw-2">&amp;</span>entry<span class="question-mark">?</span>.path())<span class="question-mark">?</span>;
-<a href=#1418 id=1418 data-nosnippet>1418</a>    }
-<a href=#1419 id=1419 data-nosnippet>1419</a>    <span class="prelude-val">Ok</span>(total)
-<a href=#1420 id=1420 data-nosnippet>1420</a>}
-<a href=#1421 id=1421 data-nosnippet>1421</a>
-<a href=#1422 id=1422 data-nosnippet>1422</a><span class="doccomment">/// Canonical `simobserve` task request envelope.
-<a href=#1423 id=1423 data-nosnippet>1423</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-<a href=#1424 id=1424 data-nosnippet>1424</a>#[serde(tag = <span class="string">"kind"</span>, content = <span class="string">"request"</span>, rename_all = <span class="string">"snake_case"</span>)]
-<a href=#1425 id=1425 data-nosnippet>1425</a></span><span class="kw">pub enum </span>SimobserveTaskRequest {
-<a href=#1426 id=1426 data-nosnippet>1426</a>    <span class="doccomment">/// Execute one `simobserve` request.
-<a href=#1427 id=1427 data-nosnippet>1427</a>    </span>Run(Box&lt;SimobserveRunTaskRequest&gt;),
-<a href=#1428 id=1428 data-nosnippet>1428</a>    <span class="doccomment">/// Plan one synthetic MeasurementSet family from persisted dialog inputs.
-<a href=#1429 id=1429 data-nosnippet>1429</a>    </span>Family(Box&lt;SimobserveFamilyTaskRequest&gt;),
-<a href=#1430 id=1430 data-nosnippet>1430</a>}
-<a href=#1431 id=1431 data-nosnippet>1431</a>
-<a href=#1432 id=1432 data-nosnippet>1432</a><span class="kw">impl </span>SimobserveTaskRequest {
-<a href=#1433 id=1433 data-nosnippet>1433</a>    <span class="doccomment">/// Execute the request and return the canonical task result envelope.
-<a href=#1434 id=1434 data-nosnippet>1434</a>    </span><span class="kw">pub fn </span>execute(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SimobserveTaskResult, String&gt; {
-<a href=#1435 id=1435 data-nosnippet>1435</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#1436 id=1436 data-nosnippet>1436</a>            <span class="self">Self</span>::Run(request) =&gt; <span class="prelude-val">Ok</span>(SimobserveTaskResult::Run(Box::new(request.execute()<span class="question-mark">?</span>))),
-<a href=#1437 id=1437 data-nosnippet>1437</a>            <span class="self">Self</span>::Family(request) =&gt; <span class="prelude-val">Ok</span>(SimobserveTaskResult::Family(Box::new(request.execute()<span class="question-mark">?</span>))),
-<a href=#1438 id=1438 data-nosnippet>1438</a>        }
-<a href=#1439 id=1439 data-nosnippet>1439</a>    }
-<a href=#1440 id=1440 data-nosnippet>1440</a>}
-<a href=#1441 id=1441 data-nosnippet>1441</a>
-<a href=#1442 id=1442 data-nosnippet>1442</a><span class="doccomment">/// Canonical `simobserve` task result envelope.
-<a href=#1443 id=1443 data-nosnippet>1443</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-<a href=#1444 id=1444 data-nosnippet>1444</a>#[serde(tag = <span class="string">"kind"</span>, content = <span class="string">"result"</span>, rename_all = <span class="string">"snake_case"</span>)]
-<a href=#1445 id=1445 data-nosnippet>1445</a></span><span class="kw">pub enum </span>SimobserveTaskResult {
-<a href=#1446 id=1446 data-nosnippet>1446</a>    <span class="doccomment">/// Completed synthetic-observation run.
-<a href=#1447 id=1447 data-nosnippet>1447</a>    </span>Run(Box&lt;SimobserveRunTaskResult&gt;),
-<a href=#1448 id=1448 data-nosnippet>1448</a>    <span class="doccomment">/// Planned synthetic MeasurementSet family.
-<a href=#1449 id=1449 data-nosnippet>1449</a>    </span>Family(Box&lt;SimobserveFamilyTaskResult&gt;),
+<a href=#1376 id=1376 data-nosnippet>1376</a><span class="kw">fn </span>mosaic_offsets(pointing_count: usize, spacing_rad: f64) -&gt; Vec&lt;[f64; <span class="number">2</span>]&gt; {
+<a href=#1377 id=1377 data-nosnippet>1377</a>    <span class="kw">let </span><span class="kw-2">mut </span>offsets = <span class="macro">vec!</span>[[<span class="number">0.0</span>, <span class="number">0.0</span>]];
+<a href=#1378 id=1378 data-nosnippet>1378</a>    <span class="kw">let </span><span class="kw-2">mut </span>ring = <span class="number">1usize</span>;
+<a href=#1379 id=1379 data-nosnippet>1379</a>    <span class="kw">while </span>offsets.len() &lt; pointing_count {
+<a href=#1380 id=1380 data-nosnippet>1380</a>        <span class="kw">let </span>samples = ring * <span class="number">6</span>;
+<a href=#1381 id=1381 data-nosnippet>1381</a>        <span class="kw">for </span>sample <span class="kw">in </span><span class="number">0</span>..samples {
+<a href=#1382 id=1382 data-nosnippet>1382</a>            <span class="kw">if </span>offsets.len() == pointing_count {
+<a href=#1383 id=1383 data-nosnippet>1383</a>                <span class="kw">break</span>;
+<a href=#1384 id=1384 data-nosnippet>1384</a>            }
+<a href=#1385 id=1385 data-nosnippet>1385</a>            <span class="kw">let </span>angle = std::f64::consts::TAU * sample <span class="kw">as </span>f64 / samples <span class="kw">as </span>f64;
+<a href=#1386 id=1386 data-nosnippet>1386</a>            offsets.push([
+<a href=#1387 id=1387 data-nosnippet>1387</a>                ring <span class="kw">as </span>f64 * spacing_rad * angle.cos(),
+<a href=#1388 id=1388 data-nosnippet>1388</a>                ring <span class="kw">as </span>f64 * spacing_rad * angle.sin(),
+<a href=#1389 id=1389 data-nosnippet>1389</a>            ]);
+<a href=#1390 id=1390 data-nosnippet>1390</a>        }
+<a href=#1391 id=1391 data-nosnippet>1391</a>        ring += <span class="number">1</span>;
+<a href=#1392 id=1392 data-nosnippet>1392</a>    }
+<a href=#1393 id=1393 data-nosnippet>1393</a>    offsets
+<a href=#1394 id=1394 data-nosnippet>1394</a>}
+<a href=#1395 id=1395 data-nosnippet>1395</a>
+<a href=#1396 id=1396 data-nosnippet>1396</a><span class="kw">fn </span>family_manifest_path(output_ms: <span class="kw-2">&amp;</span>Path) -&gt; PathBuf {
+<a href=#1397 id=1397 data-nosnippet>1397</a>    <span class="kw">let </span><span class="kw-2">mut </span>path = output_ms.to_path_buf();
+<a href=#1398 id=1398 data-nosnippet>1398</a>    path.set_extension(<span class="string">"synthetic-family.json"</span>);
+<a href=#1399 id=1399 data-nosnippet>1399</a>    path
+<a href=#1400 id=1400 data-nosnippet>1400</a>}
+<a href=#1401 id=1401 data-nosnippet>1401</a>
+<a href=#1402 id=1402 data-nosnippet>1402</a><span class="kw">fn </span>directory_size_bytes(path: <span class="kw-2">&amp;</span>Path) -&gt; std::io::Result&lt;u64&gt; {
+<a href=#1403 id=1403 data-nosnippet>1403</a>    <span class="kw">let </span>metadata = fs::metadata(path)<span class="question-mark">?</span>;
+<a href=#1404 id=1404 data-nosnippet>1404</a>    <span class="kw">if </span>metadata.is_file() {
+<a href=#1405 id=1405 data-nosnippet>1405</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(metadata.len());
+<a href=#1406 id=1406 data-nosnippet>1406</a>    }
+<a href=#1407 id=1407 data-nosnippet>1407</a>    <span class="kw">let </span><span class="kw-2">mut </span>total = <span class="number">0</span>;
+<a href=#1408 id=1408 data-nosnippet>1408</a>    <span class="kw">for </span>entry <span class="kw">in </span>fs::read_dir(path)<span class="question-mark">? </span>{
+<a href=#1409 id=1409 data-nosnippet>1409</a>        total += directory_size_bytes(<span class="kw-2">&amp;</span>entry<span class="question-mark">?</span>.path())<span class="question-mark">?</span>;
+<a href=#1410 id=1410 data-nosnippet>1410</a>    }
+<a href=#1411 id=1411 data-nosnippet>1411</a>    <span class="prelude-val">Ok</span>(total)
+<a href=#1412 id=1412 data-nosnippet>1412</a>}
+<a href=#1413 id=1413 data-nosnippet>1413</a>
+<a href=#1414 id=1414 data-nosnippet>1414</a><span class="doccomment">/// Canonical `simobserve` task request envelope.
+<a href=#1415 id=1415 data-nosnippet>1415</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+<a href=#1416 id=1416 data-nosnippet>1416</a>#[serde(tag = <span class="string">"kind"</span>, content = <span class="string">"request"</span>, rename_all = <span class="string">"snake_case"</span>)]
+<a href=#1417 id=1417 data-nosnippet>1417</a></span><span class="kw">pub enum </span>SimobserveTaskRequest {
+<a href=#1418 id=1418 data-nosnippet>1418</a>    <span class="doccomment">/// Execute one `simobserve` request.
+<a href=#1419 id=1419 data-nosnippet>1419</a>    </span>Run(Box&lt;SimobserveRunTaskRequest&gt;),
+<a href=#1420 id=1420 data-nosnippet>1420</a>    <span class="doccomment">/// Plan one synthetic MeasurementSet family from persisted dialog inputs.
+<a href=#1421 id=1421 data-nosnippet>1421</a>    </span>Family(Box&lt;SimobserveFamilyTaskRequest&gt;),
+<a href=#1422 id=1422 data-nosnippet>1422</a>}
+<a href=#1423 id=1423 data-nosnippet>1423</a>
+<a href=#1424 id=1424 data-nosnippet>1424</a><span class="kw">impl </span>SimobserveTaskRequest {
+<a href=#1425 id=1425 data-nosnippet>1425</a>    <span class="doccomment">/// Execute the request and return the canonical task result envelope.
+<a href=#1426 id=1426 data-nosnippet>1426</a>    </span><span class="kw">pub fn </span>execute(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SimobserveTaskResult, String&gt; {
+<a href=#1427 id=1427 data-nosnippet>1427</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#1428 id=1428 data-nosnippet>1428</a>            <span class="self">Self</span>::Run(request) =&gt; <span class="prelude-val">Ok</span>(SimobserveTaskResult::Run(Box::new(request.execute()<span class="question-mark">?</span>))),
+<a href=#1429 id=1429 data-nosnippet>1429</a>            <span class="self">Self</span>::Family(request) =&gt; <span class="prelude-val">Ok</span>(SimobserveTaskResult::Family(Box::new(request.execute()<span class="question-mark">?</span>))),
+<a href=#1430 id=1430 data-nosnippet>1430</a>        }
+<a href=#1431 id=1431 data-nosnippet>1431</a>    }
+<a href=#1432 id=1432 data-nosnippet>1432</a>}
+<a href=#1433 id=1433 data-nosnippet>1433</a>
+<a href=#1434 id=1434 data-nosnippet>1434</a><span class="doccomment">/// Canonical `simobserve` task result envelope.
+<a href=#1435 id=1435 data-nosnippet>1435</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+<a href=#1436 id=1436 data-nosnippet>1436</a>#[serde(tag = <span class="string">"kind"</span>, content = <span class="string">"result"</span>, rename_all = <span class="string">"snake_case"</span>)]
+<a href=#1437 id=1437 data-nosnippet>1437</a></span><span class="kw">pub enum </span>SimobserveTaskResult {
+<a href=#1438 id=1438 data-nosnippet>1438</a>    <span class="doccomment">/// Completed synthetic-observation run.
+<a href=#1439 id=1439 data-nosnippet>1439</a>    </span>Run(Box&lt;SimobserveRunTaskResult&gt;),
+<a href=#1440 id=1440 data-nosnippet>1440</a>    <span class="doccomment">/// Planned synthetic MeasurementSet family.
+<a href=#1441 id=1441 data-nosnippet>1441</a>    </span>Family(Box&lt;SimobserveFamilyTaskResult&gt;),
+<a href=#1442 id=1442 data-nosnippet>1442</a>}
+<a href=#1443 id=1443 data-nosnippet>1443</a>
+<a href=#1444 id=1444 data-nosnippet>1444</a><span class="kw">fn </span>default_predict_model() -&gt; bool {
+<a href=#1445 id=1445 data-nosnippet>1445</a>    <span class="bool-val">true
+<a href=#1446 id=1446 data-nosnippet>1446</a></span>}
+<a href=#1447 id=1447 data-nosnippet>1447</a>
+<a href=#1448 id=1448 data-nosnippet>1448</a><span class="kw">fn </span>default_vla_antennas() -&gt; Vec&lt;SyntheticAntenna&gt; {
+<a href=#1449 id=1449 data-nosnippet>1449</a>    tutorial_vla_a_antennas()
 <a href=#1450 id=1450 data-nosnippet>1450</a>}
 <a href=#1451 id=1451 data-nosnippet>1451</a>
-<a href=#1452 id=1452 data-nosnippet>1452</a><span class="kw">fn </span>default_predict_model() -&gt; bool {
-<a href=#1453 id=1453 data-nosnippet>1453</a>    <span class="bool-val">true
-<a href=#1454 id=1454 data-nosnippet>1454</a></span>}
-<a href=#1455 id=1455 data-nosnippet>1455</a>
-<a href=#1456 id=1456 data-nosnippet>1456</a><span class="kw">fn </span>default_vla_antennas() -&gt; Vec&lt;SyntheticAntenna&gt; {
-<a href=#1457 id=1457 data-nosnippet>1457</a>    tutorial_vla_a_antennas()
-<a href=#1458 id=1458 data-nosnippet>1458</a>}
+<a href=#1452 id=1452 data-nosnippet>1452</a><span class="attr">#[cfg(test)]
+<a href=#1453 id=1453 data-nosnippet>1453</a></span><span class="kw">mod </span>tests {
+<a href=#1454 id=1454 data-nosnippet>1454</a>    <span class="kw">use super</span>::{
+<a href=#1455 id=1455 data-nosnippet>1455</a>        SimobserveFamilyManifest, SimobserveTaskRequest, SyntheticObservationMode,
+<a href=#1456 id=1456 data-nosnippet>1456</a>        load_real_family_config,
+<a href=#1457 id=1457 data-nosnippet>1457</a>    };
+<a href=#1458 id=1458 data-nosnippet>1458</a>    <span class="kw">use </span><span class="kw">crate</span>::columns::main_ids;
 <a href=#1459 id=1459 data-nosnippet>1459</a>
-<a href=#1460 id=1460 data-nosnippet>1460</a><span class="attr">#[cfg(test)]
-<a href=#1461 id=1461 data-nosnippet>1461</a></span><span class="kw">mod </span>tests {
-<a href=#1462 id=1462 data-nosnippet>1462</a>    <span class="kw">use super</span>::{
-<a href=#1463 id=1463 data-nosnippet>1463</a>        SimobserveFamilyManifest, SimobserveTaskRequest, SyntheticObservationMode,
-<a href=#1464 id=1464 data-nosnippet>1464</a>        load_real_family_config,
-<a href=#1465 id=1465 data-nosnippet>1465</a>    };
-<a href=#1466 id=1466 data-nosnippet>1466</a>    <span class="kw">use </span><span class="kw">crate</span>::columns::main_ids;
-<a href=#1467 id=1467 data-nosnippet>1467</a>
-<a href=#1468 id=1468 data-nosnippet>1468</a>    <span class="attr">#[test]
-<a href=#1469 id=1469 data-nosnippet>1469</a>    </span><span class="kw">fn </span>run_request_accepts_analytic_model_without_legacy_model_image() {
-<a href=#1470 id=1470 data-nosnippet>1470</a>        <span class="kw">let </span>request: SimobserveTaskRequest = serde_json::from_str(
-<a href=#1471 id=1471 data-nosnippet>1471</a>            <span class="string">r#"{
-<a href=#1472 id=1472 data-nosnippet>1472</a>                "kind": "run",
-<a href=#1473 id=1473 data-nosnippet>1473</a>                "request": {
-<a href=#1474 id=1474 data-nosnippet>1474</a>                    "model": {
-<a href=#1475 id=1475 data-nosnippet>1475</a>                        "kind": "analytic_components",
-<a href=#1476 id=1476 data-nosnippet>1476</a>                        "components": [{
-<a href=#1477 id=1477 data-nosnippet>1477</a>                            "kind": "point",
-<a href=#1478 id=1478 data-nosnippet>1478</a>                            "l_rad": 0.0,
-<a href=#1479 id=1479 data-nosnippet>1479</a>                            "m_rad": 0.0,
-<a href=#1480 id=1480 data-nosnippet>1480</a>                            "spectrum": { "flux_jy": 1.0 }
-<a href=#1481 id=1481 data-nosnippet>1481</a>                        }]
-<a href=#1482 id=1482 data-nosnippet>1482</a>                    },
-<a href=#1483 id=1483 data-nosnippet>1483</a>                    "output_ms": "out.ms"
-<a href=#1484 id=1484 data-nosnippet>1484</a>                }
-<a href=#1485 id=1485 data-nosnippet>1485</a>            }"#</span>,
-<a href=#1486 id=1486 data-nosnippet>1486</a>        )
-<a href=#1487 id=1487 data-nosnippet>1487</a>        .expect(<span class="string">"parse analytic run request"</span>);
-<a href=#1488 id=1488 data-nosnippet>1488</a>        <span class="kw">let </span>SimobserveTaskRequest::Run(request) = request <span class="kw">else </span>{
-<a href=#1489 id=1489 data-nosnippet>1489</a>            <span class="macro">panic!</span>(<span class="string">"expected run request"</span>);
-<a href=#1490 id=1490 data-nosnippet>1490</a>        };
-<a href=#1491 id=1491 data-nosnippet>1491</a>
-<a href=#1492 id=1492 data-nosnippet>1492</a>        <span class="kw">let </span>synthetic = request.to_synthetic_request();
-<a href=#1493 id=1493 data-nosnippet>1493</a>
-<a href=#1494 id=1494 data-nosnippet>1494</a>        <span class="macro">assert!</span>(synthetic.model.is_some());
-<a href=#1495 id=1495 data-nosnippet>1495</a>        <span class="macro">assert_eq!</span>(
-<a href=#1496 id=1496 data-nosnippet>1496</a>            synthetic.model_image,
-<a href=#1497 id=1497 data-nosnippet>1497</a>            std::path::PathBuf::from(<span class="string">"analytic-components.json"</span>)
-<a href=#1498 id=1498 data-nosnippet>1498</a>        );
-<a href=#1499 id=1499 data-nosnippet>1499</a>    }
-<a href=#1500 id=1500 data-nosnippet>1500</a>
-<a href=#1501 id=1501 data-nosnippet>1501</a>    <span class="attr">#[test]
-<a href=#1502 id=1502 data-nosnippet>1502</a>    </span><span class="kw">fn </span>real_array_config_loader_accepts_casa_xyz_cfg_path() {
-<a href=#1503 id=1503 data-nosnippet>1503</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
-<a href=#1504 id=1504 data-nosnippet>1504</a>        <span class="kw">let </span>config_path = temp.path().join(<span class="string">"vla.test.cfg"</span>);
-<a href=#1505 id=1505 data-nosnippet>1505</a>        std::fs::write(
-<a href=#1506 id=1506 data-nosnippet>1506</a>            <span class="kw-2">&amp;</span>config_path,
-<a href=#1507 id=1507 data-nosnippet>1507</a>            <span class="string">"# observatory=VLA\n# coordsys=XYZ\n1.0 2.0 3.0 25.0 VLA01\n4.0 5.0 6.0 25.0 VLA02\n"</span>,
-<a href=#1508 id=1508 data-nosnippet>1508</a>        )
-<a href=#1509 id=1509 data-nosnippet>1509</a>        .unwrap();
-<a href=#1510 id=1510 data-nosnippet>1510</a>
-<a href=#1511 id=1511 data-nosnippet>1511</a>        <span class="kw">let </span>loaded = load_real_family_config(<span class="string">"VLA"</span>, config_path.to_str().unwrap())
-<a href=#1512 id=1512 data-nosnippet>1512</a>            .expect(<span class="string">"load config"</span>)
-<a href=#1513 id=1513 data-nosnippet>1513</a>            .expect(<span class="string">"config found"</span>);
-<a href=#1514 id=1514 data-nosnippet>1514</a>
-<a href=#1515 id=1515 data-nosnippet>1515</a>        <span class="macro">assert_eq!</span>(loaded.<span class="number">0</span>.len(), <span class="number">2</span>);
-<a href=#1516 id=1516 data-nosnippet>1516</a>        <span class="macro">assert_eq!</span>(loaded.<span class="number">0</span>[<span class="number">0</span>].station, <span class="string">"VLA01"</span>);
-<a href=#1517 id=1517 data-nosnippet>1517</a>        <span class="macro">assert_eq!</span>(loaded.<span class="number">0</span>[<span class="number">1</span>].position_m, [<span class="number">4.0</span>, <span class="number">5.0</span>, <span class="number">6.0</span>]);
-<a href=#1518 id=1518 data-nosnippet>1518</a>        <span class="macro">assert_eq!</span>(loaded.<span class="number">1</span>, config_path.display().to_string());
-<a href=#1519 id=1519 data-nosnippet>1519</a>    }
-<a href=#1520 id=1520 data-nosnippet>1520</a>
-<a href=#1521 id=1521 data-nosnippet>1521</a>    <span class="attr">#[test]
-<a href=#1522 id=1522 data-nosnippet>1522</a>    </span><span class="kw">fn </span>real_array_config_loader_uses_casa_geodetic_loc_basis() {
-<a href=#1523 id=1523 data-nosnippet>1523</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
-<a href=#1524 id=1524 data-nosnippet>1524</a>        <span class="kw">let </span>config_path = temp.path().join(<span class="string">"alma.test.cfg"</span>);
-<a href=#1525 id=1525 data-nosnippet>1525</a>        std::fs::write(
-<a href=#1526 id=1526 data-nosnippet>1526</a>            <span class="kw-2">&amp;</span>config_path,
-<a href=#1527 id=1527 data-nosnippet>1527</a>            <span class="string">"# observatory=ALMA\n# coordsys=LOC (local tangent plane)\n-33.89412596 -712.7516484 -2.330089496 12.0 A001\n"</span>,
-<a href=#1528 id=1528 data-nosnippet>1528</a>        )
-<a href=#1529 id=1529 data-nosnippet>1529</a>        .unwrap();
-<a href=#1530 id=1530 data-nosnippet>1530</a>
-<a href=#1531 id=1531 data-nosnippet>1531</a>        <span class="kw">let </span>loaded = load_real_family_config(<span class="string">"ALMA"</span>, config_path.to_str().unwrap())
-<a href=#1532 id=1532 data-nosnippet>1532</a>            .expect(<span class="string">"load config"</span>)
-<a href=#1533 id=1533 data-nosnippet>1533</a>            .expect(<span class="string">"config found"</span>);
-<a href=#1534 id=1534 data-nosnippet>1534</a>        <span class="kw">let </span>position = loaded.<span class="number">0</span>[<span class="number">0</span>].position_m;
-<a href=#1535 id=1535 data-nosnippet>1535</a>
-<a href=#1536 id=1536 data-nosnippet>1536</a>        <span class="macro">assert!</span>((position[<span class="number">0</span>] - <span class="number">2_225_004.468_449_519_5</span>).abs() &lt; <span class="number">1.0e-3</span>);
-<a href=#1537 id=1537 data-nosnippet>1537</a>        <span class="macro">assert!</span>((position[<span class="number">1</span>] + <span class="number">5_440_060.207_407_018</span>).abs() &lt; <span class="number">1.0e-3</span>);
-<a href=#1538 id=1538 data-nosnippet>1538</a>        <span class="macro">assert!</span>((position[<span class="number">2</span>] + <span class="number">2_481_684.920_604_503</span>).abs() &lt; <span class="number">1.0e-3</span>);
-<a href=#1539 id=1539 data-nosnippet>1539</a>    }
-<a href=#1540 id=1540 data-nosnippet>1540</a>
-<a href=#1541 id=1541 data-nosnippet>1541</a>    <span class="attr">#[test]
-<a href=#1542 id=1542 data-nosnippet>1542</a>    </span><span class="kw">fn </span>real_array_config_loader_converts_casa_utm_sam56_basis() {
-<a href=#1543 id=1543 data-nosnippet>1543</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
-<a href=#1544 id=1544 data-nosnippet>1544</a>        <span class="kw">let </span>config_path = temp.path().join(<span class="string">"alma.out07.test.cfg"</span>);
-<a href=#1545 id=1545 data-nosnippet>1545</a>        std::fs::write(
-<a href=#1546 id=1546 data-nosnippet>1546</a>            <span class="kw-2">&amp;</span>config_path,
-<a href=#1547 id=1547 data-nosnippet>1547</a>            <span class="string">"# observatory=ALMA\n# coordsys=UTM\n# datum=SAM56\n# zone=19\n# hemisphere=S\n627789.81 7453079.62 5029.4 12.0 1\n"</span>,
-<a href=#1548 id=1548 data-nosnippet>1548</a>        )
-<a href=#1549 id=1549 data-nosnippet>1549</a>        .unwrap();
-<a href=#1550 id=1550 data-nosnippet>1550</a>
-<a href=#1551 id=1551 data-nosnippet>1551</a>        <span class="kw">let </span>loaded = load_real_family_config(<span class="string">"ALMA"</span>, config_path.to_str().unwrap())
-<a href=#1552 id=1552 data-nosnippet>1552</a>            .expect(<span class="string">"load config"</span>)
-<a href=#1553 id=1553 data-nosnippet>1553</a>            .expect(<span class="string">"config found"</span>);
-<a href=#1554 id=1554 data-nosnippet>1554</a>        <span class="kw">let </span>position = loaded.<span class="number">0</span>[<span class="number">0</span>].position_m;
-<a href=#1555 id=1555 data-nosnippet>1555</a>
-<a href=#1556 id=1556 data-nosnippet>1556</a>        <span class="macro">assert!</span>((position[<span class="number">0</span>] - <span class="number">2_225_083.645_110_78</span>).abs() &lt; <span class="number">1.0e-3</span>);
-<a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="macro">assert!</span>((position[<span class="number">1</span>] + <span class="number">5_440_152.112_940_93</span>).abs() &lt; <span class="number">1.0e-3</span>);
-<a href=#1558 id=1558 data-nosnippet>1558</a>        <span class="macro">assert!</span>((position[<span class="number">2</span>] + <span class="number">2_481_694.493_444_05</span>).abs() &lt; <span class="number">1.0e-3</span>);
-<a href=#1559 id=1559 data-nosnippet>1559</a>    }
-<a href=#1560 id=1560 data-nosnippet>1560</a>
-<a href=#1561 id=1561 data-nosnippet>1561</a>    <span class="attr">#[test]
-<a href=#1562 id=1562 data-nosnippet>1562</a>    </span><span class="kw">fn </span>family_total_power_accepts_almasd_cfg_and_uses_first_antenna() {
-<a href=#1563 id=1563 data-nosnippet>1563</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
-<a href=#1564 id=1564 data-nosnippet>1564</a>        <span class="kw">let </span>config_path = temp.path().join(<span class="string">"aca.tp.cfg"</span>);
-<a href=#1565 id=1565 data-nosnippet>1565</a>        std::fs::write(
-<a href=#1566 id=1566 data-nosnippet>1566</a>            <span class="kw-2">&amp;</span>config_path,
-<a href=#1567 id=1567 data-nosnippet>1567</a>            <span class="string">"# observatory=ALMASD\n# coordsys=LOC\n-47.7 178.2 -2.0 12.0 T701\n-42.1 118.7 -2.0 12.0 T702\n"</span>,
-<a href=#1568 id=1568 data-nosnippet>1568</a>        )
-<a href=#1569 id=1569 data-nosnippet>1569</a>        .unwrap();
-<a href=#1570 id=1570 data-nosnippet>1570</a>        <span class="kw">let </span>output_ms = temp.path().join(<span class="string">"tp-family.ms"</span>);
-<a href=#1571 id=1571 data-nosnippet>1571</a>        <span class="kw">let </span>request_json = <span class="macro">serde_json::json!</span>({
-<a href=#1572 id=1572 data-nosnippet>1572</a>            <span class="string">"kind"</span>: <span class="string">"family"</span>,
-<a href=#1573 id=1573 data-nosnippet>1573</a>            <span class="string">"request"</span>: {
-<a href=#1574 id=1574 data-nosnippet>1574</a>                <span class="string">"source_model"</span>: {
-<a href=#1575 id=1575 data-nosnippet>1575</a>                    <span class="string">"kind"</span>: <span class="string">"analytic_components"</span>,
-<a href=#1576 id=1576 data-nosnippet>1576</a>                    <span class="string">"components"</span>: [{
-<a href=#1577 id=1577 data-nosnippet>1577</a>                        <span class="string">"kind"</span>: <span class="string">"point"</span>,
-<a href=#1578 id=1578 data-nosnippet>1578</a>                        <span class="string">"l_rad"</span>: <span class="number">0.0</span>,
-<a href=#1579 id=1579 data-nosnippet>1579</a>                        <span class="string">"m_rad"</span>: <span class="number">0.0</span>,
-<a href=#1580 id=1580 data-nosnippet>1580</a>                        <span class="string">"spectrum"</span>: { <span class="string">"flux_jy"</span>: <span class="number">1.0 </span>}
-<a href=#1581 id=1581 data-nosnippet>1581</a>                    }]
-<a href=#1582 id=1582 data-nosnippet>1582</a>                },
-<a href=#1583 id=1583 data-nosnippet>1583</a>                <span class="string">"telescope"</span>: <span class="string">"ACA"</span>,
-<a href=#1584 id=1584 data-nosnippet>1584</a>                <span class="string">"array_config"</span>: config_path,
-<a href=#1585 id=1585 data-nosnippet>1585</a>                <span class="string">"band"</span>: <span class="string">"Band 7"</span>,
-<a href=#1586 id=1586 data-nosnippet>1586</a>                <span class="string">"target_ms_size_gib"</span>: <span class="number">0.00001</span>,
-<a href=#1587 id=1587 data-nosnippet>1587</a>                <span class="string">"polarizations"</span>: <span class="number">2</span>,
-<a href=#1588 id=1588 data-nosnippet>1588</a>                <span class="string">"ms_channels"</span>: <span class="number">1</span>,
-<a href=#1589 id=1589 data-nosnippet>1589</a>                <span class="string">"image_channels"</span>: <span class="number">1</span>,
-<a href=#1590 id=1590 data-nosnippet>1590</a>                <span class="string">"pointing_count"</span>: <span class="number">3</span>,
-<a href=#1591 id=1591 data-nosnippet>1591</a>                <span class="string">"imaging_mode"</span>: <span class="string">"mosaic"</span>,
-<a href=#1592 id=1592 data-nosnippet>1592</a>                <span class="string">"observation_mode"</span>: <span class="string">"total_power"</span>,
-<a href=#1593 id=1593 data-nosnippet>1593</a>                <span class="string">"output_ms"</span>: output_ms
-<a href=#1594 id=1594 data-nosnippet>1594</a>            }
-<a href=#1595 id=1595 data-nosnippet>1595</a>        });
-<a href=#1596 id=1596 data-nosnippet>1596</a>
-<a href=#1597 id=1597 data-nosnippet>1597</a>        <span class="kw">let </span>request: SimobserveTaskRequest =
-<a href=#1598 id=1598 data-nosnippet>1598</a>            serde_json::from_value(request_json).expect(<span class="string">"parse family request"</span>);
-<a href=#1599 id=1599 data-nosnippet>1599</a>        <span class="kw">let </span>result = request.execute().expect(<span class="string">"execute family request"</span>);
-<a href=#1600 id=1600 data-nosnippet>1600</a>        <span class="kw">let </span><span class="kw">super</span>::SimobserveTaskResult::Family(result) = result <span class="kw">else </span>{
-<a href=#1601 id=1601 data-nosnippet>1601</a>            <span class="macro">panic!</span>(<span class="string">"expected family result"</span>);
-<a href=#1602 id=1602 data-nosnippet>1602</a>        };
-<a href=#1603 id=1603 data-nosnippet>1603</a>
-<a href=#1604 id=1604 data-nosnippet>1604</a>        <span class="macro">assert_eq!</span>(
-<a href=#1605 id=1605 data-nosnippet>1605</a>            result.run_result.report.observation_mode,
-<a href=#1606 id=1606 data-nosnippet>1606</a>            SyntheticObservationMode::TotalPower
-<a href=#1607 id=1607 data-nosnippet>1607</a>        );
-<a href=#1608 id=1608 data-nosnippet>1608</a>        <span class="macro">assert_eq!</span>(result.run_result.report.antenna_count, <span class="number">1</span>);
-<a href=#1609 id=1609 data-nosnippet>1609</a>        <span class="macro">assert_eq!</span>(result.run_result.report.baseline_count, <span class="number">1</span>);
-<a href=#1610 id=1610 data-nosnippet>1610</a>        <span class="macro">assert_eq!</span>(
-<a href=#1611 id=1611 data-nosnippet>1611</a>            result.run_result.report.main_row_count,
-<a href=#1612 id=1612 data-nosnippet>1612</a>            result.run_result.report.time_sample_count
-<a href=#1613 id=1613 data-nosnippet>1613</a>        );
-<a href=#1614 id=1614 data-nosnippet>1614</a>        <span class="kw">let </span>manifest: SimobserveFamilyManifest =
-<a href=#1615 id=1615 data-nosnippet>1615</a>            serde_json::from_slice(<span class="kw-2">&amp;</span>std::fs::read(<span class="kw-2">&amp;</span>result.manifest_path).expect(<span class="string">"read manifest"</span>))
-<a href=#1616 id=1616 data-nosnippet>1616</a>                .expect(<span class="string">"parse manifest"</span>);
-<a href=#1617 id=1617 data-nosnippet>1617</a>        <span class="macro">assert_eq!</span>(
-<a href=#1618 id=1618 data-nosnippet>1618</a>            manifest.observation_mode,
-<a href=#1619 id=1619 data-nosnippet>1619</a>            SyntheticObservationMode::TotalPower
-<a href=#1620 id=1620 data-nosnippet>1620</a>        );
-<a href=#1621 id=1621 data-nosnippet>1621</a>        <span class="macro">assert_eq!</span>(manifest.run_request.antennas.len(), <span class="number">1</span>);
-<a href=#1622 id=1622 data-nosnippet>1622</a>        <span class="macro">assert_eq!</span>(manifest.run_request.antennas[<span class="number">0</span>].station, <span class="string">"T701"</span>);
-<a href=#1623 id=1623 data-nosnippet>1623</a>        <span class="macro">assert_eq!</span>(
-<a href=#1624 id=1624 data-nosnippet>1624</a>            manifest.run_request.telescope_name.as_deref(),
-<a href=#1625 id=1625 data-nosnippet>1625</a>            <span class="prelude-val">Some</span>(<span class="string">"ALMASD"</span>)
-<a href=#1626 id=1626 data-nosnippet>1626</a>        );
-<a href=#1627 id=1627 data-nosnippet>1627</a>    }
-<a href=#1628 id=1628 data-nosnippet>1628</a>
-<a href=#1629 id=1629 data-nosnippet>1629</a>    <span class="attr">#[test]
-<a href=#1630 id=1630 data-nosnippet>1630</a>    </span><span class="kw">fn </span>family_request_generates_ms_and_manifest_from_dialog_inputs() {
-<a href=#1631 id=1631 data-nosnippet>1631</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
-<a href=#1632 id=1632 data-nosnippet>1632</a>        <span class="kw">let </span>output_ms = temp.path().join(<span class="string">"family.ms"</span>);
-<a href=#1633 id=1633 data-nosnippet>1633</a>        <span class="kw">let </span>request_json = <span class="macro">serde_json::json!</span>({
-<a href=#1634 id=1634 data-nosnippet>1634</a>            <span class="string">"kind"</span>: <span class="string">"family"</span>,
-<a href=#1635 id=1635 data-nosnippet>1635</a>            <span class="string">"request"</span>: {
-<a href=#1636 id=1636 data-nosnippet>1636</a>                <span class="string">"source_model"</span>: {
-<a href=#1637 id=1637 data-nosnippet>1637</a>                    <span class="string">"kind"</span>: <span class="string">"analytic_components"</span>,
-<a href=#1638 id=1638 data-nosnippet>1638</a>                    <span class="string">"components"</span>: [{
-<a href=#1639 id=1639 data-nosnippet>1639</a>                        <span class="string">"kind"</span>: <span class="string">"point"</span>,
-<a href=#1640 id=1640 data-nosnippet>1640</a>                        <span class="string">"l_rad"</span>: <span class="number">0.0</span>,
-<a href=#1641 id=1641 data-nosnippet>1641</a>                        <span class="string">"m_rad"</span>: <span class="number">0.0</span>,
-<a href=#1642 id=1642 data-nosnippet>1642</a>                        <span class="string">"spectrum"</span>: { <span class="string">"flux_jy"</span>: <span class="number">1.0 </span>}
-<a href=#1643 id=1643 data-nosnippet>1643</a>                    }]
-<a href=#1644 id=1644 data-nosnippet>1644</a>                },
-<a href=#1645 id=1645 data-nosnippet>1645</a>                <span class="string">"telescope"</span>: <span class="string">"ALMA"</span>,
-<a href=#1646 id=1646 data-nosnippet>1646</a>                <span class="string">"array_config"</span>: <span class="string">"synthetic-aca"</span>,
-<a href=#1647 id=1647 data-nosnippet>1647</a>                <span class="string">"band"</span>: <span class="string">"Band 3"</span>,
-<a href=#1648 id=1648 data-nosnippet>1648</a>                <span class="string">"target_ms_size_gib"</span>: <span class="number">0.0001</span>,
-<a href=#1649 id=1649 data-nosnippet>1649</a>                <span class="string">"polarizations"</span>: <span class="number">4</span>,
-<a href=#1650 id=1650 data-nosnippet>1650</a>                <span class="string">"ms_channels"</span>: <span class="number">4</span>,
-<a href=#1651 id=1651 data-nosnippet>1651</a>                <span class="string">"image_channels"</span>: <span class="number">2</span>,
-<a href=#1652 id=1652 data-nosnippet>1652</a>                <span class="string">"pointing_count"</span>: <span class="number">3</span>,
-<a href=#1653 id=1653 data-nosnippet>1653</a>                <span class="string">"imaging_mode"</span>: <span class="string">"mosaic"</span>,
-<a href=#1654 id=1654 data-nosnippet>1654</a>                <span class="string">"output_ms"</span>: output_ms
-<a href=#1655 id=1655 data-nosnippet>1655</a>            }
-<a href=#1656 id=1656 data-nosnippet>1656</a>        });
-<a href=#1657 id=1657 data-nosnippet>1657</a>        <span class="kw">let </span>request: SimobserveTaskRequest =
-<a href=#1658 id=1658 data-nosnippet>1658</a>            serde_json::from_value(request_json).expect(<span class="string">"parse family request"</span>);
-<a href=#1659 id=1659 data-nosnippet>1659</a>        <span class="kw">let </span>result = request.execute().expect(<span class="string">"execute family request"</span>);
-<a href=#1660 id=1660 data-nosnippet>1660</a>        <span class="kw">let </span><span class="kw">super</span>::SimobserveTaskResult::Family(result) = result <span class="kw">else </span>{
-<a href=#1661 id=1661 data-nosnippet>1661</a>            <span class="macro">panic!</span>(<span class="string">"expected family result"</span>);
-<a href=#1662 id=1662 data-nosnippet>1662</a>        };
-<a href=#1663 id=1663 data-nosnippet>1663</a>
-<a href=#1664 id=1664 data-nosnippet>1664</a>        <span class="macro">assert_eq!</span>(result.source_model_kind, <span class="string">"analytic_components"</span>);
-<a href=#1665 id=1665 data-nosnippet>1665</a>        <span class="macro">assert_eq!</span>(result.requested_ms_channels, <span class="number">4</span>);
-<a href=#1666 id=1666 data-nosnippet>1666</a>        <span class="macro">assert_eq!</span>(result.requested_image_channels, <span class="number">2</span>);
-<a href=#1667 id=1667 data-nosnippet>1667</a>        <span class="macro">assert_eq!</span>(result.requested_pointing_count, <span class="number">3</span>);
-<a href=#1668 id=1668 data-nosnippet>1668</a>        <span class="macro">assert!</span>(result.estimated_main_rows &gt; <span class="number">0</span>);
-<a href=#1669 id=1669 data-nosnippet>1669</a>        <span class="macro">assert!</span>(result.output_ms.exists());
-<a href=#1670 id=1670 data-nosnippet>1670</a>        <span class="macro">assert!</span>(result.manifest_path.exists());
-<a href=#1671 id=1671 data-nosnippet>1671</a>        <span class="macro">assert_eq!</span>(result.run_result.report.correlation_count, <span class="number">4</span>);
-<a href=#1672 id=1672 data-nosnippet>1672</a>        <span class="macro">assert_eq!</span>(result.run_result.report.channel_count, <span class="number">4</span>);
-<a href=#1673 id=1673 data-nosnippet>1673</a>
-<a href=#1674 id=1674 data-nosnippet>1674</a>        <span class="kw">let </span>ms = <span class="kw">crate</span>::MeasurementSet::open(<span class="kw-2">&amp;</span>result.output_ms).expect(<span class="string">"open family MS"</span>);
-<a href=#1675 id=1675 data-nosnippet>1675</a>        <span class="macro">assert!</span>(ms.validate().unwrap().is_empty());
-<a href=#1676 id=1676 data-nosnippet>1676</a>        <span class="macro">assert_eq!</span>(ms.polarization().unwrap().num_corr(<span class="number">0</span>).unwrap(), <span class="number">4</span>);
-<a href=#1677 id=1677 data-nosnippet>1677</a>        <span class="macro">assert_eq!</span>(ms.field().unwrap().row_count(), <span class="number">3</span>);
-<a href=#1678 id=1678 data-nosnippet>1678</a>        <span class="kw">let </span>antenna_count = result.run_result.report.antenna_count;
-<a href=#1679 id=1679 data-nosnippet>1679</a>        <span class="macro">assert_eq!</span>(
-<a href=#1680 id=1680 data-nosnippet>1680</a>            ms.pointing().unwrap().row_count(),
-<a href=#1681 id=1681 data-nosnippet>1681</a>            antenna_count * result.run_result.report.time_sample_count
-<a href=#1682 id=1682 data-nosnippet>1682</a>        );
-<a href=#1683 id=1683 data-nosnippet>1683</a>        <span class="kw">let </span>baseline_count = antenna_count * (antenna_count - <span class="number">1</span>) / <span class="number">2</span>;
-<a href=#1684 id=1684 data-nosnippet>1684</a>        <span class="macro">assert_eq!</span>(main_ids::field_id(ms.main_table()).get(<span class="number">0</span>).unwrap(), <span class="number">0</span>);
-<a href=#1685 id=1685 data-nosnippet>1685</a>        <span class="macro">assert_eq!</span>(
-<a href=#1686 id=1686 data-nosnippet>1686</a>            main_ids::field_id(ms.main_table())
-<a href=#1687 id=1687 data-nosnippet>1687</a>                .get(baseline_count)
-<a href=#1688 id=1688 data-nosnippet>1688</a>                .unwrap(),
-<a href=#1689 id=1689 data-nosnippet>1689</a>            <span class="number">1
-<a href=#1690 id=1690 data-nosnippet>1690</a>        </span>);
-<a href=#1691 id=1691 data-nosnippet>1691</a>        <span class="macro">assert_eq!</span>(
-<a href=#1692 id=1692 data-nosnippet>1692</a>            main_ids::field_id(ms.main_table())
-<a href=#1693 id=1693 data-nosnippet>1693</a>                .get(<span class="number">2 </span>* baseline_count)
-<a href=#1694 id=1694 data-nosnippet>1694</a>                .unwrap(),
-<a href=#1695 id=1695 data-nosnippet>1695</a>            <span class="number">2
-<a href=#1696 id=1696 data-nosnippet>1696</a>        </span>);
+<a href=#1460 id=1460 data-nosnippet>1460</a>    <span class="attr">#[test]
+<a href=#1461 id=1461 data-nosnippet>1461</a>    </span><span class="kw">fn </span>run_request_accepts_analytic_model_without_legacy_model_image() {
+<a href=#1462 id=1462 data-nosnippet>1462</a>        <span class="kw">let </span>request: SimobserveTaskRequest = serde_json::from_str(
+<a href=#1463 id=1463 data-nosnippet>1463</a>            <span class="string">r#"{
+<a href=#1464 id=1464 data-nosnippet>1464</a>                "kind": "run",
+<a href=#1465 id=1465 data-nosnippet>1465</a>                "request": {
+<a href=#1466 id=1466 data-nosnippet>1466</a>                    "model": {
+<a href=#1467 id=1467 data-nosnippet>1467</a>                        "kind": "analytic_components",
+<a href=#1468 id=1468 data-nosnippet>1468</a>                        "components": [{
+<a href=#1469 id=1469 data-nosnippet>1469</a>                            "kind": "point",
+<a href=#1470 id=1470 data-nosnippet>1470</a>                            "l_rad": 0.0,
+<a href=#1471 id=1471 data-nosnippet>1471</a>                            "m_rad": 0.0,
+<a href=#1472 id=1472 data-nosnippet>1472</a>                            "spectrum": { "flux_jy": 1.0 }
+<a href=#1473 id=1473 data-nosnippet>1473</a>                        }]
+<a href=#1474 id=1474 data-nosnippet>1474</a>                    },
+<a href=#1475 id=1475 data-nosnippet>1475</a>                    "output_ms": "out.ms"
+<a href=#1476 id=1476 data-nosnippet>1476</a>                }
+<a href=#1477 id=1477 data-nosnippet>1477</a>            }"#</span>,
+<a href=#1478 id=1478 data-nosnippet>1478</a>        )
+<a href=#1479 id=1479 data-nosnippet>1479</a>        .expect(<span class="string">"parse analytic run request"</span>);
+<a href=#1480 id=1480 data-nosnippet>1480</a>        <span class="kw">let </span>SimobserveTaskRequest::Run(request) = request <span class="kw">else </span>{
+<a href=#1481 id=1481 data-nosnippet>1481</a>            <span class="macro">panic!</span>(<span class="string">"expected run request"</span>);
+<a href=#1482 id=1482 data-nosnippet>1482</a>        };
+<a href=#1483 id=1483 data-nosnippet>1483</a>
+<a href=#1484 id=1484 data-nosnippet>1484</a>        <span class="kw">let </span>synthetic = request.to_synthetic_request();
+<a href=#1485 id=1485 data-nosnippet>1485</a>
+<a href=#1486 id=1486 data-nosnippet>1486</a>        <span class="macro">assert!</span>(synthetic.model.is_some());
+<a href=#1487 id=1487 data-nosnippet>1487</a>        <span class="macro">assert_eq!</span>(
+<a href=#1488 id=1488 data-nosnippet>1488</a>            synthetic.model_image,
+<a href=#1489 id=1489 data-nosnippet>1489</a>            std::path::PathBuf::from(<span class="string">"analytic-components.json"</span>)
+<a href=#1490 id=1490 data-nosnippet>1490</a>        );
+<a href=#1491 id=1491 data-nosnippet>1491</a>    }
+<a href=#1492 id=1492 data-nosnippet>1492</a>
+<a href=#1493 id=1493 data-nosnippet>1493</a>    <span class="attr">#[test]
+<a href=#1494 id=1494 data-nosnippet>1494</a>    </span><span class="kw">fn </span>real_array_config_loader_accepts_casa_xyz_cfg_path() {
+<a href=#1495 id=1495 data-nosnippet>1495</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
+<a href=#1496 id=1496 data-nosnippet>1496</a>        <span class="kw">let </span>config_path = temp.path().join(<span class="string">"vla.test.cfg"</span>);
+<a href=#1497 id=1497 data-nosnippet>1497</a>        std::fs::write(
+<a href=#1498 id=1498 data-nosnippet>1498</a>            <span class="kw-2">&amp;</span>config_path,
+<a href=#1499 id=1499 data-nosnippet>1499</a>            <span class="string">"# observatory=VLA\n# coordsys=XYZ\n1.0 2.0 3.0 25.0 VLA01\n4.0 5.0 6.0 25.0 VLA02\n"</span>,
+<a href=#1500 id=1500 data-nosnippet>1500</a>        )
+<a href=#1501 id=1501 data-nosnippet>1501</a>        .unwrap();
+<a href=#1502 id=1502 data-nosnippet>1502</a>
+<a href=#1503 id=1503 data-nosnippet>1503</a>        <span class="kw">let </span>loaded = load_real_family_config(<span class="string">"VLA"</span>, config_path.to_str().unwrap())
+<a href=#1504 id=1504 data-nosnippet>1504</a>            .expect(<span class="string">"load config"</span>)
+<a href=#1505 id=1505 data-nosnippet>1505</a>            .expect(<span class="string">"config found"</span>);
+<a href=#1506 id=1506 data-nosnippet>1506</a>
+<a href=#1507 id=1507 data-nosnippet>1507</a>        <span class="macro">assert_eq!</span>(loaded.<span class="number">0</span>.len(), <span class="number">2</span>);
+<a href=#1508 id=1508 data-nosnippet>1508</a>        <span class="macro">assert_eq!</span>(loaded.<span class="number">0</span>[<span class="number">0</span>].station, <span class="string">"VLA01"</span>);
+<a href=#1509 id=1509 data-nosnippet>1509</a>        <span class="macro">assert_eq!</span>(loaded.<span class="number">0</span>[<span class="number">1</span>].position_m, [<span class="number">4.0</span>, <span class="number">5.0</span>, <span class="number">6.0</span>]);
+<a href=#1510 id=1510 data-nosnippet>1510</a>        <span class="macro">assert_eq!</span>(loaded.<span class="number">1</span>, config_path.display().to_string());
+<a href=#1511 id=1511 data-nosnippet>1511</a>    }
+<a href=#1512 id=1512 data-nosnippet>1512</a>
+<a href=#1513 id=1513 data-nosnippet>1513</a>    <span class="attr">#[test]
+<a href=#1514 id=1514 data-nosnippet>1514</a>    </span><span class="kw">fn </span>real_array_config_loader_uses_casa_geodetic_loc_basis() {
+<a href=#1515 id=1515 data-nosnippet>1515</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
+<a href=#1516 id=1516 data-nosnippet>1516</a>        <span class="kw">let </span>config_path = temp.path().join(<span class="string">"alma.test.cfg"</span>);
+<a href=#1517 id=1517 data-nosnippet>1517</a>        std::fs::write(
+<a href=#1518 id=1518 data-nosnippet>1518</a>            <span class="kw-2">&amp;</span>config_path,
+<a href=#1519 id=1519 data-nosnippet>1519</a>            <span class="string">"# observatory=ALMA\n# coordsys=LOC (local tangent plane)\n-33.89412596 -712.7516484 -2.330089496 12.0 A001\n"</span>,
+<a href=#1520 id=1520 data-nosnippet>1520</a>        )
+<a href=#1521 id=1521 data-nosnippet>1521</a>        .unwrap();
+<a href=#1522 id=1522 data-nosnippet>1522</a>
+<a href=#1523 id=1523 data-nosnippet>1523</a>        <span class="kw">let </span>loaded = load_real_family_config(<span class="string">"ALMA"</span>, config_path.to_str().unwrap())
+<a href=#1524 id=1524 data-nosnippet>1524</a>            .expect(<span class="string">"load config"</span>)
+<a href=#1525 id=1525 data-nosnippet>1525</a>            .expect(<span class="string">"config found"</span>);
+<a href=#1526 id=1526 data-nosnippet>1526</a>        <span class="kw">let </span>position = loaded.<span class="number">0</span>[<span class="number">0</span>].position_m;
+<a href=#1527 id=1527 data-nosnippet>1527</a>
+<a href=#1528 id=1528 data-nosnippet>1528</a>        <span class="macro">assert!</span>((position[<span class="number">0</span>] - <span class="number">2_225_004.468_449_519_5</span>).abs() &lt; <span class="number">1.0e-3</span>);
+<a href=#1529 id=1529 data-nosnippet>1529</a>        <span class="macro">assert!</span>((position[<span class="number">1</span>] + <span class="number">5_440_060.207_407_018</span>).abs() &lt; <span class="number">1.0e-3</span>);
+<a href=#1530 id=1530 data-nosnippet>1530</a>        <span class="macro">assert!</span>((position[<span class="number">2</span>] + <span class="number">2_481_684.920_604_503</span>).abs() &lt; <span class="number">1.0e-3</span>);
+<a href=#1531 id=1531 data-nosnippet>1531</a>    }
+<a href=#1532 id=1532 data-nosnippet>1532</a>
+<a href=#1533 id=1533 data-nosnippet>1533</a>    <span class="attr">#[test]
+<a href=#1534 id=1534 data-nosnippet>1534</a>    </span><span class="kw">fn </span>real_array_config_loader_converts_casa_utm_sam56_basis() {
+<a href=#1535 id=1535 data-nosnippet>1535</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
+<a href=#1536 id=1536 data-nosnippet>1536</a>        <span class="kw">let </span>config_path = temp.path().join(<span class="string">"alma.out07.test.cfg"</span>);
+<a href=#1537 id=1537 data-nosnippet>1537</a>        std::fs::write(
+<a href=#1538 id=1538 data-nosnippet>1538</a>            <span class="kw-2">&amp;</span>config_path,
+<a href=#1539 id=1539 data-nosnippet>1539</a>            <span class="string">"# observatory=ALMA\n# coordsys=UTM\n# datum=SAM56\n# zone=19\n# hemisphere=S\n627789.81 7453079.62 5029.4 12.0 1\n"</span>,
+<a href=#1540 id=1540 data-nosnippet>1540</a>        )
+<a href=#1541 id=1541 data-nosnippet>1541</a>        .unwrap();
+<a href=#1542 id=1542 data-nosnippet>1542</a>
+<a href=#1543 id=1543 data-nosnippet>1543</a>        <span class="kw">let </span>loaded = load_real_family_config(<span class="string">"ALMA"</span>, config_path.to_str().unwrap())
+<a href=#1544 id=1544 data-nosnippet>1544</a>            .expect(<span class="string">"load config"</span>)
+<a href=#1545 id=1545 data-nosnippet>1545</a>            .expect(<span class="string">"config found"</span>);
+<a href=#1546 id=1546 data-nosnippet>1546</a>        <span class="kw">let </span>position = loaded.<span class="number">0</span>[<span class="number">0</span>].position_m;
+<a href=#1547 id=1547 data-nosnippet>1547</a>
+<a href=#1548 id=1548 data-nosnippet>1548</a>        <span class="macro">assert!</span>((position[<span class="number">0</span>] - <span class="number">2_225_083.645_110_78</span>).abs() &lt; <span class="number">1.0e-3</span>);
+<a href=#1549 id=1549 data-nosnippet>1549</a>        <span class="macro">assert!</span>((position[<span class="number">1</span>] + <span class="number">5_440_152.112_940_93</span>).abs() &lt; <span class="number">1.0e-3</span>);
+<a href=#1550 id=1550 data-nosnippet>1550</a>        <span class="macro">assert!</span>((position[<span class="number">2</span>] + <span class="number">2_481_694.493_444_05</span>).abs() &lt; <span class="number">1.0e-3</span>);
+<a href=#1551 id=1551 data-nosnippet>1551</a>    }
+<a href=#1552 id=1552 data-nosnippet>1552</a>
+<a href=#1553 id=1553 data-nosnippet>1553</a>    <span class="attr">#[test]
+<a href=#1554 id=1554 data-nosnippet>1554</a>    </span><span class="kw">fn </span>family_total_power_accepts_almasd_cfg_and_uses_first_antenna() {
+<a href=#1555 id=1555 data-nosnippet>1555</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
+<a href=#1556 id=1556 data-nosnippet>1556</a>        <span class="kw">let </span>config_path = temp.path().join(<span class="string">"aca.tp.cfg"</span>);
+<a href=#1557 id=1557 data-nosnippet>1557</a>        std::fs::write(
+<a href=#1558 id=1558 data-nosnippet>1558</a>            <span class="kw-2">&amp;</span>config_path,
+<a href=#1559 id=1559 data-nosnippet>1559</a>            <span class="string">"# observatory=ALMASD\n# coordsys=LOC\n-47.7 178.2 -2.0 12.0 T701\n-42.1 118.7 -2.0 12.0 T702\n"</span>,
+<a href=#1560 id=1560 data-nosnippet>1560</a>        )
+<a href=#1561 id=1561 data-nosnippet>1561</a>        .unwrap();
+<a href=#1562 id=1562 data-nosnippet>1562</a>        <span class="kw">let </span>output_ms = temp.path().join(<span class="string">"tp-family.ms"</span>);
+<a href=#1563 id=1563 data-nosnippet>1563</a>        <span class="kw">let </span>request_json = <span class="macro">serde_json::json!</span>({
+<a href=#1564 id=1564 data-nosnippet>1564</a>            <span class="string">"kind"</span>: <span class="string">"family"</span>,
+<a href=#1565 id=1565 data-nosnippet>1565</a>            <span class="string">"request"</span>: {
+<a href=#1566 id=1566 data-nosnippet>1566</a>                <span class="string">"source_model"</span>: {
+<a href=#1567 id=1567 data-nosnippet>1567</a>                    <span class="string">"kind"</span>: <span class="string">"analytic_components"</span>,
+<a href=#1568 id=1568 data-nosnippet>1568</a>                    <span class="string">"components"</span>: [{
+<a href=#1569 id=1569 data-nosnippet>1569</a>                        <span class="string">"kind"</span>: <span class="string">"point"</span>,
+<a href=#1570 id=1570 data-nosnippet>1570</a>                        <span class="string">"l_rad"</span>: <span class="number">0.0</span>,
+<a href=#1571 id=1571 data-nosnippet>1571</a>                        <span class="string">"m_rad"</span>: <span class="number">0.0</span>,
+<a href=#1572 id=1572 data-nosnippet>1572</a>                        <span class="string">"spectrum"</span>: { <span class="string">"flux_jy"</span>: <span class="number">1.0 </span>}
+<a href=#1573 id=1573 data-nosnippet>1573</a>                    }]
+<a href=#1574 id=1574 data-nosnippet>1574</a>                },
+<a href=#1575 id=1575 data-nosnippet>1575</a>                <span class="string">"telescope"</span>: <span class="string">"ACA"</span>,
+<a href=#1576 id=1576 data-nosnippet>1576</a>                <span class="string">"array_config"</span>: config_path,
+<a href=#1577 id=1577 data-nosnippet>1577</a>                <span class="string">"band"</span>: <span class="string">"Band 7"</span>,
+<a href=#1578 id=1578 data-nosnippet>1578</a>                <span class="string">"target_ms_size_gib"</span>: <span class="number">0.00001</span>,
+<a href=#1579 id=1579 data-nosnippet>1579</a>                <span class="string">"polarizations"</span>: <span class="number">2</span>,
+<a href=#1580 id=1580 data-nosnippet>1580</a>                <span class="string">"ms_channels"</span>: <span class="number">1</span>,
+<a href=#1581 id=1581 data-nosnippet>1581</a>                <span class="string">"image_channels"</span>: <span class="number">1</span>,
+<a href=#1582 id=1582 data-nosnippet>1582</a>                <span class="string">"pointing_count"</span>: <span class="number">3</span>,
+<a href=#1583 id=1583 data-nosnippet>1583</a>                <span class="string">"imaging_mode"</span>: <span class="string">"mosaic"</span>,
+<a href=#1584 id=1584 data-nosnippet>1584</a>                <span class="string">"observation_mode"</span>: <span class="string">"total_power"</span>,
+<a href=#1585 id=1585 data-nosnippet>1585</a>                <span class="string">"output_ms"</span>: output_ms
+<a href=#1586 id=1586 data-nosnippet>1586</a>            }
+<a href=#1587 id=1587 data-nosnippet>1587</a>        });
+<a href=#1588 id=1588 data-nosnippet>1588</a>
+<a href=#1589 id=1589 data-nosnippet>1589</a>        <span class="kw">let </span>request: SimobserveTaskRequest =
+<a href=#1590 id=1590 data-nosnippet>1590</a>            serde_json::from_value(request_json).expect(<span class="string">"parse family request"</span>);
+<a href=#1591 id=1591 data-nosnippet>1591</a>        <span class="kw">let </span>result = request.execute().expect(<span class="string">"execute family request"</span>);
+<a href=#1592 id=1592 data-nosnippet>1592</a>        <span class="kw">let </span><span class="kw">super</span>::SimobserveTaskResult::Family(result) = result <span class="kw">else </span>{
+<a href=#1593 id=1593 data-nosnippet>1593</a>            <span class="macro">panic!</span>(<span class="string">"expected family result"</span>);
+<a href=#1594 id=1594 data-nosnippet>1594</a>        };
+<a href=#1595 id=1595 data-nosnippet>1595</a>
+<a href=#1596 id=1596 data-nosnippet>1596</a>        <span class="macro">assert_eq!</span>(
+<a href=#1597 id=1597 data-nosnippet>1597</a>            result.run_result.report.observation_mode,
+<a href=#1598 id=1598 data-nosnippet>1598</a>            SyntheticObservationMode::TotalPower
+<a href=#1599 id=1599 data-nosnippet>1599</a>        );
+<a href=#1600 id=1600 data-nosnippet>1600</a>        <span class="macro">assert_eq!</span>(result.run_result.report.antenna_count, <span class="number">1</span>);
+<a href=#1601 id=1601 data-nosnippet>1601</a>        <span class="macro">assert_eq!</span>(result.run_result.report.baseline_count, <span class="number">1</span>);
+<a href=#1602 id=1602 data-nosnippet>1602</a>        <span class="macro">assert_eq!</span>(
+<a href=#1603 id=1603 data-nosnippet>1603</a>            result.run_result.report.main_row_count,
+<a href=#1604 id=1604 data-nosnippet>1604</a>            result.run_result.report.time_sample_count
+<a href=#1605 id=1605 data-nosnippet>1605</a>        );
+<a href=#1606 id=1606 data-nosnippet>1606</a>        <span class="kw">let </span>manifest: SimobserveFamilyManifest =
+<a href=#1607 id=1607 data-nosnippet>1607</a>            serde_json::from_slice(<span class="kw-2">&amp;</span>std::fs::read(<span class="kw-2">&amp;</span>result.manifest_path).expect(<span class="string">"read manifest"</span>))
+<a href=#1608 id=1608 data-nosnippet>1608</a>                .expect(<span class="string">"parse manifest"</span>);
+<a href=#1609 id=1609 data-nosnippet>1609</a>        <span class="macro">assert_eq!</span>(
+<a href=#1610 id=1610 data-nosnippet>1610</a>            manifest.observation_mode,
+<a href=#1611 id=1611 data-nosnippet>1611</a>            SyntheticObservationMode::TotalPower
+<a href=#1612 id=1612 data-nosnippet>1612</a>        );
+<a href=#1613 id=1613 data-nosnippet>1613</a>        <span class="macro">assert_eq!</span>(manifest.run_request.antennas.len(), <span class="number">1</span>);
+<a href=#1614 id=1614 data-nosnippet>1614</a>        <span class="macro">assert_eq!</span>(manifest.run_request.antennas[<span class="number">0</span>].station, <span class="string">"T701"</span>);
+<a href=#1615 id=1615 data-nosnippet>1615</a>        <span class="macro">assert_eq!</span>(
+<a href=#1616 id=1616 data-nosnippet>1616</a>            manifest.run_request.telescope_name.as_deref(),
+<a href=#1617 id=1617 data-nosnippet>1617</a>            <span class="prelude-val">Some</span>(<span class="string">"ALMASD"</span>)
+<a href=#1618 id=1618 data-nosnippet>1618</a>        );
+<a href=#1619 id=1619 data-nosnippet>1619</a>    }
+<a href=#1620 id=1620 data-nosnippet>1620</a>
+<a href=#1621 id=1621 data-nosnippet>1621</a>    <span class="attr">#[test]
+<a href=#1622 id=1622 data-nosnippet>1622</a>    </span><span class="kw">fn </span>family_request_generates_ms_and_manifest_from_dialog_inputs() {
+<a href=#1623 id=1623 data-nosnippet>1623</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
+<a href=#1624 id=1624 data-nosnippet>1624</a>        <span class="kw">let </span>output_ms = temp.path().join(<span class="string">"family.ms"</span>);
+<a href=#1625 id=1625 data-nosnippet>1625</a>        <span class="kw">let </span>request_json = <span class="macro">serde_json::json!</span>({
+<a href=#1626 id=1626 data-nosnippet>1626</a>            <span class="string">"kind"</span>: <span class="string">"family"</span>,
+<a href=#1627 id=1627 data-nosnippet>1627</a>            <span class="string">"request"</span>: {
+<a href=#1628 id=1628 data-nosnippet>1628</a>                <span class="string">"source_model"</span>: {
+<a href=#1629 id=1629 data-nosnippet>1629</a>                    <span class="string">"kind"</span>: <span class="string">"analytic_components"</span>,
+<a href=#1630 id=1630 data-nosnippet>1630</a>                    <span class="string">"components"</span>: [{
+<a href=#1631 id=1631 data-nosnippet>1631</a>                        <span class="string">"kind"</span>: <span class="string">"point"</span>,
+<a href=#1632 id=1632 data-nosnippet>1632</a>                        <span class="string">"l_rad"</span>: <span class="number">0.0</span>,
+<a href=#1633 id=1633 data-nosnippet>1633</a>                        <span class="string">"m_rad"</span>: <span class="number">0.0</span>,
+<a href=#1634 id=1634 data-nosnippet>1634</a>                        <span class="string">"spectrum"</span>: { <span class="string">"flux_jy"</span>: <span class="number">1.0 </span>}
+<a href=#1635 id=1635 data-nosnippet>1635</a>                    }]
+<a href=#1636 id=1636 data-nosnippet>1636</a>                },
+<a href=#1637 id=1637 data-nosnippet>1637</a>                <span class="string">"telescope"</span>: <span class="string">"ALMA"</span>,
+<a href=#1638 id=1638 data-nosnippet>1638</a>                <span class="string">"array_config"</span>: <span class="string">"synthetic-aca"</span>,
+<a href=#1639 id=1639 data-nosnippet>1639</a>                <span class="string">"band"</span>: <span class="string">"Band 3"</span>,
+<a href=#1640 id=1640 data-nosnippet>1640</a>                <span class="string">"target_ms_size_gib"</span>: <span class="number">0.0001</span>,
+<a href=#1641 id=1641 data-nosnippet>1641</a>                <span class="string">"polarizations"</span>: <span class="number">4</span>,
+<a href=#1642 id=1642 data-nosnippet>1642</a>                <span class="string">"ms_channels"</span>: <span class="number">4</span>,
+<a href=#1643 id=1643 data-nosnippet>1643</a>                <span class="string">"image_channels"</span>: <span class="number">2</span>,
+<a href=#1644 id=1644 data-nosnippet>1644</a>                <span class="string">"pointing_count"</span>: <span class="number">3</span>,
+<a href=#1645 id=1645 data-nosnippet>1645</a>                <span class="string">"imaging_mode"</span>: <span class="string">"mosaic"</span>,
+<a href=#1646 id=1646 data-nosnippet>1646</a>                <span class="string">"output_ms"</span>: output_ms
+<a href=#1647 id=1647 data-nosnippet>1647</a>            }
+<a href=#1648 id=1648 data-nosnippet>1648</a>        });
+<a href=#1649 id=1649 data-nosnippet>1649</a>        <span class="kw">let </span>request: SimobserveTaskRequest =
+<a href=#1650 id=1650 data-nosnippet>1650</a>            serde_json::from_value(request_json).expect(<span class="string">"parse family request"</span>);
+<a href=#1651 id=1651 data-nosnippet>1651</a>        <span class="kw">let </span>result = request.execute().expect(<span class="string">"execute family request"</span>);
+<a href=#1652 id=1652 data-nosnippet>1652</a>        <span class="kw">let </span><span class="kw">super</span>::SimobserveTaskResult::Family(result) = result <span class="kw">else </span>{
+<a href=#1653 id=1653 data-nosnippet>1653</a>            <span class="macro">panic!</span>(<span class="string">"expected family result"</span>);
+<a href=#1654 id=1654 data-nosnippet>1654</a>        };
+<a href=#1655 id=1655 data-nosnippet>1655</a>
+<a href=#1656 id=1656 data-nosnippet>1656</a>        <span class="macro">assert_eq!</span>(result.source_model_kind, <span class="string">"analytic_components"</span>);
+<a href=#1657 id=1657 data-nosnippet>1657</a>        <span class="macro">assert_eq!</span>(result.requested_ms_channels, <span class="number">4</span>);
+<a href=#1658 id=1658 data-nosnippet>1658</a>        <span class="macro">assert_eq!</span>(result.requested_image_channels, <span class="number">2</span>);
+<a href=#1659 id=1659 data-nosnippet>1659</a>        <span class="macro">assert_eq!</span>(result.requested_pointing_count, <span class="number">3</span>);
+<a href=#1660 id=1660 data-nosnippet>1660</a>        <span class="macro">assert!</span>(result.estimated_main_rows &gt; <span class="number">0</span>);
+<a href=#1661 id=1661 data-nosnippet>1661</a>        <span class="macro">assert!</span>(result.output_ms.exists());
+<a href=#1662 id=1662 data-nosnippet>1662</a>        <span class="macro">assert!</span>(result.manifest_path.exists());
+<a href=#1663 id=1663 data-nosnippet>1663</a>        <span class="macro">assert_eq!</span>(result.run_result.report.correlation_count, <span class="number">4</span>);
+<a href=#1664 id=1664 data-nosnippet>1664</a>        <span class="macro">assert_eq!</span>(result.run_result.report.channel_count, <span class="number">4</span>);
+<a href=#1665 id=1665 data-nosnippet>1665</a>
+<a href=#1666 id=1666 data-nosnippet>1666</a>        <span class="kw">let </span>ms = <span class="kw">crate</span>::MeasurementSet::open(<span class="kw-2">&amp;</span>result.output_ms).expect(<span class="string">"open family MS"</span>);
+<a href=#1667 id=1667 data-nosnippet>1667</a>        <span class="macro">assert!</span>(ms.validate().unwrap().is_empty());
+<a href=#1668 id=1668 data-nosnippet>1668</a>        <span class="macro">assert_eq!</span>(ms.polarization().unwrap().num_corr(<span class="number">0</span>).unwrap(), <span class="number">4</span>);
+<a href=#1669 id=1669 data-nosnippet>1669</a>        <span class="macro">assert_eq!</span>(ms.field().unwrap().row_count(), <span class="number">3</span>);
+<a href=#1670 id=1670 data-nosnippet>1670</a>        <span class="kw">let </span>antenna_count = result.run_result.report.antenna_count;
+<a href=#1671 id=1671 data-nosnippet>1671</a>        <span class="macro">assert_eq!</span>(
+<a href=#1672 id=1672 data-nosnippet>1672</a>            ms.pointing().unwrap().row_count(),
+<a href=#1673 id=1673 data-nosnippet>1673</a>            antenna_count * result.run_result.report.time_sample_count
+<a href=#1674 id=1674 data-nosnippet>1674</a>        );
+<a href=#1675 id=1675 data-nosnippet>1675</a>        <span class="kw">let </span>baseline_count = antenna_count * (antenna_count - <span class="number">1</span>) / <span class="number">2</span>;
+<a href=#1676 id=1676 data-nosnippet>1676</a>        <span class="macro">assert_eq!</span>(main_ids::field_id(ms.main_table()).get(<span class="number">0</span>).unwrap(), <span class="number">0</span>);
+<a href=#1677 id=1677 data-nosnippet>1677</a>        <span class="macro">assert_eq!</span>(
+<a href=#1678 id=1678 data-nosnippet>1678</a>            main_ids::field_id(ms.main_table())
+<a href=#1679 id=1679 data-nosnippet>1679</a>                .get(baseline_count)
+<a href=#1680 id=1680 data-nosnippet>1680</a>                .unwrap(),
+<a href=#1681 id=1681 data-nosnippet>1681</a>            <span class="number">1
+<a href=#1682 id=1682 data-nosnippet>1682</a>        </span>);
+<a href=#1683 id=1683 data-nosnippet>1683</a>        <span class="macro">assert_eq!</span>(
+<a href=#1684 id=1684 data-nosnippet>1684</a>            main_ids::field_id(ms.main_table())
+<a href=#1685 id=1685 data-nosnippet>1685</a>                .get(<span class="number">2 </span>* baseline_count)
+<a href=#1686 id=1686 data-nosnippet>1686</a>                .unwrap(),
+<a href=#1687 id=1687 data-nosnippet>1687</a>            <span class="number">2
+<a href=#1688 id=1688 data-nosnippet>1688</a>        </span>);
+<a href=#1689 id=1689 data-nosnippet>1689</a>
+<a href=#1690 id=1690 data-nosnippet>1690</a>        <span class="kw">let </span>manifest: SimobserveFamilyManifest =
+<a href=#1691 id=1691 data-nosnippet>1691</a>            serde_json::from_slice(<span class="kw-2">&amp;</span>std::fs::read(<span class="kw-2">&amp;</span>result.manifest_path).expect(<span class="string">"read manifest"</span>))
+<a href=#1692 id=1692 data-nosnippet>1692</a>                .expect(<span class="string">"parse manifest"</span>);
+<a href=#1693 id=1693 data-nosnippet>1693</a>        <span class="macro">assert_eq!</span>(manifest.requested_image_channels, <span class="number">2</span>);
+<a href=#1694 id=1694 data-nosnippet>1694</a>        <span class="macro">assert_eq!</span>(manifest.array_config_source, <span class="string">"synthetic ACA 7m compact"</span>);
+<a href=#1695 id=1695 data-nosnippet>1695</a>        <span class="macro">assert_eq!</span>(manifest.run_request.fields.len(), <span class="number">3</span>);
+<a href=#1696 id=1696 data-nosnippet>1696</a>    }
 <a href=#1697 id=1697 data-nosnippet>1697</a>
-<a href=#1698 id=1698 data-nosnippet>1698</a>        <span class="kw">let </span>manifest: SimobserveFamilyManifest =
-<a href=#1699 id=1699 data-nosnippet>1699</a>            serde_json::from_slice(<span class="kw-2">&amp;</span>std::fs::read(<span class="kw-2">&amp;</span>result.manifest_path).expect(<span class="string">"read manifest"</span>))
-<a href=#1700 id=1700 data-nosnippet>1700</a>                .expect(<span class="string">"parse manifest"</span>);
-<a href=#1701 id=1701 data-nosnippet>1701</a>        <span class="macro">assert_eq!</span>(manifest.requested_image_channels, <span class="number">2</span>);
-<a href=#1702 id=1702 data-nosnippet>1702</a>        <span class="macro">assert_eq!</span>(manifest.array_config_source, <span class="string">"synthetic ACA 7m compact"</span>);
-<a href=#1703 id=1703 data-nosnippet>1703</a>        <span class="macro">assert_eq!</span>(manifest.run_request.fields.len(), <span class="number">3</span>);
-<a href=#1704 id=1704 data-nosnippet>1704</a>    }
-<a href=#1705 id=1705 data-nosnippet>1705</a>
-<a href=#1706 id=1706 data-nosnippet>1706</a>    <span class="attr">#[test]
-<a href=#1707 id=1707 data-nosnippet>1707</a>    </span><span class="kw">fn </span>family_request_generates_expected_mode_matrix_members() {
-<a href=#1708 id=1708 data-nosnippet>1708</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
-<a href=#1709 id=1709 data-nosnippet>1709</a>        <span class="kw">let </span>cases = [
-<a href=#1710 id=1710 data-nosnippet>1710</a>            (<span class="string">"single_field"</span>, <span class="string">"VLA"</span>, <span class="string">"A"</span>, <span class="string">"Q"</span>, <span class="number">1usize</span>),
-<a href=#1711 id=1711 data-nosnippet>1711</a>            (<span class="string">"mfs"</span>, <span class="string">"VLA"</span>, <span class="string">"A"</span>, <span class="string">"Q"</span>, <span class="number">1usize</span>),
-<a href=#1712 id=1712 data-nosnippet>1712</a>            (<span class="string">"mosaic"</span>, <span class="string">"VLA"</span>, <span class="string">"A"</span>, <span class="string">"Q"</span>, <span class="number">3usize</span>),
-<a href=#1713 id=1713 data-nosnippet>1713</a>            (<span class="string">"spectral_cube"</span>, <span class="string">"VLA"</span>, <span class="string">"A"</span>, <span class="string">"Q"</span>, <span class="number">1usize</span>),
-<a href=#1714 id=1714 data-nosnippet>1714</a>            (<span class="string">"cubedata"</span>, <span class="string">"VLA"</span>, <span class="string">"A"</span>, <span class="string">"Q"</span>, <span class="number">1usize</span>),
-<a href=#1715 id=1715 data-nosnippet>1715</a>            (<span class="string">"mt_mfs"</span>, <span class="string">"VLA"</span>, <span class="string">"A"</span>, <span class="string">"Q"</span>, <span class="number">1usize</span>),
-<a href=#1716 id=1716 data-nosnippet>1716</a>            (<span class="string">"simalma"</span>, <span class="string">"ALMA"</span>, <span class="string">"synthetic-simalma"</span>, <span class="string">"Band 3"</span>, <span class="number">3usize</span>),
-<a href=#1717 id=1717 data-nosnippet>1717</a>            (<span class="string">"aca"</span>, <span class="string">"ACA"</span>, <span class="string">"synthetic-aca"</span>, <span class="string">"Band 3"</span>, <span class="number">3usize</span>),
-<a href=#1718 id=1718 data-nosnippet>1718</a>        ];
-<a href=#1719 id=1719 data-nosnippet>1719</a>
-<a href=#1720 id=1720 data-nosnippet>1720</a>        <span class="kw">for </span>(mode, telescope, array_config, band, expected_fields) <span class="kw">in </span>cases {
-<a href=#1721 id=1721 data-nosnippet>1721</a>            <span class="kw">let </span>output_ms = temp.path().join(<span class="macro">format!</span>(<span class="string">"{mode}.ms"</span>));
-<a href=#1722 id=1722 data-nosnippet>1722</a>            <span class="kw">let </span>request_json = <span class="macro">serde_json::json!</span>({
-<a href=#1723 id=1723 data-nosnippet>1723</a>                <span class="string">"kind"</span>: <span class="string">"family"</span>,
-<a href=#1724 id=1724 data-nosnippet>1724</a>                <span class="string">"request"</span>: {
-<a href=#1725 id=1725 data-nosnippet>1725</a>                    <span class="string">"source_model"</span>: {
-<a href=#1726 id=1726 data-nosnippet>1726</a>                        <span class="string">"kind"</span>: <span class="string">"analytic_components"</span>,
-<a href=#1727 id=1727 data-nosnippet>1727</a>                        <span class="string">"components"</span>: [{
-<a href=#1728 id=1728 data-nosnippet>1728</a>                            <span class="string">"kind"</span>: <span class="string">"point"</span>,
-<a href=#1729 id=1729 data-nosnippet>1729</a>                            <span class="string">"l_rad"</span>: <span class="number">0.0</span>,
-<a href=#1730 id=1730 data-nosnippet>1730</a>                            <span class="string">"m_rad"</span>: <span class="number">0.0</span>,
-<a href=#1731 id=1731 data-nosnippet>1731</a>                            <span class="string">"spectrum"</span>: {
-<a href=#1732 id=1732 data-nosnippet>1732</a>                                <span class="string">"flux_jy"</span>: <span class="number">1.0</span>,
-<a href=#1733 id=1733 data-nosnippet>1733</a>                                <span class="string">"line_peak_jy"</span>: <span class="number">0.25</span>,
-<a href=#1734 id=1734 data-nosnippet>1734</a>                                <span class="string">"line_center_fraction"</span>: <span class="number">0.5</span>,
-<a href=#1735 id=1735 data-nosnippet>1735</a>                                <span class="string">"line_sigma_fraction"</span>: <span class="number">0.2
-<a href=#1736 id=1736 data-nosnippet>1736</a>                            </span>}
-<a href=#1737 id=1737 data-nosnippet>1737</a>                        }]
-<a href=#1738 id=1738 data-nosnippet>1738</a>                    },
-<a href=#1739 id=1739 data-nosnippet>1739</a>                    <span class="string">"telescope"</span>: telescope,
-<a href=#1740 id=1740 data-nosnippet>1740</a>                    <span class="string">"array_config"</span>: array_config,
-<a href=#1741 id=1741 data-nosnippet>1741</a>                    <span class="string">"band"</span>: band,
-<a href=#1742 id=1742 data-nosnippet>1742</a>                    <span class="string">"target_ms_size_gib"</span>: <span class="number">0.000001</span>,
-<a href=#1743 id=1743 data-nosnippet>1743</a>                    <span class="string">"polarizations"</span>: <span class="number">2</span>,
-<a href=#1744 id=1744 data-nosnippet>1744</a>                    <span class="string">"ms_channels"</span>: <span class="number">4</span>,
-<a href=#1745 id=1745 data-nosnippet>1745</a>                    <span class="string">"image_channels"</span>: <span class="number">2</span>,
-<a href=#1746 id=1746 data-nosnippet>1746</a>                    <span class="string">"pointing_count"</span>: <span class="number">3</span>,
-<a href=#1747 id=1747 data-nosnippet>1747</a>                    <span class="string">"imaging_mode"</span>: mode,
-<a href=#1748 id=1748 data-nosnippet>1748</a>                    <span class="string">"output_ms"</span>: output_ms
-<a href=#1749 id=1749 data-nosnippet>1749</a>                }
-<a href=#1750 id=1750 data-nosnippet>1750</a>            });
-<a href=#1751 id=1751 data-nosnippet>1751</a>            <span class="kw">let </span>request: SimobserveTaskRequest =
-<a href=#1752 id=1752 data-nosnippet>1752</a>                serde_json::from_value(request_json).expect(<span class="string">"parse family request"</span>);
-<a href=#1753 id=1753 data-nosnippet>1753</a>            <span class="kw">let </span>result = request.execute().expect(<span class="string">"execute family request"</span>);
-<a href=#1754 id=1754 data-nosnippet>1754</a>            <span class="kw">let </span><span class="kw">super</span>::SimobserveTaskResult::Family(result) = result <span class="kw">else </span>{
-<a href=#1755 id=1755 data-nosnippet>1755</a>                <span class="macro">panic!</span>(<span class="string">"expected family result"</span>);
-<a href=#1756 id=1756 data-nosnippet>1756</a>            };
-<a href=#1757 id=1757 data-nosnippet>1757</a>            <span class="kw">let </span>ms = <span class="kw">crate</span>::MeasurementSet::open(<span class="kw-2">&amp;</span>result.output_ms).expect(<span class="string">"open family MS"</span>);
-<a href=#1758 id=1758 data-nosnippet>1758</a>            <span class="macro">assert_eq!</span>(
-<a href=#1759 id=1759 data-nosnippet>1759</a>                ms.field().unwrap().row_count(),
-<a href=#1760 id=1760 data-nosnippet>1760</a>                expected_fields,
-<a href=#1761 id=1761 data-nosnippet>1761</a>                <span class="string">"mode {mode}"
-<a href=#1762 id=1762 data-nosnippet>1762</a>            </span>);
-<a href=#1763 id=1763 data-nosnippet>1763</a>            <span class="macro">assert_eq!</span>(ms.spectral_window().unwrap().num_chan(<span class="number">0</span>).unwrap(), <span class="number">4</span>);
-<a href=#1764 id=1764 data-nosnippet>1764</a>        }
-<a href=#1765 id=1765 data-nosnippet>1765</a>    }
-<a href=#1766 id=1766 data-nosnippet>1766</a>}
+<a href=#1698 id=1698 data-nosnippet>1698</a>    <span class="attr">#[test]
+<a href=#1699 id=1699 data-nosnippet>1699</a>    </span><span class="kw">fn </span>family_request_generates_expected_mode_matrix_members() {
+<a href=#1700 id=1700 data-nosnippet>1700</a>        <span class="kw">let </span>temp = tempfile::tempdir().unwrap();
+<a href=#1701 id=1701 data-nosnippet>1701</a>        <span class="kw">let </span>cases = [
+<a href=#1702 id=1702 data-nosnippet>1702</a>            (<span class="string">"single_field"</span>, <span class="string">"VLA"</span>, <span class="string">"A"</span>, <span class="string">"Q"</span>, <span class="number">1usize</span>),
+<a href=#1703 id=1703 data-nosnippet>1703</a>            (<span class="string">"mfs"</span>, <span class="string">"VLA"</span>, <span class="string">"A"</span>, <span class="string">"Q"</span>, <span class="number">1usize</span>),
+<a href=#1704 id=1704 data-nosnippet>1704</a>            (<span class="string">"mosaic"</span>, <span class="string">"VLA"</span>, <span class="string">"A"</span>, <span class="string">"Q"</span>, <span class="number">3usize</span>),
+<a href=#1705 id=1705 data-nosnippet>1705</a>            (<span class="string">"spectral_cube"</span>, <span class="string">"VLA"</span>, <span class="string">"A"</span>, <span class="string">"Q"</span>, <span class="number">1usize</span>),
+<a href=#1706 id=1706 data-nosnippet>1706</a>            (<span class="string">"cubedata"</span>, <span class="string">"VLA"</span>, <span class="string">"A"</span>, <span class="string">"Q"</span>, <span class="number">1usize</span>),
+<a href=#1707 id=1707 data-nosnippet>1707</a>            (<span class="string">"mt_mfs"</span>, <span class="string">"VLA"</span>, <span class="string">"A"</span>, <span class="string">"Q"</span>, <span class="number">1usize</span>),
+<a href=#1708 id=1708 data-nosnippet>1708</a>            (<span class="string">"simalma"</span>, <span class="string">"ALMA"</span>, <span class="string">"synthetic-simalma"</span>, <span class="string">"Band 3"</span>, <span class="number">3usize</span>),
+<a href=#1709 id=1709 data-nosnippet>1709</a>            (<span class="string">"aca"</span>, <span class="string">"ACA"</span>, <span class="string">"synthetic-aca"</span>, <span class="string">"Band 3"</span>, <span class="number">3usize</span>),
+<a href=#1710 id=1710 data-nosnippet>1710</a>        ];
+<a href=#1711 id=1711 data-nosnippet>1711</a>
+<a href=#1712 id=1712 data-nosnippet>1712</a>        <span class="kw">for </span>(mode, telescope, array_config, band, expected_fields) <span class="kw">in </span>cases {
+<a href=#1713 id=1713 data-nosnippet>1713</a>            <span class="kw">let </span>output_ms = temp.path().join(<span class="macro">format!</span>(<span class="string">"{mode}.ms"</span>));
+<a href=#1714 id=1714 data-nosnippet>1714</a>            <span class="kw">let </span>request_json = <span class="macro">serde_json::json!</span>({
+<a href=#1715 id=1715 data-nosnippet>1715</a>                <span class="string">"kind"</span>: <span class="string">"family"</span>,
+<a href=#1716 id=1716 data-nosnippet>1716</a>                <span class="string">"request"</span>: {
+<a href=#1717 id=1717 data-nosnippet>1717</a>                    <span class="string">"source_model"</span>: {
+<a href=#1718 id=1718 data-nosnippet>1718</a>                        <span class="string">"kind"</span>: <span class="string">"analytic_components"</span>,
+<a href=#1719 id=1719 data-nosnippet>1719</a>                        <span class="string">"components"</span>: [{
+<a href=#1720 id=1720 data-nosnippet>1720</a>                            <span class="string">"kind"</span>: <span class="string">"point"</span>,
+<a href=#1721 id=1721 data-nosnippet>1721</a>                            <span class="string">"l_rad"</span>: <span class="number">0.0</span>,
+<a href=#1722 id=1722 data-nosnippet>1722</a>                            <span class="string">"m_rad"</span>: <span class="number">0.0</span>,
+<a href=#1723 id=1723 data-nosnippet>1723</a>                            <span class="string">"spectrum"</span>: {
+<a href=#1724 id=1724 data-nosnippet>1724</a>                                <span class="string">"flux_jy"</span>: <span class="number">1.0</span>,
+<a href=#1725 id=1725 data-nosnippet>1725</a>                                <span class="string">"line_peak_jy"</span>: <span class="number">0.25</span>,
+<a href=#1726 id=1726 data-nosnippet>1726</a>                                <span class="string">"line_center_fraction"</span>: <span class="number">0.5</span>,
+<a href=#1727 id=1727 data-nosnippet>1727</a>                                <span class="string">"line_sigma_fraction"</span>: <span class="number">0.2
+<a href=#1728 id=1728 data-nosnippet>1728</a>                            </span>}
+<a href=#1729 id=1729 data-nosnippet>1729</a>                        }]
+<a href=#1730 id=1730 data-nosnippet>1730</a>                    },
+<a href=#1731 id=1731 data-nosnippet>1731</a>                    <span class="string">"telescope"</span>: telescope,
+<a href=#1732 id=1732 data-nosnippet>1732</a>                    <span class="string">"array_config"</span>: array_config,
+<a href=#1733 id=1733 data-nosnippet>1733</a>                    <span class="string">"band"</span>: band,
+<a href=#1734 id=1734 data-nosnippet>1734</a>                    <span class="string">"target_ms_size_gib"</span>: <span class="number">0.000001</span>,
+<a href=#1735 id=1735 data-nosnippet>1735</a>                    <span class="string">"polarizations"</span>: <span class="number">2</span>,
+<a href=#1736 id=1736 data-nosnippet>1736</a>                    <span class="string">"ms_channels"</span>: <span class="number">4</span>,
+<a href=#1737 id=1737 data-nosnippet>1737</a>                    <span class="string">"image_channels"</span>: <span class="number">2</span>,
+<a href=#1738 id=1738 data-nosnippet>1738</a>                    <span class="string">"pointing_count"</span>: <span class="number">3</span>,
+<a href=#1739 id=1739 data-nosnippet>1739</a>                    <span class="string">"imaging_mode"</span>: mode,
+<a href=#1740 id=1740 data-nosnippet>1740</a>                    <span class="string">"output_ms"</span>: output_ms
+<a href=#1741 id=1741 data-nosnippet>1741</a>                }
+<a href=#1742 id=1742 data-nosnippet>1742</a>            });
+<a href=#1743 id=1743 data-nosnippet>1743</a>            <span class="kw">let </span>request: SimobserveTaskRequest =
+<a href=#1744 id=1744 data-nosnippet>1744</a>                serde_json::from_value(request_json).expect(<span class="string">"parse family request"</span>);
+<a href=#1745 id=1745 data-nosnippet>1745</a>            <span class="kw">let </span>result = request.execute().expect(<span class="string">"execute family request"</span>);
+<a href=#1746 id=1746 data-nosnippet>1746</a>            <span class="kw">let </span><span class="kw">super</span>::SimobserveTaskResult::Family(result) = result <span class="kw">else </span>{
+<a href=#1747 id=1747 data-nosnippet>1747</a>                <span class="macro">panic!</span>(<span class="string">"expected family result"</span>);
+<a href=#1748 id=1748 data-nosnippet>1748</a>            };
+<a href=#1749 id=1749 data-nosnippet>1749</a>            <span class="kw">let </span>ms = <span class="kw">crate</span>::MeasurementSet::open(<span class="kw-2">&amp;</span>result.output_ms).expect(<span class="string">"open family MS"</span>);
+<a href=#1750 id=1750 data-nosnippet>1750</a>            <span class="macro">assert_eq!</span>(
+<a href=#1751 id=1751 data-nosnippet>1751</a>                ms.field().unwrap().row_count(),
+<a href=#1752 id=1752 data-nosnippet>1752</a>                expected_fields,
+<a href=#1753 id=1753 data-nosnippet>1753</a>                <span class="string">"mode {mode}"
+<a href=#1754 id=1754 data-nosnippet>1754</a>            </span>);
+<a href=#1755 id=1755 data-nosnippet>1755</a>            <span class="macro">assert_eq!</span>(ms.spectral_window().unwrap().num_chan(<span class="number">0</span>).unwrap(), <span class="number">4</span>);
+<a href=#1756 id=1756 data-nosnippet>1756</a>        }
+<a href=#1757 id=1757 data-nosnippet>1757</a>    }
+<a href=#1758 id=1758 data-nosnippet>1758</a>}
 </code></pre></div></section></main></body></html>
