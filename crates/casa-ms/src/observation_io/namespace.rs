@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The namespace a calibration table persists (`docs/measurement-set/
-//! contracts.md` section 2, `CalibrationBinding`).
+//! The namespace a calibration table persists, which calibration's
+//! `CalibrationBinding` binds a table to.
 //!
 //! A CASA calibration table numbers antennas, fields and spectral windows
 //! by the rows of its own `ANTENNA`, `FIELD` and `SPECTRAL_WINDOW`

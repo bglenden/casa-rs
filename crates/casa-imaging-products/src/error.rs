@@ -66,6 +66,15 @@ pub enum ProductsError {
     /// model in the controls.
     #[error("a primary-beam product or mask needs a primary-beam model")]
     MissingPrimaryBeamModel,
+    /// Restoring beams that do not form the channel × Stokes grid casacore
+    /// requires of an image's beam set (`ImageInfo::checkBeamSet`).
+    #[error("{beams} restoring beams do not form a grid of {channels} channels")]
+    BeamGrid {
+        /// Beams given for the image's planes.
+        beams: usize,
+        /// The image's channels.
+        channels: usize,
+    },
     /// The selected beam law cannot represent an output channel's frequency.
     #[error(
         "primary-beam model {model:?} does not support output channel {output_channel} at {frequency_hz} Hz"

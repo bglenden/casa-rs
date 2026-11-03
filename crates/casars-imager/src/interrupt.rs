@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! SIGINT cancels the run (plan section 5.4). The first interrupt sets the
+//! SIGINT cancels the run. The first interrupt sets the
 //! process's cancellation token: the run stops at the next block boundary of
 //! a pass or before its next phase, and publishes nothing. A system call the
 //! interrupt lands in is restarted, so a read in flight completes rather than

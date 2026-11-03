@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Integration test: create an MS, save, reopen, validate, and verify data.
 
-use casa_ms::SubTable;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_ms::selection::{MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow};
+use casa_ms::{OptionalMainColumn, SubTable};
 
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
@@ -309,6 +309,37 @@ fn saves_keep_a_uvw_measinfo_without_reference() {
     reopened.save_as(&copy_path).unwrap();
     let copy = MeasurementSet::open(&copy_path).unwrap();
     assert_eq!(uvw_measinfo(&copy).get("Ref"), None);
+}
+
+#[test]
+fn uvw2_takes_the_keywords_casacore_gives_a_uvw_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let ms_path = dir.path().join("uvw2.ms");
+    let builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Uvw2);
+    let mut ms = MeasurementSet::create(&ms_path, builder).unwrap();
+    ms.save().unwrap();
+
+    // casacore defines UVW2 as it does UVW, a Muvw column in metres
+    // (`MeasurementSet.cc`), so `MSTableImpl::addColumnToDesc` gives it
+    // QuantumUnits [m, m, m] and `addMeasColumn` the MEASINFO
+    // {type: uvw, Ref: ITRF}, Muvw's default reference.
+    let ms = MeasurementSet::open(&ms_path).unwrap();
+    let string = |text: &str| Value::Scalar(ScalarValue::String(text.to_string()));
+    let keywords = ms.main_table().column_keywords("UVW2").unwrap();
+    assert_eq!(
+        keywords.get("QuantumUnits"),
+        Some(&Value::Array(ArrayValue::from_string_vec(vec![
+            "m".to_string();
+            3
+        ])))
+    );
+    let Some(Value::Record(measinfo)) = keywords.get("MEASINFO") else {
+        panic!("UVW2 has no MEASINFO record: {keywords:?}");
+    };
+    assert_eq!(measinfo.get("type"), Some(&string("uvw")));
+    assert_eq!(measinfo.get("Ref"), Some(&string("ITRF")));
+    assert_eq!(Some(keywords), ms.main_table().column_keywords("UVW"));
+    assert!(ms.validate().unwrap().is_empty());
 }
 
 #[test]

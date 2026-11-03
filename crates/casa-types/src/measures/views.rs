@@ -15,10 +15,9 @@
 //! units reads them without inspecting a unit string; a source holding other
 //! units scales them when it fills the view, never after.
 //!
-//! These views are the first part of the bulk Measures interface the
-//! MSv2/MSv4 trial needs (`docs/measurement-set/contracts.md`, "Shared
-//! Measures types and bulk conversion"); prepared bulk conversions over them
-//! are later work.
+//! These views are the first part of a bulk Measures interface; prepared
+//! bulk conversions over them are later work
+//! (`docs/measurement-set/contracts.md`, "Bulk Measures conversion").
 //!
 //! # Examples
 //!

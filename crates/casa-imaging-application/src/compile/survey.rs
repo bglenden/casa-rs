@@ -121,6 +121,10 @@ pub(super) struct Survey {
     /// The channels the request's `spw` names per window
     /// ([`super::selection::SpwChoice::channels`]), set after the survey.
     pub(super) spw_channels: WindowChannels,
+    /// The selection `savemodel='virtual'` writes its model for, resolved
+    /// beside the survey from the same selection
+    /// ([`super::virtual_selection`]).
+    pub(super) virtual_model: Option<crate::virtual_model::CompiledSelection>,
 }
 
 impl Survey {
@@ -462,6 +466,7 @@ pub(super) fn survey(
             w: facts.w,
             epochs: facts.epochs,
             spw_channels: WindowChannels::new(),
+            virtual_model: None,
         },
         reservation,
     })
@@ -633,9 +638,9 @@ fn observe_time(
 
 /// Whether sample `sample` of `batch` is padding its store holds: every
 /// weight across its native channels not finite. A NaN weight is
-/// padding's one mark (`docs/measurement-set/contracts.md`, "padding"),
-/// and XRADIO's converter and casa-rs's writer put it on every channel and
-/// product of a cell no acquisition filled.
+/// padding's one mark in both stores, and XRADIO's converter and
+/// casa-rs's writer put it on every channel and product of a cell no
+/// acquisition filled.
 fn stored_padding(batch: &VisibilityBatch<'_>, sample: usize) -> bool {
     batch
         .group

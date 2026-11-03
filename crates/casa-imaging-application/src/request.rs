@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! The imaging request: the provider-contracts catalog's `tclean` surface,
-//! resolved, as one typed record (plan section 5.8, decision D8).
+//! resolved, as one typed record (ADR-0016 decision 8).
 //!
 //! A request is made only from resolved catalog values (every route, the
 //! command line and `--json-run` alike, resolves through the catalog), by
@@ -267,7 +267,7 @@ pub struct ImagingRequest {
     /// Where the major-cycle passes grid, resolved against the compiled
     /// problem and the host by [`crate::availability::resolve_backend`].
     pub backend: BackendRequest,
-    /// Grid arithmetic; `None` (`auto`) is plan decision D2's rule.
+    /// Grid arithmetic; `None` (`auto`) is `f64` on the CPU, `f32` on Metal.
     #[serde(deserialize_with = "grid_precision")]
     pub gridprecision: Option<GridPrecision>,
     /// The optional diagnostic output: `stage_timing`,
@@ -320,7 +320,7 @@ pub struct MeasurementSetSelection {
 ///
 /// `auto` takes the host's GPU for what it implements and has been checked
 /// on, end to end, against the CPU; everything else grids on the CPU. The
-/// GPU accumulates in `f32` (plan decision D2), so choosing it accepts
+/// GPU accumulates in `f32` (ADR-0016 decision 6), so choosing it accepts
 /// single-precision grids, and an explicit `gridprecision = f64` keeps
 /// `auto` on the CPU.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]

@@ -2,7 +2,7 @@
 
 ## Common parameter API
 
-ADR-0006 defines this common surface for task profiles; ADR-0012 defines
+ADR-0006 defines this common surface for task profiles, including
 current-only surface evolution:
 
 ```python
@@ -26,15 +26,14 @@ A task call starts the task's own executable. `tasks.run` returns a
 `TaskCompletion` (`task`, `command`, `workspace`, `returncode`, `stdout`, the
 reply; `stderr`, the log; `provider_invocation`, `status`, `message`,
 `parameter`, `value`, CASA's return value; and `result`, the declared
-products). A wrapper whose surface names its CASA task (the image tasks,
-`flagdata`, `flagmanager`, `importvla`, `mstransform`, `split`, `applycal`,
-`gaincal`, `bandpass`, `fluxscale`, `gencal` and `simobserve` so far) has
+products). A wrapper whose surface names its CASA task (every task but the
+casa-rs tasks `calibrate`, `msexplore` and `msconvert`, and `plotms`) has
 CASA's signature, positional or by keyword with
 CASA's defaults, then casa-rs's own controls, keyword-only, and returns
 CASA's value, with NumPy arrays where CASA returns them. A parameter casa-rs
 does not implement yet is taken only at CASA's default; its docstring names
 the issue. The other wrappers take keyword arguments and return the
-`TaskCompletion` until their families are converted (#931).
+`TaskCompletion`.
 
 A value the contract refuses raises `ValueError` before anything starts, or
 `TypeError` for a value of the wrong type. A task that refuses its

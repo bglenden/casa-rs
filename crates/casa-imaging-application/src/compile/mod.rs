@@ -29,6 +29,7 @@ mod start_model;
 mod stores;
 mod survey;
 mod time_selection;
+mod virtual_selection;
 
 pub(crate) use opening::OpenedStore;
 pub(crate) use start_model::StartModel;
@@ -299,8 +300,14 @@ fn virtual_model_plans(
                     ),
                 ));
             }
+            let selection = store.survey.virtual_model.clone().ok_or_else(|| {
+                PrepareError::MeasurementSet(casa_ms::MsError::InvalidInput(
+                    "savemodel='virtual': the survey resolved no selection".to_string(),
+                ))
+            })?;
             Ok(crate::virtual_model::VirtualModelPlan::new(
                 (request, &store.selection),
+                selection,
                 coordinates.clone(),
                 Arc::clone(measures),
             ))
@@ -357,8 +364,18 @@ fn survey_observation(
             Gridder::Awproject(aw) if matches!(aw.cf_source, AwCfSource::NativeEvla { .. })
         ),
     };
+    let virtual_model = match (request.savemodel, store.msv2()) {
+        (SaveModel::Virtual, Some(observation)) => Some(virtual_selection::resolve(
+            selection,
+            (store, observation),
+            (&windows, &spw_channels),
+            (&plan.row_selection, &states),
+        )?),
+        _ => None,
+    };
     let mut surveyed = survey::survey(plan, spectral_windows, (&context.host, &context.policy))?;
     surveyed.value.spw_channels = spw_channels;
+    surveyed.value.virtual_model = virtual_model;
     Ok((surveyed, columns))
 }
 
@@ -742,7 +759,7 @@ impl AwPlan {
     /// complete and holding nothing else. Generation fills in the absent
     /// cells of such a directory, and clears and regenerates any other.
     /// Regeneration clears the cache first. The loader then checks each
-    /// cell's sky increment against the image (plan section 5.6).
+    /// cell's sky increment against the image.
     ///
     /// The run reads a native cache under its shared [`NativeCacheLock`],
     /// held in the deployment for as long as the run lives, since cells load

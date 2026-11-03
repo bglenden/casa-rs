@@ -74,8 +74,9 @@ q() { printf '%q' "$1"; }
 # with, after `verb=setup|clean mac_root=... name=...`. It finds ROOT without
 # creating anything; setup then creates ROOT if needed (never on the small
 # internal disk while ~/ext exists) and prints its absolute path and the rsync
-# to use, preferring Homebrew's over the system openrsync. clean removes this
-# branch's copy.
+# to use, preferring Homebrew's over the system openrsync, after removing
+# other branches' copies unused for 14 days (each sync touches its own copy).
+# clean removes this branch's copy.
 # shellcheck disable=SC2016 # It expands on the Mac, not here.
 remote_program='root=$mac_root
 if [ -z "$root" ]; then
@@ -102,7 +103,10 @@ if [ "$verb" = clean ]; then
   fi
   exit
 fi
-mkdir -p "$root/src/$name" "$root/target" && cd "$root" && pwd || exit 3
+mkdir -p "$root/src/$name" "$root/target" || exit 3
+touch "$root/src/$name"
+find "$root/src" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null
+cd "$root" && pwd || exit 3
 if [ -x /opt/homebrew/bin/rsync ]; then echo /opt/homebrew/bin/rsync; else echo rsync; fi'
 
 remote() {

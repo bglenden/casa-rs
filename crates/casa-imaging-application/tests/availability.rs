@@ -34,7 +34,7 @@ const fn host(metal: bool) -> HostResources {
     }
 }
 
-/// The CPU backend at plan decision D2's precision.
+/// The CPU backend at the default precision.
 fn on_cpu(problem: &CompiledProblem) -> Result<(), ImplementationUnavailable> {
     check(problem, BackendChoice::Cpu, None, &host(false))
 }

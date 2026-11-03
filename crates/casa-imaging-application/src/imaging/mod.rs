@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native imaging on the major-cycle pass: the measurement operator built
 //! from the compiled problem, the MeasurementSet as a bounded source, and
-//! the loop of major and minor cycles (plan section 5.4).
+//! the loop of major and minor cycles.
 
 mod charts;
 mod continuum;

@@ -178,6 +178,19 @@ pub struct AutoMaskCycle {
 pub const AUTO_MULTITHRESH_BYTES_PER_CELL: u64 =
     4 * size_of::<f64>() as u64 + 4 * size_of::<usize>() as u64 + 12;
 
+/// Heap bytes [`auto_multithresh`] holds at most for one plane of `shape`
+/// (`[width, height]`): [`AUTO_MULTITHRESH_BYTES_PER_CELL`] per pixel and
+/// one row of its smoothing kernel, which holds at most one value per
+/// offset along the plane's longer axis (`2 * extent - 1`, `f64` each).
+#[must_use]
+pub fn auto_multithresh_bytes(shape: [usize; 2]) -> u64 {
+    let cells = (shape[0] as u64).saturating_mul(shape[1] as u64);
+    let row = 2 * shape[0].max(shape[1]) as u64 * size_of::<f64>() as u64;
+    cells
+        .saturating_mul(AUTO_MULTITHRESH_BYTES_PER_CELL)
+        .saturating_add(row)
+}
+
 /// The thresholds of one plane (`autoMaskByMultiThreshold`).
 #[derive(Debug, Clone, Copy)]
 struct Thresholds {
@@ -664,34 +677,34 @@ fn smooth(mask: &[bool], shape: [usize; 2], smooth_factor: f64, beam: AutoMaskBe
     let sigma_minor = smooth_factor * beam.minor_fwhm_pixels / 2.354_820_045_030_949_3;
     // Image2DConvolver::_shapeOfKernel uses a square +/-5-sigma Gaussian
     // kernel (`_sizeOfGaussian(width, 5.0)`) and then forces an odd shape.
-    // An offset beyond the image's extent reaches none of its pixels, so
-    // the kernel stops there: a beam wider than the image (a PSF fitted
-    // to few short baselines) would otherwise ask for a kernel of its own
-    // size, gigabytes for a small image, to the same sums.
-    let extent = isize::try_from(shape[0].max(shape[1])).unwrap_or(isize::MAX);
-    let radius = ((5.0 * sigma_major + 0.5) as isize + 1).min(extent - 1);
-    let side = 2 * radius.unsigned_abs() + 1;
+    // An offset beyond the image's extent on an axis reaches none of its
+    // pixels, so each axis's offsets stop there: a beam wider than the
+    // image (a PSF fitted to few short baselines) would otherwise ask for
+    // a kernel of its own size to the same sums.
+    let reach = (5.0 * sigma_major + 0.5) as isize + 1;
+    let extent = |axis: usize| isize::try_from(shape[axis]).unwrap_or(isize::MAX) - 1;
+    let [reach_x, reach_y] = [reach.min(extent(0)), reach.min(extent(1))];
     let cos_pa = beam.position_angle_rad.cos();
     let sin_pa = beam.position_angle_rad.sin();
-    let kernel = (-radius..=radius)
-        .flat_map(|dx| {
-            (-radius..=radius).map(move |dy| {
-                let (dx, dy) = (dx as f64, dy as f64);
-                let u = dx * cos_pa + dy * sin_pa;
-                let v = -dx * sin_pa + dy * cos_pa;
-                (-0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2))).exp()
-            })
-        })
-        .collect::<Vec<_>>();
     // Each output pixel sums the kernel at its offsets to the mask's set
-    // pixels; scattering from the set pixels visits only those.
+    // pixels; scattering from the set pixels visits only those. The kernel
+    // is tabulated one offset row at a time, so the smoothing holds one
+    // row ([`auto_multithresh_bytes`] charges it)
+    // beside its output, not the whole (2r+1)^2 table.
     let mut smoothed = vec![0.0; mask.len()];
-    for (index, _) in mask.iter().enumerate().filter(|(_, set)| **set) {
-        let pixel = [index / shape[1], index % shape[1]];
-        for (row, dx) in (-radius..=radius).enumerate() {
-            for (column, dy) in (-radius..=radius).enumerate() {
+    let mut row = vec![0.0; 2 * reach_y.unsigned_abs() + 1];
+    for dx in -reach_x..=reach_x {
+        for (value, dy) in row.iter_mut().zip(-reach_y..=reach_y) {
+            let (dx, dy) = (dx as f64, dy as f64);
+            let u = dx * cos_pa + dy * sin_pa;
+            let v = -dx * sin_pa + dy * cos_pa;
+            *value = (-0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2))).exp();
+        }
+        for (index, _) in mask.iter().enumerate().filter(|(_, set)| **set) {
+            let pixel = [index / shape[1], index % shape[1]];
+            for (value, dy) in row.iter().zip(-reach_y..=reach_y) {
                 if let Some(target) = offset_mask_pixel(pixel, [-dx, -dy], shape) {
-                    smoothed[target[0] * shape[1] + target[1]] += kernel[row * side + column];
+                    smoothed[target[0] * shape[1] + target[1]] += value;
                 }
             }
         }

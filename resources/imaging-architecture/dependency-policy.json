@@ -285,7 +285,7 @@
   },
   {
    "id": "no-content-hashing-in-imaging-crates",
-   "message": "no SHA-256 or CRC over scientific arrays, plans, receipts or spill (ADR-0014/0015/0016)",
+   "message": "no SHA-256 or CRC over scientific arrays, plans, receipts or spill (ADR-0014/0016)",
    "roots": [
     "crates/casa-imaging-model/src",
     "crates/casa-imaging-operator/src",

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The MSv2/MSv4 trial's scale probe (`docs/measurement-set/trial/README.md`):
-//! opens a store through the trial adapters and reports what opening cost,
-//! what the estimate predicts for each partition, and what one traversal of
-//! every partition reads.
+//! The MSv2/MSv4 trial's scale probe: opens a store through the trial
+//! adapters and reports what opening cost, what the estimate predicts for
+//! each partition, and what one traversal of every partition reads.
 //!
 //! ```text
 //! cargo run --release -p casa-ms --example ms_trial_probe -- STORE [--open-only] [--batch-mib N] [--channels N] [--products XX,YY] [--parallel]

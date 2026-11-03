@@ -136,12 +136,6 @@ order. Each member is staged and replaced on its own, so a member already
 replaced stays valid if a later one fails.
 _Avoid_: Output files, sidecars
 
-**Migration Obligation**:
-A visible, executable record of a scientific capability that is intentionally
-unavailable during architectural migration and must be restored before the
-programme completes.
-_Avoid_: Ignored test, temporary fallback
-
 **Current-Only Profile Contract**:
 A sparse human parameter contract that accepts exactly the current version and
 canonical names, adopting current defaults for omitted optional values without
@@ -150,8 +144,7 @@ _Avoid_: Compatibility profile, historical run replay
 
 ## Observation access
 
-The vocabulary of the MSv2/MSv4 observation boundary
-(`crates/casa-observation`, `docs/measurement-set/trial/revision-2-design.md`).
+The vocabulary of the MSv2/MSv4 observation boundary (`crates/casa-observation`).
 
 **Partition**:
 One store unit of an opened observation, described by its content: spectral
@@ -326,7 +319,7 @@ _Avoid_: Planning, lease
 The one record a run leaves beside its products, whether it completes or
 fails: the request echo, each phase with its wall time and peak resident
 memory, the worker count, the backend, the minor-cycle totals, the product
-list and a failed run's error (plan section 8.3). It is O(1) per phase.
+list and a failed run's error. It is O(1) per phase.
 _Avoid_: Execution receipt, log, metrics blob
 
 **Acceptance Contract**:

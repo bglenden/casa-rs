@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""CASA side of the trial's ephemeris check (docs/measurement-set/trial/README.md,
-"Ephemerides in MSv4"). Run with a CASA (casatools) Python; CASA is only the
-oracle.
+"""CASA side of the trial's ephemeris check. Run with a CASA (casatools)
+Python; CASA is only the oracle.
 
     check_ephemeris_casa.py ORIGINAL.ms ROUND_TRIP.ms
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! The one availability gate (plan section 5.8): what the installed
+//! The one availability gate: what the installed
 //! implementation cannot run, checked once on the compiled problem, the
 //! run's backend and its host, before any phase.
 
@@ -27,7 +27,7 @@ pub enum Unsupported {
     MultiDomainTaylorBasis,
     /// The Metal backend needs a Metal device, which the host lacks.
     NoMetalDevice,
-    /// Metal accumulates its grids in `f32` (plan decision D2).
+    /// Metal accumulates its grids in `f32` (ADR-0016 decision 6).
     F64GridsOnMetal,
     /// Metal grids the standard and mosaic kernel sets (#787); W and AW
     /// wait for their gate R2 rows (#653).
@@ -173,7 +173,7 @@ fn gpu_checked(problem: &CompiledProblem) -> bool {
 }
 
 /// Require the installed implementation to run `problem` on `backend` at
-/// `precision` (`None` for plan decision D2's rule) on `host`.
+/// `precision` (`None`: `f64` on the CPU, `f32` on Metal) on `host`.
 pub fn check(
     problem: &CompiledProblem,
     backend: BackendChoice,

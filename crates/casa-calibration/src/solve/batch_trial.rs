@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! MSv2/MSv4 trial, example B (`docs/measurement-set/trial/README.md`): the
-//! production gain accumulation and solver fed from
-//! `casa_observation::VisibilityBatch`es of both stores, with 60 s solution
-//! groups that cross batch boundaries.
+//! MSv2/MSv4 trial, example B: the production gain accumulation and solver
+//! fed from `casa_observation::VisibilityBatch`es of both stores, with 60 s
+//! solution groups that cross batch boundaries.
 //!
 //! `cargo test -p casa-calibration --lib batch_trial -- --nocapture` prints
-//! the measurements the evidence records.
+//! its measurements.
 
 //!
 //! The solve itself is [`feed`], which sees only the shared observation
