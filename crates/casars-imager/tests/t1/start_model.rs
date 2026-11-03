@@ -361,3 +361,44 @@ fn a_start_model_on_another_spectral_grid_is_regridded_along_frequency() {
         );
     }
 }
+
+/// A plane no sample reaches restores its start model: CASA's
+/// `SIImageStore::restore` convolves every plane's model with its beam and
+/// adds the residual, whatever the plane's weights (CASA's
+/// `test_startmodel_regrid_cube` restores a regridded model in a channel
+/// the data miss). Its residual is zero, so its restored image is the
+/// model's point convolved with the beam: a peak of the model's flux.
+#[test]
+fn a_plane_without_weights_restores_its_start_model() {
+    let observation = Observation::synthesise_band(16, &[("point", POINT)]);
+    let controls = json!({
+        "specmode": "cube",
+        "start": 0,
+        "nchan": 16,
+        "weighting": "natural",
+        "deconvolver": "hogbom",
+        "niter": 300,
+        "threshold": "0.01Jy",
+    });
+    let (_, deep) = observation.image("unweighted-deep", controls.clone());
+    let (_, started) = observation.image(
+        "unweighted-started",
+        with(
+            &controls,
+            json!({
+                "niter": 0,
+                "spw": "0:2~15",
+                "startmodel": observation.scratch("unweighted-deep.model"),
+            }),
+        ),
+    );
+    assert_eq!(started.get(".sumwt").channel_values()[0], 0.0);
+    assert!(started.get(".residual").plane(0).iter().all(|v| *v == 0.0));
+    let flux: f32 = deep.get(".model").plane(0).iter().sum();
+    let restored = started.get(".image").plane(0);
+    let peak = restored.iter().fold(0.0_f32, |m, v| m.max(*v));
+    assert!(
+        flux > 0.5 && (peak - flux).abs() < 0.02 * flux,
+        "the unweighted plane restores a peak of {peak} for a model of {flux} Jy"
+    );
+}

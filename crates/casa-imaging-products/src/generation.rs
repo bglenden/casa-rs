@@ -149,8 +149,38 @@ fn fit_beams(
 /// The beams each plane is restored with, by the problem's restoring-beam
 /// policy: none, each plane's fitted beam, one beam enclosing a domain's
 /// fitted beams, or the beam the request gives. A plane with no fitted beam
-/// holds no data and restores with none.
+/// (a blank PSF) restores with its domain's largest restoring beam, as
+/// `SIImageStore::makeImageBeamSet` replaces a null beam by the beam set's
+/// largest (`getMaxAreaBeam`) before `restore` restores every plane: a
+/// start model regridded onto a channel no sample reaches is restored
+/// there. A domain with no fitted beam restores none.
 fn restoring_beams(
+    inputs: &ContinuumProductInputs<'_>,
+    fitted_beams: &[Option<RestoringBeam>],
+) -> Result<Box<[Option<RestoringBeam>]>, ProductsError> {
+    let mut beams = policy_restoring_beams(inputs, fitted_beams)?;
+    let normal_state = inputs.normal_state();
+    let planes = normal_state.channel_count() * normal_state.polarization_count();
+    if planes > 0 {
+        for domain_beams in beams.chunks_mut(planes) {
+            let largest = domain_beams
+                .iter()
+                .flatten()
+                .copied()
+                .max_by(|left, right| {
+                    (left.major_fwhm_rad() * left.minor_fwhm_rad())
+                        .total_cmp(&(right.major_fwhm_rad() * right.minor_fwhm_rad()))
+                });
+            for beam in domain_beams.iter_mut().filter(|beam| beam.is_none()) {
+                *beam = largest;
+            }
+        }
+    }
+    Ok(beams)
+}
+
+/// [`restoring_beams`] before blank planes take their domain's largest.
+fn policy_restoring_beams(
     inputs: &ContinuumProductInputs<'_>,
     fitted_beams: &[Option<RestoringBeam>],
 ) -> Result<Box<[Option<RestoringBeam>]>, ProductsError> {

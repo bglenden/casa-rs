@@ -953,9 +953,7 @@ fn start_models<'de, D: Deserializer<'de>>(
     };
     match Value::deserialize(deserializer)? {
         Value::String(text) if unset(&text) => Ok(Vec::new()),
-        Value::Array(items)
-            if items.len() == 1 && items[0].as_str().is_some_and(|text| unset(text)) =>
-        {
+        Value::Array(items) if items.len() == 1 && items[0].as_str().is_some_and(unset) => {
             Ok(Vec::new())
         }
         Value::Array(items) => items.iter().map(entry).collect(),
