@@ -7,8 +7,7 @@
 use std::path::Path;
 
 use casa_coordinates::{
-    CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo, SpectralCoordinate,
-    StokesCoordinate, StokesType,
+    CoordinateSystem, CoordinateType, ObsInfo, SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_imaging_model::{
     DirectionCoordinateSpec, DirectionFrame, PhaseCentreLaw, PolarizationCoordinate, Projection,
@@ -555,9 +554,9 @@ pub(super) fn image_coordinates(
     spectral: &ImageSpectralCoordinate,
     observation: &ObsInfo,
 ) -> CoordinateSystem {
-    let reference = direction.reference_direction();
     let mut coordinates = CoordinateSystem::new();
-    // casacore's defaults for the poles, as `direction_spec` states them.
+    // The specification's coordinate, with the poles `direction_spec`
+    // states (WCSLIB's defaults).
     debug_assert_eq!(
         direction.reference_pixel(),
         image_reference_pixel(image_size)
@@ -680,7 +679,8 @@ fn parse_sexagesimal(text: &str, hours: bool) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use casa_coordinates::{
-        CoordinateModel, CoordinateType, Projection as CoordinateProjection, ProjectionType,
+        CoordinateModel, CoordinateType, DirectionCoordinate, Projection as CoordinateProjection,
+        ProjectionType,
     };
 
     use super::*;
