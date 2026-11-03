@@ -7,11 +7,15 @@
 
 use casa_imaging_deconvolution::{
     Clark, CycleControls, FinalNormalState, Hogbom, ImageDomainReconstructionMaskPlans,
-    MajorCycleCompletion, Multiscale, NormalBasis, PlaneShape, PlaneStop, Solver, Taylor,
+    MajorCycleCompletion, Multiscale, NormalBasis, PlaneShape, PlaneStatistics, PlaneStop,
+    PsfSummary, Solver, Taylor,
 };
 use casa_imaging_model::{CompiledProblem, ReconstructionAlgorithm, ReconstructionBasis};
 
-use super::{MinorCycleSetup, PsfCache, Slot, Solved, TRACE, is_taylor, plane_keys, plane_shape};
+use super::{
+    Measured, MinorCycleSetup, PlaneKey, PsfCache, RetainedPlane, Slot, Solved, TRACE, is_taylor,
+    plane_keys, plane_shape,
+};
 
 /// The layout of the image state a minor cycle cleans, as its charges read
 /// it: how many planes it loads and the largest, its image domains'
@@ -184,12 +188,39 @@ impl MinorLayout {
     fn concurrent(&self, workers: usize) -> u64 {
         workers.min(self.planes).max(1) as u64
     }
+
+    /// Heap bytes the PSF cache keeps once every plane's PSF is measured: a
+    /// summary per plane in its B-tree, charged twice for the tree's nodes.
+    /// It outlives each minor cycle; the run holds it with the masks.
+    #[must_use]
+    pub fn psf_cache_bytes(&self) -> u64 {
+        self.planes as u64 * 2 * size_of::<(PlaneKey, PsfSummary)>() as u64
+    }
+
+    /// Heap bytes preparation records for each of its planes beside the
+    /// plane's load: its key, its measurement slot, its statistics and its
+    /// sidelobe, and for an `automatic` mask the slot its PSF is measured
+    /// into.
+    fn plane_record_bytes(automatic: bool) -> u64 {
+        let measured = size_of::<PlaneKey>()
+            + size_of::<(PlaneKey, Option<Measured>, Option<RetainedPlane>)>()
+            + size_of::<(PlaneKey, PlaneStatistics)>()
+            + size_of::<f64>();
+        let automatic = if automatic {
+            size_of::<(PlaneKey, Option<PsfSummary>)>()
+        } else {
+            0
+        };
+        (measured + automatic) as u64
+    }
 }
 
 /// Heap bytes [`super::prepare_minor_cycle`] holds at most: the masks it
-/// materializes, and on each of the planes loaded at once on `workers`, the
-/// load and its measurement (the robust noise's two copies under `nsigma`,
-/// the PSF fit's single-precision copies for a plane not yet in `cache`).
+/// materializes, what it records of every plane, and on each of the planes
+/// loaded at once on `workers`, the load and its measurement (the robust
+/// noise's two copies under `nsigma`, the PSF fit's single-precision copies
+/// for a plane not yet in `cache`). The PSF summaries it adds to `cache`
+/// are the run's ([`psf_cache_bytes`]).
 #[must_use]
 pub fn prepare_bytes(
     completion: &MajorCycleCompletion,
@@ -226,7 +257,15 @@ pub fn prepare_bytes_for(
         |domain| layout.domains.get(domain).copied(),
         layout.channels_and_polarizations,
         workers,
-    ) + layout.concurrent(workers) * (layout.load_bytes(setup.response.is_some()) + measure)
+    ) + layout.planes as u64 * MinorLayout::plane_record_bytes(mask_plans.automatic())
+        + layout.concurrent(workers) * (layout.load_bytes(setup.response.is_some()) + measure)
+}
+
+/// Heap bytes the PSF cache keeps of `completion`'s planes once each is
+/// measured ([`MinorLayout::psf_cache_bytes`]).
+#[must_use]
+pub fn psf_cache_bytes(completion: &MajorCycleCompletion) -> u64 {
+    MinorLayout::of(completion.normal_state()).psf_cache_bytes()
 }
 
 /// Heap bytes the masks a minor cycle forms from `mask_plans` keep while

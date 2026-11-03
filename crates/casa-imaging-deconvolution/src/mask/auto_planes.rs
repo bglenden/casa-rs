@@ -31,6 +31,7 @@
 //! thresholds are zero and its mask stays as it was.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use casa_imaging_model::DirectionCoordinateSpec;
 use rayon::prelude::*;
@@ -74,12 +75,16 @@ pub type AutoMaskPsf<'a> = dyn Fn(MaskPlaneKey) -> Option<PsfSummary> + Sync + '
 /// What an automatic mask reads of one major cycle's planes, from the
 /// owner of the minor cycle: each plane as [`AutoMaskRead`] gives it, read
 /// once per boundary, and its PSF's measurements ([`AutoMaskPsf`]), which
-/// do not change.
+/// do not change; and how many channels it masks at once.
 pub struct AutoMaskSource<'a, E> {
     /// Each plane's residual and valid pixels.
     pub read: &'a AutoMaskRead<'a, E>,
     /// Each plane's PSF measurements.
     pub psf: &'a AutoMaskPsf<'a>,
+    /// The channels masked at once: more than one masks a block's channels
+    /// side by side on the current rayon pool (the owner's worker team),
+    /// one masks them one after another.
+    pub workers: usize,
 }
 
 /// One image domain's automatic mask at one boundary: a row of CASA's
@@ -136,12 +141,33 @@ pub(super) struct AutoMaskState<'a> {
     pub(super) stopped_channels: &'a [bool],
 }
 
-/// One channel's new supports, polarization after polarization, and rows.
-struct ChannelMask {
-    support: Vec<bool>,
-    rows: Vec<AutoMultithreshEvidence>,
-    positive: bool,
+/// A channel's place in the domain's new mask: its supports, polarization
+/// after polarization, and its rows of the automask summary, which it
+/// fills.
+struct ChannelSlots<'a> {
+    channel: usize,
+    support: &'a mut [bool],
+    rows: &'a mut [AutoMultithreshEvidence],
 }
+
+/// A row before its plane is masked.
+const UNMASKED: AutoMultithreshEvidence = AutoMultithreshEvidence {
+    median: 0.0,
+    robust_rms: 0.0,
+    peak: 0.0,
+    positive_threshold: 0.0,
+    low_noise_threshold: 0.0,
+    negative_threshold: None,
+    threshold: AutoMaskThreshold::Sidelobe,
+    masked: false,
+    regions: 0,
+    pruned_regions: 0,
+    grow_regions: 0,
+    grow_pruned_regions: 0,
+    negative_pixels: 0,
+    changed_pixels: 0,
+    channel_stopped: false,
+};
 
 /// What every channel of one block is masked with.
 struct Block<'a, 'b, E> {
@@ -157,10 +183,15 @@ struct Block<'a, 'b, E> {
 }
 
 impl<E: From<MaskError>> Block<'_, '_, E> {
-    /// The masks of `channel`'s planes and its stop
+    /// Mask `slots`' channel into its slots, and apply its stop
     /// (`SDMaskHandler::skipChannels`), which every plane of the channel
-    /// shares.
-    fn channel(&self, channel: usize) -> Result<ChannelMask, E> {
+    /// shares: whether it added a positive (emission) region.
+    fn channel(&self, slots: ChannelSlots<'_>) -> Result<bool, E> {
+        let ChannelSlots {
+            channel,
+            support,
+            rows,
+        } = slots;
         let state = self.state;
         let inherited = |polarization| {
             state
@@ -178,12 +209,9 @@ impl<E: From<MaskError>> Block<'_, '_, E> {
                 .unwrap_or(false),
         };
         let cells = self.shape[0] * self.shape[1];
-        let mut masked = ChannelMask {
-            support: Vec::with_capacity(self.polarizations * cells),
-            rows: Vec::with_capacity(self.polarizations),
-            positive: false,
-        };
-        for polarization in 0..self.polarizations {
+        let mut positive = false;
+        for (polarization, (out, row)) in support.chunks_mut(cells).zip(rows.iter_mut()).enumerate()
+        {
             let plane = (self.source.read)(MaskPlaneKey {
                 domain: self.domain,
                 channel,
@@ -198,9 +226,9 @@ impl<E: From<MaskError>> Block<'_, '_, E> {
                 controls: state.controls,
                 beam: self.beam,
             })?;
-            masked.support.extend(made.support);
-            masked.rows.push(made.evidence);
-            masked.positive |= made.positive;
+            out.copy_from_slice(&made.support);
+            *row = made.evidence;
+            positive |= made.positive;
         }
         let count = |support: &[bool]| support.iter().filter(|set| **set).count();
         let before = (0..self.polarizations)
@@ -208,22 +236,23 @@ impl<E: From<MaskError>> Block<'_, '_, E> {
             .sum();
         let stopped = skip_channel(
             before,
-            count(&masked.support),
-            masked.rows[0].threshold,
+            count(support),
+            rows[0].threshold,
             cycle,
             state.controls,
         );
-        for row in &mut masked.rows {
+        for row in rows.iter_mut() {
             row.channel_stopped = stopped;
         }
-        Ok(masked)
+        Ok(positive)
     }
 }
 
 /// The automatic mask of every plane of `domain`, `shape` pixels by
-/// `planes` channels and polarizations, from the mask it inherits.
-/// Called inside a rayon pool (a worker team's), a block's channels are
-/// masked side by side on it; otherwise one after another.
+/// `planes` channels and polarizations, from the mask it inherits. Each
+/// channel writes its planes and rows straight into the domain's new mask
+/// and summary; a block's channels are masked side by side on the current
+/// rayon pool when `source` masks more than one at once.
 pub(super) fn auto_mask_domain<E>(
     state: &AutoMaskState<'_>,
     domain: usize,
@@ -241,9 +270,10 @@ where
     }) {
         return Err(MaskError::ShapeMismatch.into());
     }
+    let polarizations = planes.polarizations();
     let psfs = (0..planes.channels())
         .flat_map(|channel| {
-            (0..planes.polarizations()).map(move |polarization| MaskPlaneKey {
+            (0..polarizations).map(move |polarization| MaskPlaneKey {
                 domain,
                 channel,
                 polarization,
@@ -257,17 +287,24 @@ where
         .map(PsfSummary::sidelobe)
         .fold(0.0_f64, f64::max);
     let nothing = vec![false; cells];
-    let mut support = Vec::with_capacity(planes.count() * cells);
-    let mut rows = Vec::with_capacity(planes.count());
+    // One allocation each, written in place: the support is shared as it
+    // is by the mask (a trusted-length iterator collects into the `Arc`
+    // without a staging copy).
+    let mut support = (0..planes.count() * cells)
+        .map(|_| false)
+        .collect::<Arc<[bool]>>();
+    let mut rows = vec![UNMASKED; planes.count()];
+    let slots = Arc::get_mut(&mut support).expect("a support no one else holds yet");
+    let per_channel = polarizations * cells;
     for block in channel_blocks(planes.channels(), shape) {
         let masking = Block {
             state,
             source,
             domain,
             shape,
-            polarizations: planes.polarizations(),
+            polarizations,
             beam: block_beam(
-                &psfs[block.start * planes.polarizations()..block.end * planes.polarizations()],
+                &psfs[block.start * polarizations..block.end * polarizations],
                 sidelobe,
                 state.coordinate,
             )?,
@@ -277,28 +314,48 @@ where
                 .is_some_and(|plane| plane.iter().all(|set| *set)),
             nothing: &nothing,
         };
-        let channels = if rayon::current_thread_index().is_some() {
-            block
-                .clone()
-                .into_par_iter()
-                .map(|channel| masking.channel(channel))
-                .collect::<Result<Vec<_>, E>>()?
+        let block_support = &mut slots[block.start * per_channel..block.end * per_channel];
+        let block_rows = &mut rows[block.start * polarizations..block.end * polarizations];
+        let positive = if source.workers > 1 {
+            block_support
+                .par_chunks_mut(per_channel)
+                .zip(block_rows.par_chunks_mut(polarizations))
+                .zip(block.clone().into_par_iter())
+                .map(|((support, rows), channel)| {
+                    masking.channel(ChannelSlots {
+                        channel,
+                        support,
+                        rows,
+                    })
+                })
+                .try_reduce(|| false, |left, right| Ok(left || right))?
         } else {
-            block
-                .clone()
-                .map(|channel| masking.channel(channel))
-                .collect::<Result<Vec<_>, E>>()?
+            let mut positive = false;
+            for ((support, rows), channel) in block_support
+                .chunks_mut(per_channel)
+                .zip(block_rows.chunks_mut(polarizations))
+                .zip(block.clone())
+            {
+                positive |= masking.channel(ChannelSlots {
+                    channel,
+                    support,
+                    rows,
+                })?;
+            }
+            positive
         };
-        report_block(state, &block, &channels, planes.polarizations());
-        for channel in channels {
-            support.extend(channel.support);
-            rows.extend(channel.rows);
-        }
+        report_block(
+            state,
+            block.start,
+            &rows[block.start * polarizations..block.end * polarizations],
+            positive,
+            polarizations,
+        );
     }
     Ok((
         ReconstructionMask::from_plane_support(state.coordinate, shape, planes, support)?,
         AutoMaskEvidence {
-            polarizations: planes.polarizations(),
+            polarizations,
             planes: rows.into_boxed_slice(),
         },
     ))
@@ -360,16 +417,19 @@ fn block_beam(
     Ok(Some(beam))
 }
 
-/// What tclean logs of one block's mask: at the first boundary its
-/// warnings (`autoMaskByMultiThreshold`, `noMaskCheck`), and with
-/// `verbose` CASA's automask summary, a row per channel
+/// What tclean logs of one block's mask, its `rows` channel-major from
+/// channel `first`: at the first boundary its warnings
+/// (`autoMaskByMultiThreshold`, `noMaskCheck`) when it added no positive
+/// region, and with `verbose` CASA's automask summary, a row per channel
 /// (`printAutomaskSummary`).
 fn report_block(
     state: &AutoMaskState<'_>,
-    block: &Range<usize>,
-    channels: &[ChannelMask],
+    first: usize,
+    rows: &[AutoMultithreshEvidence],
+    positive: bool,
     polarizations: usize,
 ) {
+    let channels = rows.len() / polarizations;
     if state.completed_major_cycles == 0 {
         if state.controls.cut_threshold >= 0.2 {
             tracing::warn!(
@@ -377,35 +437,29 @@ fn report_block(
                  cutthreshold."
             );
         }
-        if !channels.iter().any(|channel| channel.positive) {
-            warn_no_regions(channels);
-            let pruned = channels
+        if !positive {
+            warn_no_regions(rows);
+            let pruned = rows
                 .iter()
-                .flat_map(|channel| &channel.rows)
                 .filter(|row| row.regions > 0 && row.pruned_regions == row.regions)
                 .count();
             if pruned > 0 {
                 tracing::warn!(
-                    "{pruned} of {} channels had all regions removed by pruning. Try decreasing \
-                     minbeamfrac to remove fewer regions",
-                    channels.len()
+                    "{pruned} of {channels} channels had all regions removed by pruning. Try \
+                     decreasing minbeamfrac to remove fewer regions"
                 );
             }
         }
     }
     if state.controls.verbose {
-        log_summary(block.start, channels, polarizations);
+        log_summary(first, rows, polarizations);
     }
 }
 
 /// `SDMaskHandler::noMaskCheck` of a block whose positive mask is empty.
-fn warn_no_regions(channels: &[ChannelMask]) {
+fn warn_no_regions(rows: &[AutoMultithreshEvidence]) {
     tracing::warn!("No regions found by automasking");
-    let rows = channels
-        .iter()
-        .flat_map(|channel| &channel.rows)
-        .collect::<Vec<_>>();
-    let [first, ..] = rows.as_slice() else {
+    let [first, ..] = rows else {
         return;
     };
     if rows.len() == 1 {
@@ -430,9 +484,10 @@ fn warn_no_regions(channels: &[ChannelMask]) {
     }
 }
 
-/// CASA's `printAutomaskSummary` of one block, through `tracing`: a row per
-/// channel, each value a list over its polarizations when it has several.
-fn log_summary(first_channel: usize, channels: &[ChannelMask], polarizations: usize) {
+/// CASA's `printAutomaskSummary` of one block's `rows` from channel
+/// `first_channel`, through `tracing`: a row per channel, each value a list
+/// over its polarizations when it has several.
+fn log_summary(first_channel: usize, rows: &[AutoMultithreshEvidence], polarizations: usize) {
     let list = |values: Vec<String>| {
         if polarizations == 1 {
             values.into_iter().next().unwrap_or_default()
@@ -445,8 +500,7 @@ fn log_summary(first_channel: usize, channels: &[ChannelMask], polarizations: us
         "chan masking? median   RMS         peak   thresh_type   thresh_value   N_reg N_pruned \
          N_grow N_grow_pruned N_neg_pix"
     );
-    for (offset, channel) in channels.iter().enumerate() {
-        let rows = &channel.rows;
+    for (offset, rows) in rows.chunks(polarizations).enumerate() {
         let column =
             |value: fn(&AutoMultithreshEvidence) -> String| list(rows.iter().map(value).collect());
         // A stopped channel was skipped before this boundary: CASA prints

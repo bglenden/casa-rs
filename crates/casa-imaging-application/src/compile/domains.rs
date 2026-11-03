@@ -26,7 +26,9 @@ use super::direction::{
     parse_phase_center_direction,
 };
 use super::outliers::read_outlier_domains;
+use crate::RunContext;
 use casa_imaging_products::CasaImageDomainOutput;
+use casa_imaging_runtime::{Demand, Reservation, admit};
 
 use crate::{Gridder, ImagingRequest, UseMask};
 
@@ -45,8 +47,8 @@ pub(super) enum DomainMask {
     PixelSupport {
         /// The planes held.
         planes: MaskPlanes,
-        /// Their support.
-        support: Box<[bool]>,
+        /// Their support, shared by the plan and every mask made from it.
+        support: std::sync::Arc<[bool]>,
     },
     /// CASA auto-multithresh support from the current normal state.
     AutoMultithresh(AutoMultithreshControls),
@@ -223,22 +225,28 @@ pub(super) const fn noise_estimate(request: &ImagingRequest) -> NoiseEstimate {
 }
 
 /// Each domain's mask plan, bound to its direction coordinate, for images
-/// of `channels` channels.
+/// of `channels` channels, and what the plans keep of the mask images
+/// read for them: each image's read is admitted under `context` before it
+/// is read ([`super::mask_image::MaskImage::reading_bytes`]), and the
+/// support its plan shares stays charged.
 pub(super) fn mask_plans(
     domains: &[PreparedImageDomain],
     channels: usize,
-) -> Result<ImageDomainReconstructionMaskPlans, PrepareError> {
-    Ok(ImageDomainReconstructionMaskPlans::new(
-        domains
-            .iter()
-            .map(|domain| mask_plan(domain, channels))
-            .collect::<Result<Vec<_>, _>>()?,
-    )?)
+    context: &RunContext,
+) -> Result<(ImageDomainReconstructionMaskPlans, Reservation), PrepareError> {
+    let mut resident = Reservation::none();
+    let plans = domains
+        .iter()
+        .map(|domain| mask_plan(domain, channels, context, &mut resident))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((ImageDomainReconstructionMaskPlans::new(plans)?, resident))
 }
 
 fn mask_plan(
     domain: &PreparedImageDomain,
     channels: usize,
+    context: &RunContext,
+    resident: &mut Reservation,
 ) -> Result<ReconstructionMaskPlan, PrepareError> {
     let coordinate = domain.direction;
     let image_size = domain.image_size;
@@ -266,7 +274,7 @@ fn mask_plan(
                 Some(CoordinateModel::Spectral(spectral)) => Some(&**spectral),
                 _ => None,
             };
-            super::mask_image::reproject_image_mask(
+            let image = super::mask_image::MaskImage::open(
                 &path,
                 coordinate,
                 image_size,
@@ -275,7 +283,19 @@ fn mask_plan(
                     polarizations,
                     spectral,
                 },
-            )?
+            )?;
+            let mut charge = admit(
+                &context.host,
+                &context.policy,
+                &Demand {
+                    phase: "clean mask image",
+                    memory: image.reading_bytes(),
+                },
+            )?;
+            charge.retain(image.retained_bytes());
+            let plan = image.read()?;
+            resident.join(charge);
+            plan
         }
         DomainMask::PixelSupport { planes, support } => {
             assert_eq!(
@@ -383,7 +403,10 @@ mod tests {
     /// non-zero at (0, 0), (2, 0), (1, 1) and (2, 1), with (2, 1) invalid in
     /// its default pixel mask; the direction first, or (as a transposed CASA
     /// mask reads) after Stokes. Its support reprojected onto its own grid.
-    fn support<T: ImagePixel + From<f32>>(dir: &Path, direction_first: bool) -> Box<[bool]> {
+    fn support<T: ImagePixel + From<f32>>(
+        dir: &Path,
+        direction_first: bool,
+    ) -> std::sync::Arc<[bool]> {
         let mut coordinates = CoordinateSystem::new();
         let stokes = StokesCoordinate::new(vec![StokesType::I]);
         let shape = if direction_first {

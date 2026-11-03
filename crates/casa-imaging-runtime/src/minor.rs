@@ -42,7 +42,8 @@ use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit
 
 mod layout;
 pub use layout::{
-    MinorLayout, mask_bytes, prepare_bytes, prepare_bytes_for, run_bytes, run_bytes_for,
+    MinorLayout, mask_bytes, prepare_bytes, prepare_bytes_for, psf_cache_bytes, run_bytes,
+    run_bytes_for,
 };
 
 /// Component records kept per minor cycle for diagnostics.
@@ -284,13 +285,14 @@ pub fn prepare_minor_cycle(
         // thresholds by the image's sidelobe level, so every plane's PSF is
         // measured first.
         measure_psfs(normal, taylor, cache, &keys, team)?;
+        let shared = &*cache;
         let reading = Reading {
             normal,
             base,
             setup,
             taylor,
+            summaries: &shared.summaries,
         };
-        let shared = &*cache;
         let read = |key: MaskPlaneKey| automask_plane(&reading, absolute(normal, taylor, key));
         let psf = |key: MaskPlaneKey| {
             shared
@@ -301,6 +303,7 @@ pub fn prepare_minor_cycle(
         let source = AutoMaskSource {
             read: &read,
             psf: &psf,
+            workers: team.workers(),
         };
         team.install(|| mask_plans.materialize(base, normal, Some(&source)))?
     } else {
@@ -666,12 +669,14 @@ fn absolute(normal: &FinalNormalState, taylor: bool, key: MaskPlaneKey) -> Plane
     }
 }
 
-/// What an automatic mask reads its planes from.
+/// What an automatic mask reads its planes from, with each plane's PSF
+/// measurements.
 struct Reading<'a> {
     normal: &'a FinalNormalState,
     base: &'a ModelGeneration,
     setup: &'a MinorCycleSetup,
     taylor: bool,
+    summaries: &'a BTreeMap<PlaneKey, PsfSummary>,
 }
 
 /// The plane `key` as its automatic mask reads it: the residual the minor
@@ -686,6 +691,7 @@ fn automask_plane(
         base,
         setup,
         taylor,
+        summaries,
     } = *reading;
     if !holds_data(normal, taylor, key) {
         return Ok(None);
@@ -693,7 +699,11 @@ fn automask_plane(
     let shape = plane_shape(normal, key);
     let valid = valid_support(normal, base, taylor, key, shape)?;
     let residual = if taylor {
-        read_taylor(normal, setup)?.residual.swap_remove(0)
+        let peak = summaries
+            .get(&key)
+            .ok_or(casa_imaging_deconvolution::Error::PsfPeak)?
+            .peak();
+        taylor_principal_residual(normal, setup, peak)?
     } else {
         let plane = normal.read_plane(key.domain, key.channel, key.polarization)?;
         let raw = plane.read_residual()?;
@@ -1042,6 +1052,51 @@ fn read_taylor(
             sum_weight: normal_weight,
         }),
     })
+}
+
+/// The zeroth Taylor term's residual in the units the minor cycle cleans,
+/// as [`read_taylor`] gives it, read alone: an automatic mask reads that
+/// term and, of the zeroth PSF moment, its value at its measured `peak`,
+/// not the whole family.
+fn taylor_principal_residual(
+    normal: &FinalNormalState,
+    setup: &MinorCycleSetup,
+    peak: usize,
+) -> Result<Vec<f64>, MinorCycleRunError> {
+    let window = normal.read_window(normal.slab().core_range())?;
+    let principal = window
+        .normal_moment(0)
+        .expect("a Taylor family has its zeroth moment");
+    let scale = principal.normal_approximation()[peak].re;
+    if !(scale.is_finite() && scale > 0.0) {
+        return Err(casa_imaging_deconvolution::Error::PsfPeak.into());
+    }
+    let term = window
+        .coefficient_term(0)
+        .expect("a Taylor family has its zeroth term")
+        .residual();
+    let Some(response) = setup.response else {
+        return Ok(term.iter().map(|value| value.re / scale).collect());
+    };
+    let normal_weight = principal.sum_weight();
+    let published_weight = window.published_sum_weights()[0];
+    let sensitivity = principal.sensitivity().to_vec();
+    let bound = MosaicSensitivity::new(&sensitivity)?.with_normal_sum_weight(normal_weight)?;
+    let residual = term
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            bound.normalize_weighted_residual_sample(
+                value.re,
+                index,
+                response.normalization(),
+                ResidualFamily::Taylor,
+                published_weight,
+                response.policy(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(residual)
 }
 
 fn psf_peak_value(psf: &[f64], shape: PlaneShape) -> Result<f64, MinorCycleRunError> {

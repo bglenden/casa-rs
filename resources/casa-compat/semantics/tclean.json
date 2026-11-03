@@ -806,7 +806,7 @@
     },
     "usemask": {
       "status": "Partial",
-      "scope": "user and auto-multithresh pass; pb refused (issue 823); controls whether user mask is read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold plane by plane, every channel and Stokes plane of its own: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube is masked in tclean's serial channel blocks, each smoothed by the common beam of its planes' PSF beams, every plane thresholded by the image's PSF sidelobe level, and a channel's planes stop together (skipChannels); a plane with no data keeps its mask.",
+      "scope": "user and auto-multithresh pass; pb refused (issue 823); controls whether user mask is read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold plane by plane, every channel and Stokes plane of its own: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube is masked in tclean's serial channel blocks, each smoothed by the common beam of its planes' PSF beams, every plane thresholded by the image's PSF sidelobe level, and a channel's planes stop together (skipChannels); a plane with no data keeps its mask. CASA takes the automatic mask's statistics and peak inside pb > pblimit where the image has a primary beam (SDMaskHandler::autoMask); casa-rs takes them over every valid pixel, so an image reaching below that response can differ at a mask's edge (issue 980).",
       "evidence": [
         "signature",
         "reader"

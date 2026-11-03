@@ -26,14 +26,18 @@
 //! pixel mask.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate};
-use casa_images::AnyPagedImage;
+use casa_images::{AnyPagedImage, ImagePixel, PagedImage};
 use casa_imaging_deconvolution::{MaskPlanes, ReconstructionMaskPlan, reproject_mask_support};
 use casa_imaging_model::DirectionCoordinateSpec;
-use ndarray::{ArrayD, IxDyn};
 
 use super::PrepareError;
+
+/// The bound on the tiles a mask image's read caches, as a restart's CLEAN
+/// mask is read.
+const CACHE_BYTES: usize = 64 * 1024;
 
 /// The planes of the image a mask is read onto: its channels and Stokes
 /// planes, and its spectral coordinate.
@@ -57,66 +61,204 @@ impl MaskAxes {
         axis.map_or(1, |axis| self.shape[axis])
     }
 
-    /// The index of pixel `[x, y]` of plane `channel` and `stokes`.
-    fn index(&self, [x, y]: [usize; 2], channel: usize, stokes: usize) -> IxDyn {
-        let mut index = vec![0; self.shape.len()];
-        index[self.direction[0]] = x;
-        index[self.direction[1]] = y;
+    /// The start and shape of the direction plane of `channel` and
+    /// `stokes`: one pixel along every other axis.
+    fn plane(&self, channel: usize, stokes: usize) -> (Vec<usize>, Vec<usize>) {
+        let mut start = vec![0; self.shape.len()];
+        let mut shape = vec![1; self.shape.len()];
+        for axis in self.direction {
+            shape[axis] = self.shape[axis];
+        }
         if let Some(axis) = self.spectral {
-            index[axis] = channel;
+            start[axis] = channel;
         }
         if let Some(axis) = self.stokes {
-            index[axis] = stokes;
+            start[axis] = stokes;
         }
-        IxDyn(&index)
+        (start, shape)
     }
+
+    /// Pixels of one direction plane.
+    fn plane_cells(&self) -> u64 {
+        self.direction.iter().fold(1_u64, |cells, &axis| {
+            cells.saturating_mul(self.shape[axis] as u64)
+        })
+    }
+}
+
+/// A mask image of real pixels.
+enum RealImage {
+    Float32(PagedImage<f32>),
+    Float64(PagedImage<f64>),
+}
+
+/// A real mask image opened onto an image domain, read plane by plane once
+/// its read is admitted ([`Self::reading_bytes`]), as a restart's CLEAN
+/// mask is.
+pub(crate) struct MaskImage {
+    image: RealImage,
+    axes: MaskAxes,
+    /// The planes tclean gives it on the image (`SDMaskHandler::fillMask`).
+    held: MaskPlanes,
+    source: DirectionCoordinateSpec,
+    target: DirectionCoordinateSpec,
+    target_size: [usize; 2],
+    /// Bytes of one pixel of the image.
+    pixel_bytes: u64,
+    tile_bytes: u64,
+}
+
+impl MaskImage {
+    /// Open the mask image at `path` for `target`'s direction grid of
+    /// `target_size` pixels on an image of `planes`, reading only its
+    /// description: CASA's refusal, or the planes it gives the mask.
+    pub(super) fn open(
+        path: &Path,
+        target: DirectionCoordinateSpec,
+        target_size: [usize; 2],
+        planes: TargetPlanes<'_>,
+    ) -> Result<Self, PrepareError> {
+        let (image, pixel_bytes) = match AnyPagedImage::open_with_cache(path, CACHE_BYTES)? {
+            AnyPagedImage::Float32(image) => (RealImage::Float32(image), 4_u64),
+            AnyPagedImage::Float64(image) => (RealImage::Float64(image), 8),
+            AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
+                return Err(PrepareError::ComplexMaskImage);
+            }
+        };
+        let (shape, coordinates, tile) = match &image {
+            RealImage::Float32(image) => (image.shape(), image.coordinates(), image.tile_shape()),
+            RealImage::Float64(image) => (image.shape(), image.coordinates(), image.tile_shape()),
+        };
+        let axes = mask_axes(shape, coordinates)?;
+        let held = expansion(path, coordinates, &axes, planes)?;
+        let direction = coordinates
+            .find_coordinate(CoordinateType::Direction)
+            .ok_or(PrepareError::MaskImageDirection)?;
+        let source = super::domains::direction_model_spec(coordinates.coordinate(direction))?;
+        let tile_bytes = tile.iter().fold(pixel_bytes, |bytes, &side| {
+            bytes.saturating_mul(side as u64)
+        });
+        Ok(Self {
+            image,
+            axes,
+            held,
+            source,
+            target,
+            target_size,
+            pixel_bytes,
+            tile_bytes,
+        })
+    }
+
+    /// Target pixels of one plane.
+    fn target_plane(&self) -> u64 {
+        (self.target_size[0] as u64).saturating_mul(self.target_size[1] as u64)
+    }
+
+    /// Heap bytes [`Self::read`] holds at most: one source plane as it is
+    /// read (its pixels, its default pixel mask and its support) and that
+    /// plane reprojected; every plane's support as it is gathered and as
+    /// the plan shares it; the bounded tile cache and two decoded/I/O tile
+    /// buffers.
+    pub(crate) fn reading_bytes(&self) -> u64 {
+        self.axes
+            .plane_cells()
+            .saturating_mul(self.pixel_bytes + 2)
+            .saturating_add(self.target_plane())
+            .saturating_add(self.retained_bytes().saturating_mul(2))
+            .saturating_add(self.tile_bytes.saturating_mul(2))
+            .saturating_add(CACHE_BYTES as u64)
+    }
+
+    /// Heap bytes the plan keeps of [`Self::read`]: its shared support, a
+    /// plane for each plane it holds.
+    pub(crate) fn retained_bytes(&self) -> u64 {
+        self.target_plane().saturating_mul(self.held.count() as u64)
+    }
+
+    /// The plan of the mask on the target grid: each source plane read and
+    /// its support reprojected, one plane at a time.
+    pub(crate) fn read(self) -> Result<ReconstructionMaskPlan, PrepareError> {
+        let source_shape = self.axes.direction.map(|axis| self.axes.shape[axis]);
+        let held = self.held;
+        let cells = self.target_size[0] * self.target_size[1];
+        let mut support = Vec::with_capacity(cells * held.count());
+        for channel in 0..held.channels() {
+            for stokes in 0..held.polarizations() {
+                let (start, shape) = self.axes.plane(channel, stokes);
+                let plane = match &self.image {
+                    RealImage::Float32(image) => plane_support(image, &start, &shape)?,
+                    RealImage::Float64(image) => plane_support(image, &start, &shape)?,
+                };
+                support.extend_from_slice(&reproject_mask_support(
+                    self.source,
+                    source_shape,
+                    &plane,
+                    self.target,
+                    self.target_size,
+                )?);
+            }
+        }
+        let support: Arc<[bool]> = support.into();
+        Ok(ReconstructionMaskPlan::Reprojected {
+            coordinate: self.target,
+            planes: held,
+            support,
+        })
+    }
+}
+
+/// The mask image at `path` opened onto its own direction grid, for an
+/// image of `channels` channels on its own spectral coordinate and
+/// `polarizations` Stokes planes: the counting law's view of the reader
+/// compile uses ([`crate::mask_image_law`]).
+pub(crate) fn open_onto_itself(
+    path: &Path,
+    channels: usize,
+    polarizations: usize,
+) -> Result<MaskImage, PrepareError> {
+    let (coordinates, shape) = match AnyPagedImage::open(path)? {
+        AnyPagedImage::Float32(image) => (image.coordinates().clone(), image.shape().to_vec()),
+        AnyPagedImage::Float64(image) => (image.coordinates().clone(), image.shape().to_vec()),
+        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
+            return Err(PrepareError::ComplexMaskImage);
+        }
+    };
+    let axes = mask_axes(&shape, &coordinates)?;
+    let direction = coordinates
+        .find_coordinate(CoordinateType::Direction)
+        .ok_or(PrepareError::MaskImageDirection)?;
+    let target = super::domains::direction_model_spec(coordinates.coordinate(direction))?;
+    let spectral = match coordinates
+        .find_coordinate(CoordinateType::Spectral)
+        .map(|index| coordinates.coordinate(index))
+    {
+        Some(CoordinateModel::Spectral(spectral)) => Some(&**spectral),
+        _ => None,
+    };
+    MaskImage::open(
+        path,
+        target,
+        axes.direction.map(|axis| shape[axis]),
+        TargetPlanes {
+            channels,
+            polarizations,
+            spectral,
+        },
+    )
 }
 
 /// The plan of the mask image at `path` on `target`'s direction grid of
 /// `target_size` pixels, with the planes tclean gives it for an image of
-/// `planes`.
+/// `planes`, read without admission.
+#[cfg(test)]
 pub(super) fn reproject_image_mask(
     path: &Path,
     target: DirectionCoordinateSpec,
     target_size: [usize; 2],
     planes: TargetPlanes<'_>,
 ) -> Result<ReconstructionMaskPlan, PrepareError> {
-    let (coordinates, axes, supports) = match AnyPagedImage::open(path)? {
-        AnyPagedImage::Float32(image) => {
-            let axes = mask_axes(image.shape(), image.coordinates())?;
-            let supports = plane_supports(&image.get()?, image.get_mask()?.as_ref(), &axes);
-            (image.coordinates().clone(), axes, supports)
-        }
-        AnyPagedImage::Float64(image) => {
-            let axes = mask_axes(image.shape(), image.coordinates())?;
-            let supports = plane_supports(&image.get()?, image.get_mask()?.as_ref(), &axes);
-            (image.coordinates().clone(), axes, supports)
-        }
-        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
-            return Err(PrepareError::ComplexMaskImage);
-        }
-    };
-    let held = expansion(path, &coordinates, &axes, planes)?;
-    let direction = coordinates
-        .find_coordinate(CoordinateType::Direction)
-        .ok_or(PrepareError::MaskImageDirection)?;
-    let source = super::domains::direction_model_spec(coordinates.coordinate(direction))?;
-    let source_shape = axes.direction.map(|axis| axes.shape[axis]);
-    let mut support = Vec::with_capacity(held.count() * target_size[0] * target_size[1]);
-    for plane in &supports {
-        support.extend_from_slice(&reproject_mask_support(
-            source,
-            source_shape,
-            plane,
-            target,
-            target_size,
-        )?);
-    }
-    Ok(ReconstructionMaskPlan::Reprojected {
-        coordinate: target,
-        planes: held,
-        support: support.into_boxed_slice(),
-    })
+    MaskImage::open(path, target, target_size, planes)?.read()
 }
 
 /// Where the direction, Stokes and spectral axes of an image of `shape`
@@ -160,31 +302,32 @@ fn mask_axes(shape: &[usize], coordinates: &CoordinateSystem) -> Result<MaskAxes
     Ok(axes)
 }
 
-/// Each plane's support, channel-major: its finite, non-zero pixels valid
-/// in the default pixel `mask`, x-major.
-fn plane_supports<T>(
-    values: &ArrayD<T>,
-    mask: Option<&ArrayD<bool>>,
-    axes: &MaskAxes,
-) -> Vec<Vec<bool>>
+/// The support of the direction plane of `image` at `start` of `shape`
+/// (one pixel along every other axis): its finite, non-zero pixels valid in
+/// the default pixel mask, x-major. The plane's values, in index order, run
+/// over x with y fastest, whatever axes lie between.
+fn plane_support<T>(
+    image: &PagedImage<T>,
+    start: &[usize],
+    shape: &[usize],
+) -> Result<Vec<bool>, PrepareError>
 where
-    T: Into<f64> + Copy,
+    T: ImagePixel + Into<f64> + Copy,
 {
-    let [nx, ny] = axes.direction.map(|axis| axes.shape[axis]);
-    let mut planes = Vec::new();
-    for channel in 0..axes.extent(axes.spectral) {
-        for stokes in 0..axes.extent(axes.stokes) {
-            let plane = (0..nx * ny)
-                .map(|cell| {
-                    let index = axes.index([cell / ny, cell % ny], channel, stokes);
-                    let value: f64 = values[&index].into();
-                    value.is_finite() && value != 0.0 && mask.is_none_or(|mask| mask[&index])
-                })
-                .collect();
-            planes.push(plane);
-        }
-    }
-    planes
+    let values = image.get_slice(start, shape)?;
+    let mask = image.get_mask_slice(start, shape, &vec![1; shape.len()])?;
+    let set = |value: &T| {
+        let value: f64 = (*value).into();
+        value.is_finite() && value != 0.0
+    };
+    Ok(match mask {
+        Some(mask) => values
+            .iter()
+            .zip(mask.iter())
+            .map(|(value, valid)| *valid && set(value))
+            .collect(),
+        None => values.iter().map(set).collect(),
+    })
 }
 
 /// The planes tclean gives a mask of `axes` on an image of `target`

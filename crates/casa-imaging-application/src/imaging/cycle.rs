@@ -32,8 +32,8 @@ use casa_imaging_runtime::pass::{
 use casa_imaging_runtime::{
     Admitted, CubeState, Demand, Diagnostics, HostResources, MinorCycleOutcome, MinorCycleSetup,
     MinorLayout, PsfCache, Reservation, ResourcePolicy, RunSummary, admit, free_memory, mask_bytes,
-    prepare_bytes, prepare_bytes_for, prepare_minor_cycle, run_bytes, run_bytes_for,
-    run_minor_cycle, run_phase,
+    prepare_bytes, prepare_bytes_for, prepare_minor_cycle, psf_cache_bytes, run_bytes,
+    run_bytes_for, run_minor_cycle, run_phase,
 };
 
 use super::charts::{Chart, ChartStitch, charts};
@@ -237,6 +237,7 @@ pub(crate) fn run(
     let minor = |workers: usize| {
         if cleaning {
             2 * layout.mask_bytes(&mask_plans)
+                + layout.psf_cache_bytes()
                 + prepare_bytes_for(&layout, &mask_plans, &setup, true, workers)
                     .max(run_bytes_for(&layout, &setup, iterations, 0, workers))
         } else {
@@ -281,7 +282,9 @@ pub(crate) fn run(
     let mut controller = Controller::new(&controls);
     let mut cache = PsfCache::default();
     // What outlives each minor cycle: the masks it forms (the latest, and the
-    // one an automatic mask evolves from) and a Clark refresh it caches.
+    // one an automatic mask evolves from, every holder sharing a
+    // generation's support), the PSF summaries it measures and a Clark
+    // refresh it caches.
     let mut held = Reservation::none();
     // tclean skips the major cycle after a minor cycle that cleans nothing,
     // updates the mask and still asks `hasConverged` for the stop it reports.
@@ -296,7 +299,8 @@ pub(crate) fn run(
             if ordinal == 1 {
                 held = run.admit(
                     "reconstruction masks",
-                    2 * mask_bytes(&outcome.scientific, &mask_plans),
+                    2 * mask_bytes(&outcome.scientific, &mask_plans)
+                        + psf_cache_bytes(&outcome.scientific),
                 )?;
             }
             let mut preparing = run.admit(
@@ -445,7 +449,7 @@ fn refresh_demand(
     if let Some((layout, setup, iterations)) = cleaning {
         let controls = inputs.problem.reconstruction().controls();
         return Some(RefreshDemand {
-            masks: 2 * layout.mask_bytes(&inputs.masks),
+            masks: 2 * layout.mask_bytes(&inputs.masks) + layout.psf_cache_bytes(),
             cached: layout.refresh_bytes(setup),
             results: layout.result_bytes(setup, iterations),
             records: layout.record_bytes()

@@ -31,7 +31,7 @@ use casa_imaging_model::{
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{
     Demand, HostResources, MinorCycleSetup, PsfCache, ResourcePolicy, admit, free_memory,
-    mask_bytes, prepare_bytes, prepare_minor_cycle, result_bytes, run_bytes, run_minor_cycle,
+    prepare_bytes, prepare_minor_cycle, psf_cache_bytes, result_bytes, run_bytes, run_minor_cycle,
 };
 use problems::{empty_final_model, model_lifecycle, reconstruction_problem};
 use synthetic_pass::{BLOCKS, SAMPLES, Scene};
@@ -222,23 +222,57 @@ fn a_minor_cycle_holds_at_most_its_admission_whatever_its_planes() {
 /// CASA's automatic mask of every channel (#980): preparing a minor cycle
 /// measures every plane's PSF, masks each channel side by side on the team
 /// and keeps the masks, a support and a summary row per plane. It holds no
-/// more than [`prepare_bytes`] and the masks' own charge, [`mask_bytes`],
-/// which the run holds for them; at the first boundary and the next, which
-/// grows each mask from the one before, on one worker and on four.
+/// more than [`prepare_bytes`], which charges the new masks, the planes
+/// being masked and what it records of each plane, and the PSF summaries it
+/// measures, which the run holds ([`psf_cache_bytes`]); the mask it evolves
+/// from is the run's, outside the measurement. At the first boundary and the next, which grows each mask
+/// from the one before, on one worker and on four: cubes of a few channels,
+/// one block of 240 channels of 16 by 16 pixels, whose per-plane results a
+/// block once gathered beside the mask, and a five-term Taylor family,
+/// whose mask once read every term and PSF moment to keep the first.
 #[test]
 fn an_automatic_cube_mask_holds_at_most_its_admission() {
     let _measurement = MEASUREMENT.lock().expect("measurement lock");
-    for (channels, workers) in [(1, 1), (16, 1), (16, 4), (64, 4)] {
+    let mtmfs = ReconstructionAlgorithm::Mtmfs {
+        scales_px: vec![0.0],
+        small_scale_bias: 0.0,
+    };
+    let cases = [
+        (32, ReconstructionBasis::ChannelLocal { channels: 1 }, 1),
+        (32, ReconstructionBasis::ChannelLocal { channels: 16 }, 1),
+        (32, ReconstructionBasis::ChannelLocal { channels: 16 }, 4),
+        (32, ReconstructionBasis::ChannelLocal { channels: 64 }, 4),
+        (16, ReconstructionBasis::ChannelLocal { channels: 240 }, 1),
+        (16, ReconstructionBasis::ChannelLocal { channels: 240 }, 4),
+        (64, ReconstructionBasis::Taylor { terms: 5 }, 1),
+    ];
+    for (width, basis, workers) in cases {
+        let (channels, planes, algorithm, fluxes) = match basis {
+            ReconstructionBasis::ChannelLocal { channels } => (
+                channels,
+                channels,
+                ReconstructionAlgorithm::Hogbom,
+                vec![1.0; channels],
+            ),
+            ReconstructionBasis::Taylor { terms } => (
+                1,
+                1,
+                mtmfs.clone(),
+                (0..terms).map(|term| 0.5_f64.powi(term as i32)).collect(),
+            ),
+            ReconstructionBasis::Constant => unreachable!("not measured here"),
+        };
+        let label = format!("{basis:?} of {width} px on {workers} workers");
         let problem = reconstruction_problem(
             31,
-            32,
+            width,
             channels,
-            ReconstructionBasis::ChannelLocal { channels },
-            ReconstructionAlgorithm::Hogbom,
+            basis,
+            algorithm.clone(),
             ReconstructionControls::new(100, 0.1, 0.0),
         );
         let scene = Scene::new(&problem)
-            .with_point([12, 18], &vec![1.0; channels])
+            .with_point([width * 3 / 8, width * 9 / 16], &fluxes)
             .with_noise(0.01);
         let lifecycle = model_lifecycle(&problem);
         let mut cycle = MajorCycle::initial(
@@ -251,7 +285,7 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
         pass.append(scene.pass_images(model, true)).expect("images");
         let completion = cycle.finish(SAMPLES, BLOCKS).expect("complete");
         let setup = MinorCycleSetup {
-            algorithm: ReconstructionAlgorithm::Hogbom,
+            algorithm,
             accounting: HogbomIterationAccounting::Strict,
             response: None,
             nsigma: 0.0,
@@ -284,8 +318,10 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
         let team = WorkerTeam::new(workers).expect("team");
         let mut cache = PsfCache::default();
         for boundary in 0..2 {
+            // The run holds the PSF summaries preparation measures with the
+            // masks, outside preparation's own charge.
             let charge = prepare_bytes(&completion, &plans, &setup, &cache, workers)
-                + mask_bytes(&completion, &plans);
+                + psf_cache_bytes(&completion);
             let preparing = admit(
                 &HOST,
                 &POLICY,
@@ -306,17 +342,21 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
             let excess = EXCESS.load(Ordering::Relaxed);
             assert!(
                 excess <= 0,
-                "{channels} channels on {workers} workers, boundary {boundary}: preparation \
-                 held {excess} bytes more than it was admitted"
+                "{label}, boundary {boundary}: preparation held {excess} bytes more than it \
+                 was admitted"
             );
             let evidence = prepared.auto_masks()[0]
                 .as_ref()
                 .expect("automatic evidence");
-            assert_eq!(evidence.planes().len(), channels);
+            assert_eq!(evidence.planes().len(), planes, "{label}");
             assert_eq!(
                 prepared.masks().primary().planes().count(),
-                channels,
-                "a mask plane per channel"
+                planes,
+                "{label}: a mask plane per channel"
+            );
+            assert!(
+                prepared.masks().primary().support().iter().any(|set| *set),
+                "{label}: the point is masked"
             );
             plans = plans
                 .next_cycle(prepared.masks(), prepared.auto_masks(), boundary + 1, false)

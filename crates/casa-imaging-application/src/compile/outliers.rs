@@ -282,7 +282,7 @@ fn circle_mask(text: &str, image_size: [usize; 2]) -> Result<DomainMask, Outlier
     }
     Ok(DomainMask::PixelSupport {
         planes: casa_imaging_deconvolution::MaskPlanes::SHARED,
-        support: support.into_boxed_slice(),
+        support: support.into(),
     })
 }
 

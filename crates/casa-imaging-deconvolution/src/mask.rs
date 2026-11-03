@@ -16,6 +16,8 @@ mod auto_multithresh;
 mod auto_planes;
 mod plans;
 
+use std::sync::Arc;
+
 use casa_imaging_model::DirectionCoordinateSpec;
 use thiserror::Error;
 
@@ -281,12 +283,17 @@ impl MaskPlanes {
 /// Immutable reconstruction-mask support on one direction grid, for every
 /// plane of its image domain: one support per held plane ([`MaskPlanes`]),
 /// each x-major.
+///
+/// The support is shared, not copied, by every clone: the plan an
+/// automatic mask evolves from, the minor cycle that cleans within it and
+/// the run's outcome hold one generation's support between them, so a run
+/// holds at most the generation in use and the one being made.
 #[derive(Debug, Clone)]
 pub struct ReconstructionMask {
     coordinate: DirectionCoordinateSpec,
     shape: [usize; 2],
     planes: MaskPlanes,
-    support: Box<[bool]>,
+    support: Arc<[bool]>,
 }
 
 impl ReconstructionMask {
@@ -350,7 +357,8 @@ impl ReconstructionMask {
     }
 
     /// Exact target-grid support of `planes` planes, plane after plane
-    /// (channel-major), each x-major.
+    /// (channel-major), each x-major. A `Vec` or boxed support is copied
+    /// once into shared storage; an `Arc` is shared as it is.
     ///
     /// # Errors
     ///
@@ -359,9 +367,10 @@ impl ReconstructionMask {
         coordinate: DirectionCoordinateSpec,
         shape: [usize; 2],
         planes: MaskPlanes,
-        support: Vec<bool>,
+        support: impl Into<Arc<[bool]>>,
     ) -> Result<Self, MaskError> {
         validate_shape(shape)?;
+        let support = support.into();
         if Some(support.len()) != (shape[0] * shape[1]).checked_mul(planes.count()) {
             return Err(MaskError::ShapeMismatch);
         }
@@ -369,7 +378,7 @@ impl ReconstructionMask {
             coordinate,
             shape,
             planes,
-            support: support.into_boxed_slice(),
+            support,
         })
     }
 
@@ -414,7 +423,7 @@ impl ReconstructionMask {
             coordinate,
             shape,
             planes: MaskPlanes::SHARED,
-            support: support.into_boxed_slice(),
+            support: support.into(),
         }
     }
 }

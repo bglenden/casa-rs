@@ -6,6 +6,8 @@
 //! automatic mask of every channel and polarization, which evolves from
 //! one boundary to the next.
 
+use std::sync::Arc;
+
 use casa_imaging_model::{DirectionCoordinateSpec, ModelSample};
 
 use super::auto_multithresh::{
@@ -15,7 +17,7 @@ use super::auto_planes::{
     AutoMaskEvidence, AutoMaskSource, AutoMaskState, auto_mask_domain, channel_blocks,
 };
 use super::{MaskBox, MaskError, MaskPlanes, ReconstructionMask};
-use crate::{FinalNormalState, ModelGeneration, NormalBasis};
+use crate::{FinalNormalState, ModelGeneration, NormalBasis, PsfSummary};
 
 /// Deferred mask construction evaluated at an exact major-cycle boundary.
 #[derive(Debug, Clone)]
@@ -39,8 +41,9 @@ pub enum ReconstructionMaskPlan {
         /// The planes the support holds, shared along an axis of one.
         planes: MaskPlanes,
         /// Canonical target-grid support produced by exact WCS reprojection,
-        /// plane after plane (channel-major), each x-major.
-        support: Box<[bool]>,
+        /// plane after plane (channel-major), each x-major; every mask
+        /// materialized from the plan shares it.
+        support: Arc<[bool]>,
     },
     /// Generate CASA auto-multithreshold support of every plane from the
     /// current Normal State.
@@ -98,9 +101,8 @@ impl ReconstructionMaskPlan {
         match self {
             Self::FullPlane { .. } | Self::Boxes { .. } => MaskPlanes::SHARED,
             Self::Reprojected { planes, .. } => *planes,
-            Self::AutoMultithresh { .. } => {
-                MaskPlanes::new(channels, polarizations).unwrap_or(MaskPlanes::SHARED)
-            }
+            Self::AutoMultithresh { .. } => MaskPlanes::new(channels, polarizations)
+                .expect("an image has at least one channel and one polarization"),
         }
     }
 
@@ -128,7 +130,12 @@ impl ReconstructionMaskPlan {
                 if !held.covers(planes.channels(), planes.polarizations()) {
                     return Err(MaskError::ShapeMismatch.into());
                 }
-                ReconstructionMask::from_plane_support(*coordinate, shape, *held, support.to_vec())?
+                ReconstructionMask::from_plane_support(
+                    *coordinate,
+                    shape,
+                    *held,
+                    Arc::clone(support),
+                )?
             }
             Self::AutoMultithresh {
                 coordinate,
@@ -240,7 +247,8 @@ fn normal_planes(normal: &FinalNormalState) -> MaskPlanes {
     } else {
         normal.channel_count()
     };
-    MaskPlanes::new(channels, normal.polarization_count()).unwrap_or(MaskPlanes::SHARED)
+    MaskPlanes::new(channels, normal.polarization_count())
+        .expect("a normal state has at least one channel and one polarization")
 }
 
 impl ImageDomainReconstructionMaskPlans {
@@ -409,7 +417,8 @@ impl ImageDomainReconstructionMaskPlans {
     /// ([`Self::mask_bytes_for`]) and, for an automatic mask, on each of
     /// the `workers` channels masked at once, what one plane's mask holds
     /// ([`auto_multithresh_bytes`]), the plane's read (as `Complex64`) and
-    /// the model support it reads, and the channel's new supports.
+    /// the model support it reads, and the channel's new supports; and every
+    /// plane's PSF measurements, which the mask lists.
     #[must_use]
     pub fn materialize_bytes_for(
         &self,
@@ -430,7 +439,14 @@ impl ImageDomainReconstructionMaskPlans {
                 let read = size_of::<num_complex::Complex64>() as u64
                     + size_of::<ModelSample>() as u64
                     + polarizations as u64 * size_of::<bool>() as u64;
-                workers.min(channels).max(1) as u64 * (auto_multithresh_bytes(shape) + cells * read)
+                // Every plane's PSF measurements and the empty plane a mask
+                // inherits before the first boundary, beside the workers'.
+                let measurements = (channels * polarizations) as u64
+                    * size_of::<Option<PsfSummary>>() as u64
+                    + cells * size_of::<bool>() as u64;
+                measurements
+                    + workers.min(channels).max(1) as u64
+                        * (auto_multithresh_bytes(shape) + cells * read)
             })
             .max()
             .unwrap_or(0);
@@ -527,5 +543,88 @@ impl ImageDomainReconstructionMasks {
     /// Iterate supports in canonical domain order.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &ReconstructionMask> {
         self.masks.iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_imaging_model::{DirectionFrame, Projection, SkyDirection};
+
+    fn grid() -> DirectionCoordinateSpec {
+        DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(DirectionFrame::J2000, 1.0, 0.5),
+            [1.0, 1.0],
+            [-1.0e-4, 1.0e-4],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 90.0],
+        )
+    }
+
+    fn controls() -> AutoMultithreshControls {
+        AutoMultithreshControls {
+            sidelobe_factor: 3.0,
+            noise_factor: 5.0,
+            low_noise_factor: 1.5,
+            negative_factor: 0.0,
+            minimum_beam_fraction: 0.3,
+            smooth_factor: 1.0,
+            cut_threshold: 0.01,
+            grow_iterations: 75,
+            grow_prune: true,
+            minimum_percent_change: -1.0,
+            noise: crate::NoiseEstimate::Fast,
+            verbose: false,
+        }
+    }
+
+    fn same(left: &ReconstructionMask, right: &[bool]) -> bool {
+        std::ptr::eq(left.support().as_ptr(), right.as_ptr())
+    }
+
+    /// A generation of masks is held once, whoever holds it: the plan the
+    /// next boundary evolves from, the run's outcome (a clone) and the
+    /// minor cycle share its support, and a static plan's masks share the
+    /// plan's. Each holder once copied a cube's every plane.
+    #[test]
+    fn every_holder_shares_a_generation_of_masks() {
+        let planes = MaskPlanes::new(3, 2).unwrap();
+        let used =
+            ReconstructionMask::from_plane_support(grid(), [2, 2], planes, vec![true; 24]).unwrap();
+        let masks = ImageDomainReconstructionMasks::new([used]).unwrap();
+        let plans =
+            ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::AutoMultithresh {
+                coordinate: grid(),
+                controls: controls(),
+                completed_major_cycles: 0,
+                cycle_threshold_reached: false,
+                previous: None,
+                stopped_channels: Box::new([]),
+            }])
+            .unwrap();
+        let next = plans.next_cycle(&masks, &[None], 1, false).unwrap();
+        let ReconstructionMaskPlan::AutoMultithresh {
+            previous: Some(previous),
+            ..
+        } = next.primary()
+        else {
+            panic!("the next boundary evolves from the masks used");
+        };
+        assert!(same(previous, masks.primary().support()));
+        let outcome = masks.clone();
+        assert!(same(outcome.primary(), masks.primary().support()));
+
+        let support: Arc<[bool]> = vec![true, false, false, true].into();
+        let plan = ReconstructionMaskPlan::Reprojected {
+            coordinate: grid(),
+            planes: MaskPlanes::SHARED,
+            support: Arc::clone(&support),
+        };
+        let (made, _) = plan
+            .materialize::<MaskError>(0, ([2, 2], planes), None)
+            .unwrap();
+        assert!(same(&made, &support));
+        assert!(same(&made.clone(), &support));
     }
 }
