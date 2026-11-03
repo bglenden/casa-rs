@@ -36,7 +36,12 @@ pub(super) fn reseed_response(
 ) -> Option<MinorCycleImageResponse> {
     start_model
         .and(response)
-        .filter(|response| response.normalization() == ProductNormalization::FlatNoise)
+        .filter(|response| {
+            matches!(
+                response.normalization(),
+                ProductNormalization::FlatNoise | ProductNormalization::PbSquare
+            )
+        })
 }
 
 impl Run<'_> {

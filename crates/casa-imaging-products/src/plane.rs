@@ -140,7 +140,9 @@ fn normalize_domain_plane(
 ) -> Result<Vec<f32>, ProductsError> {
     match normalization {
         ProductNormalization::UnitResponse => Ok(normalize_plane(values, plane.sum_weight())),
-        ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
+        ProductNormalization::FlatNoise
+        | ProductNormalization::FlatSky
+        | ProductNormalization::PbSquare => {
             MosaicSensitivity::new(&plane.read_sensitivity()?)?.normalize(
                 values,
                 normalization,
@@ -166,7 +168,9 @@ pub(crate) fn apparent_model(
     if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
         || !matches!(
             normalization,
-            ProductNormalization::FlatNoise | ProductNormalization::FlatSky
+            ProductNormalization::FlatNoise
+                | ProductNormalization::FlatSky
+                | ProductNormalization::PbSquare
         )
     {
         return Ok(model);

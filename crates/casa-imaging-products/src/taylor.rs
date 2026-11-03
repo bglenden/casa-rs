@@ -324,7 +324,9 @@ fn directional_response<'a>(
     let directional = primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
         && matches!(
             inputs.problem().products().normalization(),
-            ProductNormalization::FlatNoise | ProductNormalization::FlatSky
+            ProductNormalization::FlatNoise
+                | ProductNormalization::FlatSky
+                | ProductNormalization::PbSquare
         );
     directional
         .then(|| {
