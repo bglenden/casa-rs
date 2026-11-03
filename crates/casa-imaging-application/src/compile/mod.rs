@@ -231,14 +231,19 @@ pub(crate) fn prepare(
     let model_samples = domains::model_samples(&domains, reconstruction_planes, &request.stokes)?;
     let continuation =
         continuation::prepare(request, &mut domains[0], spectral.output_channels, context)?;
-    let start_model = match request.startmodel.as_deref() {
-        Some(path) => Some(StartModel::prepare(
-            path,
+    let start_model = if request.has_start_model() {
+        let terms = match request.deconvolver {
+            Deconvolver::Mtmfs => request.nterms,
+            _ => 1,
+        };
+        Some(StartModel::prepare(
+            &request.startmodel,
             &domains[0],
             request.stokes.len(),
-            reconstruction_planes,
-        )?),
-        None => continuation.start_model,
+            (reconstruction_planes, terms),
+        )?)
+    } else {
+        continuation.start_model
     };
     let geometry = geometry(request, &domains, &centre, &spectral);
     // A moving phase centre names a body and a table alike; the table, when

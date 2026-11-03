@@ -123,7 +123,7 @@ pub(crate) fn check(request: &ImagingRequest) -> Result<(), PrepareError> {
                 "it is not a product of this run's {family} images; choose a new imagename"
             )));
         }
-        if suffix.starts_with("model") && request.startmodel.is_some() {
+        if suffix.starts_with("model") && request.has_start_model() {
             return Err(refuse(
                 "startmodel cannot be supplied when the output model already exists".into(),
             ));

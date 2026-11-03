@@ -178,7 +178,7 @@ def tclean(
     phasecenter: str = ...,
     stokes: str = ...,
     projection: str = ...,
-    startmodel: StrPath = ...,
+    startmodel: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     specmode: Literal['cont', 'cube', 'cubedata', 'cubesource', 'mfs', 'mvc'] = ...,
     reffreq: str = ...,
     nchan: int = ...,

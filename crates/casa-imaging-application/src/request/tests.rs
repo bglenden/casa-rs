@@ -164,9 +164,19 @@ fn contradictory_parameters_are_refused_before_any_data_is_read() {
         ),
         (json!({ "fitspw": "0:0~3" }), "fitspw, specmode"),
         (json!({ "pblimit": 1.0 }), "psfcutoff, pblimit"),
+        // CASA's image stores take one image, or one per Taylor term.
         (
-            json!({ "deconvolver": "mtmfs", "nterms": 2, "startmodel": "deep.model" }),
-            "startmodel, deconvolver",
+            json!({ "startmodel": ["a.model", "b.model"] }),
+            "startmodel",
+        ),
+        (
+            json!({ "deconvolver": "mtmfs", "nterms": 2,
+                    "startmodel": ["a.tt0", "a.tt1", "a.tt2"] }),
+            "startmodel",
+        ),
+        (
+            json!({ "startmodel": "a.model", "outlierfile": "outliers.txt" }),
+            "startmodel, outlierfile",
         ),
     ] {
         assert_eq!(refusal(overrides), parameters);
@@ -270,4 +280,30 @@ fn stokes_names_stokes_parameters_or_correlations_in_casa_order() {
             .map_or(true, |values| ImagingRequest::from_tclean(&values).is_err());
         assert!(refused, "{text:?}");
     }
+}
+
+/// `startmodel` is one image, or a list with an entry per Taylor term, an
+/// empty entry leaving its term zero (`SIImageStoreMultiTerm::setModelImage`;
+/// CASA's `test_startmodel_mtmfs_restart` passes `['', 'tst1.model.tt1']`).
+#[test]
+fn a_start_model_is_one_image_or_one_per_taylor_term() {
+    let paths = |overrides: Value| request(overrides).startmodel;
+    assert!(paths(json!({})).is_empty());
+    assert!(paths(json!({ "startmodel": "" })).is_empty());
+    assert_eq!(
+        paths(json!({ "startmodel": "deep.model" })),
+        [Some(PathBuf::from("deep.model"))]
+    );
+    assert_eq!(
+        paths(json!({ "startmodel": ["deep.model"] })),
+        [Some(PathBuf::from("deep.model"))]
+    );
+    let terms = request(json!({ "deconvolver": "mtmfs", "nterms": 2,
+                                "startmodel": ["", "tst1.model.tt1"] }));
+    assert_eq!(
+        terms.startmodel,
+        [None, Some(PathBuf::from("tst1.model.tt1"))]
+    );
+    assert!(terms.has_start_model());
+    assert!(terms.validate().is_ok());
 }

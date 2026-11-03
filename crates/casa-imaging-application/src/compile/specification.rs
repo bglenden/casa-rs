@@ -394,7 +394,7 @@ fn requested_products(
     // CASA makes the model when the minor cycle, the restoration or a
     // start model needs it: tclean sets up no deconvolver for `niter=0`
     // with `restoration=False`, and nothing else writes one.
-    if residual && (minor_cycle || restored || request.startmodel.is_some()) {
+    if residual && (minor_cycle || restored || request.has_start_model()) {
         products.push(ProductKind::Model);
     }
     if restored {

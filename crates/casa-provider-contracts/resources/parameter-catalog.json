@@ -6451,11 +6451,17 @@
     },
     {
       "id": "parameter.startmodel",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "startmodel",
       "value_domain": {
-        "kind": "path",
-        "resource_kind": "image"
+        "kind": "array",
+        "element": {
+          "kind": "path",
+          "resource_kind": "image"
+        },
+        "min_items": 0,
+        "max_items": null,
+        "allow_scalar": true
       },
       "normalization": {
         "kind": "path"
@@ -6464,8 +6470,8 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "CASA image in Jy/pixel that the model starts from",
-        "details": "Its masked pixels are zero. On another grid it is regridded linearly onto the image's, its flux kept; its direction frame must be the image's, since casa-rs does not convert frames. Its Stokes must be the image's, plane for plane. A cube's start model has the cube's spectral axis; an MFS image's has one plane, at any frequency, as CASA's regrid takes it. The first major cycle subtracts its prediction, and the restored image includes it.",
+        "summary": "CASA image in Jy/pixel that the model starts from, or one per Taylor term",
+        "details": "One image, or with deconvolver='mtmfs' a list of at most nterms images, the k-th the start of Taylor term k, an empty entry leaving its term zero. Its masked pixels are zero. On another grid it is regridded linearly onto the image's, its flux kept, along direction and frequency; its direction and spectral frames must be the image's, since casa-rs does not convert frames. Its Stokes must be the image's, plane for plane. An MFS image's has one plane, at any frequency, as CASA's regrid takes it. The first major cycle subtracts its prediction, and the restored image includes it.",
         "examples": [
           "deep.model"
         ]

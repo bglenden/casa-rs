@@ -27,16 +27,18 @@
 //! converts every output pixel, as casacore does with `decimate=0`, so its
 //! positions are exact.
 //!
-//! Only the direction axes are regridded, in the same frame. For every other
-//! coordinate:
+//! The direction axes are regridded in the same frame, and a spectral axis
+//! that differs is regridded along frequency in the same frame
+//! ([`spectral`]: casacore's `regrid1D`, linear whatever the method, as
+//! `SIImageStore::regridToModelImage` asks for a start model). For every
+//! other coordinate:
 //! - where all its axes have one pixel in both images, casacore does not
 //!   regrid it and the output keeps the input's coordinate (CASA 6.7.6 keeps
 //!   the input's channel and Stokes for a template at another frequency or
 //!   Stokes), and so does casa-rs;
 //! - otherwise the template's must be the input's: the same type, names,
-//!   units, spectral frame and rest frequency or Stokes list, and the same
-//!   world value at every pixel. A different one is refused rather than
-//!   relabelled.
+//!   units and Stokes list, and the same world value at every pixel. A
+//!   different one is refused rather than relabelled.
 
 use casa_coordinates::{
     Coordinate, CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
@@ -46,6 +48,8 @@ use casa_types::ArrayD;
 use ndarray::{IxDyn, ShapeBuilder};
 
 use crate::{ImageError, ImageInterface, ImagePixel};
+
+mod spectral;
 
 /// casacore's `Interpolate2D` methods that `imregrid` and the image tool's
 /// `regrid` offer, Lanczos aside.
@@ -178,16 +182,18 @@ fn same_axes(a: &CoordinateModel, b: &CoordinateModel, shape: &[usize]) -> bool 
 type DirectionAxes<'a> = (&'a DirectionCoordinate, usize);
 
 /// How an image is regridded onto a template: the two direction coordinates
-/// and their first pixel axes, and the output's coordinate system.
+/// and their first pixel axes, the spectral pass when the spectral axes
+/// differ, and the output's coordinate system.
 struct AxesPlan<'a> {
     input: DirectionAxes<'a>,
     output: DirectionAxes<'a>,
+    spectral: Option<spectral::SpectralPlan>,
     coordinates: CoordinateSystem,
     template_coordinates: bool,
 }
 
 /// The plan, once the two images are checked to differ only on the
-/// direction axes and on coordinates of one pixel.
+/// direction and spectral axes and on coordinates of one pixel.
 fn plan_axes<'a>(
     input: &'a CoordinateSystem,
     input_shape: &[usize],
@@ -215,6 +221,7 @@ fn plan_axes<'a>(
     }
     let mut coordinates = template.coordinates.clone();
     let mut template_coordinates = true;
+    let mut spectral = None;
     let mut first = 0;
     for k in 0..input.n_coordinates() {
         let ours = input.coordinate(k);
@@ -225,7 +232,7 @@ fn plan_axes<'a>(
             continue;
         }
         let in_shape = &input_shape[axes.clone()];
-        let out_shape = &template.shape[axes];
+        let out_shape = &template.shape[axes.clone()];
         let degenerate = in_shape.iter().chain(out_shape).all(|n| *n == 1);
         if degenerate && ours.coordinate_type() == theirs.coordinate_type() {
             // Not regridded: the output keeps the input's coordinate.
@@ -234,11 +241,14 @@ fn plan_axes<'a>(
                 template_coordinates = false;
             }
         } else if in_shape != out_shape || !same_axes(ours, theirs, in_shape) {
-            return Err(refuse(format!(
-                "the {} axes differ between the input and the template; casa-rs regrids the \
-                 direction axes only",
-                ours.coordinate_type()
-            )));
+            spectral = Some(
+                spectral::SpectralPlan::new(
+                    (ours, in_shape[0]),
+                    (theirs, out_shape[0]),
+                    axes.start,
+                )
+                .map_err(refuse)?,
+            );
         }
     }
     let input_direction = direction(input, in_index);
@@ -254,6 +264,7 @@ fn plan_axes<'a>(
     Ok(AxesPlan {
         input: (input_direction, in_axis),
         output: (output_direction, out_axis),
+        spectral,
         coordinates,
         template_coordinates,
     })
@@ -373,13 +384,15 @@ pub fn check_regrid(
     plan_axes(coordinates, shape, template).map(drop)
 }
 
-/// Regrid `input`'s direction axes onto `template` by `method`.
+/// Regrid `input`'s direction axes onto `template` by `method`, and its
+/// spectral axis linearly where the template's differs.
 ///
 /// # Errors
 ///
-/// A template whose axes other than the direction differ from the input's,
-/// where they have more than one pixel, or whose direction frame does, and a
-/// failure to read the input.
+/// A template whose axes other than the direction and spectral ones differ
+/// from the input's, where they have more than one pixel, whose direction
+/// or spectral frame does, or onto whose spectral axis an input of one
+/// channel would be regridded, and a failure to read the input.
 pub fn regrid<T, I>(
     input: &I,
     template: &RegridTemplate,
@@ -398,14 +411,18 @@ where
     let grid = positions(input_direction, output_direction, out_plane);
     let data = input.get()?;
     let mask = input.default_mask()?;
-    let mut out_data = ArrayD::<T>::from_elem(IxDyn(&template.shape).f(), T::from(0.0));
-    let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(&template.shape).f(), false);
+    // The direction pass keeps the input's channels; the spectral pass
+    // takes them to the template's.
+    let mut direction_shape = input_shape.clone();
+    direction_shape[out_axis..out_axis + 2].copy_from_slice(&out_plane);
+    let mut out_data = ArrayD::<T>::from_elem(IxDyn(&direction_shape).f(), T::from(0.0));
+    let mut out_mask = ArrayD::<bool>::from_elem(IxDyn(&direction_shape).f(), false);
     let mut plane = vec![0.0f64; in_plane[0] * in_plane[1]];
     let mut plane_mask = mask.as_ref().map(|_| vec![true; plane.len()]);
     let mut out_values = vec![0.0f64; out_plane[0] * out_plane[1]];
     let mut out_valid = vec![false; out_values.len()];
     let planes = PlaneIndex::new(&input_shape, in_axis);
-    let out_planes = PlaneIndex::new(&template.shape, out_axis);
+    let out_planes = PlaneIndex::new(&direction_shape, out_axis);
     for plane_number in 0..planes.count {
         planes.read(plane_number, &data, &mut plane, |v| (*v).into());
         if let (Some(values), Some(mask)) = (plane_mask.as_mut(), mask.as_ref()) {
@@ -425,6 +442,9 @@ where
             T::from(v as f32)
         });
         out_planes.write(plane_number, &out_valid, &mut out_mask, |v| v);
+    }
+    if let Some(spectral) = &plan.spectral {
+        (out_data, out_mask) = spectral.apply(&out_data, &out_mask, &template.shape);
     }
     Ok(Regridded {
         data: out_data,
