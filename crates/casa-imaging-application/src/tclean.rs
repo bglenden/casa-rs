@@ -985,15 +985,24 @@ fn output_frame(text: &str) -> Result<String, TcleanRefusal> {
     }
 }
 
-/// A cube's velocity convention, in casacore's spelling: `z` is optical and
-/// `relativistic` (or `true`) is `beta`, as in `MDoppler`.
-/// Whether a cube's `start` or `width` text is a velocity, which makes
-/// CASA's axis a velocity grid (`SynthesisParamsImage::findSpecMode`).
+/// Whether a cube's `start` or `width` text makes its axis a velocity
+/// grid (`SynthesisParamsImage::findSpecMode`): a velocity, or a
+/// dimensionless Doppler value, which the axis builder takes as the
+/// velocity it stands for (`CubeAxisValue::parse`). A whole number is a
+/// channel.
 fn is_velocity(text: &str) -> bool {
+    let text = text.trim();
+    if text.parse::<i32>().is_ok() {
+        return false;
+    }
     let velocity = Unit::new("m/s").expect("built-in velocity unit");
-    Quantity::from_str(text.trim()).is_ok_and(|quantity| quantity.unit().conformant(&velocity))
+    Quantity::from_str(text).is_ok_and(|quantity| {
+        quantity.unit().conformant(&velocity) || quantity.unit().conformant(&Unit::dimensionless())
+    })
 }
 
+/// A cube's velocity convention, in casacore's spelling: `z` is optical and
+/// `relativistic` (or `true`) is `beta`, as in `MDoppler`.
 fn velocity_convention(text: &str) -> Result<&'static str, TcleanRefusal> {
     match text.to_ascii_lowercase().as_str() {
         "radio" => Ok("RADIO"),

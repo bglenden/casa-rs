@@ -281,3 +281,84 @@ fn cubic_prediction_reproduces_a_cubic_spectrum_and_extrapolates_in_its_halo() {
         Complex64::default()
     );
 }
+
+/// A cubic residual beside a flagged channel, as CASA forms it: the sample
+/// fits the flagged channel's stored value, and the model there is zero.
+/// `interpolateFrequencyFromgrid` writes the predicted model through
+/// `swapyz(flipgrid, copyOfFlag, flipdata)`, which skips every entry
+/// `vb.flagCube()` flags and so leaves it zero in `visCubeModel`;
+/// `SIMapperCollection::grid` then grids `Σ f·(V − M)` with `M = 0` there.
+/// casa-rs's sample lists the flagged channel with its factor and its
+/// native term carries the channel's flag bits, which zero its model.
+#[test]
+fn a_cubic_residual_fits_a_flagged_channels_value_and_no_model_there() {
+    use casa_imaging_operator::{NO_CELL, STENCIL};
+    let axis = SpectralAxis::new(1.00025e9, 1.0e6, 10).expect("axis");
+    let resampler = SpectralResampler::channel_local(axis, SpectralKernel::Cubic);
+    let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+    let native = native();
+    let values = vec![Complex32::new(1.0, 0.0); native.len() * 2];
+    let weights = vec![1.0; native.len() * 2];
+    let mut flags = vec![false; native.len() * 2];
+    flags[10] = true;
+    flags[11] = true;
+    let row = NativeRow {
+        uvw_m: UVW_M,
+        phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
+        frequencies_hz: &native,
+        values: &values,
+        weights: &weights,
+        flags: &flags,
+        row_flag: false,
+        context: context(),
+    };
+    // The sample at 3.25 has the stencil 2–5, flagged channel 5 in it.
+    let mut sources = Vec::new();
+    resampler
+        .place_each_sourced(
+            &operator,
+            &WeightingGeneration::Natural { taper: None },
+            &row,
+            0,
+            None,
+            |placement, _, _, source| sources.push((placement.plane, source)),
+        )
+        .expect("placed");
+    let (_, source) = sources
+        .iter()
+        .find(|(plane, _)| *plane == 3)
+        .expect("a sample on plane 3");
+    let flagged = source
+        .cells
+        .iter()
+        .zip(source.factors)
+        .find(|(cell, _)| **cell == 5)
+        .expect("the flagged channel is in the stencil");
+    assert!(flagged.1 != 0.0, "{source:?}");
+    assert_eq!(
+        source.cells.iter().filter(|cell| **cell != NO_CELL).count(),
+        STENCIL
+    );
+    // The flagged channel's native term keeps its model zero.
+    let model = point_model(&operator, &[1.0; 10]);
+    let mut scratch = PredictionScratch::default();
+    scratch.begin(2);
+    let placed = resampler
+        .place_prediction(&operator, &model, &row, &mut scratch)
+        .expect("prediction placed");
+    resampler.native_terms(&row, 2, placed, &mut scratch, 0);
+    let term = scratch
+        .terms()
+        .iter()
+        .find(|term| term.cell == 5)
+        .expect("a term for channel 5");
+    assert_eq!(term.flags, 0b11, "{term:?}");
+    assert!(
+        scratch
+            .terms()
+            .iter()
+            .filter(|term| term.cell != 5)
+            .all(|term| term.flags == 0)
+    );
+}

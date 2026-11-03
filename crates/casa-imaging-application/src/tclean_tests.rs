@@ -333,6 +333,12 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "veltype",
             "#1096",
         ),
+        // A dimensionless start is a Doppler value, a velocity grid too.
+        (
+            json!({ "specmode": "cube", "veltype": "z", "start": "0.01" }),
+            "veltype",
+            "#1096",
+        ),
         // A source-frame cube's per-channel density, mosaic or not.
         (
             json!({ "specmode": "cubesource", "weighting": "briggsbwtaper",

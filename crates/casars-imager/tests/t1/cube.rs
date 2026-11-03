@@ -802,6 +802,25 @@ fn a_cube_without_nchan_counts_the_channels_from_its_start() {
     assert!(close(&paired, &pairs), "{paired:?}");
     let started = planes("derived-start", json!({ "start": 5 }));
     assert!(close(&started, &native[5..]), "{started:?}");
+    // A frequency grid (`regridChanBounds`' "freq" branch with nchan < 0):
+    // from `start`'s lower edge to the band's upper edge in whole widths,
+    // with CASA's 1% tolerance.
+    let spacing_hz = native[1] - native[0];
+    let (start_hz, width_hz) = (native[2] + 0.3 * spacing_hz, 2.0 * spacing_hz);
+    let upper_edge_hz = native[native.len() - 1] + spacing_hz / 2.0;
+    let count =
+        ((upper_edge_hz - (start_hz - width_hz / 2.0) + 0.01 * width_hz) / width_hz).floor();
+    let expected = (0..count as usize)
+        .map(|plane| start_hz + plane as f64 * width_hz)
+        .collect::<Vec<_>>();
+    let frequency = planes(
+        "derived-frequency",
+        json!({ "start": format!("{start_hz}Hz"), "width": format!("{width_hz}Hz") }),
+    );
+    assert!(
+        close(&frequency, &expected),
+        "{frequency:?} against {expected:?}"
+    );
 }
 
 /// CASA's visibility iterator selects a cube's channels at each time by

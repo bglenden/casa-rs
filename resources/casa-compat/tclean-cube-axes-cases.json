@@ -1,8 +1,9 @@
 {
- "note": "#1066: cube axes CASA derives from the selection, start and width (nchan=-1), strided channel selections and cubic spectral interpolation, against CASA 6.7.6.14, with tools/casa-compat/tclean_case_matrix.py. refim_point.ms holds one window of 20 TOPO channels of 50 MHz from 1 GHz; refim_point_withline.ms the same window with a spectral line. Optical-velocity (tabular) axes wait for #1096 and are refused.",
+ "note": "#1066: cube axes CASA derives from the selection, start and width (nchan=-1), strided channel selections and cubic spectral interpolation, against CASA 6.7.6.14, with tools/casa-compat/tclean_case_matrix.py. refim_point.ms holds one window of 20 TOPO channels of 50 MHz from 1 GHz; refim_point_withline.ms the same window with a spectral line. Optical-velocity (tabular) axes wait for #1096 and are refused. refim_point_withline_flag9.ms is refim_point_withline.ms with channel 9 flagged in every row by CASA's flagdata(mode='manual', spw='0:9', flagbackup=False); it is made beside the data root's copy, as casatestdata has none.",
  "inputs": {
   "point": "unittest/tclean/refim_point.ms",
-  "line": "unittest/tclean/refim_point_withline.ms"
+  "line": "unittest/tclean/refim_point_withline.ms",
+  "line_flag9": "unittest/tclean/refim_point_withline_flag9.ms"
  },
  "common": {},
  "cases": {
@@ -249,6 +250,36 @@
     "robust": 0.5
    },
    "note": "interpolation='cubic' with per-channel Briggs weights (the nearer channel's weight)"
+  },
+  "cubic_line_flagged_channel": {
+   "vis": "line_flag9",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "interpolation": "cubic",
+    "start": "1.225GHz",
+    "width": "50MHz",
+    "nchan": 16,
+    "niter": 50
+   },
+   "note": "interpolation='cubic' half a channel off the data with channel 9 flagged: the samples whose four channels hold it fit its stored value and no model there, as CASA's swapyz leaves the flagged model zero"
+  },
+  "cubic_line_flagged_channel_wide": {
+   "vis": "line_flag9",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "interpolation": "cubic",
+    "width": 2,
+    "niter": 50
+   },
+   "note": "the flagged channel under two-channel bins"
   }
  }
 }

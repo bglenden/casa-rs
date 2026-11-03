@@ -810,24 +810,26 @@ impl SpectralResampler {
     ///
     /// When residuals are formed at native channels, a sample on plane `p`
     /// lies within half an output width `Δ` of `p`'s centre; the natives it
-    /// interpolates lie within the native spacing `s` of it (two spacings
-    /// for a cubic); each of their predictions interpolates output-channel
-    /// values on CASA's fine grid within one output width of the native
-    /// (two for a cubic) (`interpolateFrequencyFromgrid`). So every model
-    /// plane a wave's samples reach lies within `⌈1.5 + s/|Δ|⌉` planes of
-    /// the wave (`⌈2.5 + 2s/|Δ|⌉` for a cubic). Direct and nearest
-    /// sampling predict a native on its own plane: no halo.
+    /// interpolates lie within the native spacing `s` of it, and a cubic's
+    /// within `3s`, its four-point window moved inwards at either end of a
+    /// row; each of their predictions interpolates output-channel values on
+    /// CASA's fine grid within one output width of the native (two for a
+    /// cubic) (`interpolateFrequencyFromgrid`). So every model plane a
+    /// wave's samples reach lies within `⌈1.5 + s/|Δ|⌉` planes of the wave
+    /// (`⌈2.5 + 3s/|Δ|⌉` for a cubic). Direct and nearest sampling predict
+    /// a native on its own plane: no halo.
     #[must_use]
     pub fn model_halo(&self, native_spacing_hz: f64) -> u32 {
         match self.sampling {
             Sampling::Interpolated(axis, order) if axis.channels > 1 => {
-                let reach = match order {
-                    Order::Linear => 1.0,
-                    Order::Cubic => 2.0,
+                let (prediction, natives) = match order {
+                    Order::Linear => (1.0, 1.0),
+                    Order::Cubic => (2.0, 3.0),
                 };
-                let planes =
-                    (reach + 0.5 + reach * native_spacing_hz.abs() / axis.increment_hz.abs())
-                        .ceil();
+                let planes = (prediction
+                    + 0.5
+                    + natives * native_spacing_hz.abs() / axis.increment_hz.abs())
+                .ceil();
                 if planes.is_finite() && planes < f64::from(axis.channels) {
                     planes as u32
                 } else {

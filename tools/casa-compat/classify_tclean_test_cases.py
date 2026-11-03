@@ -523,8 +523,12 @@ class Refusals:
 
 
 def is_velocity(text):
-    """`tclean.rs`'s `is_velocity`: a start or width in velocity units."""
-    return bool(re.fullmatch(r"\s*[-+]?[0-9.eE+-]+\s*(k?m/s)\s*", text or ""))
+    """`tclean.rs`'s `is_velocity`: a start or width in velocity units, or a
+    dimensionless Doppler value (a number that is not a whole channel)."""
+    text = (text or "").strip()
+    if not text or re.fullmatch(r"[-+]?\d+", text):
+        return False
+    return bool(re.fullmatch(r"[-+]?[0-9.eE+-]+\s*(k?m/s)?", text))
 
 
 def selector_ids(text):
