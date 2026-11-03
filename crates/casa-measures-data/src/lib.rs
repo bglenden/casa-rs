@@ -975,6 +975,24 @@ impl MeasuresProvider for MeasuresRuntime {
             .map_err(|error| error.to_string())
     }
 
+    fn observatory_names(&self) -> Result<Vec<String>, String> {
+        self.observatories()
+            .map(|catalog| catalog.iter().map(|entry| entry.name.clone()).collect())
+            .map_err(|error| error.to_string())
+    }
+
+    fn source_names(&self) -> Result<Vec<String>, String> {
+        self.sources()
+            .map(|catalog| catalog.iter().map(|entry| entry.name.clone()).collect())
+            .map_err(|error| error.to_string())
+    }
+
+    fn spectral_line_names(&self) -> Result<Vec<String>, String> {
+        self.spectral_lines()
+            .map(|catalog| catalog.iter().map(|entry| entry.name.clone()).collect())
+            .map_err(|error| error.to_string())
+    }
+
     fn observatory(&self, name: &str) -> Result<Option<ObservatoryPosition>, String> {
         self.observatories()
             .map(|catalog| {

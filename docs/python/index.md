@@ -23,7 +23,8 @@
   that `sm` scripts and `simobserve` use: `readantenna`, the mosaic
   pointings (`calc_pointings2`, pointing files), the direction helpers,
   `noisetemp`, `bandname`, `polsettings`, the baseline helpers, and the
-  sky-model helpers `modifymodel` and `flatimage`. Its other methods have
+  sky-model helpers `modifymodel` and `flatimage`, and the analysis helpers
+  `ismstp`, `cellsize`, `statim` and `convimage`. Its other methods have
   CASA's signatures and raise `NotImplementedError` naming the issue that
   records them. `from casars import simutil` is its public import.
 - `casars.parameters` is the accepted common API for typed task profiles

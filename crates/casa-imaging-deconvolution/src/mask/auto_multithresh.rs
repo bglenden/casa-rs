@@ -176,9 +176,10 @@ pub struct AutoMaskCycle {
 /// is made: the residual it reads and a copy for its
 /// statistics and a smoothed plane (`f64` each); region pruning's
 /// component list and queue, grown by pushes (`usize` each, twice); and
-/// its twelve `bool` planes, the valid pixels and new support among them.
+/// its thirteen `bool` planes, the valid pixels, the pixels its noise is
+/// measured on and new support among them.
 pub const AUTO_MULTITHRESH_BYTES_PER_CELL: u64 =
-    3 * size_of::<f64>() as u64 + 4 * size_of::<usize>() as u64 + 12;
+    3 * size_of::<f64>() as u64 + 4 * size_of::<usize>() as u64 + 13;
 
 /// Heap bytes one plane's automatic mask ([`auto_multithresh`]) holds at
 /// most for a plane of `shape` (`[width, height]`):
@@ -322,7 +323,8 @@ pub(super) fn plane_mask(inputs: &PlaneInputs<'_>) -> Result<PlaneMask, MaskErro
     let Some(plane) = plane else {
         return Ok(empty_plane(inherited, cycle, controls));
     };
-    if plane.residual.len() != cells || plane.valid.len() != cells {
+    let measured = plane.statistics.as_deref().unwrap_or(&plane.valid);
+    if plane.residual.len() != cells || plane.valid.len() != cells || measured.len() != cells {
         return Err(MaskError::ShapeMismatch);
     }
     if plane.residual.iter().any(|value| !value.is_finite()) {
@@ -331,7 +333,7 @@ pub(super) fn plane_mask(inputs: &PlaneInputs<'_>) -> Result<PlaneMask, MaskErro
     let beam = beam.ok_or(MaskError::InvalidBeamArea)?;
     let (noise, peak) = statistics(
         &plane.residual,
-        &plane.valid,
+        (&plane.valid, measured),
         inherited,
         first_plane_full,
         cycle,
@@ -420,15 +422,15 @@ fn changed(before: &[bool], after: &[bool]) -> usize {
         .count()
 }
 
-/// The plane's noise and signed absolute peak over its valid pixels
-/// (`SDMaskHandler::autoMask`). The fast estimate is the classical
-/// statistics of every valid pixel; the robust one excludes the inherited
-/// mask, unless the mask covers the block's whole first plane, and is zero
-/// for a stopped plane, as `calcRobustImageStatistics` records a flagged
-/// channel.
+/// The plane's noise over `measured` and signed absolute peak over its
+/// valid pixels (`SDMaskHandler::autoMask`). The fast estimate is the
+/// classical statistics of every measured pixel; the robust one excludes
+/// the inherited mask, unless the mask covers the block's whole first
+/// plane, and is zero for a stopped plane, as `calcRobustImageStatistics`
+/// records a flagged channel.
 fn statistics(
     residual: &[f64],
-    valid: &[bool],
+    (valid, measured): (&[bool], &[bool]),
     inherited: &[bool],
     first_plane_full: bool,
     cycle: AutoMaskCycle,
@@ -455,7 +457,7 @@ fn statistics(
     } else {
         plane_noise(
             residual,
-            valid,
+            measured,
             controls.noise,
             Some(inherited),
             first_plane_full,
@@ -911,7 +913,14 @@ mod tests {
         };
         let residual = [-41.1, -1.3, 128.9, -500.0];
         let valid = [true, true, true, false];
-        let (_, peak) = statistics(&residual, &valid, &[false; 4], false, cycle, &controls);
+        let (_, peak) = statistics(
+            &residual,
+            (&valid, &valid),
+            &[false; 4],
+            false,
+            cycle,
+            &controls,
+        );
         // Neither recentred by the median nor read from an invalid pixel.
         assert_eq!(peak, 128.9);
         let mut robust = controls;
@@ -920,10 +929,38 @@ mod tests {
             stopped: true,
             ..cycle
         };
-        let (noise, _) = statistics(&residual, &valid, &[false; 4], false, stopped, &robust);
+        let (noise, _) = statistics(
+            &residual,
+            (&valid, &valid),
+            &[false; 4],
+            false,
+            stopped,
+            &robust,
+        );
         assert_eq!((noise.median, noise.rms), (0.0, 0.0));
-        let (noise, _) = statistics(&residual, &valid, &[false; 4], false, stopped, &controls);
+        let (noise, _) = statistics(
+            &residual,
+            (&valid, &valid),
+            &[false; 4],
+            false,
+            stopped,
+            &controls,
+        );
         assert_eq!(noise.median, -1.3);
+        // At a run's first boundary with `nsigma`, the median and noise are
+        // `calcRobustRMS`'s, of their own pixels; the peak stays the
+        // pixel mask's.
+        let measured = [true, false, false, true];
+        let (noise, peak) = statistics(
+            &residual,
+            (&valid, &measured),
+            &[false; 4],
+            false,
+            cycle,
+            &controls,
+        );
+        assert_eq!(noise.median, -270.55);
+        assert_eq!(peak, 128.9);
     }
 
     /// The robust noise leaves the inherited mask out of a plane's
@@ -954,9 +991,23 @@ mod tests {
         let residual = [1.0, 2.0, 3.0, 40.0, 50.0];
         let valid = [true; 5];
         let inherited = [false, false, false, true, true];
-        let (outside, _) = statistics(&residual, &valid, &inherited, false, cycle, &controls);
+        let (outside, _) = statistics(
+            &residual,
+            (&valid, &valid),
+            &inherited,
+            false,
+            cycle,
+            &controls,
+        );
         assert_eq!(outside.median, 2.0);
-        let (whole, _) = statistics(&residual, &valid, &inherited, true, cycle, &controls);
+        let (whole, _) = statistics(
+            &residual,
+            (&valid, &valid),
+            &inherited,
+            true,
+            cycle,
+            &controls,
+        );
         assert_eq!(whole, crate::chauvenet_noise(residual.to_vec()).unwrap());
     }
 

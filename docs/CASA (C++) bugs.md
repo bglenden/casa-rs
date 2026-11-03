@@ -2073,6 +2073,37 @@ The efficiencies are unchanged. `tools/simulation/simutil_oracle.py` records
 both cases, and `tests/simutil_casa.rs` checks that casa-rs departs exactly
 there.
 
+## `simutil.xyz2long` subtracts the x offset from y
+
+- Date noted: 2026-11-03
+- Status: CASA bug; casa-rs does not follow it (#1053)
+- Affected code: `casatasks/src/private/simutil.py` (`xyz2long`,
+  `lon = pl.arctan2(y-dx, x-dx)`)
+
+`xyz2long` converts Earth-centred x, y, z on a datum to longitude, latitude
+and height, first removing the datum's offsets. Its distance from the polar
+axis uses `(x-dx, y-dy)` and its latitude `z-dz`, but its longitude is
+`atan2(y-dx, x-dx)`: it subtracts the x offset from y. For a datum whose x
+and y offsets differ, the longitude is wrong: `long2xyz` then `xyz2long` on
+NAD27 at ALMA returns a longitude 2.2 arcseconds from the one given (CASA
+6.7.6.14). casa-rs subtracts `dy` (`readantenna::geodesy::xyz_to_geodetic`),
+so `xyz2long` inverts `long2xyz`; for WGS 84, the datum `readantenna` uses,
+the two agree.
+
+## `simutil.xyz2long_old` subtracts the x offset from z
+
+- Date noted: 2026-11-03
+- Status: CASA bug; casa-rs does not follow it (#1053)
+- Affected code: `casatasks/src/private/simutil.py` (`xyz2long_old`,
+  `c = (z-dx)**2 / er**2`)
+
+`xyz2long_old`, CASA's older iteration for the same conversion, removes the
+datum's offsets as `(x-dx, y-dy, z-dz)` everywhere but in its second term,
+`c = (z-dx)**2 / er**2`, which subtracts the x offset from z. Its latitude
+is then slightly wrong for a datum whose x and z offsets differ. casa-rs
+subtracts `dz` (`readantenna::geodesy::xyz_to_geodetic_old`); its longitude
+and, for WGS 84, its latitude are CASA's.
+
 ## `direction_splitter` cannot split a direction without an epoch
 
 - Date noted: 2026-10-26
