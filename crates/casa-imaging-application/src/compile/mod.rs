@@ -16,6 +16,7 @@ mod direction;
 mod domains;
 mod envelope;
 mod error;
+mod frequency_bands;
 mod instrument;
 mod intents;
 mod mask_image;
@@ -161,7 +162,6 @@ pub(crate) fn prepare(
     }
     let frame = FrameContext {
         anchor_time_mjd_seconds: survey.first_time_mjd_seconds,
-        time_bounds_mjd_seconds: survey.time_bounds_mjd_seconds,
         field_id: centre.field_id,
         phase: centre.phase.clone(),
         direction: centre.direction,
@@ -257,7 +257,8 @@ pub(crate) fn prepare(
     let (masks, mut mask_resident) =
         domains::mask_plans(&domains, spectral.output_channels, context)?;
     mask_resident.join(continuation.mask_resident);
-    let (snapshot, stores, survey_charge) = snapshot_input(stores, &channels)?;
+    let (snapshot, stores, survey_charge) =
+        snapshot_input(stores, &channels, &spectral.frequency_bands)?;
     Ok(Prepared {
         specification,
         geometry,
@@ -340,6 +341,7 @@ fn survey_observation(
     let selection::SpwChoice {
         windows,
         channels: spw_channels,
+        ranges: spw_ranges,
     } = selection::window_choice(request, selection, store)?;
     let (row_selection, states) = selection::row_selection(selection, catalogue)?;
     let times =
@@ -384,6 +386,7 @@ fn survey_observation(
     };
     let mut surveyed = survey::survey(plan, spectral_windows, (&context.host, &context.policy))?;
     surveyed.value.spw_channels = spw_channels;
+    surveyed.value.spw_ranges = spw_ranges;
     surveyed.value.virtual_model = virtual_model;
     Ok((surveyed, columns))
 }
@@ -557,12 +560,14 @@ fn density_field_keys(stores: &[stores::SurveyedStore]) -> BTreeSet<i32> {
 /// reading its `channels` (in store order): its survey's samples, the
 /// channels read with each selected window's whole frequency axis, the
 /// visibility column, and the weights the selected partitions hold (each
-/// partition's by CASA's rule, [`partitions::stored_weights`]); with the
-/// stores the run reads, in the manifest's order, and the charge of their
-/// surveys.
+/// partition's by CASA's rule, [`partitions::stored_weights`]) and the
+/// per-time frequency selection `bands` holds for its windows
+/// ([`frequency_bands`]); with the stores the run reads, in the manifest's
+/// order, and the charge of their surveys.
 fn snapshot_input(
     stores: Vec<stores::SurveyedStore>,
     channels: &[WindowChannels],
+    bands: &[spectral::WindowBands],
 ) -> Result<
     (
         ObservationSnapshotInput,
@@ -574,7 +579,7 @@ fn snapshot_input(
     let mut sources = Vec::with_capacity(stores.len());
     let mut opened = Vec::with_capacity(stores.len());
     let mut charge = casa_imaging_runtime::Reservation::none();
-    for (store, channels) in stores.into_iter().zip(channels) {
+    for ((store, channels), bands) in stores.into_iter().zip(channels).zip(bands) {
         let visibility = store.columns.visibility;
         let weights = partitions::stored_weights(
             &store.opened.value,
@@ -588,7 +593,8 @@ fn snapshot_input(
         // Each MeasurementSet's first buffers are its own.
         let lsrk_factors =
             envelope::first_buffer_lsrk_factors((store.catalogue(), &store.engine), &store.survey)?;
-        let selection = selection::observation_selection(store.survey, channels, &lsrk_factors)?;
+        let selection =
+            selection::observation_selection(store.survey, channels, &lsrk_factors, bands)?;
         sources.push(ObservationSourceInput::new(
             ObservationSourceProvenance::new(store.selection.vis.display().to_string()),
             selection,
@@ -647,22 +653,20 @@ fn primary_beam_model(
     })
 }
 
-/// CASA's padded per-channel density grid of a linearly interpolated
-/// cube with per-channel density.
+/// CASA's padded per-channel density grid of a cube with per-channel
+/// density.
 fn cube_density_padding(
     request: &ImagingRequest,
     surveyed: &Surveyed<'_>,
 ) -> Result<Option<usize>, PrepareError> {
     let (survey, spectral) = (surveyed.survey, surveyed.spectral);
-    if !specification::cube_density_padded(request, spectral) {
+    if !specification::cube_density_padded(request) {
         return Ok(None);
     }
     stores::one_store(surveyed.stores, "a cube's per-channel density weighting")?;
-    let window = selection::one_window(&survey.spectral_windows, "cube density")?;
     Ok(Some(envelope::cube_density_padding(
         (surveyed.catalogue, surveyed.engine),
         survey,
-        window,
         &envelope::OutputAxis {
             frequency_reference: spectral.output_frequency_reference,
             centres_hz: [
@@ -671,6 +675,7 @@ fn cube_density_padding(
                     + (spectral.output_channels - 1) as f64 * spectral.increment_hz,
             ],
             channels: spectral.output_channels,
+            increment_hz: spectral.increment_hz,
         },
     )?))
 }

@@ -5,7 +5,7 @@
 use casa_imaging_deconvolution::direction_world_to_pixel;
 use casa_imaging_model::{
     AntennaResponseClass, BatchGeometry, CompiledProblem, DirectionCoordinateSpec,
-    FiniteValuePolicy, SelectedAntennaResponses, SkyDirection,
+    FiniteValuePolicy, FrequencyBands, GeometryPlan, SelectedAntennaResponses, SkyDirection,
 };
 use casa_imaging_operator::RowContext;
 use casa_imaging_runtime::pass::{
@@ -29,6 +29,9 @@ pub(super) struct Layout {
     channel_indices: Vec<u32>,
     /// Their stored frequencies, the continuum fit's abscissae.
     native_hz: Vec<f64>,
+    /// Half their stored widths, the extent a frequency band selects
+    /// them by.
+    half_widths_hz: Vec<f64>,
     /// The routed products, in the operator's order.
     correlations: Vec<Correlation>,
     /// Their stored indices, the block's correlation indices.
@@ -66,6 +69,10 @@ impl Layout {
             native_hz: channel_indices
                 .iter()
                 .map(|channel| entry.frequencies_hz[*channel as usize])
+                .collect(),
+            half_widths_hz: channel_indices
+                .iter()
+                .map(|channel| entry.channel_widths_hz[*channel as usize].abs() / 2.0)
                 .collect(),
             channel_indices,
             parallel: partition
@@ -127,6 +134,9 @@ pub(super) fn select_samples(
 /// laws, fixed for a run.
 pub(super) struct Packer<'p> {
     pub(super) problem: &'p CompiledProblem,
+    /// Each store's geometry, in store order: what converts a window's
+    /// frequency bands to a time's rows.
+    pub(super) plans: Vec<&'p GeometryPlan>,
     /// Projections per row: one per chart.
     pub(super) charts: usize,
     /// Each chart's direction law when a kernel set ramps each row to its
@@ -143,6 +153,9 @@ pub(super) struct Packer<'p> {
 pub(super) struct PackScratch {
     projections: Vec<DomainProjection>,
     frequencies_hz: Vec<f64>,
+    /// Whether the window's frequency bands select each channel at the time
+    /// packed; empty when every channel is read.
+    in_band: Vec<bool>,
     /// Each routed product's place along the batch's correlations.
     routed: Vec<usize>,
     /// One sample's weight per delivered product, for weights stored per
@@ -155,7 +168,7 @@ impl PackScratch {
     /// each growing at most to twice what it needs.
     pub(super) fn bound(layout: BlockShape) -> usize {
         2 * (layout.domains * size_of::<DomainProjection>()
-            + layout.channels() * size_of::<f64>()
+            + layout.channels() * (size_of::<f64>() + size_of::<bool>())
             + layout.correlations * (size_of::<usize>() + size_of::<f32>()))
     }
 }
@@ -244,6 +257,9 @@ impl Packer<'_> {
         let per_time = batch.samples_per_time();
         let origin = MjdHighPrec::new(0.0, 0.0);
         let uvw = batch.group.uvw.ok_or("the batch carries no UVW")?;
+        // An imaging pass reads a time's channels as CASA's frequency
+        // selection does; the density pass reads every selected channel.
+        let bands = partition.frequency_bands.as_ref().filter(|_| values);
         let mut packed_time = None;
         for sample in (0..batch.samples()).filter(|sample| keep[*sample]) {
             let time = sample / per_time;
@@ -253,6 +269,22 @@ impl Packer<'_> {
                 scratch
                     .frequencies_hz
                     .extend(layout.channels.iter().map(|channel| frequencies[*channel]));
+                scratch.in_band.clear();
+                if let Some(bands) = bands {
+                    let factor = self.plans[store].frequency_factor(
+                        bands.frame().frequency_ref(),
+                        batch.field[time],
+                        batch.time.seconds_since(time, origin),
+                        batch.time.reference(),
+                    )?;
+                    in_band(
+                        bands,
+                        factor,
+                        layout,
+                        &scratch.frequencies_hz,
+                        &mut scratch.in_band,
+                    );
+                }
                 packed_time = Some(time);
             }
             let row = Row {
@@ -303,6 +335,7 @@ impl Packer<'_> {
                 .and_then(|transform| transform.rule(field.0 as i32, partition.spectral_window));
             let row_weights = &scratch.row_weights;
             let routed = &scratch.routed;
+            let in_band = &scratch.in_band;
             out.push_row_with(
                 header,
                 &scratch.projections,
@@ -314,6 +347,15 @@ impl Packer<'_> {
                         (values_out, weights_out, flags_out),
                         reject_flagged,
                     )?;
+                    // A channel the time's bands miss is not read: no
+                    // sample of it, or interpolated from it, is imaged.
+                    for (cells, _) in flags_out
+                        .chunks_mut(routed.len())
+                        .zip(in_band)
+                        .filter(|(_, selected)| !**selected)
+                    {
+                        cells.fill(true);
+                    }
                     // A row's uvw matters only if one of its samples is imaged.
                     let imaged = !flagged && flags_out.iter().any(|flag| !*flag);
                     if nonfinite_uvw && (reject_flagged || imaged) {
@@ -368,6 +410,33 @@ impl Packer<'_> {
         }
         Ok(())
     }
+}
+
+/// Whether `bands` select each of `layout`'s channels at one time, into
+/// `out`: the channel's extent, its centre `frequencies_hz` in the rows'
+/// frame less and plus half its width scaled as its centre is, meets a
+/// band scaled by `factor`, the bands' frame's factor to the rows' frame
+/// at the time ([`GeometryPlan::frequency_factor`]). CASA converts the
+/// bands to the window's frame instead and compares stored extents
+/// (`VisibilityIteratorImpl2::makeChannelSelectorF`); both conversions are
+/// one Doppler factor, so the comparisons agree.
+fn in_band(
+    bands: &FrequencyBands,
+    factor: f64,
+    layout: &Layout,
+    frequencies_hz: &[f64],
+    out: &mut Vec<bool>,
+) {
+    out.extend(
+        frequencies_hz
+            .iter()
+            .zip(&layout.native_hz)
+            .zip(&layout.half_widths_hz)
+            .map(|((centre, native), half_width)| {
+                let half_width = half_width * centre / native;
+                bands.meets(factor, [centre - half_width, centre + half_width])
+            }),
+    );
 }
 
 /// One sample being packed, for naming it in an error.

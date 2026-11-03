@@ -277,6 +277,71 @@ pub(crate) fn norm(
     }
 }
 
+/// [`norm`] over the taps landing on `cells` alone (grid coordinates): the
+/// kernel sum `WProjectFT`'s sectioned gridder weighs a support it clips
+/// by ([`GridEdge::Sectioned`](crate::GridEdge::Sectioned)).
+pub(crate) fn clipped_norm(
+    taps: &TapLayout<'_>,
+    location: CellLocation,
+    cells: CellBox,
+    mueller: u8,
+    conjugate: bool,
+) -> Complex64 {
+    let [hx, hy] = taps.half_support().map(i64::from);
+    let first = [location.x - hx, location.y - hy];
+    let kept = |axis: usize, index: usize| {
+        (cells[axis][0]..cells[axis][1]).contains(&(first[axis] + index as i64))
+    };
+    match *taps {
+        TapLayout::SeparableReal {
+            rows,
+            support,
+            oversampling: _,
+        } => {
+            debug_assert_eq!(mueller, 0, "separable kernels have one Mueller plane");
+            let support = usize::from(support);
+            let axis_sum = |axis: usize, offset: u16| {
+                rows[usize::from(offset) * support..][..support]
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| kept(axis, *index))
+                    .map(|(_, tap)| f64::from(*tap))
+                    .sum::<f64>()
+            };
+            Complex64::new(axis_sum(0, location.ox) * axis_sum(1, location.oy), 0.0)
+        }
+        TapLayout::Dense {
+            data,
+            support,
+            oversampling,
+            mueller_planes,
+            ..
+        } => {
+            let tile = dense_tile(
+                data,
+                support,
+                oversampling,
+                mueller_planes,
+                location,
+                mueller,
+            );
+            let [sx, sy] = support.map(usize::from);
+            let mut sum = Complex64::default();
+            for (iy, row) in tile.chunks_exact(sx).enumerate().take(sy) {
+                if !kept(1, iy) {
+                    continue;
+                }
+                for (ix, tap) in row.iter().enumerate() {
+                    if kept(0, ix) {
+                        sum += oriented(*tap, conjugate);
+                    }
+                }
+            }
+            sum
+        }
+    }
+}
+
 /// Block-local `(x0, y0)` of the first tap.
 fn block_origin(tile: Tile, location: CellLocation, half: [usize; 2]) -> (usize, usize) {
     let x0 = location.x - half[0] as i64 - tile.origin[0] as i64;

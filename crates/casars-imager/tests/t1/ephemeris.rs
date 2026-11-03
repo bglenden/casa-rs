@@ -56,7 +56,11 @@ fn body() -> Vec<EphemerisRow> {
 /// The track with its field following [`body`] (`FIELD.EPHEMERIS_ID` 0),
 /// its `PHASE_DIR` the offset from it.
 pub(super) fn moving_track() -> Observation {
-    let observation = Observation::synthesise(&[("point", POINT)]);
+    following_body(Observation::synthesise(&[("point", POINT)]))
+}
+
+/// `observation` with its field following [`body`], as [`moving_track`].
+fn following_body(observation: Observation) -> Observation {
     let path = observation.measurement_set();
     let mut ms = MeasurementSet::open(path).expect("the T1 MeasurementSet");
     let field = ms.subtable_mut(SubtableId::Field).expect("FIELD");
@@ -314,4 +318,38 @@ fn geocentric_body_direction(mjd: f64) -> MDirection {
         std::array::from_fn(|axis| start[axis] + fraction * (end[axis] - start[axis])),
         DirectionRef::ICRS,
     )
+}
+
+/// A source-frame cube over several spectral windows is refused, naming
+/// the issue that ports it (#1059), rather than imaged on the first
+/// window's axis alone.
+#[test]
+fn a_rest_frame_cube_over_two_windows_is_refused() {
+    let mut setup = super::fixture::Setup::vla_q_band(4);
+    let low = setup.spectral_windows[0].clone();
+    setup
+        .spectral_windows
+        .push(casa_ms::SyntheticSpectralSetup {
+            name: "t1-qband-next".to_string(),
+            start_frequency_hz: low.start_frequency_hz + 4.0 * low.channel_width_hz,
+            ..low
+        });
+    let observation = following_body(Observation::synthesise_setup(setup, &[("point", POINT)]));
+    let Err(refusal) = observation.try_image(
+        "trackfield-two-windows",
+        json!({
+            "phasecenter": "TRACKFIELD",
+            "specmode": "cubesource",
+            "outframe": "REST",
+            "restfreq": "45GHz",
+            "channel_count": 4,
+            "niter": 0,
+        }),
+    ) else {
+        panic!("a source-frame cube over two windows was imaged");
+    };
+    assert!(
+        refusal.contains("several spectral windows") && refusal.contains("#1059"),
+        "{refusal}"
+    );
 }

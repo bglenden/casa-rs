@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use casa_imaging_operator::{
-    AccumulatorLayout, CellHold, CellLocation, CfKey, ConvolutionFunctionSet, KernelNormalisation,
-    Mode, Reach, SampleBlock, TapLayout,
+    AccumulatorLayout, CellHold, CellLocation, CfKey, ConvolutionFunctionSet, GridEdge,
+    KernelNormalisation, Mode, Reach, SampleBlock, TapLayout, clipped_kernel_sum,
 };
 use num_complex::{Complex32, Complex64};
 
@@ -398,6 +398,13 @@ pub(crate) fn prepare(
             predicts || reach == Reach::Whole,
         );
         let tile = origin_layout.tile();
+        // A sectioned set weighs a clipped support by the taps it keeps,
+        // which the table's norms do not hold: the rare such sample reads
+        // its taps from the set.
+        let kept = match reach {
+            Reach::Clipped { cells, .. } if cf.grid_edge() == GridEdge::Sectioned => Some(cells),
+            _ => None,
+        };
         let ([clip_low, clip_high], weighs) = match reach {
             Reach::Whole => ([[0; 2], tile.shape.map(tile_extent)], true),
             Reach::Clipped { cells, weighs } => {
@@ -447,10 +454,21 @@ pub(crate) fn prepare(
                 if weight == 0.0 {
                     continue;
                 }
+                let sum = match kept {
+                    Some(cells) => {
+                        let mut hold = CellHold::new();
+                        let taps = targets
+                            .kind
+                            .taps(cf, placement.cf, &mut hold)
+                            .expect("a sectioned set lends the taps it grids with");
+                        clipped_kernel_sum(&taps, location, cells, m, w_positive)
+                    }
+                    None => table.norm(location, m, w_positive),
+                };
                 let norm = match rule {
                     KernelNormalisation::UnitSum => 1.0,
-                    KernelNormalisation::RealSum => table.norm(location, m, w_positive).re,
-                    KernelNormalisation::KernelSum => table.norm(location, m, w_positive).norm(),
+                    KernelNormalisation::RealSum => sum.re,
+                    KernelNormalisation::KernelSum => sum.norm(),
                 };
                 let first = layout.block_index(plane as usize, gpol, 0);
                 for (power, term) in powers.iter().zip(terms.clone()) {

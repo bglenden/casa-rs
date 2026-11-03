@@ -74,7 +74,7 @@ pub use convolution::{
     MuellerRouting, RowContext, TapFootprint, TapLayout,
 };
 pub use cpu::CpuBackend;
-pub use edge::{CellBox, Reach};
+pub use edge::{CellBox, Reach, clipped_kernel_sum};
 pub use error::{DeviceFailure, OperatorError};
 pub use geometry::{CellLocation, GridGeometry, GridPadding, ImageExtent, PaddingFactor};
 pub use mosaic::{

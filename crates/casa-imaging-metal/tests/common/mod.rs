@@ -11,7 +11,7 @@ use casa_imaging_operator::{
     ImageExtent, KernelNormalisation, MeasurementOperator, ModelImages, ModelPlane, MosaicPb,
     MosaicRules, MosaicWindow, MuellerRouting, OperatorError, PaddingFactor, Placement,
     PolarizationRouting, PrimaryBeam, RowContext, SampleBuffer, Spheroidal, TapFootprint,
-    TapLayout, Tile, pair_plane,
+    TapLayout, Tile, WPlaneCount, WPlanes, pair_plane,
 };
 use casa_types::Correlation;
 use ndarray::Array2;
@@ -464,6 +464,105 @@ pub fn edge_placements(
                 let mut placed = placement(cf, u, v, 1, dense, rng);
                 placed.w = if w_positive { 25.0 } else { -25.0 };
                 out.push(placed);
+            }
+        }
+    }
+    out
+}
+
+/// A wide field (1 mrad cells, 3.7° across [`IMAGE`] pixels), where the
+/// W-projection set's planes reach phases of radians and its supports
+/// differ from plane to plane.
+const W_INCREMENT_RAD: [f64; 2] = [-1.0e-3, 1.0e-3];
+
+/// An `f32` operator over `[XX, YY]` with sixteen W-projection planes
+/// (`WPlanes`, CASA's `WProjectFT` kernels, [`GridEdge::Sectioned`] edge)
+/// on a wide-field [`IMAGE`]² image ([`W_INCREMENT_RAD`]).
+///
+/// [`GridEdge::Sectioned`]: casa_imaging_operator::GridEdge::Sectioned
+pub fn w_planes_operator() -> MeasurementOperator {
+    let geometry = GridGeometry::new(
+        ImageExtent {
+            shape: [IMAGE, IMAGE],
+            increment_rad: W_INCREMENT_RAD,
+            reference_pixel: [IMAGE / 2, IMAGE / 2],
+        },
+        GridPadding::CasaComposite(PaddingFactor::TCLEAN),
+    )
+    .expect("a wide geometry");
+    let planes = WPlanes::new(&geometry, &routing(), WPlaneCount::Fixed(16)).expect("W planes");
+    MeasurementOperator::new(
+        geometry,
+        Basis::Constant,
+        routing(),
+        Box::new(planes),
+        GridPrecision::F32,
+    )
+}
+
+/// W-projection samples about each of the grid's four edges, for three
+/// planes of different supports and both signs of `w`, a random fraction
+/// of a cell from their anchors: supports overrunning the edge by one and
+/// by three cells with the anchor on the grid, the anchor one and three
+/// cells off the grid with the support reaching back, a support whose one
+/// tap on the grid is its last, one that ends a cell short of the grid, and
+/// (on the high edges) one whose last tap lies on the grid's last column or
+/// row, which the sectors leave out (#980 review).
+pub fn sectioned_edge_placements(operator: &MeasurementOperator, rng: &mut Rng) -> Vec<Placement> {
+    let geometry = operator.geometry();
+    let n = geometry.grid_shape().map(|n| n as i64);
+    let [sx, sy] = geometry.scale();
+    let max_w = 0.25 / W_INCREMENT_RAD[1];
+    let context = RowContext {
+        original_uvw_m: None,
+        time_s: 0.0,
+        antennas: [0, 1],
+        antenna_types: [0, 0],
+        parallactic_angle_rad: [0.0; 2],
+        field: 0,
+        spectral_window: 0,
+    };
+    let mut hold = CellHold::new();
+    let mut out = Vec::new();
+    for fraction in [0.1, 0.45, 0.9] {
+        for sign in [-1.0, 1.0] {
+            let w = sign * fraction * max_w;
+            let cf = operator.cf().key(&context, 1.0e9, w);
+            let half = operator
+                .cf()
+                .taps(cf, &mut hold)
+                .half_support()
+                .map(i64::from);
+            for axis in 0..2 {
+                let h = half[axis];
+                let last = n[axis] - 1;
+                let low = [h - 1, h - 3, -1, -3, -h, -h - 1];
+                let high = [
+                    last - h,
+                    last - h + 1,
+                    last - h + 3,
+                    last + 1,
+                    last + 3,
+                    last + h,
+                    last + h + 1,
+                ];
+                for edge in low.into_iter().chain(high) {
+                    let mut cell = n.map(|n| n / 2);
+                    cell[1 - axis] += (rng.next_u64() % 9) as i64 - 4;
+                    cell[axis] = edge;
+                    let fine = [rng.signed() * 0.45, rng.signed() * 0.45];
+                    out.push(Placement {
+                        u: (cell[0] as f64 + fine[0] - (n[0] / 2) as f64) / sx,
+                        v: (cell[1] as f64 + fine[1] - (n[1] / 2) as f64) / sy,
+                        w,
+                        prediction_w_positive: w > 0.0,
+                        phase: rng.signed() * std::f64::consts::PI,
+                        plane: 0,
+                        spectral: 0.0,
+                        cf,
+                        gradient: [0.0; 2],
+                    });
+                }
             }
         }
     }

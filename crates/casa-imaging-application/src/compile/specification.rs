@@ -17,10 +17,9 @@ use casa_imaging_model::{
     ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
     ReductionPolicy, RestoringBeamPolicy, ScientificContract, SequentialContinuumTransform,
-    SpectralContract, SpectralCoupling, SpectralSamplingLaw, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, UncorrectedImageMaskPolicy,
-    VisibilityInnerProduct, WProjectionContract, WStatistics, WeightDensityScope,
-    WeightingContract, WeightingScheme,
+    SpectralContract, SpectralCoupling, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, UncorrectedImageMaskPolicy, VisibilityInnerProduct, WProjectionContract,
+    WStatistics, WeightDensityScope, WeightingContract, WeightingScheme,
 };
 use casa_ms::{parse_spw_selector, resolve_channel_selector_selection};
 
@@ -549,15 +548,11 @@ pub(super) fn continuum_transform(
 }
 
 /// Whether the cube's density weighting follows CASA's padded
-/// per-channel grid: a linearly interpolated multi-channel cube with
-/// non-natural per-channel density.
-pub(super) fn cube_density_padded(
-    request: &ImagingRequest,
-    spectral: &PreparedSpectralAxis,
-) -> bool {
+/// per-channel grid: a cube with non-natural per-channel density, of any
+/// channel count and interpolation, since `BriggsCubeWeightor` always pads
+/// its density cube (`estimateSwingChanPad`).
+pub(super) fn cube_density_padded(request: &ImagingRequest) -> bool {
     matches!(request.specmode, SpecMode::Cube | SpecMode::Cubedata)
-        && spectral.sampling == SpectralSamplingLaw::LINEAR
-        && spectral.output_channels > 1
         && request.weighting.per_channel_density()
         && request.perchanweightdensity
 }

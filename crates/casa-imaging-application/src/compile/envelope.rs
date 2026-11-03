@@ -57,7 +57,7 @@ impl SpectralEnvelope {
 /// The observatory frame towards `epoch`'s field at its time: a moving
 /// field's direction then, else a fixed field's stored phase centre, in its
 /// stored frame, as the deleted MAIN walk read `PHASE_DIR`.
-fn epoch_frame(
+pub(super) fn epoch_frame(
     (catalogue, engine): (&Catalogue, &MsCalEngine),
     epoch: Epoch,
 ) -> Result<MeasFrame, PrepareError> {
@@ -147,54 +147,120 @@ pub(super) fn continuum_envelope(
     let mut edges_hz = [f64::INFINITY, f64::NEG_INFINITY];
     // Each field's direction, once: only the conversion epoch varies.
     let mut directions = BTreeMap::<i32, MDirection>::new();
-    let mut fold = |hz: f64| {
-        edges_hz[0] = edges_hz[0].min(hz);
-        edges_hz[1] = edges_hz[1].max(hz);
-    };
     for window in &survey.spectral_windows {
         let channels = selected
             .get(&window.spw_id)
             .expect("the continuum selects channels of every selected window");
-        let [lower_hz, upper_hz] = selected_edges(window, channels)?;
-        let source = window.frequency_reference;
-        if source == FrequencyRef::REST || (source == output && source != FrequencyRef::TOPO) {
-            fold(lower_hz);
-            fold(upper_hz);
-            continue;
-        }
-        let mut converter = MFrequencyConverter::new(source, output);
-        for epoch in survey.window_epochs(window.spw_id) {
-            let direction = match directions.get(&epoch.field_id) {
-                Some(direction) => direction.clone(),
-                None => {
-                    // Only a moving field without its own reference epoch
-                    // (an MSv4's) reads its first selected time; finding it
-                    // scans every window's epochs, so fixed fields skip it.
-                    let field =
-                        usize::try_from(epoch.field_id).expect("a surveyed field is a FIELD row");
-                    let first = if engine.field_moves(field) {
-                        survey
-                            .first_time_of(epoch.field_id)
-                            .unwrap_or(epoch.time_mjd_seconds)
-                    } else {
-                        epoch.time_mjd_seconds
-                    };
-                    let direction =
-                        continuum_direction((catalogue, engine), epoch.field_id, first)?;
-                    directions.insert(epoch.field_id, direction.clone());
-                    direction
-                }
-            };
-            let frame =
-                engine.spectral_frame_observatory_direction(epoch.time_mjd_seconds, direction)?;
-            fold(converter.convert_hz(lower_hz, &frame)?.hz());
-            fold(converter.convert_hz(upper_hz, &frame)?.hz());
-        }
+        let edges = selected_edges(window, channels)?;
+        fold_over_epochs(
+            (catalogue, engine),
+            (survey, window),
+            &edges,
+            output,
+            &mut directions,
+            &mut |hz| {
+                edges_hz[0] = edges_hz[0].min(hz);
+                edges_hz[1] = edges_hz[1].max(hz);
+            },
+        )?;
     }
     if !(edges_hz[0].is_finite() && edges_hz[1].is_finite() && edges_hz[1] > edges_hz[0]) {
         return Err(PrepareError::SpectralEnvelope { edges_hz });
     }
     Ok(SpectralEnvelope { edges_hz })
+}
+
+/// CASA's band of channels `[first, last]` of `window` in frame `output`
+/// (`SynthesisImagerVi2::selectData`, by `MSUtil::getFreqRangeInSpw`
+/// without `fromEdge`): the lowest and highest of the channels' centres
+/// converted at each epoch of the window's samples, as
+/// [`continuum_envelope`] converts edges. `None` when the window has no
+/// epoch to convert at, where CASA selects nothing of it by frequency.
+pub(super) fn selection_band(
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
+    (survey, window): (&Survey, &SourceSpectralWindow),
+    [first, last]: [usize; 2],
+    output: FrequencyRef,
+) -> Result<Option<[f64; 2]>, PrepareError> {
+    let centres =
+        window
+            .frequencies_hz
+            .get(first..=last)
+            .ok_or(PrepareError::SpectralWindowCoordinates {
+                spw_id: window.spw_id,
+            })?;
+    let lowest = centres.iter().copied().fold(f64::INFINITY, f64::min);
+    let highest = centres.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let mut band = [f64::INFINITY, f64::NEG_INFINITY];
+    let converted = fold_over_epochs(
+        (catalogue, engine),
+        (survey, window),
+        &[lowest, highest],
+        output,
+        &mut BTreeMap::new(),
+        &mut |hz| {
+            band[0] = band[0].min(hz);
+            band[1] = band[1].max(hz);
+        },
+    )?;
+    Ok(converted.then_some(band))
+}
+
+/// Fold each of `frequencies_hz`, in `window`'s frame, into `fold` in frame
+/// `output`, as `MSUtil::getFreqRangeInSpw` converts a window's
+/// frequencies: at each epoch of the window's samples in time order,
+/// through **one** `MFrequency::Convert`, whose aberration and dUT1 are
+/// anchored at the first epoch and extrapolated across 0.04 days
+/// ([`MFrequencyConverter`]); that moves the far end of a long track by
+/// about 1e-12. CASA keys its epochs by `TIME·(DATA_DESC_ID+1)`, each
+/// standing for the earliest row with the key; a window's samples at one
+/// time towards one field are one epoch here. CASA takes `REST`
+/// frequencies, and those already in a frame other than `TOPO` that is the
+/// output's, as they are. Whether any frequency was folded.
+fn fold_over_epochs(
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
+    (survey, window): (&Survey, &SourceSpectralWindow),
+    frequencies_hz: &[f64],
+    output: FrequencyRef,
+    directions: &mut BTreeMap<i32, MDirection>,
+    fold: &mut impl FnMut(f64),
+) -> Result<bool, PrepareError> {
+    let source = window.frequency_reference;
+    if source == FrequencyRef::REST || (source == output && source != FrequencyRef::TOPO) {
+        frequencies_hz.iter().copied().for_each(&mut *fold);
+        return Ok(true);
+    }
+    let mut converter = MFrequencyConverter::new(source, output);
+    let mut converted = false;
+    for epoch in survey.window_epochs(window.spw_id) {
+        let direction = match directions.get(&epoch.field_id) {
+            Some(direction) => direction.clone(),
+            None => {
+                // Only a moving field without its own reference epoch
+                // (an MSv4's) reads its first selected time; finding it
+                // scans every window's epochs, so fixed fields skip it.
+                let field =
+                    usize::try_from(epoch.field_id).expect("a surveyed field is a FIELD row");
+                let first = if engine.field_moves(field) {
+                    survey
+                        .first_time_of(epoch.field_id)
+                        .unwrap_or(epoch.time_mjd_seconds)
+                } else {
+                    epoch.time_mjd_seconds
+                };
+                let direction = continuum_direction((catalogue, engine), epoch.field_id, first)?;
+                directions.insert(epoch.field_id, direction.clone());
+                direction
+            }
+        };
+        let frame =
+            engine.spectral_frame_observatory_direction(epoch.time_mjd_seconds, direction)?;
+        for &hz in frequencies_hz {
+            fold(converter.convert_hz(hz, &frame)?.hz());
+        }
+        converted = true;
+    }
+    Ok(converted)
 }
 
 /// Each selected window's factor from its frame to LSRK at the first
@@ -243,57 +309,134 @@ pub(super) fn first_buffer_lsrk_factors(
     Ok(factors)
 }
 
-/// A cube's output axis: its frame and the centres of its first and last
-/// channels.
+/// A cube's output axis: its frame, the centres of its first and last
+/// channels, their count and the image's channel increment.
 pub(super) struct OutputAxis {
     pub(super) frequency_reference: FrequencyRef,
     pub(super) centres_hz: [f64; 2],
     pub(super) channels: usize,
+    pub(super) increment_hz: f64,
 }
 
-/// CASA's nominal Briggs-cube density padding of `window`, per side
+/// CASA's nominal Briggs-cube density padding, per side
 /// (`BriggsCubeWeightor::estimateSwingChanPad`, half its `swingpad`).
 ///
-/// Each field's output interval is converted back to `window`'s frame at
-/// the epochs of its samples, then matched against the whole window with
-/// CASA's strict channel-edge overlap. The padding is the swing of the
-/// matched range in output channels, rounded up, plus
-/// `max(min(4, nchan/10), 1)`, so it is at least one plane even when the
-/// frames agree. The selected channels' interpolation support does not
-/// redefine this nominal density domain.
+/// CASA walks its visibility buffers in `DATA_DESC_ID`, then `FIELD_ID`
+/// order (one array; windows here in window order) and takes a window's
+/// range whenever the field changes from the buffer before, so with one
+/// field only the first window counts. For each such (window, field), the
+/// field's output interval is converted back to the window's frame at the
+/// epochs of its samples, then matched against the whole window with
+/// CASA's strict channel-edge overlap; a window it misses adds nothing.
+/// The output interval is widened by half its mean channel step,
+/// `|last − first| / max(nchan − 1, 1)`, which is zero for one channel.
+/// The padding is the largest swing of the matched ranges' ends plus the
+/// largest offset between the windows' lowest channels, in the image's
+/// channel increment rounded up, plus `max(min(4, nchan/10), 1)`, so it is
+/// at least one plane even when the frames agree. The selected channels'
+/// interpolation support does not redefine this nominal density domain.
 pub(super) fn cube_density_padding(
     (catalogue, engine): (&Catalogue, &MsCalEngine),
     survey: &Survey,
-    window: &SourceSpectralWindow,
     output: &OutputAxis,
 ) -> Result<usize, PrepareError> {
-    if window.frequencies_hz.is_empty()
-        || window.frequencies_hz.len() != window.channel_widths_hz.len()
-        || window
-            .frequencies_hz
-            .iter()
-            .any(|frequency| !frequency.is_finite() || *frequency <= 0.0)
-        || window
-            .channel_widths_hz
-            .iter()
-            .any(|width| !width.is_finite() || *width == 0.0)
-    {
-        return Err(PrepareError::SpectralWindowCoordinates {
-            spw_id: window.spw_id,
-        });
+    for window in &survey.spectral_windows {
+        if window.frequencies_hz.is_empty()
+            || window.frequencies_hz.len() != window.channel_widths_hz.len()
+            || window
+                .frequencies_hz
+                .iter()
+                .any(|frequency| !frequency.is_finite() || *frequency <= 0.0)
+            || window
+                .channel_widths_hz
+                .iter()
+                .any(|width| !width.is_finite() || *width == 0.0)
+        {
+            return Err(PrepareError::SpectralWindowCoordinates {
+                spw_id: window.spw_id,
+            });
+        }
     }
     let extra_padding = (output.channels / 10).clamp(1, 4);
-    if window.frequency_reference == output.frequency_reference {
+    if survey.source_frequency_reference == output.frequency_reference {
         return Ok(extra_padding);
     }
     let [first, last] = output.centres_hz;
-    let increment = (last - first).abs() / output.channels.saturating_sub(1).max(1) as f64;
-    if output.channels < 2 || !increment.is_finite() || increment <= 0.0 {
+    let step = (last - first).abs() / output.channels.saturating_sub(1).max(1) as f64;
+    let increment = output.increment_hz.abs();
+    if !(step.is_finite() && increment.is_finite() && increment > 0.0) {
+        return Err(PrepareError::CubeIncrement {
+            increment_hz: output.increment_hz,
+        });
+    }
+    let interval = [first.min(last), first.max(last)];
+    let mut lower_centres = [f64::INFINITY, f64::NEG_INFINITY];
+    let mut upper_centres = [f64::INFINITY, f64::NEG_INFINITY];
+    let mut lowest_channels = [f64::INFINITY, f64::NEG_INFINITY];
+    let mut previous_field = None;
+    for window in &survey.spectral_windows {
+        let mut fields = survey
+            .window_epochs(window.spw_id)
+            .iter()
+            .map(|epoch| epoch.field_id)
+            .collect::<Vec<_>>();
+        fields.sort_unstable();
+        fields.dedup();
+        for field in fields {
+            if previous_field.replace(field) == Some(field) {
+                continue;
+            }
+            let Some([a, b]) = matched_range(
+                (catalogue, engine),
+                survey,
+                (window, field),
+                output.frequency_reference,
+                interval,
+                step,
+            )?
+            else {
+                continue;
+            };
+            lower_centres[0] = lower_centres[0].min(a.min(b));
+            lower_centres[1] = lower_centres[1].max(a.min(b));
+            upper_centres[0] = upper_centres[0].min(a.max(b));
+            upper_centres[1] = upper_centres[1].max(a.max(b));
+            let lowest = window
+                .frequencies_hz
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, f64::min);
+            lowest_channels[0] = lowest_channels[0].min(lowest);
+            lowest_channels[1] = lowest_channels[1].max(lowest);
+        }
+    }
+    if !lower_centres[0].is_finite() {
+        return Ok(extra_padding);
+    }
+    let swing = (lower_centres[1] - lower_centres[0]).max(upper_centres[1] - upper_centres[0]);
+    let first_channel_shift = lowest_channels[1] - lowest_channels[0];
+    let swing_channels = ((swing + first_channel_shift) / increment).ceil();
+    if !(swing_channels.is_finite() && swing_channels < usize::MAX as f64) {
         return Err(PrepareError::CubeIncrement {
             increment_hz: increment,
         });
     }
-    let interval = [first.min(last), first.max(last)];
+    Ok(swing_channels as usize + extra_padding)
+}
+
+/// The centres of the first and last channels of `window` that the output
+/// `interval` in frame `output_reference`, converted back to the window's
+/// frame at field `field`'s epochs in it and widened by half a `step`,
+/// overlaps (`MSUtil::getSpwInFreqRange`), or `None` when it overlaps
+/// none.
+fn matched_range(
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
+    survey: &Survey,
+    (window, field): (&SourceSpectralWindow, i32),
+    output_reference: FrequencyRef,
+    interval: [f64; 2],
+    step: f64,
+) -> Result<Option<[f64; 2]>, PrepareError> {
     let native_min = window
         .frequencies_hz
         .iter()
@@ -304,69 +447,49 @@ pub(super) fn cube_density_padding(
         .iter()
         .copied()
         .fold(f64::NEG_INFINITY, f64::max);
-    let mut lower_centres = [f64::INFINITY, f64::NEG_INFINITY];
-    let mut upper_centres = [f64::INFINITY, f64::NEG_INFINITY];
-    for &field in &survey.fields {
-        let mut native = [f64::INFINITY, f64::NEG_INFINITY];
-        for epoch in survey
-            .window_epochs(window.spw_id)
-            .iter()
-            .filter(|epoch| epoch.field_id == field)
-        {
-            let frame = epoch_frame((catalogue, engine), *epoch)?;
-            let conversion = PreparedFrequencyConversion::new(
-                output.frequency_reference,
-                window.frequency_reference,
-                Some(&frame),
-                Some(&frame),
-            )?;
-            let a = conversion.convert_hz(interval[0]);
-            let b = conversion.convert_hz(interval[1]);
-            native[0] = native[0].min(a.min(b));
-            native[1] = native[1].max(a.max(b));
-        }
-        let lower = native[0] - 0.5 * increment;
-        let upper = native[1] + 0.5 * increment;
-        let partial = (lower > native_min && lower < native_max)
-            || (upper > native_min && upper < native_max);
-        let full = lower < native_min && upper > native_max;
-        if !partial && !full {
-            continue;
-        }
-        let mut matched = window
-            .frequencies_hz
-            .iter()
-            .zip(&window.channel_widths_hz)
-            .enumerate()
-            .filter(|(_, (centre, width))| {
-                full || (**centre + 0.5 * width.abs() > lower
-                    && **centre - 0.5 * width.abs() < upper)
-            })
-            .map(|(channel, _)| channel);
-        let Some(first) = matched.next() else {
-            continue;
-        };
-        let last = matched.next_back().unwrap_or(first);
-        let a = window.frequencies_hz[first];
-        let b = window.frequencies_hz[last];
-        lower_centres[0] = lower_centres[0].min(a.min(b));
-        lower_centres[1] = lower_centres[1].max(a.min(b));
-        upper_centres[0] = upper_centres[0].min(a.max(b));
-        upper_centres[1] = upper_centres[1].max(a.max(b));
+    let mut native = [f64::INFINITY, f64::NEG_INFINITY];
+    for epoch in survey
+        .window_epochs(window.spw_id)
+        .iter()
+        .filter(|epoch| epoch.field_id == field)
+    {
+        let frame = epoch_frame((catalogue, engine), *epoch)?;
+        let conversion = PreparedFrequencyConversion::new(
+            output_reference,
+            window.frequency_reference,
+            Some(&frame),
+            Some(&frame),
+        )?;
+        let a = conversion.convert_hz(interval[0]);
+        let b = conversion.convert_hz(interval[1]);
+        native[0] = native[0].min(a.min(b));
+        native[1] = native[1].max(a.max(b));
     }
-    if !lower_centres[0].is_finite() {
-        return Ok(extra_padding);
+    let lower = native[0] - 0.5 * step;
+    let upper = native[1] + 0.5 * step;
+    let partial =
+        (lower > native_min && lower < native_max) || (upper > native_min && upper < native_max);
+    let full = lower < native_min && upper > native_max;
+    if !partial && !full {
+        return Ok(None);
     }
-    // One window has one full-native origin, so CASA's first-channel shift
-    // is zero.
-    let swing = (lower_centres[1] - lower_centres[0]).max(upper_centres[1] - upper_centres[0]);
-    let swing_channels = (swing / increment).ceil();
-    if !(swing_channels.is_finite() && swing_channels < usize::MAX as f64) {
-        return Err(PrepareError::CubeIncrement {
-            increment_hz: increment,
-        });
-    }
-    Ok(swing_channels as usize + extra_padding)
+    let mut matched = window
+        .frequencies_hz
+        .iter()
+        .zip(&window.channel_widths_hz)
+        .enumerate()
+        .filter(|(_, (centre, width))| {
+            full || (**centre + 0.5 * width.abs() > lower && **centre - 0.5 * width.abs() < upper)
+        })
+        .map(|(channel, _)| channel);
+    let Some(first) = matched.next() else {
+        return Ok(None);
+    };
+    let last = matched.next_back().unwrap_or(first);
+    Ok(Some([
+        window.frequencies_hz[first],
+        window.frequencies_hz[last],
+    ]))
 }
 
 #[cfg(test)]
