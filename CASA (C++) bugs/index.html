@@ -4316,6 +4316,34 @@ CASA works in arcseconds; the common beams agree within one of the algorithm's
 The two searches can stop at different enclosing beams. For four nearly
 equal channel beams (axis ratio 1.17, the simulation round trip's cube,
 2026-11-03), the axes differ by 2.2e-4 and the position angle by 0.036°.</p>
+<h2 id="cubic-spectral-interpolation-reads-past-a-short-axis-and-fits-flagged-values">Cubic spectral interpolation reads past a short axis and fits flagged values<a class="headerlink" href="#cubic-spectral-interpolation-reads-past-a-short-axis-and-fits-flagged-values" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA bug casa-rs corrects (#1066)</li>
+<li>Affected code: casacore <code>scimath/Mathematics/InterpolateArray1D.tcc</code>
+  (<code>interpolatePtr</code>'s <code>cubic</code> case and <code>polynomialInterpolation</code>), called by
+  casatools <code>synthesis/TransformMachines2/FTMachine.cc</code>
+  (<code>interpolateFrequencyTogrid</code>, <code>interpolateFrequencyFromgrid</code>)</li>
+</ul>
+<p>tclean's <code>interpolation='cubic'</code> fits casacore's cubic polynomial through the
+four points about each frequency. <code>polynomialInterpolation</code> takes four
+points whatever the axis holds (a <code>DebugAssert</code> only), so a row of two or
+three selected channels, or an image of two output channels, reads past the
+end of its arrays. casa-rs fits the polynomial through every point such an
+axis has. The cubic case also notes "TODO: implement flags properly - ie
+don't use flagged points": a sample takes the flags of the two channels it
+lies between, but its value fits all four, flagged ones included, so a
+flagged channel stored as NaN makes an unflagged sample NaN and the image
+NaN with it. casa-rs fits a flagged channel's stored value as CASA does and
+counts a non-finite one as zero. The model half follows CASA too: a residual
+sample is <code>Σ f·(V − M)</code> over its four channels, and the model <code>M</code> is zero at
+a flagged one, since <code>interpolateFrequencyFromgrid</code> writes the prediction
+through <code>swapyz(flipgrid, copyOfFlag, flipdata)</code>, which skips every entry
+<code>vb.flagCube()</code> flags. Weights are interpolated the same way;
+<code>VisImagingWeight</code> has already given a flagged channel zero weight, which
+casa-rs follows. Evidence: the operator laws in
+<code>casa-imaging-operator/tests/cubic.rs</code> and the cubic cases of
+<code>resources/casa-compat/tclean-cube-axes-cases.json</code>.</p>
 
 
 
