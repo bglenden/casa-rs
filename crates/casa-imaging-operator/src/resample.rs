@@ -655,7 +655,9 @@ fn locate_sample(
     let (u, v) = (row.uvw_m[0] * scale, row.uvw_m[1] * scale);
     let location = geometry.locate(u, v, placing.oversampling);
     let gridded = match cf.grid_edge() {
-        GridEdge::Whole => geometry.fits(location, placing.half_support),
+        GridEdge::Whole => {
+            geometry.fits(location, placing.half_support) || cf.weighs_samples_off_the_grid()
+        }
         GridEdge::Clipped | GridEdge::Sectioned => geometry.reaches(location, placing.half_support),
     };
     if !gridded {

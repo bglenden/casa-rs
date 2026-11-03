@@ -946,6 +946,10 @@ impl ConvolutionFunctionSet for AwCatalog {
     fn weight_image_magnitude(&self) -> bool {
         true
     }
+
+    fn weighs_samples_off_the_grid(&self) -> bool {
+        true
+    }
 }
 
 /// Every cell of the cache at `root` (`CFCache::fillCFListFromDisk`): each

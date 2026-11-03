@@ -688,6 +688,16 @@ pub trait ConvolutionFunctionSet: Send + Sync {
         GridEdge::Whole
     }
 
+    /// Whether the weight image counts a sample whose support overruns the
+    /// grid. `AWProjectWBFT::resampleCFToGrid` puts every row's weight cell
+    /// at the uv origin, where `onGrid` always holds, so a row the data and
+    /// the PSF drop still weighs in the sensitivity. Such a placement is
+    /// kept, and each other mode skips it by its own [`Reach`](crate::Reach).
+    /// Every other set forms no such image, or keeps every sample it can.
+    fn weighs_samples_off_the_grid(&self) -> bool {
+        false
+    }
+
     /// Whether a sample at `w_lambda` is gridded at all. `WProjectFT`'s
     /// gridder drops a row whose plane index `nint(√(wScale·|w|))` lies
     /// beyond the last plane (`wprojgrid.f` `owp` tests the unclamped
