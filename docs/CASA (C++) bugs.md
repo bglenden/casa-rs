@@ -3134,3 +3134,22 @@ makes an empty mask and stops at code 7 without cleaning. The same regions
 as a list, or as lines of a region file, mask both regions. casa-rs reads
 every line of the text as a region of the mask, as the list and the file
 read.
+
+## A common beam's circular case is the reciprocal of its axis
+
+- Date noted: 2026-11-03
+- Status: CASA bug casa-rs corrects (#980)
+- Affected code: casatools `imageanalysis/ImageAnalysis/CasaImageBeamSet.cc`
+  (`_transformEllipseByScaling`, used by `getCommonBeam`)
+
+`_transformEllipseByScaling` computes a scaled ellipse's axes as
+`c1 = sqrt(1/k1)` and `c2 = sqrt(1/k2)`. When they are exactly equal, a circle,
+it returns `sqrt(k1)` for both axes instead: the reciprocal of the axis. That
+contradicts the general branch and the function's evident intent. casa-rs
+returns the axis. Both take the circle branch only for exactly equal axes, which
+scaling rarely produces. An earlier casa-rs absolute tolerance of 1e-12 took
+sub-arcsecond beams in radians for circles of the reciprocal axis, about 3e6,
+and the common-beam search then never ended. casa-rs works in radians where
+CASA works in arcseconds; the common beams agree within one of the algorithm's
+0.1% growth steps (`casa-numerics` law
+`the_common_beam_of_sub_arcsecond_beams_is_found_whatever_the_unit`).
