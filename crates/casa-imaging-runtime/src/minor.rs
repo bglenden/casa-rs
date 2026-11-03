@@ -22,7 +22,7 @@ use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MajorCycleCompletion,
     MaskError, MaskPlaneKey, ModelGeneration, ModelLifecycle, ModelLifecycleError, NoiseEstimate,
     NoiseMaskExclusion, NormalBasis, NormalStateError, RobustNoise, SpectralChannelValidity,
-    plane_noise,
+    plane_noise, robust_noise,
 };
 use casa_imaging_deconvolution::{
     Clark, Component, CycleControls, Delta, Hogbom, LinearRefresh, MinorCycleView, Multiscale,
@@ -337,21 +337,26 @@ pub fn prepare_minor_cycle(
             Some(summary) => *summary,
             None => PsfSummary::new(&plane.psf[0], plane.shape)?,
         };
-        let robust = setup.noise == NoiseEstimate::Robust;
         let mut statistics = PlaneStatistics::measure(
             &plane.residual[0],
             &plane.support,
             &plane.valid,
-            if robust { 0.0 } else { setup.nsigma },
+            0.0,
             setup.automask,
         );
-        if robust && setup.nsigma > 0.0 {
-            let local = (
-                key.channel - normal.slab().core_range().start,
-                key.polarization,
-            );
-            let exclusion = mask_plans.noise_exclusion(key.domain, local, &masks);
-            statistics.noise = robust_plane_noise(&plane.residual[0], &plane.valid, exclusion);
+        if setup.nsigma > 0.0 {
+            let pixels = noise_pixels(&plane)?;
+            statistics.noise = match setup.noise {
+                NoiseEstimate::Fast => robust_noise(&plane.residual[0], &pixels),
+                NoiseEstimate::Robust => {
+                    let local = (
+                        key.channel - normal.slab().core_range().start,
+                        key.polarization,
+                    );
+                    let exclusion = mask_plans.noise_exclusion(key.domain, local, &masks);
+                    robust_plane_noise(&plane.residual[0], &pixels, exclusion)
+                }
+            };
         }
         *out = Some(Measured {
             statistics,
@@ -587,6 +592,35 @@ fn plane_keys(normal: &FinalNormalState, taylor: bool) -> Vec<PlaneKey> {
         }
     }
     keys
+}
+
+/// The pixels a plane's `nsigma` noise is measured on. CASA measures it
+/// where the published primary beam exceeds tclean's `pbmask`, which is 0
+/// (`SIImageStore::calcRobustRMS` masks the residual with `pb >
+/// pbmasklevel`), and every beam it publishes is zero where it is not above
+/// `|pblimit|` (`makePBFromWeight`, `makePBImage`). Under a response the
+/// beam is the weight image's, and the plane's valid pixels where its
+/// Float value exceeds the cutoff are CASA's; outside them the normalized
+/// residual is zero, so a mosaic whose beam covers less than half its
+/// image would otherwise measure a median deviation of zero. A plane
+/// without a response, whose analytic beam the minor cycle does not hold,
+/// keeps every valid pixel, where CASA keeps those inside `pblimit`
+/// (#1078).
+fn noise_pixels<'p>(plane: &'p PlaneData<'_>) -> Result<Cow<'p, Support>, MinorCycleRunError> {
+    let Some(binding) = &plane.response else {
+        return Ok(Cow::Borrowed(&plane.valid));
+    };
+    let beam =
+        MosaicSensitivity::new(&binding.sensitivity)?.with_normal_sum_weight(binding.sum_weight)?;
+    let policy = binding.response.policy();
+    let pixels = plane
+        .valid
+        .as_slice()
+        .iter()
+        .enumerate()
+        .map(|(index, valid)| Ok(*valid && beam.weighted_primary_beam_positive_at(index, policy)?))
+        .collect::<Result<Vec<_>, ProductsError>>()?;
+    Ok(Cow::Owned(Support::new(plane.shape, pixels)))
 }
 
 /// tclean's robust noise of one plane under `fastnoise=False`

@@ -3,10 +3,10 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "9ea8d4b51b2b4a5e43cb11dcb31890a24ad8e619",
+  "casa_rs_revision": "f68c54415fd56455a169ef749e892138738d2156",
   "parameter_surfaces_sha256": "ccb7861fc6fdf72bcf868ebe75929970281308a10c6a82b017cbfffefc6c24fb",
   "parameter_catalog_sha256": "2feb237df1620d8b3ef76fd219fd27a252ca8e54621238aa91f0ce93b5acf5b9",
-  "tclean_rs_sha256": "7bed997d8a152ab2f9993e686775100f3b2c14ef947b8ec167c1d72a5521775d",
+  "tclean_rs_sha256": "d9e57a53b1fe1dd27c0e77fad333f76d55728cf79132794aa9c0784787855aaf",
   "tclean_contract_version": 38
  },
  "totals": {

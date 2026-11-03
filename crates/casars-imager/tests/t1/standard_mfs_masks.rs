@@ -386,3 +386,80 @@ fn clipped_pixel_boxes_and_empty_regions_preserve_casa_mask_semantics() {
         );
     }
 }
+
+/// A CRTF region limited to a spectral range (CASA's test_mask_2) masks an
+/// MFS image when the range reaches its one channel, by casacore's
+/// rounding of each end's pixel, and is left out when it misses it, which
+/// here leaves an empty mask and no cleaning, as CASA's stop code 7. A
+/// range over part of a cube's channels is refused until masks hold a
+/// plane per channel (#980).
+#[test]
+fn a_crtf_range_masks_an_mfs_image_where_it_reaches_its_channel() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let [px, py] = component_pixel(POINT);
+    let region = format!(
+        "box[[{}pix,{}pix],[{}pix,{}pix]]",
+        px - 6,
+        py - 6,
+        px + 6,
+        py + 6
+    );
+    let controls = |mask: String| {
+        json!({
+            "weighting": "natural",
+            "deconvolver": "hogbom",
+            "niter": 50,
+            "threshold": THRESHOLD,
+            "mask": mask,
+        })
+    };
+    let (plain_summary, plain) = observation.image("range-plain", controls(region.clone()));
+    let image = plain.get(".image");
+    let (centre, width) = (
+        image.channel_frequency_hz(0),
+        image.channel_width_hz().abs(),
+    );
+    assert!(width > 0.0, "the MFS channel has a width");
+    // Within a third of a channel of its centre: both ends round to it.
+    let reaches = format!(
+        "{region},range=[{}Hz,{}Hz]",
+        centre - width / 3.0,
+        centre + width / 3.0
+    );
+    let (summary, products) = observation.image("range-reaches", controls(reaches));
+    assert_eq!(products.get(".mask").pixels, plain.get(".mask").pixels);
+    assert!(plain_summary.actual_minor_iterations > 0);
+    assert_eq!(
+        summary.actual_minor_iterations,
+        plain_summary.actual_minor_iterations
+    );
+    // From 0.6 of a channel above it: the low end rounds past the channel.
+    let misses = format!(
+        "{region},range=[{}Hz,{}Hz]",
+        centre + 0.6 * width,
+        centre + 2.0 * width
+    );
+    let (summary, products) = observation.image("range-misses", controls(misses));
+    for product in [".mask", ".model"] {
+        assert!(
+            products
+                .get(product)
+                .pixels
+                .iter()
+                .all(|value| *value == 0.0),
+            "{product}"
+        );
+    }
+    assert_eq!(summary.actual_minor_iterations, 0);
+    let cube = Observation::synthesise_band(3, &[("point", POINT)]);
+    let Err(refusal) = cube.try_image(
+        "range-cube",
+        json!({ "specmode": "cube", "mask": format!("{region},range=[0pix,0pix]") }),
+    ) else {
+        panic!("a range over one channel of three was accepted");
+    };
+    assert!(
+        refusal.contains("channels 0~0") && refusal.contains("#980"),
+        "{refusal}"
+    );
+}

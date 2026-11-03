@@ -196,6 +196,27 @@ pub enum PrepareError {
         /// The requested channel.
         channel: usize,
     },
+    /// A CRTF region limited to part of a cube's channels: the user mask
+    /// holds one plane for every channel until per-channel masks are native.
+    #[error(
+        "mask: a region limited to channels {first}~{last} of the cube's {channels} is not \
+         implemented by casa-rs yet (#980)"
+    )]
+    MaskChannelRange {
+        /// The first channel the region masks.
+        first: usize,
+        /// The last.
+        last: usize,
+        /// The cube's channels.
+        channels: usize,
+    },
+    /// A CRTF region's spectral range has an end that is not a finite pixel
+    /// on the image's spectral axis.
+    #[error("mask: the spectral range {range:?} has no finite pixel on the image's axis")]
+    MaskRange {
+        /// The range.
+        range: crate::SpectralMaskRange,
+    },
     /// The cube's output frequency increment is zero or not finite.
     #[error("cube output frequency increment must be finite and non-zero (got {increment_hz} Hz)")]
     CubeIncrement {

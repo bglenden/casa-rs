@@ -33,6 +33,22 @@ pub enum AntennaResponseClass {
     /// `SynthesisImagerVi2::createMosFTMachine` builds it for
     /// `PBMath::EVLA` (`PBMathInterface::COMMONPB`).
     CasaEvla,
+    /// A dish of a telescope CASA's voltage-pattern manager has no beam
+    /// for ([`Self::casa_airy_telescope`]): the Airy disk of the dish itself
+    /// that `HetArrayConvFunc::findAntennaSizes` forms for
+    /// `PBMathInterface::AIRY`, one per dish diameter.
+    ///
+    /// The class is the exact diameter. CASA keys a dish by its diameter's
+    /// text, `String::toString(Double)` to six significant digits, and
+    /// gives the class the diameter of the first antenna with that text, so
+    /// casa-rs may split dishes CASA merges (diameters that differ beyond
+    /// the sixth digit, whose beams then differ by less than a part in
+    /// 10⁵), but never merges dishes CASA splits.
+    CasaAiry {
+        /// The bits of the ANTENNA table's `DISH_DIAMETER` in metres, a
+        /// positive finite `f64`, whose bit order is its numeric order.
+        dish_diameter_m_bits: u64,
+    },
 }
 
 impl AntennaResponseClass {
@@ -51,6 +67,60 @@ impl AntennaResponseClass {
         telescope.trim() == "EVLA"
     }
 
+    /// Whether CASA's mosaic forms an Airy disk of each dish of
+    /// `telescope` ([`Self::CasaAiry`]): `SynthesisImager::getVPRecord`
+    /// finds no default voltage pattern under the name (`VPManager` lists
+    /// those of `PBMath::nameCommonPB` and the observatories with antenna
+    /// responses, and matches the name exactly), so it leaves
+    /// `PBMath::UNKNOWN`, for which `SynthesisImagerVi2::createMosFTMachine`
+    /// gives `HetArrayConvFunc` its `PBMathInterface::AIRY` class.
+    /// `NGVLA1`, an ngVLA simulation's name, is one; `NGVLA`, whose common
+    /// beam the mosaic applies instead, is not. Nor are `UNKNOWN` and
+    /// `OSF`, which have default records but no common beam the mosaic
+    /// can form.
+    ///
+    /// `BIMA` and `NRAO140FT` are Airy telescopes too, although
+    /// `PBMath::enumerateCommonPB` knows them (as `HATCREEK` and
+    /// `NRAO140FT`): `VPManager` has no default under either name, so
+    /// `getVPRecord` resets its `PBMath::UNKNOWN` for the empty record
+    /// (SynthesisImager.cc, `rec.empty()`). CASA 6.7.6's tclean of
+    /// refim_sim_hetarray_ngvla.ms renamed to either logs "vpmanager does
+    /// not have a beam for antenna" and "Overriding PB with Airy of
+    /// diam,blockage=18 m,1.125 m"; renamed to `HATCREEK`, neither.
+    ///
+    /// The name is matched as given. casa-rs's compiler gives it trimmed
+    /// of surrounding blanks, as every telescope name it reads; CASA
+    /// matches the stored name as it is, so a padded `NGVLA ` is an Airy
+    /// telescope to CASA and the common ngVLA beam's name, refused, to
+    /// casa-rs.
+    #[must_use]
+    pub fn casa_airy_telescope(telescope: &str) -> bool {
+        !CASA_DEFAULT_VOLTAGE_PATTERNS.contains(&telescope)
+    }
+
+    /// CASA's class of a dish `diameter_m` across of a telescope without a
+    /// default voltage pattern ([`Self::casa_airy_telescope`]); `None` for a
+    /// diameter that is not positive and finite (`findAntennaSizes` gives
+    /// no dish to one that is not positive).
+    #[must_use]
+    pub fn casa_airy(diameter_m: f64) -> Option<Self> {
+        (diameter_m.is_finite() && diameter_m > 0.0).then_some(Self::CasaAiry {
+            dish_diameter_m_bits: diameter_m.to_bits(),
+        })
+    }
+
+    /// The dish diameter of a [`Self::CasaAiry`] class, in metres; `None`
+    /// for the other classes, whose apertures CASA fixes.
+    #[must_use]
+    pub fn airy_dish_diameter_m(self) -> Option<f64> {
+        match self {
+            Self::CasaAiry {
+                dish_diameter_m_bits,
+            } => Some(f64::from_bits(dish_diameter_m_bits)),
+            Self::CasaAlma12m | Self::CasaAca7m | Self::CasaEvla => None,
+        }
+    }
+
     /// CASA's class of an ALMA or ACA dish `diameter_m` across: 12 m
     /// within 0.5 m, 7 m within 1 m; `None` for another dish.
     #[must_use]
@@ -66,14 +136,74 @@ impl AntennaResponseClass {
 
     /// The largest response of an antenna family whose dishes are
     /// `classes`: the family envelope CASA's heterogeneous mosaic sizes its
-    /// kernels by.
+    /// kernels by; of Airy dishes, the widest.
     #[must_use]
     pub fn family_envelope(classes: &[Option<Self>]) -> Option<Self> {
         [Self::CasaAlma12m, Self::CasaAca7m, Self::CasaEvla]
             .into_iter()
             .find(|class| classes.contains(&Some(*class)))
+            .or_else(|| {
+                classes
+                    .iter()
+                    .flatten()
+                    .copied()
+                    .filter(|class| class.airy_dish_diameter_m().is_some())
+                    .max()
+            })
     }
 }
+
+/// The telescope names CASA's `VPManager::reset` gives a default voltage
+/// pattern (CASA 6.7.6): `PBMath::nameCommonPB` of every common beam from
+/// `ATCA_L1` to `NGVLA` (`NRAO140FT`'s name is `UNKNOWN`), and the
+/// observatories whose antenna responses the Observatories table names
+/// (`ALMA`, `ACA` and `OSF` in casarundata 2026.10.27). CASA's
+/// `vpmanager.getvp` returns an empty record for every other name,
+/// `NGVLA1`, `BIMA` and `NRAO140FT` among them.
+const CASA_DEFAULT_VOLTAGE_PATTERNS: [&str; 42] = [
+    "ATCA_L1",
+    "ATCA_L2",
+    "ATCA_L3",
+    "ATCA_S",
+    "ATCA_C",
+    "ATCA_X",
+    "GBT",
+    "GMRT",
+    "HATCREEK",
+    "NRAO12M",
+    "UNKNOWN",
+    "OVRO",
+    "VLA",
+    "VLA_INVERSE",
+    "VLA_NVSS",
+    "VLA_2NULL",
+    "VLA_4",
+    "VLA_P",
+    "VLA_L",
+    "VLA_C",
+    "VLA_X",
+    "VLA_U",
+    "VLA_K",
+    "VLA_Q",
+    "WSRT",
+    "WSRT_LOW",
+    "ALMA",
+    "ALMASD",
+    "ACA",
+    "IRAMPDB",
+    "IRAM30M",
+    "SMA",
+    "ATA",
+    "ATCA_C_RI",
+    "ATCA",
+    "ATCA_16",
+    "ATCA_K",
+    "ATCA_Q",
+    "ATCA_W",
+    "EVLA",
+    "NGVLA",
+    "OSF",
+];
 
 /// Ordered response classes for one selected interferometric baseline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,4 +217,51 @@ pub struct SelectedAntennaResponses {
     /// CASA crops every heterogeneous convolution plane to one family-wide
     /// extent so resampling has the same boundary domain for every pair.
     pub family_envelope: AntennaResponseClass,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `HetArrayConvFunc::findAntennaSizes` gives every positive dish
+    /// diameter its own Airy disk and none to a dish that is not positive;
+    /// the widest is the family's envelope.
+    #[test]
+    fn airy_dishes_are_classed_by_their_diameter() {
+        let [eighteen, six] = [18.0, 6.0]
+            .map(|diameter| AntennaResponseClass::casa_airy(diameter).expect("a positive dish"));
+        assert_eq!(
+            eighteen,
+            AntennaResponseClass::CasaAiry {
+                dish_diameter_m_bits: 18.0_f64.to_bits()
+            }
+        );
+        // Diameters CASA's six-digit text merges stay apart.
+        assert_ne!(
+            AntennaResponseClass::casa_airy(18.000_000_1),
+            Some(eighteen)
+        );
+        assert_eq!(eighteen.airy_dish_diameter_m(), Some(18.0));
+        assert_eq!(six.airy_dish_diameter_m(), Some(6.0));
+        assert_eq!(
+            AntennaResponseClass::CasaAlma12m.airy_dish_diameter_m(),
+            None
+        );
+        for absent in [0.0, -6.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(AntennaResponseClass::casa_airy(absent), None, "{absent}");
+        }
+        assert_eq!(
+            AntennaResponseClass::family_envelope(&[Some(six), None, Some(eighteen), Some(six)]),
+            Some(eighteen)
+        );
+        for airy in ["NGVLA1", "BIMA", "NRAO140FT"] {
+            assert!(AntennaResponseClass::casa_airy_telescope(airy), "{airy}");
+        }
+        for common in ["NGVLA", "HATCREEK", "ALMA", "UNKNOWN", "OSF"] {
+            assert!(
+                !AntennaResponseClass::casa_airy_telescope(common),
+                "{common}"
+            );
+        }
+    }
 }
