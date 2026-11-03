@@ -403,8 +403,9 @@ impl<'a> Tclean<'a> {
     /// `ImagerParameters::checkAndFixSelectionPars` pairs them: a selector
     /// given as one text, or a list of one, applies to every MeasurementSet,
     /// and a longer list gives each MeasurementSet its own, in `vis`'s order;
-    /// any other length is refused. Compile images the MeasurementSets in
-    /// CASA's order, each with its own selection.
+    /// any other length is refused, as is a MeasurementSet named twice.
+    /// Compile images the MeasurementSets in CASA's order, each with its
+    /// own selection.
     fn selection(&mut self) -> Result<(), TcleanRefusal> {
         self.copy(&["imagename"])?;
         // CASA's tclean selects whatever selectdata says: its parameter
@@ -414,14 +415,26 @@ impl<'a> Tclean<'a> {
         if vis.is_empty() {
             return Err(TcleanRefusal::new("vis", "Input MS list is empty"));
         }
-        let mut selections = vis
-            .into_iter()
-            .map(|path| {
-                path.as_str()
-                    .map(|path| Map::from_iter([("vis".to_string(), json!(path))]))
-                    .ok_or_else(|| Self::mismatch("vis", "a path", path))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        // CASA's `check_mslist` refuses a MeasurementSet named twice. It
+        // compares each later entry with the first only, as text; any
+        // repeat, by canonical path, is refused here
+        // (docs/CASA (C++) bugs.md).
+        let mut named = Vec::with_capacity(vis.len());
+        let mut selections = Vec::with_capacity(vis.len());
+        for path in vis {
+            let text = path
+                .as_str()
+                .ok_or_else(|| Self::mismatch("vis", "a path", path))?;
+            let key = std::fs::canonicalize(text).unwrap_or_else(|_| text.into());
+            if named.contains(&key) {
+                return Err(TcleanRefusal::new(
+                    "vis",
+                    format!("{text} is contained in the list more than once."),
+                ));
+            }
+            named.push(key);
+            selections.push(Map::from_iter([("vis".to_string(), json!(text))]));
+        }
         let count = selections.len();
         // Field, spw, uvrange and intent are trimmed; scan, observation,
         // antenna and time selectors keep their exact text: CASA's tclean

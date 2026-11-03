@@ -3134,3 +3134,20 @@ makes an empty mask and stops at code 7 without cleaning. The same regions
 as a list, or as lines of a region file, mask both regions. casa-rs reads
 every line of the text as a region of the mask, as the list and the file
 read.
+
+## `tclean` checks a `vis` list for repeats of its first entry only
+
+- Date noted: 2026-11-03
+- Status: CASA bug casa-rs corrects (#980)
+- Affected code: casatasks `private/mslisthelper.py` (`check_mslist`), called
+  by `ImagerParameters.checkAndFixSelectionPars`
+
+CASA 6.7.6.14's tclean refuses `vis=['a.ms', 'a.ms']` with "a.ms is contained
+in the list more than once." (ValueError, before any imaging). The check
+compares each later entry with the first one only, after the list is sorted by
+time, and as text. So `['a.ms', 'b.ms', 'b.ms']` and `['a.ms', './a.ms']` pass
+it, and their samples are read twice. The message states the evident intent:
+no MeasurementSet twice. casa-rs refuses any repeat, comparing canonical paths,
+with CASA's message. Evidence: CASA's refusal of `[refim_point.ms,
+refim_point.ms]` on the oracle host, 2026-11-03, and the T1 law
+`vis_list::a_measurement_set_named_twice_is_refused`.
