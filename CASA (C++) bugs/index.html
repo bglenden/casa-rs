@@ -2346,6 +2346,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#a-crtf-spectral-range-rounds-each-end-to-a-channel-toward-zero" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A CRTF spectral range rounds each end to a channel, toward zero
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-mask-string-of-several-lines-is-an-empty-mask-in-tclean" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A mask string of several lines is an empty mask in tclean
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -5215,6 +5237,37 @@ window 0). <code>( ... )</code> skips <code>endOfCeremony</code>, so the express
 row. All are in the evidence file; <code>casa-ms</code> reproduces them, and <code>tclean</code>
 refuses the parenthesized form and a window kept without channels, whose
 imaging in CASA is not established.</p>
+<h2 id="a-crtf-spectral-range-rounds-each-end-to-a-channel-toward-zero">A CRTF spectral range rounds each end to a channel, toward zero<a class="headerlink" href="#a-crtf-spectral-range-rounds-each-end-to-a-channel-toward-zero" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA quirk casa-rs follows for parity (#980)</li>
+<li>Affected code: casatools <code>imageanalysis/Annotations/AnnRegion.cc</code>
+  (<code>_extend</code>), casacore <code>images/Regions/WCBox.cc</code> (<code>doToLCRegion</code>),
+  <code>lattices/LRegions/LCBox.cc</code></li>
+</ul>
+<p>A region's <code>range=[f1, f2]</code> masks the channels from <code>Int(p1 + 0.5)</code> to
+<code>Int(p2 + 0.5)</code>, where <code>p1 ≤ p2</code> are the ends' pixels on the image's spectral
+axis. <code>Int</code> truncates toward zero, then the low end is clamped to 0 and the
+high end to the last channel. A region whose ends cross is left out, and the
+other regions are kept. Because of the truncation, a range ending up to 1.5
+channels below the cube masks channel 0, while one starting half a channel
+above it masks nothing. An MFS image's one channel is its whole bandwidth
+wide. casa-rs follows this, measured with CASA 6.7.6.14 on
+<code>refim_point.ms</code>'s cube and MFS image: <code>rg.fromtext</code> and tclean's <code>.mask</code>
+for 20 ranges, in the unit test
+<code>compile::domains::tests::a_spectral_range_masks_the_channels_casa_masks</code>.</p>
+<h2 id="a-mask-string-of-several-lines-is-an-empty-mask-in-tclean">A mask string of several lines is an empty mask in <code>tclean</code><a class="headerlink" href="#a-mask-string-of-several-lines-is-an-empty-mask-in-tclean" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA bug casa-rs corrects (#980)</li>
+<li>Affected code: casatools <code>synthesis/ImagerObjects/SDMaskHandler.cc</code>
+  (reading <code>mask</code> text)</li>
+</ul>
+<p>CASA 6.7.6.14's tclean given <code>mask='circle[[50pix,50pix],10pix]\nbox[[10pix,10pix],[12pix,12pix]]'</code>
+makes an empty mask and stops at code 7 without cleaning. The same regions
+as a list, or as lines of a region file, mask both regions. casa-rs reads
+every line of the text as a region of the mask, as the list and the file
+read.</p>
 
 
 
