@@ -163,6 +163,8 @@ fn a_minor_cycle_holds_at_most_its_admission_whatever_its_planes() {
             nsigma: 0.0,
             noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
             automask: false,
+            primary_beam: None,
+            residual_pixel_mask: false,
         };
         let masks = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::FullPlane {
             coordinate: problem.geometry().domains()[0].direction(),
@@ -237,16 +239,72 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
         scales_px: vec![0.0],
         small_scale_bias: 0.0,
     };
+    // The cases with a beam read an analytic `.pb` for the residual's
+    // pixel mask and an `nsigma` noise inside it (#1078, #1079); the EVLA's
+    // beam covers the cubes' 1.05 to 7.35 GHz.
     let cases = [
-        (32, ReconstructionBasis::ChannelLocal { channels: 1 }, 1),
-        (32, ReconstructionBasis::ChannelLocal { channels: 16 }, 1),
-        (32, ReconstructionBasis::ChannelLocal { channels: 16 }, 4),
-        (32, ReconstructionBasis::ChannelLocal { channels: 64 }, 4),
-        (16, ReconstructionBasis::ChannelLocal { channels: 240 }, 1),
-        (16, ReconstructionBasis::ChannelLocal { channels: 240 }, 4),
-        (64, ReconstructionBasis::Taylor { terms: 5 }, 1),
+        (
+            32,
+            ReconstructionBasis::ChannelLocal { channels: 1 },
+            1,
+            false,
+            false,
+        ),
+        (
+            32,
+            ReconstructionBasis::ChannelLocal { channels: 16 },
+            1,
+            false,
+            false,
+        ),
+        (
+            32,
+            ReconstructionBasis::ChannelLocal { channels: 16 },
+            4,
+            false,
+            false,
+        ),
+        (
+            32,
+            ReconstructionBasis::ChannelLocal { channels: 16 },
+            4,
+            true,
+            false,
+        ),
+        (
+            32,
+            ReconstructionBasis::ChannelLocal { channels: 64 },
+            4,
+            false,
+            false,
+        ),
+        (
+            16,
+            ReconstructionBasis::ChannelLocal { channels: 240 },
+            1,
+            false,
+            false,
+        ),
+        (
+            16,
+            ReconstructionBasis::ChannelLocal { channels: 240 },
+            4,
+            false,
+            false,
+        ),
+        (
+            64,
+            ReconstructionBasis::Taylor { terms: 5 },
+            1,
+            false,
+            false,
+        ),
+        (64, ReconstructionBasis::Taylor { terms: 5 }, 1, true, false),
+        // A Taylor family under a response: its beam is the principal
+        // weight image's, read into an owned sensitivity plane.
+        (64, ReconstructionBasis::Taylor { terms: 5 }, 1, true, true),
     ];
-    for (width, basis, workers) in cases {
+    for (width, basis, workers, with_beam, with_response) in cases {
         let (channels, planes, algorithm, fluxes) = match basis {
             ReconstructionBasis::ChannelLocal { channels } => (
                 channels,
@@ -262,7 +320,9 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
             ),
             ReconstructionBasis::Constant => unreachable!("not measured here"),
         };
-        let label = format!("{basis:?} of {width} px on {workers} workers");
+        let label = format!(
+            "{basis:?} of {width} px on {workers} workers, beam {with_beam}, response {with_response}"
+        );
         let problem = reconstruction_problem(
             31,
             width,
@@ -284,14 +344,11 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
         let (model, mut pass) = cycle.parts();
         pass.append(scene.pass_images(model, true)).expect("images");
         let completion = cycle.finish(SAMPLES, BLOCKS).expect("complete");
-        let setup = MinorCycleSetup {
-            algorithm,
-            accounting: HogbomIterationAccounting::Strict,
-            response: None,
-            nsigma: 0.0,
-            noise: casa_imaging_deconvolution::NoiseEstimate::Robust,
-            automask: true,
-        };
+        let centres = std::collections::BTreeMap::from([(
+            casa_imaging_model::ImageDomainRole::Main,
+            vec![[width as f64 / 2.0, width as f64 / 2.0]],
+        )]);
+        let setup = automask_setup(&problem, algorithm, &centres, (with_beam, with_response));
         let mut plans =
             ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::AutoMultithresh {
                 coordinate: problem.geometry().domains()[0].direction(),
@@ -362,5 +419,135 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
                 .next_cycle(prepared.masks(), prepared.auto_masks(), boundary + 1, false)
                 .expect("next boundary");
         }
+    }
+}
+
+/// A minor cycle's preparation that reads the analytic `.pb` (#1078):
+/// each plane loaded at once forms its beam (`f32`) and keeps its
+/// support beside the `nsigma` noise's copies, all within
+/// [`prepare_bytes`]. A full-plane mask holds one support, so the planes
+/// in flight are what the charge must cover: cubes of 1 and 16 channels
+/// on one worker and on four, a single plane of 128 by 128 pixels, under
+/// either noise estimate.
+#[test]
+fn a_preparation_that_reads_the_beam_holds_at_most_its_admission() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let cases = [(32, 1, 1), (32, 16, 1), (32, 16, 4), (128, 1, 1)];
+    for ((width, channels, workers), noise) in cases.into_iter().flat_map(|case| {
+        [
+            casa_imaging_deconvolution::NoiseEstimate::Fast,
+            casa_imaging_deconvolution::NoiseEstimate::Robust,
+        ]
+        .map(|noise| (case, noise))
+    }) {
+        let label = format!("{channels} channels of {width} px on {workers} workers, {noise:?}");
+        let basis = ReconstructionBasis::ChannelLocal { channels };
+        let problem = reconstruction_problem(
+            31,
+            width,
+            channels,
+            basis,
+            ReconstructionAlgorithm::Hogbom,
+            ReconstructionControls::new(100, 0.1, 0.0),
+        );
+        let scene = Scene::new(&problem)
+            .with_point([width * 3 / 8, width * 9 / 16], &vec![1.0; channels])
+            .with_noise(0.01);
+        let lifecycle = model_lifecycle(&problem);
+        let mut cycle = MajorCycle::initial(
+            &problem,
+            empty_final_model(&lifecycle),
+            scene.resident_storage(),
+        )
+        .expect("major cycle");
+        let (model, mut pass) = cycle.parts();
+        pass.append(scene.pass_images(model, true)).expect("images");
+        let completion = cycle.finish(SAMPLES, BLOCKS).expect("complete");
+        let centres = std::collections::BTreeMap::from([(
+            casa_imaging_model::ImageDomainRole::Main,
+            vec![[width as f64 / 2.0, width as f64 / 2.0]],
+        )]);
+        let setup = MinorCycleSetup {
+            algorithm: ReconstructionAlgorithm::Hogbom,
+            accounting: HogbomIterationAccounting::Strict,
+            response: None,
+            nsigma: 3.0,
+            noise,
+            automask: false,
+            primary_beam: casa_imaging_products::AnalyticPrimaryBeam::new(
+                &problem,
+                casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon,
+                Some(&centres),
+            )
+            .expect("L and S band"),
+            residual_pixel_mask: true,
+        };
+        let plans = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::FullPlane {
+            coordinate: problem.geometry().domains()[0].direction(),
+        }])
+        .expect("full-plane mask");
+        let team = WorkerTeam::new(workers).expect("team");
+        let mut cache = PsfCache::default();
+        let charge = prepare_bytes(&completion, &plans, &setup, &cache, workers)
+            + psf_cache_bytes(&completion);
+        let preparing = admit(
+            &HOST,
+            &POLICY,
+            &Demand {
+                phase: "minor-cycle preparation",
+                memory: charge,
+            },
+        )
+        .expect("admitted");
+        ADMITTED.store(held() - charge, Ordering::Relaxed);
+        EXCESS.store(i64::MIN, Ordering::Relaxed);
+        BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let prepared = prepare_minor_cycle(&completion, &plans, &setup, &mut cache, &team);
+        MEASURING.store(false, Ordering::Relaxed);
+        drop(preparing);
+        let prepared = prepared.expect("prepared");
+        let excess = EXCESS.load(Ordering::Relaxed);
+        assert!(
+            excess <= 0,
+            "{label}: preparation held {excess} bytes more than it was admitted"
+        );
+        assert!(prepared.statistics.nsigma_threshold > 0.0, "{label}");
+    }
+}
+
+/// The automatic-mask law's setup: reading the beam, with `nsigma`, when
+/// `with_beam`, the weight image's under a flat-noise response when
+/// `with_response`, else the EVLA's analytic beam centred on `centres`.
+fn automask_setup<'a>(
+    problem: &'a casa_imaging_model::CompiledProblem,
+    algorithm: ReconstructionAlgorithm,
+    centres: &'a casa_imaging_products::PrimaryBeamCentres,
+    (with_beam, with_response): (bool, bool),
+) -> MinorCycleSetup<'a> {
+    MinorCycleSetup {
+        algorithm,
+        accounting: HogbomIterationAccounting::Strict,
+        response: with_response.then(|| {
+            casa_imaging_products::MinorCycleImageResponse::new(
+                casa_imaging_model::ProductNormalization::FlatNoise,
+                problems::validity().primary_beam(),
+            )
+            .expect("flat-noise response")
+        }),
+        nsigma: if with_beam { 3.0 } else { 0.0 },
+        noise: casa_imaging_deconvolution::NoiseEstimate::Robust,
+        automask: true,
+        primary_beam: (with_beam && !with_response)
+            .then(|| {
+                casa_imaging_products::AnalyticPrimaryBeam::new(
+                    problem,
+                    casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon,
+                    Some(centres),
+                )
+                .expect("L to C band")
+            })
+            .flatten(),
+        residual_pixel_mask: with_beam,
     }
 }

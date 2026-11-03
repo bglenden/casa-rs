@@ -9,6 +9,7 @@
 //! metadata. It writes each member in bounded windows to private staging
 //! beside its CASA image target, then replaces each target atomically.
 
+mod analytic_beam;
 mod beam;
 mod demand;
 mod error;
@@ -23,6 +24,7 @@ mod taylor;
 mod visibility;
 mod writer;
 
+pub use analytic_beam::{ANALYTIC_PRIMARY_BEAM_BYTES_PER_CELL, AnalyticPrimaryBeam};
 pub use beam::{RestoringBeam, fit_restoring_beam};
 pub use demand::ContinuumGenerationDemand;
 pub use error::ProductsError;

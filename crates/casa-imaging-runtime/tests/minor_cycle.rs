@@ -69,7 +69,10 @@ fn completion(
     cycle.finish(SAMPLES, BLOCKS).expect("complete")
 }
 
-fn setup(problem: &CompiledProblem, response: Option<MinorCycleImageResponse>) -> MinorCycleSetup {
+fn setup(
+    problem: &CompiledProblem,
+    response: Option<MinorCycleImageResponse>,
+) -> MinorCycleSetup<'static> {
     MinorCycleSetup {
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: HogbomIterationAccounting::Strict,
@@ -77,6 +80,8 @@ fn setup(problem: &CompiledProblem, response: Option<MinorCycleImageResponse>) -
         nsigma: 0.0,
         noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
         automask: false,
+        primary_beam: None,
+        residual_pixel_mask: false,
     }
 }
 
@@ -311,7 +316,11 @@ fn a_cube_cleans_the_same_on_any_number_of_workers() {
 fn cube_with_response(
     weights: Vec<f64>,
     edit: impl FnOnce(&mut PassImages),
-) -> (CompiledProblem, MajorCycleCompletion, MinorCycleSetup) {
+) -> (
+    CompiledProblem,
+    MajorCycleCompletion,
+    MinorCycleSetup<'static>,
+) {
     let problem = problem(
         16,
         ReconstructionBasis::ChannelLocal { channels: 2 },

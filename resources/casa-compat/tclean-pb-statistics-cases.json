@@ -1,0 +1,123 @@
+{
+ "note": "#1078 and #1079: tclean measures its statistics inside the primary beam. The residual carries the .pb's support (pb > |pblimit|) as its pixel mask where pblimit is not negative, and its peaks and automatic mask read only the pixels it keeps; the nsigma noise reads the pixels where the .pb exceeds pbmask (0), as SIImageStore::calcRobustRMS does. Each case's image reaches past its beam's pblimit circle, against CASA 6.7.6.14, with tools/casa-compat/tclean_case_matrix.py. The standard-gridder cases image the VLA's refim_point.ms (1 to 1.95 GHz, 25 m dishes) and one field of ALMA's refim_alma_mosaic.ms (340 GHz, 12 m dishes); the mosaic cases image all three ALMA fields over an image the mosaic's beam covers less than half of. refim_point_cube_automask is the cube on which #1074's review found CASA's .mask counts differ in channels 6, 17 and 18.",
+ "inputs": {
+  "alma": "unittest/tclean/refim_alma_mosaic.ms",
+  "point": "unittest/tclean/refim_point.ms"
+ },
+ "common": {
+  "parallel": false
+ },
+ "cases": {
+  "alma_standard_nsigma": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "field": "1",
+    "imsize": 640,
+    "cell": "0.06arcsec",
+    "specmode": "mfs",
+    "gridder": "standard",
+    "deconvolver": "hogbom",
+    "niter": 1000,
+    "threshold": "0Jy",
+    "nsigma": 30.0
+   },
+   "note": "#1078: a standard-gridder ALMA field, 38 arcsec across, whose 0.2 primary-beam circle is about 26 arcsec across; the noise-free residual's peak stays about 110 times its noise, so an nsigma of 30 sets every minor cycle's threshold from the noise inside the beam"
+  },
+  "point_standard_nsigma": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "12.0arcsec",
+    "specmode": "mfs",
+    "gridder": "standard",
+    "deconvolver": "hogbom",
+    "niter": 1000,
+    "threshold": "0Jy",
+    "nsigma": 5.0
+   },
+   "note": "#1078: a VLA image of 1.7 degrees, past the L-band beam's 0.2 circle; the nsigma noise and the peaks inside the beam, and the run stops on nsigma (stopcode 8)"
+  },
+  "point_standard_nsigma_robust": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "12.0arcsec",
+    "specmode": "mfs",
+    "gridder": "standard",
+    "deconvolver": "hogbom",
+    "niter": 1000,
+    "threshold": "0Jy",
+    "nsigma": 5.0,
+    "fastnoise": false,
+    "mask": "box[[206pix,206pix],[305pix,305pix]]"
+   },
+   "note": "#1078 under fastnoise=False: calcRobustImageStatistics's classical statistics outside the clean mask and inside the beam. Without a mask, CASA 6.7.6.14 cleans nothing here (docs/CASA (C++) bugs.md), so the case names a box around the source"
+  },
+  "point_cube_automask": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 1024,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "gridder": "standard",
+    "deconvolver": "hogbom",
+    "niter": 1000,
+    "usemask": "auto-multithresh"
+   },
+   "note": "#1079: #1074's review cube, 20 channels of 2.3 degrees; the automatic mask's statistics inside each channel's beam"
+  },
+  "point_automask_nsigma_negative_pblimit": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 512,
+    "cell": "12.0arcsec",
+    "specmode": "mfs",
+    "gridder": "standard",
+    "deconvolver": "hogbom",
+    "niter": 1000,
+    "usemask": "auto-multithresh",
+    "nsigma": 5.0,
+    "pblimit": -0.2
+   },
+   "note": "#1079 with a negative pblimit: the residual carries no mask, so the automatic mask reads every pixel, except at the first boundary, where it takes calcRobustRMS's statistics inside the beam; the baseline passes it too, so it guards the path rather than demonstrating the change"
+  },
+  "alma_mosaic_automask": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": 800,
+    "cell": "0.06arcsec",
+    "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
+    "specmode": "mfs",
+    "gridder": "mosaic",
+    "deconvolver": "hogbom",
+    "niter": 300,
+    "usemask": "auto-multithresh",
+    "sidelobethreshold": 0.1
+   },
+   "note": "#1079: a three-field mosaic whose beam covers less than half its 48-arcsec image; the automatic mask's median and noise inside the beam, where the normalized residual is not zero. The data are noise-free, so a sidelobethreshold of 0.1 lets the noise threshold set the mask"
+  },
+  "alma_mosaic_automask_nsigma": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": 800,
+    "cell": "0.06arcsec",
+    "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
+    "specmode": "mfs",
+    "gridder": "mosaic",
+    "deconvolver": "hogbom",
+    "niter": 300,
+    "usemask": "auto-multithresh",
+    "nsigma": 30.0,
+    "sidelobethreshold": 0.1
+   },
+   "note": "#1079: the same mosaic with an nsigma of 30, whose threshold takes the automatic mask's median and noise"
+  }
+ }
+}

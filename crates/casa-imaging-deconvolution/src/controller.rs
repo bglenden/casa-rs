@@ -139,37 +139,47 @@ impl ResidualStatistics {
 /// One plane's residual before a minor cycle.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlaneStatistics {
-    /// Largest residual magnitude on the cleanable support; zero when the
-    /// support is empty.
+    /// Largest residual magnitude on the cleanable support the residual's
+    /// pixel mask keeps; zero when it keeps none.
     pub peak_in_mask: f64,
-    /// Largest residual magnitude on the valid pixels.
+    /// Largest residual magnitude on the pixels the residual's pixel mask
+    /// keeps.
     pub peak_no_mask: f64,
     /// Number of cleanable pixels.
     pub mask_sum: usize,
-    /// Robust noise of the valid pixels, measured when `nsigma` is on.
+    /// Robust noise of the plane, measured when `nsigma` is on.
     pub noise: Option<RobustNoise>,
     /// Whether the n-sigma threshold adds the median (automatic masking).
     pub automask: bool,
 }
 
 impl PlaneStatistics {
-    /// Measure term 0 of a residual: the peaks on `support` and on `valid`,
-    /// and the robust noise of `valid` when `nsigma` is on
-    /// (`SIImageStore::calcRobustRMS` with the primary-beam mask).
+    /// Measure term 0 of a residual: the peaks on the cleanable `support`
+    /// and on the residual's pixel mask, `pixels` (the valid pixels CASA's
+    /// residual keeps, `getPeakResidualWithinMask` and `getPeakResidual`),
+    /// the support's size, and the robust noise of `pixels` when `nsigma`
+    /// is on. The cleanable support keeps the pixels the pixel mask leaves
+    /// out, as tclean's mask does: they count and are cleaned.
     #[must_use]
     pub fn measure(
         residual: &[f64],
         support: &Support,
-        valid: &Support,
+        pixels: &Support,
         nsigma: f64,
         automask: bool,
     ) -> Self {
+        let peak_in_mask = residual
+            .iter()
+            .zip(support.as_slice())
+            .zip(pixels.as_slice())
+            .filter(|((_, supported), kept)| **supported && **kept)
+            .fold(0.0_f64, |peak, ((value, _), _)| peak.max(value.abs()));
         Self {
-            peak_in_mask: peak_magnitude(residual, support),
-            peak_no_mask: peak_magnitude(residual, valid),
+            peak_in_mask,
+            peak_no_mask: peak_magnitude(residual, pixels),
             mask_sum: support.count(),
             noise: (nsigma > 0.0)
-                .then(|| robust_noise(residual, valid))
+                .then(|| robust_noise(residual, pixels))
                 .flatten(),
             automask,
         }

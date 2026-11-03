@@ -18,10 +18,12 @@ use casa_imaging_deconvolution::{
     ImageDomainReconstructionMaskPlans, MajorCycle, MajorCycleCompletion, ModelGeneration,
     ModelLifecycle, ModelStoragePlan, PassAppender, ReconstructionMaskPlan, ReconstructionMaskSet,
 };
-use casa_imaging_model::{CompiledProblem, ModelDeltaTerm, SpectralWcs};
+use casa_imaging_model::{
+    CompiledProblem, ModelDeltaTerm, SpectralWcs, UncorrectedImageMaskPolicy,
+};
 use casa_imaging_operator::{Basis, GridPrecision, ModeSet, PlaneRange, WeightingGeneration};
 use casa_imaging_products::{
-    FacetSumWeights, MinorCycleImageResponse, VisibilityProductCompletion,
+    AnalyticPrimaryBeam, FacetSumWeights, MinorCycleImageResponse, VisibilityProductCompletion,
 };
 use casa_imaging_runtime::pass::{
     BackendChoice, BoundedSource, CHUNK_PLACEMENTS, Cancel, MajorCyclePass, MeasuredRowWork,
@@ -69,6 +71,9 @@ pub(crate) struct ImagingInputs<'a> {
     /// What the run forms of its normal state (`calcpsf`, `calcres`).
     pub(crate) forms: Forms,
     pub(crate) image_response: Option<MinorCycleImageResponse>,
+    /// The analytic primary beam of a run without a response, which its
+    /// minor cycles measure their statistics inside.
+    pub(crate) primary_beam: Option<AnalyticPrimaryBeam<'a>>,
     pub(crate) visibility_write: Option<VisibilityWriteTarget<'a>>,
     /// What the products hold on one lane, and the source's charge, which
     /// the run releases before them ([`SetupDemand::products`]).
@@ -225,7 +230,11 @@ pub(crate) fn run(
     let problem = inputs.problem;
     let controls = problem.reconstruction().controls();
     let cleaning = controls.max_minor_iterations() > 0;
-    let setup = minor_setup(problem, inputs.image_response, &inputs.masks);
+    let setup = minor_setup(
+        problem,
+        (inputs.image_response, inputs.primary_beam),
+        &inputs.masks,
+    );
     let mut mask_plans = inputs.masks.clone();
     let cancel = inputs.cancel.clone();
     let diagnostics = inputs.diagnostics;
@@ -536,12 +545,18 @@ fn predict_final_model(
     Ok(outcome)
 }
 
-/// The minor cycle's view of the run.
-fn minor_setup(
+/// The minor cycle's view of the run: its `response` or analytic
+/// `primary_beam`, and whether its residual carries the beam's support as
+/// a pixel mask, as its published residual does
+/// ([`UncorrectedImageMaskPolicy::PrimaryBeam`]).
+fn minor_setup<'a>(
     problem: &CompiledProblem,
-    response: Option<MinorCycleImageResponse>,
+    (response, primary_beam): (
+        Option<MinorCycleImageResponse>,
+        Option<AnalyticPrimaryBeam<'a>>,
+    ),
     masks: &ImageDomainReconstructionMaskPlans,
-) -> MinorCycleSetup {
+) -> MinorCycleSetup<'a> {
     let controls = problem.reconstruction().controls();
     MinorCycleSetup {
         algorithm: problem.reconstruction().algorithm().clone(),
@@ -553,6 +568,9 @@ fn minor_setup(
             masks.primary(),
             ReconstructionMaskPlan::AutoMultithresh { .. }
         ),
+        primary_beam,
+        residual_pixel_mask: problem.products().validity().uncorrected_mask()
+            == UncorrectedImageMaskPolicy::PrimaryBeam,
     }
 }
 
