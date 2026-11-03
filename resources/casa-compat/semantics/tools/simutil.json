@@ -59,12 +59,12 @@
    ]
   },
   "cellsize": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "The image's cell as two quantities in radians, positive; a rotated image raises CASA's message.",
    "evidence": [
     "signature",
-    "refusals"
+    "simanalyze-casa-fixture",
+    "binding-tests"
    ]
   },
   "closereport": {
@@ -77,12 +77,13 @@
    ]
   },
   "convimage": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "scope": "Regrids the flat model onto the flat image and convolves it with the image's beam, writing CASA's .regrid and .regrid.conv; a complist is refused (#1053).",
    "evidence": [
     "signature",
-    "refusals"
+    "simanalyze-casa-fixture",
+    "binding-tests"
    ]
   },
   "dir_m2s": {
@@ -228,12 +229,12 @@
    ]
   },
   "ismstp": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Whether a MeasurementSet is total power: its first antenna's name holds TP, it has one antenna, or every UVW value is zero (CASA tests any; decision ismstp-any-zero-uvw). With halt, CASA's messages.",
    "evidence": [
     "signature",
-    "refusals"
+    "simanalyze-casa-fixture",
+    "binding-tests"
    ]
   },
   "isquantity": {
@@ -433,12 +434,13 @@
    ]
   },
   "statim": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Partial",
+   "issue": 1025,
+   "scope": "CASA's (min, max, rms, unit), the values 0-d float64 arrays as CASA returns them. plot=True, CASA's default, draws no figure yet and says so (#1025). A Jy/beam image without a beam is not scaled by the pixel area as CASA scales it (recorded deviation).",
    "evidence": [
     "signature",
-    "refusals"
+    "simanalyze-casa-fixture",
+    "binding-tests"
    ]
   },
   "tconpc": {
@@ -733,6 +735,22 @@
    "links": [
     "docs/CASA (C++) bugs.md"
    ]
+  },
+  "simanalyze-casa-fixture": {
+   "kind": "CASA fixture comparison",
+   "state": "passed",
+   "result": "casa-simulation simanalyze_analysis_casa: 6 tests pass at the revision, comparing every case's statim, cellsize, convimage and flatimage with the outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in: statistics and pixels to 1e-6, cells to 1e-15, CASA's refusals by message. The Python tests compare a sample through the binding.",
+   "scope": "The simanalyze helpers the binding exposes.",
+   "links": [
+    "crates/casa-simulation/tests/simanalyze_analysis_casa.rs",
+    "crates/casa-simulation/tests/data/simanalyze_analysis_casa.json.gz",
+    "tools/simulation/simanalyze_analysis_oracle.py"
+   ],
+   "casa_version": "6.7.6.14 (casatools 6.7.6-14), as recorded in the fixture",
+   "revision": "d5c88b52b718e4b3834447724d66371f269a0083",
+   "command": "python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)",
+   "receipt": "resources/casa-compat/evidence/simanalyze-fixtures-20261103.json",
+   "source_revision": "d5c88b52b718e4b3834447724d66371f269a0083"
   }
  }
 }

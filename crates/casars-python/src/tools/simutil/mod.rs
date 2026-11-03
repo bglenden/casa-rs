@@ -26,7 +26,9 @@
 //! `write_pointings`; `noisetemp`, `bandname` and `polsettings`;
 //! `itrf2loc`, `baselineLengths` and `approxBeam`; and the sky-model
 //! helpers `modifymodel` and `flatimage`
-//! ([`casa_simulation::simutil::skymodel`]). CASA's other public methods
+//! ([`casa_simulation::simutil::skymodel`]); and the analysis helpers
+//! `ismstp`, `cellsize`, `statim` and `convimage` (`analysis.rs`). CASA's
+//! other public methods
 //! have its signatures and raise `NotImplementedError` naming #1053, which
 //! classifies them (`stubs.rs`).
 //!
@@ -50,6 +52,7 @@
 //! differs from CASA's; also, CASA's LOC files give the positions as NumPy
 //! `float64` scalars, which here are `float`s.
 
+mod analysis;
 mod ops;
 mod stubs;
 

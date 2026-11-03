@@ -19,6 +19,7 @@ import gzip
 import inspect
 import json
 import logging
+import shutil
 import tarfile
 from pathlib import Path
 from typing import Any
@@ -35,10 +36,10 @@ CASA = casa_signatures("simutil")
 
 #: The methods casa-rs implements; CASA's others refuse, naming #1053.
 IMPLEMENTED = {
-    "approxBeam", "average_direction", "bandname", "baselineLengths", "calc_pointings2",
-    "dir_m2s", "direction_splitter", "flatimage", "isdirection", "isquantity", "itrf2loc",
-    "median_direction", "modifymodel", "noisetemp", "polsettings", "read_pointings",
-    "readantenna", "wrapang", "write_pointings",
+    "approxBeam", "average_direction", "bandname", "baselineLengths", "calc_pointings2", "cellsize",
+    "convimage", "dir_m2s", "direction_splitter", "flatimage", "isdirection", "ismstp", "isquantity",
+    "itrf2loc", "median_direction", "modifymodel", "noisetemp", "polsettings", "read_pointings",
+    "readantenna", "statim", "wrapang", "write_pointings",
 }
 
 
@@ -482,3 +483,123 @@ def test_modifymodel_makes_the_flat_image_when_asked(skymodel: tuple[dict[str, A
     assert_casas_pixels(Path(f"{out}.flat"), flat["image"])
     with pytest.raises(RuntimeError, match="not found in flatimage"):
         simutil.simutil().flatimage(str(out), complist=str(tmp_path / "missing.cl"))
+
+
+# The analysis fixture casa-simulation's Rust tests compare in full: CASA's
+# statim, cellsize and convimage on its input images.
+@pytest.fixture(scope="module")
+def analysis(tmp_path_factory: pytest.TempPathFactory) -> tuple[dict[str, Any], Path]:
+    with gzip.open(SKYMODEL / "simanalyze_analysis_casa.json.gz", "rt", encoding="utf-8") as handle:
+        record = json.load(handle)
+    assert record["casa_version"] == "6.7.6-14"
+    root = tmp_path_factory.mktemp("analysis")
+    with tarfile.open(SKYMODEL / "simanalyze_analysis_inputs.tar.gz") as archive:
+        archive.extractall(root, filter="data")
+    return record, root / "inputs"
+
+
+def test_statim_gives_casas_statistics(analysis: tuple[dict[str, Any], Path],
+                                       caplog: pytest.LogCaptureFixture) -> None:
+    record, inputs = analysis
+    u = simutil.simutil()
+    for name, casa in record["statim"].items():
+        if name == "beamless.flat":
+            # CASA scales a Jy/beam image without a beam by its pixel area
+            # and casa-rs does not (docs/CASA (C++) bugs.md); the Rust test
+            # compares it with that factor.
+            continue
+        if "error" in casa:
+            with pytest.raises(RuntimeError) as raised:
+                u.statim(str(inputs / name), plot=False)
+            assert f"Exception: {raised.value}" == casa["error"], name
+            continue
+        found = u.statim(str(inputs / name), plot=False)
+        assert isinstance(found, tuple) and len(found) == 4, name
+        for value, key in zip(found[:3], ("min", "max", "rms")):
+            # CASA's np.squeeze leaves 0-d float64 arrays.
+            assert isinstance(value, np.ndarray) and value.shape == () and value.dtype == np.float64, (name, key)
+            assert float(value) == pytest.approx(casa[key], rel=1e-6), (name, key)
+        assert found[3] == casa["unit"], name
+    with caplog.at_level(logging.WARNING, logger="casars.simutil"):
+        u.statim(str(inputs / "image.flat"))
+    assert "statim's plot is not yet implemented in casa-rs (#1025)" in caplog.text
+
+
+def test_cellsize_gives_casas_cells(analysis: tuple[dict[str, Any], Path]) -> None:
+    record, inputs = analysis
+    u = simutil.simutil()
+    for name, casa in record["cellsize"].items():
+        if "error" in casa:
+            with pytest.raises(RuntimeError) as raised:
+                u.cellsize(str(inputs / name))
+            assert f"Exception: {raised.value}" == casa["error"], name
+            continue
+        found = u.cellsize(str(inputs / name))
+        assert isinstance(found, list) and [cell["unit"] for cell in found] == casa["units"], name
+        assert [cell["value"] for cell in found] == pytest.approx(casa["cell"], rel=1e-15), name
+
+
+def assert_casas_masked_pixels(path: Path, expected: dict[str, Any]) -> None:
+    assert list(Image.open(path).shape) == expected["shape"]
+    wanted = np.array([np.nan if value is None else value for value in expected["pixels"]])
+    found = pixels(path)
+    valid = np.isfinite(wanted)
+    assert np.allclose(found[valid], wanted[valid], rtol=0.0, atol=1e-6 * np.nanmax(np.abs(wanted)))
+
+
+def test_convimage_regrids_and_convolves_as_casa_does(analysis: tuple[dict[str, Any], Path],
+                                                      tmp_path: Path) -> None:
+    record, inputs = analysis
+    u = simutil.simutil()
+    for case in ("aligned", "offset"):
+        casa = record["convimage"][case]
+        model = tmp_path / case / casa["model"]
+        shutil.copytree(inputs / casa["model"], model)
+        assert u.convimage(str(model), str(inputs / casa["image"])) is None
+        assert_casas_masked_pixels(Path(f"{model}.regrid"), casa["regrid"])
+        assert_casas_masked_pixels(Path(f"{model}.regrid.conv"), casa["convolved"])
+        assert Image.open(Path(f"{model}.regrid.conv")).units == casa["convolved"]["unit"]
+    rotated = record["convimage"]["rotated"]
+    model = tmp_path / "rotated" / rotated["model"]
+    shutil.copytree(inputs / rotated["model"], model)
+    with pytest.raises(RuntimeError) as raised:
+        u.convimage(str(model), str(inputs / rotated["image"]))
+    assert f"Exception: {raised.value}" == rotated["error"]
+    with pytest.raises(NotImplementedError, match=r"complist is not yet implemented in casa-rs \(#1053\)"):
+        u.convimage(str(model), str(inputs / "image.flat"), complist="x.cl")
+
+
+def simulated_ms(path: Path, antennas: int) -> str:
+    """A MeasurementSet of `antennas` VLA dishes, observed for 20 s."""
+    from casars.tools import simulator
+
+    sm = simulator()
+    assert sm.open(str(path))
+    x = [-1601185.4 + 30.0 * i for i in range(antennas)]
+    assert sm.setconfig(telescopename="VLA", x=x, y=[-5041977.5] * antennas, z=[3554875.9] * antennas,
+                        dishdiameter=[25.0], mount=["ALT-AZ"], antname=[f"A{i}" for i in range(antennas)],
+                        padname=[f"P{i}" for i in range(antennas)], coordsystem="global")
+    assert sm.setspwindow(spwname="L", freq="1.4GHz", deltafreq="1MHz", freqresolution="1MHz", nchannels=1,
+                          stokes="RR LL")
+    assert sm.settimes(integrationtime="10s", usehourangle=False,
+                       referencetime={"m0": {"unit": "d", "value": 58849.0}, "refer": "UTC", "type": "epoch"})
+    assert sm.setfield(sourcename="F", sourcedirection="J2000 12h00m00 45d00m00")
+    assert sm.observe("F", "L", starttime="0s", stoptime="20s")
+    assert sm.close()
+    return str(path)
+
+
+@needs_measures_data
+def test_ismstp_tells_total_power_as_casa_does(tmp_path: Path) -> None:
+    u = simutil.simutil()
+    single = simulated_ms(tmp_path / "single.ms", 1)
+    array = simulated_ms(tmp_path / "array.ms", 3)
+    # One antenna is total power; an array with nonzero UVW is not.
+    assert u.ismstp(single) is True
+    assert u.ismstp(array) is False
+    with pytest.raises(RuntimeError, match=rf"^input file '{array}' is not a totalpower ms$"):
+        u.ismstp(array, halt=True)
+    missing = str(tmp_path / "missing.ms")
+    assert u.ismstp(missing) is False
+    with pytest.raises(RuntimeError, match=rf"^can't understand the file '{missing}'$"):
+        u.ismstp(missing, halt=True)

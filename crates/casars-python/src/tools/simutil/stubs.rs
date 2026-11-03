@@ -35,26 +35,9 @@ impl PySimutil {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (image), text_signature = "($self, image)")]
-    fn cellsize(&self, image: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("cellsize")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn closereport(&self) -> PyResult<Py<PyAny>> {
         stub("closereport")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (modelflat, outflat, complist = None), text_signature = "($self, modelflat, outflat, complist='')")]
-    fn convimage(
-        &self,
-        modelflat: &Bound<'_, PyAny>,
-        outflat: &Bound<'_, PyAny>,
-        complist: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("convimage")
     }
 
     /// Not yet implemented in casa-rs.
@@ -209,12 +192,6 @@ impl PySimutil {
     #[pyo3(signature = (num), text_signature = "($self, num)")]
     fn isEven(&self, num: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("isEven")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (s, halt = None), text_signature = "($self, s, halt=False)")]
-    fn ismstp(&self, s: &Bound<'_, PyAny>, halt: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("ismstp")
     }
 
     /// Not yet implemented in casa-rs.
@@ -375,20 +352,6 @@ impl PySimutil {
     #[pyo3(signature = (image), text_signature = "($self, image)")]
     fn spectral(&self, image: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("spectral")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (image, plot = None, incell = None, disprange = None, bar = None, showstats = None), text_signature = "($self, image, plot=True, incell=None, disprange=None, bar=True, showstats=True)")]
-    fn statim(
-        &self,
-        image: &Bound<'_, PyAny>,
-        plot: Option<&Bound<'_, PyAny>>,
-        incell: Option<&Bound<'_, PyAny>>,
-        disprange: Option<&Bound<'_, PyAny>>,
-        bar: Option<&Bound<'_, PyAny>>,
-        showstats: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("statim")
     }
 
     /// Not yet implemented in casa-rs.
