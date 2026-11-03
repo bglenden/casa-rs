@@ -649,24 +649,32 @@
   },
   "table-fixtures": {
    "kind": "CASA fixture comparison",
-   "state": "measured",
-   "result": "CASA-written component-list tables read cell for cell and casa-rs-written ones read back as CASA would (getcomponent fields to 1e-13); fixtures recorded from CASA 6.7.6-14. A receipt at a pinned revision makes this a pass.",
+   "state": "passed",
+   "result": "casa-components casa_fixture: 3 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in.",
    "scope": "The component-list tables open reads and close and rename write.",
    "links": [
     "crates/casa-components/tests/casa_fixture.rs",
     "crates/casa-components/tests/data/casa-6.7.6",
     "tools/simulation/componentlist_oracle.py"
-   ]
+   ],
+   "casa_version": "6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)",
+   "receipt": "resources/casa-compat/evidence/componentlist-fixtures-20261103.json"
   },
   "casa-values": {
    "kind": "CASA-recorded call sequences",
-   "state": "measured",
-   "result": "The tests replay CASA 6.7.6-14's recorded calls and compare every value; a receipt at a pinned revision makes this a pass.",
+   "state": "passed",
+   "result": "test_tools_componentlist.py: 19 tests pass at the revision; the 2 that need a live CASA are skipped there, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in.",
    "scope": "addcomponent and the accessors on 20 components and 36 recorded calls, with CASA's edge cases.",
    "links": [
     "crates/casars-python/python/tests/data/casa_componentlist_tool.json",
     "crates/casars-python/python/tests/test_tools_componentlist.py"
-   ]
+   ],
+   "casa_version": "6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)",
+   "receipt": "resources/casa-compat/evidence/componentlist-fixtures-20261103.json"
   },
   "bugs-record": {
    "kind": "Deviation record",

@@ -693,14 +693,18 @@
   },
   "skymodel-fixture": {
    "kind": "CASA fixture comparison",
-   "state": "measured",
-   "result": "The fixture's 68 cases, recorded from CASA 6.7.6-14, agree (strings exact, numbers 1e-12, pixels 1e-6 of peak) in CI; a receipt at a pinned revision makes this a pass.",
+   "state": "passed",
+   "result": "casa-simulation skymodel_casa: 5 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in.",
    "scope": "modifymodel, flatimage and the component-only model that simobserve's sky-model stage uses.",
    "links": [
     "crates/casa-simulation/tests/skymodel_casa.rs",
     "crates/casa-simulation/tests/data/skymodel_casa.json.gz",
     "tools/simulation/skymodel_oracle.py"
-   ]
+   ],
+   "casa_version": "6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)",
+   "receipt": "resources/casa-compat/evidence/simutil-fixtures-20261103.json"
   },
   "bugs-record": {
    "kind": "Deviation record",

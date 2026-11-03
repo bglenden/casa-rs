@@ -676,35 +676,47 @@
   },
   "simutil-casa-fixture": {
    "kind": "CASA fixture comparison",
-   "state": "measured",
-   "result": "Recorded from CASA 6.7.6-14 by simutil_oracle.py: 712 calc_pointings2 cases, pointing files, directions, 1,009 noisetemp cases, band names, feeds and beams. Strings exact, numbers to 1e-12 (beams 1e-9), apart from the documented departures. Passes in CI; a receipt at a pinned revision makes this a pass.",
+   "state": "passed",
+   "result": "casa-simulation simutil_casa: 5 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in.",
    "scope": "The pointing, direction, receiver and beam helpers.",
    "links": [
     "crates/casa-simulation/tests/simutil_casa.rs",
     "crates/casa-simulation/tests/data/simutil_casa.json",
     "tools/simulation/simutil_oracle.py"
-   ]
+   ],
+   "casa_version": "6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)",
+   "receipt": "resources/casa-compat/evidence/simutil-fixtures-20261103.json"
   },
   "readantenna-casa-fixture": {
    "kind": "CASA fixture comparison",
-   "state": "measured",
-   "result": "Recorded from CASA 6.7.6.14: positions agree to 1e-6 m, and CASA's observatory table to casa-rs's. Passes in CI; a receipt at a pinned revision makes this a pass.",
+   "state": "passed",
+   "result": "casa-simulation readantenna_casa: 2 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in.",
    "scope": "readantenna on CASA's configuration files and observatories.",
    "links": [
     "crates/casa-simulation/tests/readantenna_casa.rs",
     "crates/casa-simulation/tests/data/readantenna_casa.json"
-   ]
+   ],
+   "casa_version": "6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)",
+   "receipt": "resources/casa-compat/evidence/simutil-fixtures-20261103.json"
   },
   "skymodel-casa-fixture": {
    "kind": "CASA fixture comparison",
-   "state": "measured",
-   "result": "Recorded from CASA 6.7.6-14 by skymodel_oracle.py: 68 cases, strings exact, numbers 1e-12, pixels 1e-6 of peak. Passes in CI; a receipt at a pinned revision makes this a pass.",
+   "state": "passed",
+   "result": "casa-simulation skymodel_casa: 5 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in.",
    "scope": "modifymodel and flatimage, and components added to models.",
    "links": [
     "crates/casa-simulation/tests/skymodel_casa.rs",
     "crates/casa-simulation/tests/data/skymodel_casa.json.gz",
     "tools/simulation/skymodel_oracle.py"
-   ]
+   ],
+   "casa_version": "6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)",
+   "receipt": "resources/casa-compat/evidence/simutil-fixtures-20261103.json"
   },
   "binding-tests": {
    "kind": "Python binding tests",

@@ -560,11 +560,14 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="simobserve-evidence-skymodel-fixture"></a>
 ##### skymodel-fixture
 
-**CASA fixture comparison — measured.** The fixture's 68 cases, recorded from CASA 6.7.6-14, agree (strings exact, numbers 1e-12, pixels 1e-6 of peak) in CI; a receipt at a pinned revision makes this a pass. modifymodel, flatimage and the component-only model that simobserve's sky-model stage uses.
+**CASA fixture comparison — passed.** casa-simulation skymodel_casa: 5 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. modifymodel, flatimage and the component-only model that simobserve's sky-model stage uses.
 
 - [crates/casa-simulation/tests/skymodel_casa.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/skymodel_casa.rs)
 - [crates/casa-simulation/tests/data/skymodel_casa.json.gz](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/data/skymodel_casa.json.gz)
 - [tools/simulation/skymodel_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/skymodel_oracle.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/simutil-fixtures-20261103.json`.
 
 <a id="simobserve-evidence-bugs-record"></a>
 ##### bugs-record
@@ -1462,19 +1465,25 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="componentlist-evidence-table-fixtures"></a>
 ##### table-fixtures
 
-**CASA fixture comparison — measured.** CASA-written component-list tables read cell for cell and casa-rs-written ones read back as CASA would (getcomponent fields to 1e-13); fixtures recorded from CASA 6.7.6-14. A receipt at a pinned revision makes this a pass. The component-list tables open reads and close and rename write.
+**CASA fixture comparison — passed.** casa-components casa_fixture: 3 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. The component-list tables open reads and close and rename write.
 
 - [crates/casa-components/tests/casa_fixture.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-components/tests/casa_fixture.rs)
 - [crates/casa-components/tests/data/casa-6.7.6](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-components/tests/data/casa-6.7.6)
 - [tools/simulation/componentlist_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/componentlist_oracle.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/componentlist-fixtures-20261103.json`.
 
 <a id="componentlist-evidence-casa-values"></a>
 ##### casa-values
 
-**CASA-recorded call sequences — measured.** The tests replay CASA 6.7.6-14's recorded calls and compare every value; a receipt at a pinned revision makes this a pass. addcomponent and the accessors on 20 components and 36 recorded calls, with CASA's edge cases.
+**CASA-recorded call sequences — passed.** test_tools_componentlist.py: 19 tests pass at the revision; the 2 that need a live CASA are skipped there, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. addcomponent and the accessors on 20 components and 36 recorded calls, with CASA's edge cases.
 
 - [crates/casars-python/python/tests/data/casa_componentlist_tool.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/data/casa_componentlist_tool.json)
 - [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_componentlist.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/componentlist-fixtures-20261103.json`.
 
 <a id="componentlist-evidence-bugs-record"></a>
 ##### bugs-record
@@ -2641,28 +2650,37 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="simutil-evidence-simutil-casa-fixture"></a>
 ##### simutil-casa-fixture
 
-**CASA fixture comparison — measured.** Recorded from CASA 6.7.6-14 by simutil_oracle.py: 712 calc_pointings2 cases, pointing files, directions, 1,009 noisetemp cases, band names, feeds and beams. Strings exact, numbers to 1e-12 (beams 1e-9), apart from the documented departures. Passes in CI; a receipt at a pinned revision makes this a pass. The pointing, direction, receiver and beam helpers.
+**CASA fixture comparison — passed.** casa-simulation simutil_casa: 5 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. The pointing, direction, receiver and beam helpers.
 
 - [crates/casa-simulation/tests/simutil_casa.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/simutil_casa.rs)
 - [crates/casa-simulation/tests/data/simutil_casa.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/data/simutil_casa.json)
 - [tools/simulation/simutil_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/simutil_oracle.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/simutil-fixtures-20261103.json`.
 
 <a id="simutil-evidence-readantenna-casa-fixture"></a>
 ##### readantenna-casa-fixture
 
-**CASA fixture comparison — measured.** Recorded from CASA 6.7.6.14: positions agree to 1e-6 m, and CASA's observatory table to casa-rs's. Passes in CI; a receipt at a pinned revision makes this a pass. readantenna on CASA's configuration files and observatories.
+**CASA fixture comparison — passed.** casa-simulation readantenna_casa: 2 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. readantenna on CASA's configuration files and observatories.
 
 - [crates/casa-simulation/tests/readantenna_casa.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/readantenna_casa.rs)
 - [crates/casa-simulation/tests/data/readantenna_casa.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/data/readantenna_casa.json)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/simutil-fixtures-20261103.json`.
 
 <a id="simutil-evidence-skymodel-casa-fixture"></a>
 ##### skymodel-casa-fixture
 
-**CASA fixture comparison — measured.** Recorded from CASA 6.7.6-14 by skymodel_oracle.py: 68 cases, strings exact, numbers 1e-12, pixels 1e-6 of peak. Passes in CI; a receipt at a pinned revision makes this a pass. modifymodel and flatimage, and components added to models.
+**CASA fixture comparison — passed.** casa-simulation skymodel_casa: 5 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. modifymodel and flatimage, and components added to models.
 
 - [crates/casa-simulation/tests/skymodel_casa.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/skymodel_casa.rs)
 - [crates/casa-simulation/tests/data/skymodel_casa.json.gz](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/data/skymodel_casa.json.gz)
 - [tools/simulation/skymodel_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/skymodel_oracle.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/simutil-fixtures-20261103.json`.
 
 <a id="simutil-evidence-binding-tests"></a>
 ##### binding-tests
