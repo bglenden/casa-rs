@@ -267,6 +267,7 @@ fn kernel_set_kind(problem: &CompiledProblem) -> KernelSetKind {
         Some(
             InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
                 | InstrumentModel::CasaEvlaCommonInterferometricResponseV1
+                | InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1
         )
     ) {
         KernelSetKind::Mosaic
@@ -412,7 +413,7 @@ fn kernel_set(
         KernelSetKind::Mosaic => {
             if keys.dish_classes.is_empty() {
                 return Err(ImagingError::Unsupported {
-                    reason: "the mosaic set needs ALMA, ACA or EVLA dishes in the selection",
+                    reason: "the mosaic set needs the dishes of its instrument model",
                 });
             }
             let dishes = keys
@@ -422,6 +423,9 @@ fn kernel_set(
                     AntennaResponseClass::CasaAlma12m => AiryDish::casa_alma(12.0, geometry).into(),
                     AntennaResponseClass::CasaAca7m => AiryDish::casa_alma(7.0, geometry).into(),
                     AntennaResponseClass::CasaEvla => PrimaryBeam::Evla,
+                    AntennaResponseClass::CasaAiry {
+                        dish_diameter_m_bits,
+                    } => AiryDish::casa_airy(f64::from_bits(*dish_diameter_m_bits)).into(),
                 })
                 .collect::<Vec<_>>();
             let frequency_hz = reference_frequency_hz(problem)?;

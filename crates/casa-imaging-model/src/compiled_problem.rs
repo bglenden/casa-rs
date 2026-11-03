@@ -327,6 +327,12 @@ pub enum InstrumentModel {
     /// version 1: the mosaic gridder's `HetArrayConvFunc` of
     /// `PBMathInterface::COMMONPB`.
     CasaEvlaCommonInterferometricResponseV1,
+    /// CASA-compatible paired voltage response of Airy dishes, one class
+    /// per dish diameter, for a telescope CASA has no default voltage
+    /// pattern for, version 1: the mosaic gridder's `HetArrayConvFunc` of
+    /// `PBMathInterface::AIRY` (each dish its own diameter, a blockage of
+    /// `d/12 · 0.75` and a 150″ radius at 100 GHz).
+    CasaAiryHeterogeneousInterferometricResponseV1,
     /// CASA-compatible EVLA aperture, pointing, and beam response with the
     /// terms its [`AwProjectionContract`] states (wideband and conjugate
     /// beams among them), consumed through validated paired AW convolution
@@ -2056,6 +2062,7 @@ fn validate_science(science: &ScientificContract) -> Result<(), CompileProblemEr
                     InstrumentModel::CasaAca7mInterferometricDirectPbV1
                         | InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
                         | InstrumentModel::CasaEvlaCommonInterferometricResponseV1
+                        | InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1
                         | InstrumentModel::CasaEvlaWidebandAwV1
                 )
             )
@@ -2084,6 +2091,7 @@ fn validate_science(science: &ScientificContract) -> Result<(), CompileProblemEr
             Some(
                 InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
                     | InstrumentModel::CasaEvlaCommonInterferometricResponseV1
+                    | InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1
             )
         )
     {
