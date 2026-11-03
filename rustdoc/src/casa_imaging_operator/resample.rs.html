@@ -564,7 +564,7 @@
 <a href=#564 id=564 data-nosnippet>564</a>    <span class="kw">let </span>location = geometry.locate(u, v, placing.oversampling);
 <a href=#565 id=565 data-nosnippet>565</a>    <span class="kw">let </span>gridded = <span class="kw">match </span>cf.grid_edge() {
 <a href=#566 id=566 data-nosnippet>566</a>        GridEdge::Whole =&gt; geometry.fits(location, placing.half_support),
-<a href=#567 id=567 data-nosnippet>567</a>        GridEdge::Clipped =&gt; geometry.reaches(location, placing.half_support),
+<a href=#567 id=567 data-nosnippet>567</a>        GridEdge::Clipped | GridEdge::Sectioned =&gt; geometry.reaches(location, placing.half_support),
 <a href=#568 id=568 data-nosnippet>568</a>    };
 <a href=#569 id=569 data-nosnippet>569</a>    <span class="kw">if </span>!gridded {
 <a href=#570 id=570 data-nosnippet>570</a>        <span class="kw">return </span><span class="prelude-val">None</span>;

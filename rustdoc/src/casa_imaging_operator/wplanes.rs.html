@@ -5,7 +5,7 @@
 <a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>num_complex::{Complex32, Complex64};
 <a href=#6 id=6 data-nosnippet>6</a>
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span><span class="kw">crate</span>::convolution::{
-<a href=#8 id=8 data-nosnippet>8</a>    CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
+<a href=#8 id=8 data-nosnippet>8</a>    CellHold, ConvolutionFunctionSet, DenseCell, GridEdge, ImageCorrection, KernelNormalisation,
 <a href=#9 id=9 data-nosnippet>9</a>    MuellerRouting, RowContext, TapFootprint, TapLayout,
 <a href=#10 id=10 data-nosnippet>10</a>};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">crate</span>::dense::{dense_cell_from_quadrant, dense_cell_from_quadrant_bytes};
@@ -564,37 +564,45 @@
 <a href=#564 id=564 data-nosnippet>564</a>    <span class="kw">fn </span>admits(<span class="kw-2">&amp;</span><span class="self">self</span>, w_lambda: f64) -&gt; bool {
 <a href=#565 id=565 data-nosnippet>565</a>        <span class="self">Self</span>::admits(<span class="self">self</span>, w_lambda)
 <a href=#566 id=566 data-nosnippet>566</a>    }
-<a href=#567 id=567 data-nosnippet>567</a>}
-<a href=#568 id=568 data-nosnippet>568</a>
-<a href=#569 id=569 data-nosnippet>569</a><span class="doccomment">/// `WPConvFunc::makeGWplane`: the taper times the w-screen over the inner
-<a href=#570 id=570 data-nosnippet>570</a>/// `inner × inner` pixels of a centred `conv_size × conv_size` plane, zero
-<a href=#571 id=571 data-nosnippet>571</a>/// outside; `w` in wavelengths.
-<a href=#572 id=572 data-nosnippet>572</a></span><span class="kw">fn </span>make_w_plane(
-<a href=#573 id=573 data-nosnippet>573</a>    screen: <span class="kw-2">&amp;mut </span>[Complex64],
-<a href=#574 id=574 data-nosnippet>574</a>    conv_size: usize,
-<a href=#575 id=575 data-nosnippet>575</a>    inner: usize,
-<a href=#576 id=576 data-nosnippet>576</a>    increment: [f64; <span class="number">2</span>],
-<a href=#577 id=577 data-nosnippet>577</a>    taper: <span class="kw-2">&amp;</span>[f64],
-<a href=#578 id=578 data-nosnippet>578</a>    w: f64,
-<a href=#579 id=579 data-nosnippet>579</a>) {
-<a href=#580 id=580 data-nosnippet>580</a>    screen.fill(Complex64::default());
-<a href=#581 id=581 data-nosnippet>581</a>    <span class="kw">let </span>centre = (conv_size / <span class="number">2</span>) <span class="kw">as </span>i64;
-<a href=#582 id=582 data-nosnippet>582</a>    <span class="kw">let </span>half = (inner / <span class="number">2</span>) <span class="kw">as </span>i64;
-<a href=#583 id=583 data-nosnippet>583</a>    <span class="kw">let </span>two_pi_w = std::f64::consts::TAU * w;
-<a href=#584 id=584 data-nosnippet>584</a>    <span class="kw">for </span>iy <span class="kw">in </span>-half..half {
-<a href=#585 id=585 data-nosnippet>585</a>        <span class="kw">let </span>m = increment[<span class="number">1</span>] * iy <span class="kw">as </span>f64;
-<a href=#586 id=586 data-nosnippet>586</a>        <span class="kw">let </span>m_sq = m * m;
-<a href=#587 id=587 data-nosnippet>587</a>        <span class="kw">let </span>taper_y = taper[(iy + half) <span class="kw">as </span>usize];
-<a href=#588 id=588 data-nosnippet>588</a>        <span class="kw">for </span>ix <span class="kw">in </span>-half..half {
-<a href=#589 id=589 data-nosnippet>589</a>            <span class="kw">let </span>l = increment[<span class="number">0</span>] * ix <span class="kw">as </span>f64;
-<a href=#590 id=590 data-nosnippet>590</a>            <span class="kw">let </span>r_sq = l * l + m_sq;
-<a href=#591 id=591 data-nosnippet>591</a>            <span class="kw">if </span>r_sq &lt; <span class="number">1.0 </span>{
-<a href=#592 id=592 data-nosnippet>592</a>                <span class="kw">let </span>phase = two_pi_w * ((<span class="number">1.0 </span>- r_sq).sqrt() - <span class="number">1.0</span>);
-<a href=#593 id=593 data-nosnippet>593</a>                <span class="kw">let </span>taper_x = taper[(ix + half) <span class="kw">as </span>usize];
-<a href=#594 id=594 data-nosnippet>594</a>                screen[((iy + centre) * conv_size <span class="kw">as </span>i64 + ix + centre) <span class="kw">as </span>usize] =
-<a href=#595 id=595 data-nosnippet>595</a>                    Complex64::from_polar(taper_x * taper_y, phase);
-<a href=#596 id=596 data-nosnippet>596</a>            }
-<a href=#597 id=597 data-nosnippet>597</a>        }
-<a href=#598 id=598 data-nosnippet>598</a>    }
-<a href=#599 id=599 data-nosnippet>599</a>}
+<a href=#567 id=567 data-nosnippet>567</a>
+<a href=#568 id=568 data-nosnippet>568</a>    <span class="doccomment">/// `WProjectFT::put` grids through the sectioned `sectgwgridd`, which
+<a href=#569 id=569 data-nosnippet>569</a>    /// clips a support to the grid's sectors and weighs the taps it keeps
+<a href=#570 id=570 data-nosnippet>570</a>    /// (`onmywgrid`); its unsectioned `gwgrid` and the degridder drop a
+<a href=#571 id=571 data-nosnippet>571</a>    /// support that overruns the grid (`owp`).
+<a href=#572 id=572 data-nosnippet>572</a>    </span><span class="kw">fn </span>grid_edge(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; GridEdge {
+<a href=#573 id=573 data-nosnippet>573</a>        GridEdge::Sectioned
+<a href=#574 id=574 data-nosnippet>574</a>    }
+<a href=#575 id=575 data-nosnippet>575</a>}
+<a href=#576 id=576 data-nosnippet>576</a>
+<a href=#577 id=577 data-nosnippet>577</a><span class="doccomment">/// `WPConvFunc::makeGWplane`: the taper times the w-screen over the inner
+<a href=#578 id=578 data-nosnippet>578</a>/// `inner × inner` pixels of a centred `conv_size × conv_size` plane, zero
+<a href=#579 id=579 data-nosnippet>579</a>/// outside; `w` in wavelengths.
+<a href=#580 id=580 data-nosnippet>580</a></span><span class="kw">fn </span>make_w_plane(
+<a href=#581 id=581 data-nosnippet>581</a>    screen: <span class="kw-2">&amp;mut </span>[Complex64],
+<a href=#582 id=582 data-nosnippet>582</a>    conv_size: usize,
+<a href=#583 id=583 data-nosnippet>583</a>    inner: usize,
+<a href=#584 id=584 data-nosnippet>584</a>    increment: [f64; <span class="number">2</span>],
+<a href=#585 id=585 data-nosnippet>585</a>    taper: <span class="kw-2">&amp;</span>[f64],
+<a href=#586 id=586 data-nosnippet>586</a>    w: f64,
+<a href=#587 id=587 data-nosnippet>587</a>) {
+<a href=#588 id=588 data-nosnippet>588</a>    screen.fill(Complex64::default());
+<a href=#589 id=589 data-nosnippet>589</a>    <span class="kw">let </span>centre = (conv_size / <span class="number">2</span>) <span class="kw">as </span>i64;
+<a href=#590 id=590 data-nosnippet>590</a>    <span class="kw">let </span>half = (inner / <span class="number">2</span>) <span class="kw">as </span>i64;
+<a href=#591 id=591 data-nosnippet>591</a>    <span class="kw">let </span>two_pi_w = std::f64::consts::TAU * w;
+<a href=#592 id=592 data-nosnippet>592</a>    <span class="kw">for </span>iy <span class="kw">in </span>-half..half {
+<a href=#593 id=593 data-nosnippet>593</a>        <span class="kw">let </span>m = increment[<span class="number">1</span>] * iy <span class="kw">as </span>f64;
+<a href=#594 id=594 data-nosnippet>594</a>        <span class="kw">let </span>m_sq = m * m;
+<a href=#595 id=595 data-nosnippet>595</a>        <span class="kw">let </span>taper_y = taper[(iy + half) <span class="kw">as </span>usize];
+<a href=#596 id=596 data-nosnippet>596</a>        <span class="kw">for </span>ix <span class="kw">in </span>-half..half {
+<a href=#597 id=597 data-nosnippet>597</a>            <span class="kw">let </span>l = increment[<span class="number">0</span>] * ix <span class="kw">as </span>f64;
+<a href=#598 id=598 data-nosnippet>598</a>            <span class="kw">let </span>r_sq = l * l + m_sq;
+<a href=#599 id=599 data-nosnippet>599</a>            <span class="kw">if </span>r_sq &lt; <span class="number">1.0 </span>{
+<a href=#600 id=600 data-nosnippet>600</a>                <span class="kw">let </span>phase = two_pi_w * ((<span class="number">1.0 </span>- r_sq).sqrt() - <span class="number">1.0</span>);
+<a href=#601 id=601 data-nosnippet>601</a>                <span class="kw">let </span>taper_x = taper[(ix + half) <span class="kw">as </span>usize];
+<a href=#602 id=602 data-nosnippet>602</a>                screen[((iy + centre) * conv_size <span class="kw">as </span>i64 + ix + centre) <span class="kw">as </span>usize] =
+<a href=#603 id=603 data-nosnippet>603</a>                    Complex64::from_polar(taper_x * taper_y, phase);
+<a href=#604 id=604 data-nosnippet>604</a>            }
+<a href=#605 id=605 data-nosnippet>605</a>        }
+<a href=#606 id=606 data-nosnippet>606</a>    }
+<a href=#607 id=607 data-nosnippet>607</a>}
 </code></pre></div></section></main></body></html>

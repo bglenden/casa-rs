@@ -2358,6 +2358,50 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A tuned cube selection compares outframe frequencies with LSRK ones
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A cube's fine frequency grid lets rounding choose one or two samples per plane
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A cube without a per-channel density leaves &lt;imagename&gt;.gridwt behind
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        W projection grids a support the grid's edge cuts, and never its last row and column
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#a-crtf-spectral-range-rounds-each-end-to-a-channel-toward-zero" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2431,7 +2475,8 @@ CASA behaviours casa-rs follows for parity:
 <a href="#the-evlas-beam-table-has-no-11052-mhz-fit">the EVLA's 11052 MHz fit</a>,
 <a href="#the-simulators-mosaic-machine-is-not-tcleans">the simulator's and tclean's two mosaic machines</a>,
 <a href="#smpredict-phases-a-moved-observemany-pointing-on-its-field">a moved pointing phased on its field</a>,
-<a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>.
+<a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
+<a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
 <a href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes">odd-size scale convolutions</a>,
 <a href="#matrixcleaners-step-residual-forgets-earlier-steps">MatrixCleaner's step residual</a>,
@@ -2443,6 +2488,9 @@ CASA behaviours casa-rs does not follow:
 <a href="#a-mosaics-weight-image-is-transformed-in-single-precision">a mosaic's single-precision weight image</a>,
 <a href="#facets-of-an-image-size-that-does-not-divide">facets of an image size that does not divide</a>,
 <a href="#an-unflagged-non-finite-sample-turns-the-image-to-nan">an unflagged non-finite sample</a>,
+<a href="#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones">a tuned cube's frequency selection</a>,
+<a href="#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane">a cube's fine frequency grid at a whole ratio</a>,
+<a href="#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind">the <code>.gridwt</code> a cube leaves</a>,
 <a href="#tbgetcol-refuses-a-column-of-int64"><code>tb.getcol</code> of an <code>int64</code> column</a>,
 <a href="#tbputkeyword-stores-an-int-beyond-32-bits-as-0"><code>tb.putkeyword</code> of an int beyond 32 bits</a>,
 <a href="#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process"><code>tb</code> slices that abort the process</a>,
@@ -5300,6 +5348,127 @@ window 0). <code>( ... )</code> skips <code>endOfCeremony</code>, so the express
 row. All are in the evidence file; <code>casa-ms</code> reproduces them, and <code>tclean</code>
 refuses the parenthesized form and a window kept without channels, whose
 imaging in CASA is not established.</p>
+<h2 id="a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones">A tuned cube selection compares <code>outframe</code> frequencies with LSRK ones<a class="headerlink" href="#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA bug casa-rs does not follow (#980,
+  <code>casa-imaging-application</code> <code>compile::frequency_bands</code>)</li>
+<li>Affected code: casatools <code>synthesis/ImagerObjects/SynthesisImagerVi2.cc</code>
+  (<code>selectData</code>, <code>andFreqSelection</code>), <code>SynthesisImager.cc</code>
+  (<code>tuneSelectData</code>), <code>CubeMajorCycleAlgorithm.cc</code> (<code>task</code>)</li>
+</ul>
+<p>A cube is gridded by <code>CubeMajorCycleAlgorithm</code>'s own <code>SynthesisImagerVi2</code>.
+Its <code>selectData</code> states each channel range <code>spw</code> names as a frequency band in
+tclean's <code>outframe</code> (<code>MSUtil::getFreqRangeInSpw</code> over the range's channel
+centres at every time of the window's rows) and stores it in <code>freqBegs_p</code> and
+<code>freqEnds_p</code>. Where <code>tuneSelectData</code> tunes the selection (the first visibility
+buffer's window has 30 or more channels, or the model is saved to
+<code>MODEL_DATA</code>), it calls <code>selectData</code> again with the image's band, pixel −1.5 to
+<code>nchan + 0.5</code>, in LSRK, and <code>andFreqSelection</code> narrows each stored band that
+band overlaps to their intersection, without converting either: a band in
+<code>TOPO</code> or <code>BARY</code> numbers is intersected with one in LSRK numbers, and the
+result is read as LSRK (<code>FrequencySelectionUsingFrame(LSRK)</code>). The two frames
+differ by up to tens of km/s, so with channels narrower than that, an image
+whose band overlaps the stored one in those numbers loses the image's edge
+channels (or gains channels CASA never meant to read) at every time. The same
+<code>andFreqSelection</code> narrows two of a window's own channel ranges to their
+intersection when a Doppler shift across the track makes their bands
+overlap, which keeps almost nothing of either. casa-rs states a tuned
+selection's bands in LSRK before intersecting them with the image's, and
+keeps each named range's band whole; with <code>outframe='LSRK'</code>, the default, and
+ranges further apart than the shift, the selections agree. No case of CASA's
+test suite reaches either difference: the one tuned cube with channels
+narrower than the shift, <code>test_cube_D2</code>, images in LSRK, where casa-rs and
+CASA select the same channels at every time (its edge plane keeps 2460.56 of
+5020.51 in both).</p>
+<h2 id="a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane">A cube's fine frequency grid lets rounding choose one or two samples per plane<a class="headerlink" href="#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA rounding casa-rs does not follow (#980;
+  <code>test_cube.test_cube_5</code> differs by it)</li>
+<li>Affected code: casatools <code>synthesis/TransformMachines2/FTMachine.cc</code>
+  (<code>interpolateFrequencyTogrid</code>)</li>
+</ul>
+<p>For linear interpolation onto planes wider than a channel, CASA places
+<code>floor(width)</code> points per plane, with <code>width</code> the ratio of the plane
+spacing (<code>imageFreq_p</code>, from the image's spectral coordinate and its LSRK
+conversion layer) to the visibility buffer's first channel spacing (its
+channels converted to LSRK by the visibility iterator). Where planes are a
+whole number of channels wide, the ratio is that number exactly at the
+image's epoch, and after it the Doppler shift moves it by about 1e-6, below
+or above. <code>test_cube_5</code> (<code>refim_point.ms</code>, 50 MHz TOPO channels,
+<code>width='100MHz'</code>, <code>outframe='TOPO'</code>) has a ratio of 2 at its first
+integration: the image's epoch is that integration's time and its
+direction the field's to the last bit, and the shift then lowers the ratio
+below 2 at every later integration, where both implementations place one
+point per plane. At the first integration CASA's two conversions round
+apart and its ratio falls below 2, so it places one point there too;
+casa-rs's ratio is 2 to rounding and it places two. Every plane of casa-rs's
+cube therefore holds the first integration's weight twice: its sum of
+weights exceeds CASA's by exactly that integration's share of the track,
+0.0017154 (the rows of one of its 480 integrations, unflagged, over all),
+and its PSFs differ by 7e-4 to 1.3e-3 normalized RMS, the returned
+<code>maxpsfsidelobe</code> by 3e-4. Which side of 2 a ratio that is 2 exactly falls
+on is rounding, which casa-rs does not reproduce (<code>AGENTS.md</code>: a near-tie
+broken the other way is equally valid).</p>
+<h2 id="a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind">A cube without a per-channel density leaves <code>&lt;imagename&gt;.gridwt</code> behind<a class="headerlink" href="#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA behaviour casa-rs does not follow (#980;
+  <code>test_onefield.test_onefield_pcwdT_and_pcwdF.2</code>'s inventory differs by it)</li>
+<li>Affected code: casatools <code>synthesis/ImagerObjects/SynthesisImagerVi2.cc</code>
+  (<code>runCubeGridding</code>), <code>SynthesisImager.cc</code> (<code>getWeightDensity</code>,
+  <code>setWeightDensity</code>), <code>SIImageStore.cc</code> (<code>gridwt</code>),
+  <code>CubeMajorCycleAlgorithm.cc</code> (<code>task</code>)</li>
+</ul>
+<p>A cube weighted by Briggs or uniform weighting with
+<code>perchanweightdensity=False</code> forms one <code>VisImagingWeight</code> density in the
+imager defining the cube. To hand it to the <code>CubeMajorCycleAlgorithm</code>
+imagers that grid the cube, <code>runCubeGridding</code> asks <code>getWeightDensity</code>, which
+writes the density grid to a new paged image <code>&lt;imagename&gt;.gridwt</code> and passes
+its name in the control record (<code>weightdensity</code>); each gridding imager reads
+it back with <code>setWeightDensity</code>. Nothing removes the file. A later run into
+the same name forms its density again and overwrites it, and reads the file
+only for the shape of an image store that has no other product
+(<code>SIImageStore</code>'s constructor, whose comment there asks "How can this be
+right ?"). Its
+pixels are a uv-plane density, but its coordinates are the image's sky
+coordinates, with a <code>FIELD_ORDER</code> axis added for several fields. casa-rs
+forms the density once and grids with it in the same process, so it writes
+no such file; CASA 6.7.6.14 writes <code>tst2.gridwt</code> in
+<code>test_onefield_pcwdT_and_pcwdF</code>'s second call, whose other products agree.</p>
+<h2 id="w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection grids a support the grid's edge cuts, and never its last row and column<a class="headerlink" href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA behaviour casa-rs follows for parity (#980,
+  <code>casa-imaging-operator</code> <code>GridEdge::Sectioned</code>)</li>
+<li>Affected code: casatools <code>synthesis/TransformMachines2/WProjectFT.cc</code>
+  (<code>put</code>), <code>FTMachine.cc</code> (<code>findGridSector</code>, <code>tweakGridSector</code>),
+  <code>synthesis/fortran/wprojgrid.f</code> (<code>sectgwgridd</code>, <code>sectgwgrids</code>,
+  <code>onmywgrid</code>, <code>sectdwgrid</code>, <code>owp</code>)</li>
+</ul>
+<p><code>WProjectFT::put</code> grids through the sectioned <code>sectgwgridd</code>: each sector
+<code>findGridSector</code> cuts grids the taps of a sample that fall on it and adds
+<code>weight · Σ Re(cwt)</code> over those taps to <code>sumwt</code>, wherever the sample's anchor
+lies (<code>onmywgrid</code> asks only that the support meet the sector). A support
+that overruns the grid is therefore gridded in part and weighed by the part,
+where the unsectioned <code>gwgrid</code> and the degridder (<code>sectdwgrid</code> through
+<code>owp</code>) drop it. The sectors start at the grid's first column and row (both
+<code>findGridSector</code> and <code>tweakGridSector</code> add one to the 0-based start, giving
+the 1-based <code>x0 = 1</code>, and <code>onmywgrid</code> clips a support's low end to it), and
+<code>findGridSector</code> cuts the last one short (<code>nxsub = nxp - x0 - 1</code> before that
+increment), so they cover every column and row but the grid's last: no tap
+lands before the grid, and the last column and row are never gridded,
+though <code>owp</code> predicts a support that reaches them. casa-rs grids the taps
+on the sectors and weighs them, as CASA does. Dropping the whole sample, as
+casa-rs did, left <code>test_cube_wproj_onefield</code>'s 1.5 and 1.8 GHz planes
+(<code>refim_oneshiftpoint.mosaic.ms</code>, four planes, whose supports overrun the
+grid at those frequencies) short of CASA's <code>sumwt</code> by 3.06 and 14.57 and
+their PSFs 3.6% and 5.3% apart in normalized RMS; they now agree with CASA
+6.7.6.14 to 8e-7. (An earlier reading of the sectors as starting at the
+0-based column 0, so that a tap one column below the grid would be written
+before it and weighed, mistook <code>findGridSector</code>'s start before its final
+increment for the start it returns.)</p>
 <h2 id="a-crtf-spectral-range-rounds-each-end-to-a-channel-toward-zero">A CRTF spectral range rounds each end to a channel, toward zero<a class="headerlink" href="#a-crtf-spectral-range-rounds-each-end-to-a-channel-toward-zero" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-03</li>

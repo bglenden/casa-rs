@@ -262,28 +262,31 @@
 <a href=#262 id=262 data-nosnippet>262</a>                    .with_first_buffer_lsrk_factor(factor)
 <a href=#263 id=263 data-nosnippet>263</a>                    .expect(<span class="string">"a bound factor is finite and positive"</span>);
 <a href=#264 id=264 data-nosnippet>264</a>            }
-<a href=#265 id=265 data-nosnippet>265</a>            <span class="prelude-val">Ok</span>(output)
-<a href=#266 id=266 data-nosnippet>266</a>        })
-<a href=#267 id=267 data-nosnippet>267</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="prelude-val">Ok</span>(ObservationSelection::new(
-<a href=#269 id=269 data-nosnippet>269</a>        selected.samples(),
-<a href=#270 id=270 data-nosnippet>270</a>        selected.rows_filter().clone(),
-<a href=#271 id=271 data-nosnippet>271</a>        selected.partitions().to_vec(),
-<a href=#272 id=272 data-nosnippet>272</a>        spectral_windows,
-<a href=#273 id=273 data-nosnippet>273</a>    ))
-<a href=#274 id=274 data-nosnippet>274</a>}
-<a href=#275 id=275 data-nosnippet>275</a>
-<a href=#276 id=276 data-nosnippet>276</a><span class="doccomment">/// Failure to compile a requested MeasurementSet side effect.
-<a href=#277 id=277 data-nosnippet>277</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-<a href=#278 id=278 data-nosnippet>278</a></span><span class="kw">pub enum </span>ObservationTransactionCompileError {
-<a href=#279 id=279 data-nosnippet>279</a>    <span class="doccomment">/// Residual persistence is meaningful only for a compiled continuum transform.
-<a href=#280 id=280 data-nosnippet>280</a>    </span><span class="attr">#[error(<span class="string">"CORRECTED_DATA residual persistence requires continuum subtraction"</span>)]
-<a href=#281 id=281 data-nosnippet>281</a>    </span>CorrectedDataRequiresContinuumTransform,
-<a href=#282 id=282 data-nosnippet>282</a>    <span class="doccomment">/// The MeasurementSet has no `CORRECTED_DATA` column to write.
-<a href=#283 id=283 data-nosnippet>283</a>    </span><span class="attr">#[error(<span class="string">"CORRECTED_DATA residual persistence requires an existing CORRECTED_DATA column"</span>)]
-<a href=#284 id=284 data-nosnippet>284</a>    </span>MissingCorrectedDataDestination,
-<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// The transform must expose at least one output-role channel for each selected SPW.
-<a href=#286 id=286 data-nosnippet>286</a>    </span><span class="attr">#[error(<span class="string">"continuum transform selected no CORRECTED_DATA output-role channels"</span>)]
-<a href=#287 id=287 data-nosnippet>287</a>    </span>EmptyOutputRoleSelection,
-<a href=#288 id=288 data-nosnippet>288</a>}
+<a href=#265 id=265 data-nosnippet>265</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(bands) = selection.frequency_bands() {
+<a href=#266 id=266 data-nosnippet>266</a>                output = output.with_frequency_bands(bands.clone());
+<a href=#267 id=267 data-nosnippet>267</a>            }
+<a href=#268 id=268 data-nosnippet>268</a>            <span class="prelude-val">Ok</span>(output)
+<a href=#269 id=269 data-nosnippet>269</a>        })
+<a href=#270 id=270 data-nosnippet>270</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="prelude-val">Ok</span>(ObservationSelection::new(
+<a href=#272 id=272 data-nosnippet>272</a>        selected.samples(),
+<a href=#273 id=273 data-nosnippet>273</a>        selected.rows_filter().clone(),
+<a href=#274 id=274 data-nosnippet>274</a>        selected.partitions().to_vec(),
+<a href=#275 id=275 data-nosnippet>275</a>        spectral_windows,
+<a href=#276 id=276 data-nosnippet>276</a>    ))
+<a href=#277 id=277 data-nosnippet>277</a>}
+<a href=#278 id=278 data-nosnippet>278</a>
+<a href=#279 id=279 data-nosnippet>279</a><span class="doccomment">/// Failure to compile a requested MeasurementSet side effect.
+<a href=#280 id=280 data-nosnippet>280</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+<a href=#281 id=281 data-nosnippet>281</a></span><span class="kw">pub enum </span>ObservationTransactionCompileError {
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="doccomment">/// Residual persistence is meaningful only for a compiled continuum transform.
+<a href=#283 id=283 data-nosnippet>283</a>    </span><span class="attr">#[error(<span class="string">"CORRECTED_DATA residual persistence requires continuum subtraction"</span>)]
+<a href=#284 id=284 data-nosnippet>284</a>    </span>CorrectedDataRequiresContinuumTransform,
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// The MeasurementSet has no `CORRECTED_DATA` column to write.
+<a href=#286 id=286 data-nosnippet>286</a>    </span><span class="attr">#[error(<span class="string">"CORRECTED_DATA residual persistence requires an existing CORRECTED_DATA column"</span>)]
+<a href=#287 id=287 data-nosnippet>287</a>    </span>MissingCorrectedDataDestination,
+<a href=#288 id=288 data-nosnippet>288</a>    <span class="doccomment">/// The transform must expose at least one output-role channel for each selected SPW.
+<a href=#289 id=289 data-nosnippet>289</a>    </span><span class="attr">#[error(<span class="string">"continuum transform selected no CORRECTED_DATA output-role channels"</span>)]
+<a href=#290 id=290 data-nosnippet>290</a>    </span>EmptyOutputRoleSelection,
+<a href=#291 id=291 data-nosnippet>291</a>}
 </code></pre></div></section></main></body></html>
