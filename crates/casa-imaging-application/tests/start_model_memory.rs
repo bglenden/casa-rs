@@ -143,4 +143,64 @@ fn seeding_holds_at_most_what_it_is_admitted_and_keeps_the_flux() {
         );
         assert_eq!(samples.len(), size * size);
     }
+
+    // A spectral regrid (#1067) holds the direction pass's image, of the
+    // output's planes and the input's channels, beside its own output, so
+    // what grows the charge is the channels each side and the output's
+    // plane: more channels out, more channels in than out, and the same
+    // count shifted half a channel, each onto 512² cells of a quarter the
+    // input's cell.
+    let (side, channels) = (128, 4);
+    for (label, input_channels, output_channels, start, width) in [
+        ("more out", channels, 8, 1.0e9, 0.5e6),
+        ("more in", 16, channels, 1.0e9, 4.0e6),
+        ("shifted", channels, channels, 1.0005e9, 1.0e6),
+    ] {
+        let cube_path = root.path().join(format!("cube {label}.model"));
+        let shape = [side, side, 1, input_channels];
+        let mut cube = PagedImage::<f32>::create(
+            shape.to_vec(),
+            spectral(coordinates(side, 4.0), 1.0e9, 1.0e6),
+            &cube_path,
+        )
+        .expect("create the cube start model");
+        cube.set_units("Jy/pixel").expect("units");
+        let pixels = ArrayD::from_shape_fn(IxDyn(&shape).f(), |index| {
+            let [x, y] = [index[0], index[1]].map(|v| v as f64 - (side / 2) as f64);
+            ((-(x * x + y * y) / (2.0 * 10.0 * 10.0)).exp() * (1.0 + index[3] as f64)) as f32
+        });
+        cube.put_slice(&pixels, &[0; 4]).expect("pixels");
+        cube.save().expect("save the cube start model");
+        drop((cube, pixels));
+        let template = || RegridTemplate {
+            coordinates: spectral(coordinates(512, 1.0), start, width),
+            shape: vec![512, 512, 1, output_channels],
+        };
+        let admitted = seeding_bytes(&cube_path, template()).expect("a valid cube start model");
+        PEAK.store(0, Ordering::Relaxed);
+        BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let samples = main_samples(&cube_path, template());
+        MEASURING.store(false, Ordering::Relaxed);
+        let samples = samples.expect("seeded cube samples");
+        let peak = PEAK.load(Ordering::Relaxed);
+        eprintln!("spectral regrid, {label}: held {peak} B, admitted {admitted} B");
+        assert!(
+            peak <= admitted,
+            "spectral regrid, {label}: held {peak} B, admitted {admitted} B"
+        );
+        assert_eq!(samples.len(), 512 * 512 * output_channels);
+    }
+}
+
+/// `coordinates` with its spectral axis from `first_hz` in `step_hz`.
+fn spectral(mut coordinates: CoordinateSystem, first_hz: f64, step_hz: f64) -> CoordinateSystem {
+    let index = coordinates
+        .find_coordinate(casa_coordinates::CoordinateType::Spectral)
+        .expect("a spectral coordinate");
+    coordinates.replace_coordinate(
+        index,
+        SpectralCoordinate::new(FrequencyRef::LSRK, first_hz, step_hz, 0.0, 1.0e9),
+    );
+    coordinates
 }

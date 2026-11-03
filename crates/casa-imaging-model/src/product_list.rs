@@ -522,6 +522,9 @@ impl<'a> ListBuilder<'a> {
                     );
                 }
             }
+            // CASA's `SIImageStore::restore` restores every plane, a blank
+            // one's model included (a regridded start model), so a plane's
+            // validity does not zero its restored image.
             ProductKind::RestoredImage => {
                 for term in self.image_terms() {
                     self.add_image(
@@ -533,7 +536,7 @@ impl<'a> ListBuilder<'a> {
                         ProductUnit::JyPerBeam,
                         Some(self.products.normalization()),
                         ProductBeamRule::Restoring(self.products.restoring_beam()),
-                        ProductValidityRule::FinalNormalState,
+                        ProductValidityRule::All,
                     );
                 }
             }
