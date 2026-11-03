@@ -1419,3 +1419,71 @@ fn vla_cube_primary_beam_keeps_the_first_channel_aperture() {
         vla_cube_target_beam(0.8e9, 1.5e9)
     );
 }
+
+/// A PB-corrected cube keeps its restored image's beams. Under
+/// `restoringbeam='common'` CASA writes one beam on `.image.pbcor`, the
+/// restored image's common beam; under per-plane restoring both keep a beam
+/// per channel.
+#[test]
+fn a_pb_corrected_cube_keeps_its_restored_images_beams() {
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::RestoredImage,
+        ProductKind::SumWeights,
+        ProductKind::PrimaryBeam,
+        ProductKind::PbCorrectedImage,
+    ];
+    for (policy, beams) in [
+        (RestoringBeamPolicy::Common, 1),
+        (RestoringBeamPolicy::PerPlane, 2),
+    ] {
+        let problem = continuum_problem_with_reconstruction(
+            183,
+            &products,
+            policy,
+            InstrumentResponse::Scalar,
+            ReconstructionBasis::ChannelLocal { channels: 2 },
+            ReconstructionAlgorithm::Dirty,
+            2,
+        );
+        let round = run_continuum_round(&problem);
+        let controls = ContinuumProductControls::default()
+            .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
+        let inputs = ContinuumProductInputs::from_major_cycle(&problem, &round.join);
+        let planned = planned_for(&inputs, &controls);
+        let output = ImageOutput::for_problem(inputs.problem());
+        let generated =
+            produce_continuum_members(&planned, &inputs, full_window(&planned), &(), &output)
+                .expect("direct product generation");
+        let published = GeneratedProducts::from_output(&planned, &generated, &output);
+        let resolved = |name: &str| {
+            published
+                .members()
+                .iter()
+                .find(|member| member.name() == name)
+                .unwrap_or_else(|| panic!("missing {name}"))
+                .resolved_beams()
+                .to_vec()
+        };
+        assert_eq!(resolved(".image").len(), beams, "{policy:?}");
+        assert_eq!(resolved(".image.pbcor"), resolved(".image"), "{policy:?}");
+        for name in [".image", ".image.pbcor"] {
+            let member = planned
+                .members()
+                .iter()
+                .find(|member| member.name() == name)
+                .expect("planned member");
+            let info = PagedImage::<f32>::open(output.path(member))
+                .expect("published image")
+                .image_info()
+                .expect("image info");
+            assert_eq!(
+                info.beam_set.single_beam().is_some(),
+                beams == 1,
+                "{name} under {policy:?}"
+            );
+        }
+    }
+}

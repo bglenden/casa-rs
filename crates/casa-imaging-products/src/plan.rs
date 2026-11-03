@@ -270,13 +270,20 @@ impl PlannedContinuumGeneration {
     }
 
     /// The beams `member` carries: the generation's fitted or restoring
-    /// beams for its domain, by its beam rule.
+    /// beams for its domain, by its beam rule. A member that inherits its
+    /// beams carries exactly its source's: CASA's `.image.pbcor` keeps the
+    /// restored image's one common beam under `restoringbeam='common'`.
     pub(crate) fn beams_for_member(
         &self,
         member: &PlannedMember,
         fitted: &[Option<RestoringBeam>],
         restoring: &[Option<RestoringBeam>],
     ) -> Box<[Option<RestoringBeam>]> {
+        if let ProductBeamRule::Inherit(source) = member.beam_rule
+            && let Some(source) = self.members.iter().find(|planned| planned.id == source)
+        {
+            return self.beams_for_member(source, fitted, restoring);
+        }
         // Members are listed domain by domain, in the problem's domain
         // order, which is the order of the generation's beams.
         let mut domains = Vec::new();
