@@ -11,7 +11,7 @@ use crate::sample::CfKey;
 
 /// Taps of one convolution-function cell in the layout the kernels read.
 ///
-/// Fine-offset rows are indexed by [`CellLocation`](crate::CellLocation)'s
+/// Fine-offset rows are indexed by [`CellLocation`]'s
 /// `ox`/`oy`, which run over `0..=oversampling`, so every layout holds
 /// `oversampling + 1` rows per axis and `oversampling` must be even.
 #[derive(Clone, Copy, Debug)]
@@ -341,6 +341,14 @@ pub enum GridEdge {
     /// (`fmosaic.f` `sectgmosd2` and `gmoswgtd2` through `onmosgrid`), whose
     /// degridder keeps the whole support (`sectdmos2` through `omos`).
     Clipped,
+    /// The taps of a sample whose support reaches the grid are gridded where
+    /// they fall on it, as under [`Self::Clipped`], and its weight counts in
+    /// `sumwt` by the kernel sum of the taps gridded, wherever its anchor
+    /// cell lies: `WProjectFT`'s sectioned gridders (`wprojgrid.f`
+    /// `sectgwgridd` and `sectgwgrids` through `onmywgrid`, each sector
+    /// adding `weight · Σ Re(cwt)` over its own taps), whose degridder keeps
+    /// the whole support (`sectdwgrid` through `owp`).
+    Sectioned,
 }
 
 /// Which kernel Mueller plane serves each (grid polarization, visibility
@@ -675,7 +683,7 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     }
 
     /// How the gridding treats a sample whose support overruns the grid
-    /// ([`GridEdge`]); every set but the mosaic drops it.
+    /// ([`GridEdge`]); every set but the mosaic and W projection drops it.
     fn grid_edge(&self) -> GridEdge {
         GridEdge::Whole
     }

@@ -2,7 +2,7 @@
 //! T0 laws of the W-projection kernel set: CASA's plane index, the
 //! zero-|w| plane against the standard spheroidal taps, w-sign conjugation
 //! pairing, the exact adjoint without a norm division, the `W · Re N`
-//! `sumwt` rule and the support crop.
+//! `sumwt` rule, the sectioned grid edge and the support crop.
 
 mod common;
 
@@ -13,7 +13,7 @@ use casa_imaging_operator::{
     ModelPrescale, Placement, PlaneRange, PolarizationRouting, RowContext, SampleBuffer,
     Spheroidal, TapLayout, WPlaneCount, WPlanes, Work,
 };
-use casa_imaging_operator::{GridGeometry, GridPadding, ImageExtent, PaddingFactor};
+use casa_imaging_operator::{CellLocation, GridGeometry, GridPadding, ImageExtent, PaddingFactor};
 use casa_types::Correlation;
 use common::{IMAGE, Rng, buffer, placements, samples};
 use ndarray::Array2;
@@ -63,14 +63,23 @@ fn operator_with(
     MeasurementOperator::new(geometry(), Basis::Constant, polarization, cf, precision)
 }
 
-/// Whether `placement`'s support fits the grid.
+/// Whether `placement`'s support lies on the sectors `WProjectFT`'s
+/// gridder covers, every column and row of the grid but its last
+/// ([`GridEdge::Sectioned`](casa_imaging_operator::GridEdge::Sectioned)):
+/// its prediction keeps the whole grid, so a support reaching the last
+/// column or row is not gridded as it is predicted, in CASA as here.
 fn fits(operator: &MeasurementOperator, placement: &Placement) -> bool {
     let mut hold = CellHold::new();
     let taps = operator.cf().taps(placement.cf, &mut hold);
     let location = operator
         .geometry()
         .locate(placement.u, placement.v, taps.oversampling());
-    operator.geometry().fits(location, taps.half_support())
+    let [hx, hy] = taps.half_support().map(i64::from);
+    let [nx, ny] = operator.geometry().grid_shape().map(|n| n as i64);
+    location.x - hx >= 0
+        && location.x + hx < nx - 1
+        && location.y - hy >= 0
+        && location.y + hy < ny - 1
 }
 
 /// Placements keyed by `cf` from random baselines with `w` in `±max_w`.
@@ -465,6 +474,212 @@ fn sumwt_accumulates_the_weight_times_the_real_kernel_sum() {
         (sumwt - weights.iter().sum::<f64>()).abs() > 1.0e-6,
         "complex planes make Re N differ from one"
     );
+}
+
+/// `WProjectFT::put` grids through the sectioned `sectgwgridd` (#980): a
+/// sample whose support overruns the grid is gridded where its taps fall on
+/// the sectors `findGridSector` cuts, which start at the grid's first
+/// column and row (its 1-based `x0 = 1`) and reach every one but its last,
+/// and adds `W · Σ Re(cwt)` over those taps alone to `sumwt`, wherever its
+/// anchor lies (`onmywgrid` asks only that the support meet a sector).
+/// Dropping such a sample, as the unsectioned `gwgrid` does, left the cube
+/// planes of `test_cube_wproj_onefield`'s higher windows a little short of
+/// CASA's `sumwt` and their PSFs 3.6% and 5.3% apart in normalized RMS.
+///
+/// On each edge of the grid, for both signs of `w`, with the anchor on the
+/// grid and off it: `sumwt` is `W · Re Σ` of the taps on the sectors, read
+/// from the kernel's own table, and the grid is the same sample spread
+/// whole at an anchor whole cells inside, cropped to the sectors.
+#[test]
+fn a_support_overrunning_the_grid_weighs_the_taps_the_sectors_keep() {
+    let operator = operator_with(Box::new(w_planes(16)), GridPrecision::F64);
+    let geometry = operator.geometry();
+    let n = geometry.grid_shape().map(|n| n as i64);
+    let w_magnitude = 0.5 * 0.25 / WIDE_INCREMENT_RAD;
+    let weights = [1.25, 0.75];
+    let values = [Complex64::new(0.6, -0.8); 2];
+    for w in [w_magnitude, -w_magnitude] {
+        let key = operator.cf().key(&context(), 1.0e9, w);
+        let mut hold = CellHold::new();
+        let taps = operator.cf().taps(key, &mut hold);
+        let half = taps.half_support().map(i64::from);
+        assert!(half.iter().all(|half| *half >= 4), "half support {half:?}");
+        for axis in 0..2 {
+            for (low, outside) in [(true, false), (true, true), (false, false), (false, true)] {
+                // Two cells overrun, the anchor on the grid; or the anchor
+                // two cells off it, the support reaching back on.
+                let edge = match (low, outside) {
+                    (true, false) => half[axis] - 2,
+                    (true, true) => -2,
+                    (false, false) => n[axis] + 1 - half[axis],
+                    (false, true) => n[axis] + 1,
+                };
+                let mut anchor = n.map(|n| n / 2 + 3);
+                anchor[axis] = edge;
+                let label = format!("w {w}, axis {axis}, low {low}, outside {outside}");
+                let clipped = at_cell(&operator, key, w, anchor);
+                let location = geometry.locate(clipped.u, clipped.v, taps.oversampling());
+                assert_eq!([location.x, location.y], anchor, "{label}");
+                // The same sample whole cells inside, its support on the grid.
+                let mut inside = anchor;
+                inside[axis] = n[axis] / 2;
+                let whole = at_cell(&operator, key, w, inside);
+                assert!(fits(&operator, &whole), "{label}");
+                let (clipped_grid, sumwt) = grid_one(&operator, clipped, &values, &weights);
+                let (whole_grid, whole_sumwt) = grid_one(&operator, whole, &values, &weights);
+                let kept = kept_kernel_sum(&taps, location, n);
+                let expected = weights.iter().sum::<f64>() * kept;
+                assert!(
+                    (sumwt - expected).abs() <= 1.0e-9 * expected.abs(),
+                    "{label}: sumwt {sumwt}, the kept taps' W · Re N {expected}"
+                );
+                // The edge taps of a W plane oscillate, so clipping them
+                // moves the sum either way.
+                assert!(
+                    (sumwt - whole_sumwt).abs() > 1.0e-6 * whole_sumwt.abs(),
+                    "{label}: the support is clipped: {sumwt} against {whole_sumwt} whole"
+                );
+                let shift = [inside[0] - anchor[0], inside[1] - anchor[1]];
+                let peak = whole_grid
+                    .iter()
+                    .fold(0.0_f64, |peak, cell| peak.max(cell.norm()));
+                for y in 0..n[1] {
+                    for x in 0..n[0] {
+                        let on_sectors = x < n[0] - 1 && y < n[1] - 1;
+                        let [sx, sy] = [x + shift[0], y + shift[1]];
+                        let expected =
+                            if on_sectors && (0..n[0]).contains(&sx) && (0..n[1]).contains(&sy) {
+                                whole_grid[(sy * n[0] + sx) as usize]
+                            } else {
+                                Complex64::default()
+                            };
+                        let got = clipped_grid[(y * n[0] + x) as usize];
+                        assert!(
+                            (got - expected).norm() <= 1.0e-12 * peak,
+                            "{label}: cell ({x}, {y}) holds {got}, the cropped whole spread {expected}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `owp` keeps a prediction's whole support on the whole grid, its last
+/// column and row included, where the sectors that grid it end one short:
+/// a sample whose last tap lies on the grid's last column is gridded
+/// clipped yet still predicted, as a point at the phase centre's unit
+/// visibility; one a column further out predicts nothing.
+#[test]
+fn a_support_on_the_last_column_is_gridded_clipped_and_still_predicted() {
+    let operator = operator_with(Box::new(w_planes(16)), GridPrecision::F64);
+    let n = operator.geometry().grid_shape().map(|n| n as i64);
+    let w = 0.5 * 0.25 / WIDE_INCREMENT_RAD;
+    let key = operator.cf().key(&context(), 1.0e9, w);
+    let mut hold = CellHold::new();
+    let half = operator
+        .cf()
+        .taps(key, &mut hold)
+        .half_support()
+        .map(i64::from);
+    let last = at_cell(&operator, key, w, [n[0] - 1 - half[0], n[1] / 2]);
+    let beyond = at_cell(&operator, key, w, [n[0] - half[0], n[1] / 2]);
+    let inside = at_cell(&operator, key, w, [n[0] / 2 + 3, n[1] / 2]);
+    let weights = [1.0, 1.0];
+    let values = [Complex64::new(1.0, 0.0); 2];
+    let (_, last_sumwt) = grid_one(&operator, last, &values, &weights);
+    let (_, inside_sumwt) = grid_one(&operator, inside, &values, &weights);
+    assert!(
+        (last_sumwt - inside_sumwt).abs() > 1.0e-6 * inside_sumwt.abs(),
+        "the last column is not gridded: {last_sumwt} against {inside_sumwt}"
+    );
+    let mut block = SampleBuffer::new(2);
+    for placement in [last, beyond] {
+        block.push(placement, &[Complex32::default(); 2], &[1.0; 2]);
+    }
+    let centre = IMAGE / 2;
+    let predicted = predict(&operator, &point_model([centre, centre]), &block);
+    let unit = predicted[0].norm();
+    assert!(
+        (unit - 1.0).abs() < 0.1,
+        "the last column's sample predicts the centred point's unit visibility, |P| {unit}"
+    );
+    assert_eq!(predicted[2], Complex32::default(), "beyond the grid");
+}
+
+/// A sample keyed `key` at `w` anchored at grid cell `cell`, a fraction of a
+/// cell from its centre on each axis, with no phase.
+fn at_cell(operator: &MeasurementOperator, key: CfKey, w: f64, cell: [i64; 2]) -> Placement {
+    let geometry = operator.geometry();
+    let [sx, sy] = geometry.scale();
+    let [nx, ny] = geometry.grid_shape().map(|n| (n / 2) as f64);
+    Placement {
+        u: (cell[0] as f64 + 0.3 - nx) / sx,
+        v: (cell[1] as f64 - 0.2 - ny) / sy,
+        w,
+        prediction_w_positive: w > 0.0,
+        phase: 0.0,
+        plane: 0,
+        spectral: 0.0,
+        cf: key,
+        gradient: [0.0; 2],
+    }
+}
+
+/// The data grid one `placement` of `values` and `weights` spreads, and its
+/// `sumwt`.
+fn grid_one(
+    operator: &MeasurementOperator,
+    placement: Placement,
+    values: &[Complex64],
+    weights: &[f64],
+) -> (Vec<Complex64>, f64) {
+    let block = buffer(&[placement], values, weights, 2);
+    let mut acc = operator.accumulator(PlaneRange::single(0), None, ModeSet::DATA);
+    CpuBackend::new()
+        .apply(
+            &block.block(),
+            operator.cf(),
+            Work::Grid {
+                mode: Mode::Data,
+                acc: &mut acc,
+            },
+        )
+        .expect("grid");
+    (acc.block::<f64>(0, 0, 0).to_vec(), acc.sumwt_at(0, 0, 0))
+}
+
+/// `Re Σ` of the taps of the dense W cell `taps` at `location`'s fine
+/// offset that land on the sectors of an `n`-cell grid, every column and
+/// row from the first to the last but one.
+fn kept_kernel_sum(taps: &TapLayout<'_>, location: CellLocation, n: [i64; 2]) -> f64 {
+    let TapLayout::Dense {
+        data,
+        support,
+        oversampling,
+        mueller_planes,
+        ..
+    } = *taps
+    else {
+        panic!("W planes are dense");
+    };
+    let [width, height] = support.map(usize::from);
+    let tile = (usize::from(location.oy) * (usize::from(oversampling) + 1)
+        + usize::from(location.ox))
+        * usize::from(mueller_planes);
+    let half = taps.half_support().map(i64::from);
+    let first = [location.x - half[0], location.y - half[1]];
+    data[tile * width * height..][..width * height]
+        .chunks_exact(width)
+        .enumerate()
+        .flat_map(|(iy, row)| {
+            row.iter().enumerate().filter_map(move |(ix, tap)| {
+                let [x, y] = [first[0] + ix as i64, first[1] + iy as i64];
+                ((0..n[0] - 1).contains(&x) && (0..n[1] - 1).contains(&y))
+                    .then_some(f64::from(tap.re))
+            })
+        })
+        .sum()
 }
 
 /// The predictions of `model` for every sample of `block`, `[sample][pol]`.

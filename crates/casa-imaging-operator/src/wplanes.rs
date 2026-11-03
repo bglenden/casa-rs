@@ -5,7 +5,7 @@
 use num_complex::{Complex32, Complex64};
 
 use crate::convolution::{
-    CellHold, ConvolutionFunctionSet, DenseCell, ImageCorrection, KernelNormalisation,
+    CellHold, ConvolutionFunctionSet, DenseCell, GridEdge, ImageCorrection, KernelNormalisation,
     MuellerRouting, RowContext, TapFootprint, TapLayout,
 };
 use crate::dense::{dense_cell_from_quadrant, dense_cell_from_quadrant_bytes};
@@ -563,6 +563,14 @@ impl ConvolutionFunctionSet for WPlanes {
 
     fn admits(&self, w_lambda: f64) -> bool {
         Self::admits(self, w_lambda)
+    }
+
+    /// `WProjectFT::put` grids through the sectioned `sectgwgridd`, which
+    /// clips a support to the grid's sectors and weighs the taps it keeps
+    /// (`onmywgrid`); its unsectioned `gwgrid` and the degridder drop a
+    /// support that overruns the grid (`owp`).
+    fn grid_edge(&self) -> GridEdge {
+        GridEdge::Sectioned
     }
 }
 

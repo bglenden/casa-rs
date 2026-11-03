@@ -13,7 +13,8 @@ CASA behaviours casa-rs follows for parity:
 [the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit),
 [the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans),
 [a moved pointing phased on its field](#smpredict-phases-a-moved-observemany-pointing-on-its-field),
-[`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing).
+[`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
+[W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
@@ -25,6 +26,9 @@ CASA behaviours casa-rs does not follow:
 [a mosaic's single-precision weight image](#a-mosaics-weight-image-is-transformed-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
 [an unflagged non-finite sample](#an-unflagged-non-finite-sample-turns-the-image-to-nan),
+[a tuned cube's frequency selection](#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones),
+[a cube's fine frequency grid at a whole ratio](#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane),
+[the `.gridwt` a cube leaves](#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind),
 [`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
 [`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0),
 [`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process),
@@ -3101,6 +3105,131 @@ window 0). `( ... )` skips `endOfCeremony`, so the expression keeps every MAIN
 row. All are in the evidence file; `casa-ms` reproduces them, and `tclean`
 refuses the parenthesized form and a window kept without channels, whose
 imaging in CASA is not established.
+
+## A tuned cube selection compares `outframe` frequencies with LSRK ones
+
+- Date noted: 2026-11-03
+- Status: CASA bug casa-rs does not follow (#980,
+  `casa-imaging-application` `compile::frequency_bands`)
+- Affected code: casatools `synthesis/ImagerObjects/SynthesisImagerVi2.cc`
+  (`selectData`, `andFreqSelection`), `SynthesisImager.cc`
+  (`tuneSelectData`), `CubeMajorCycleAlgorithm.cc` (`task`)
+
+A cube is gridded by `CubeMajorCycleAlgorithm`'s own `SynthesisImagerVi2`.
+Its `selectData` states each channel range `spw` names as a frequency band in
+tclean's `outframe` (`MSUtil::getFreqRangeInSpw` over the range's channel
+centres at every time of the window's rows) and stores it in `freqBegs_p` and
+`freqEnds_p`. Where `tuneSelectData` tunes the selection (the first visibility
+buffer's window has 30 or more channels, or the model is saved to
+`MODEL_DATA`), it calls `selectData` again with the image's band, pixel −1.5 to
+`nchan + 0.5`, in LSRK, and `andFreqSelection` narrows each stored band that
+band overlaps to their intersection, without converting either: a band in
+`TOPO` or `BARY` numbers is intersected with one in LSRK numbers, and the
+result is read as LSRK (`FrequencySelectionUsingFrame(LSRK)`). The two frames
+differ by up to tens of km/s, so with channels narrower than that, an image
+whose band overlaps the stored one in those numbers loses the image's edge
+channels (or gains channels CASA never meant to read) at every time. The same
+`andFreqSelection` narrows two of a window's own channel ranges to their
+intersection when a Doppler shift across the track makes their bands
+overlap, which keeps almost nothing of either. casa-rs states a tuned
+selection's bands in LSRK before intersecting them with the image's, and
+keeps each named range's band whole; with `outframe='LSRK'`, the default, and
+ranges further apart than the shift, the selections agree. No case of CASA's
+test suite reaches either difference: the one tuned cube with channels
+narrower than the shift, `test_cube_D2`, images in LSRK, where casa-rs and
+CASA select the same channels at every time (its edge plane keeps 2460.56 of
+5020.51 in both).
+
+## A cube's fine frequency grid lets rounding choose one or two samples per plane
+
+- Date noted: 2026-11-03
+- Status: CASA rounding casa-rs does not follow (#980;
+  `test_cube.test_cube_5` differs by it)
+- Affected code: casatools `synthesis/TransformMachines2/FTMachine.cc`
+  (`interpolateFrequencyTogrid`)
+
+For linear interpolation onto planes wider than a channel, CASA places
+`floor(width)` points per plane, with `width` the ratio of the plane
+spacing (`imageFreq_p`, from the image's spectral coordinate and its LSRK
+conversion layer) to the visibility buffer's first channel spacing (its
+channels converted to LSRK by the visibility iterator). Where planes are a
+whole number of channels wide, the ratio is that number exactly at the
+image's epoch, and after it the Doppler shift moves it by about 1e-6, below
+or above. `test_cube_5` (`refim_point.ms`, 50 MHz TOPO channels,
+`width='100MHz'`, `outframe='TOPO'`) has a ratio of 2 at its first
+integration: the image's epoch is that integration's time and its
+direction the field's to the last bit, and the shift then lowers the ratio
+below 2 at every later integration, where both implementations place one
+point per plane. At the first integration CASA's two conversions round
+apart and its ratio falls below 2, so it places one point there too;
+casa-rs's ratio is 2 to rounding and it places two. Every plane of casa-rs's
+cube therefore holds the first integration's weight twice: its sum of
+weights exceeds CASA's by exactly that integration's share of the track,
+0.0017154 (the rows of one of its 480 integrations, unflagged, over all),
+and its PSFs differ by 7e-4 to 1.3e-3 normalized RMS, the returned
+`maxpsfsidelobe` by 3e-4. Which side of 2 a ratio that is 2 exactly falls
+on is rounding, which casa-rs does not reproduce (`AGENTS.md`: a near-tie
+broken the other way is equally valid).
+
+## A cube without a per-channel density leaves `<imagename>.gridwt` behind
+
+- Date noted: 2026-11-03
+- Status: CASA behaviour casa-rs does not follow (#980;
+  `test_onefield.test_onefield_pcwdT_and_pcwdF.2`'s inventory differs by it)
+- Affected code: casatools `synthesis/ImagerObjects/SynthesisImagerVi2.cc`
+  (`runCubeGridding`), `SynthesisImager.cc` (`getWeightDensity`,
+  `setWeightDensity`), `SIImageStore.cc` (`gridwt`),
+  `CubeMajorCycleAlgorithm.cc` (`task`)
+
+A cube weighted by Briggs or uniform weighting with
+`perchanweightdensity=False` forms one `VisImagingWeight` density in the
+imager defining the cube. To hand it to the `CubeMajorCycleAlgorithm`
+imagers that grid the cube, `runCubeGridding` asks `getWeightDensity`, which
+writes the density grid to a new paged image `<imagename>.gridwt` and passes
+its name in the control record (`weightdensity`); each gridding imager reads
+it back with `setWeightDensity`. Nothing removes the file. A later run into
+the same name forms its density again and overwrites it, and reads the file
+only for the shape of an image store that has no other product
+(`SIImageStore`'s constructor, whose comment there asks "How can this be
+right ?"). Its
+pixels are a uv-plane density, but its coordinates are the image's sky
+coordinates, with a `FIELD_ORDER` axis added for several fields. casa-rs
+forms the density once and grids with it in the same process, so it writes
+no such file; CASA 6.7.6.14 writes `tst2.gridwt` in
+`test_onefield_pcwdT_and_pcwdF`'s second call, whose other products agree.
+
+## W projection grids a support the grid's edge cuts, and never its last row and column
+
+- Date noted: 2026-11-03
+- Status: CASA behaviour casa-rs follows for parity (#980,
+  `casa-imaging-operator` `GridEdge::Sectioned`)
+- Affected code: casatools `synthesis/TransformMachines2/WProjectFT.cc`
+  (`put`), `FTMachine.cc` (`findGridSector`, `tweakGridSector`),
+  `synthesis/fortran/wprojgrid.f` (`sectgwgridd`, `sectgwgrids`,
+  `onmywgrid`, `sectdwgrid`, `owp`)
+
+`WProjectFT::put` grids through the sectioned `sectgwgridd`: each sector
+`findGridSector` cuts grids the taps of a sample that fall on it and adds
+`weight · Σ Re(cwt)` over those taps to `sumwt`, wherever the sample's anchor
+lies (`onmywgrid` asks only that the support meet the sector). A support
+that overruns the grid is therefore gridded in part and weighed by the part,
+where the unsectioned `gwgrid` and the degridder (`sectdwgrid` through
+`owp`) drop it. The sectors start at the grid's first column and row (both
+`findGridSector` and `tweakGridSector` add one to the 0-based start, giving
+the 1-based `x0 = 1`, and `onmywgrid` clips a support's low end to it), and
+`findGridSector` cuts the last one short (`nxsub = nxp - x0 - 1` before that
+increment), so they cover every column and row but the grid's last: no tap
+lands before the grid, and the last column and row are never gridded,
+though `owp` predicts a support that reaches them. casa-rs grids the taps
+on the sectors and weighs them, as CASA does. Dropping the whole sample, as
+casa-rs did, left `test_cube_wproj_onefield`'s 1.5 and 1.8 GHz planes
+(`refim_oneshiftpoint.mosaic.ms`, four planes, whose supports overrun the
+grid at those frequencies) short of CASA's `sumwt` by 3.06 and 14.57 and
+their PSFs 3.6% and 5.3% apart in normalized RMS; they now agree with CASA
+6.7.6.14 to 8e-7. (An earlier reading of the sectors as starting at the
+0-based column 0, so that a tap one column below the grid would be written
+before it and weighed, mistook `findGridSector`'s start before its final
+increment for the start it returns.)
 
 ## A CRTF spectral range rounds each end to a channel, toward zero
 

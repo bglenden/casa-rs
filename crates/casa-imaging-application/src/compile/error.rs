@@ -268,6 +268,16 @@ pub enum PrepareError {
         /// The number selected.
         selected: usize,
     },
+    /// A source-frame cube (`specmode='cubesource'`) over several spectral
+    /// windows, which casa-rs has not ported from CASA yet.
+    #[error(
+        "a source-frame cube (specmode cubesource) over several spectral windows ({selected} \
+         are selected) is not implemented by casa-rs yet (#1059)"
+    )]
+    SourceFrameCubeWindows {
+        /// The number selected.
+        selected: usize,
+    },
     /// `fitspw` does not name exactly the selected spectral window.
     #[error("continuum fit selector must name exactly the selected spectral window")]
     ContinuumFitWindow,

@@ -414,6 +414,396 @@ fn a_topo_cube_of_topo_rows_is_doppler_tracked_as_casa_grids_it() {
     );
 }
 
+/// CASA images a cube over several windows on one axis laid over their
+/// channels merged into one (`MSTransformRegridder::combineSpwsCore`) and
+/// grids every window's rows onto it (#980). Two adjacent ten-channel
+/// windows make a twenty-channel cube, and away from the windows' edges
+/// each plane is the plane of the cube of the window holding its channel:
+/// a row interpolates only between its own window's channels, and a
+/// per-channel Briggs density sees only the samples on its plane. At an
+/// edge whether the plane lies a rounding inside the window's span decides
+/// whether its rows reach it, as in CASA's gridder.
+#[test]
+fn a_cube_over_two_windows_is_the_cubes_of_its_windows_side_by_side() {
+    const WINDOW_CHANNELS: usize = 10;
+    let (observation, low) = adjacent_windows(WINDOW_CHANNELS);
+    let [both, windows @ ..] = window_cubes(&observation, "lsrk");
+    let image = both.get(".image");
+    let sumwt = both.get(".sumwt").channel_values();
+    assert_eq!(sumwt.len(), 2 * WINDOW_CHANNELS);
+    for (channel, sumwt) in sumwt.iter().enumerate() {
+        let native_hz = low.start_frequency_hz + channel as f64 * low.channel_width_hz;
+        let frequency_hz = image.channel_frequency_hz(channel);
+        assert!(
+            (frequency_hz - native_hz).abs() <= 1.0e-9 * native_hz,
+            "channel {channel} at {frequency_hz} Hz, native {native_hz} Hz"
+        );
+        assert!(*sumwt > 0.0, "channel {channel} holds no samples");
+    }
+    assert_interior_planes_match(&observation, &both, &windows, WINDOW_CHANNELS);
+}
+
+/// The same law for TOPO windows, Doppler tracked onto an LSRK axis: the
+/// per-channel Briggs density is then padded by CASA's swing of the
+/// windows' channels (`BriggsCubeWeightor::estimateSwingChanPad`), which
+/// differs between the cubes but not for an interior plane.
+#[test]
+fn a_cube_over_two_topo_windows_is_the_cubes_of_its_windows_side_by_side() {
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+    const WINDOW_CHANNELS: usize = 10;
+    let (observation, _) = adjacent_windows(WINDOW_CHANNELS);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    for window in 0..2 {
+        ms.spectral_window_mut()
+            .unwrap()
+            .set_i32(window, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+            .unwrap();
+    }
+    ms.save().unwrap();
+    drop(ms);
+    let [both, windows @ ..] = window_cubes(&observation, "topo");
+    assert_interior_planes_match(&observation, &both, &windows, WINDOW_CHANNELS);
+}
+
+/// Per-channel Briggs cubes of every window (`spw='*'`) and of each of the
+/// two windows alone.
+fn window_cubes(observation: &Observation, label: &str) -> [Products; 3] {
+    ["*", "0", "1"].map(|spw| {
+        observation
+            .image(
+                &format!("{label}-window-{}", spw.replace('*', "all")),
+                json!({
+                    "specmode": "cube", "spw": spw, "niter": 0,
+                    "weighting": "briggs", "robust": 0.5, "perchanweightdensity": true,
+                }),
+            )
+            .1
+    })
+}
+
+/// Each plane of the cube over `windows.len()` windows of `window_channels`
+/// channels, but for the first and last of each window, is the plane of
+/// its window's own cube: its sum of weights, PSF and residual.
+fn assert_interior_planes_match(
+    observation: &Observation,
+    both: &Products,
+    windows: &[Products],
+    window_channels: usize,
+) {
+    assert_eq!(
+        both.get(".image").channels(),
+        windows.len() * window_channels
+    );
+    let sumwt = both.get(".sumwt").channel_values();
+    let samples = observation.stokes_i_samples_per_channel() as f32;
+    for (window, alone) in windows.iter().enumerate() {
+        let alone_sumwt = alone.get(".sumwt").channel_values();
+        let interior = alone_sumwt
+            .iter()
+            .enumerate()
+            .take(window_channels - 1)
+            .skip(1);
+        for (plane, alone_sumwt) in interior {
+            let channel = window * window_channels + plane;
+            assert!(
+                (sumwt[channel] - alone_sumwt).abs() <= 1.0e-6 * samples,
+                "sumwt of channel {channel}: {} against window {window}'s {alone_sumwt}",
+                sumwt[channel],
+            );
+            for suffix in [".psf", ".residual"] {
+                let ours = both.get(suffix).plane(channel);
+                let theirs = alone.get(suffix).plane(plane);
+                let scale = theirs
+                    .iter()
+                    .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+                let difference = (&ours - &theirs)
+                    .iter()
+                    .fold(0.0_f32, |largest, value| largest.max(value.abs()));
+                assert!(
+                    difference <= 1.0e-5 * scale,
+                    "{suffix} channel {channel} differs from window {window}'s plane {plane} \
+                     by {difference} of {scale}"
+                );
+            }
+        }
+    }
+}
+
+/// `BriggsCubeWeightor` pads the per-channel density of every cube, one
+/// channel included (`estimateSwingChanPad` counts the swing in the image's
+/// own channel increment), so a one-channel Briggs cube of TOPO data images
+/// (#980; `test_onefield_pcwdT_and_pcwdF` was refused): its weights are
+/// Briggs weights, below natural weighting's.
+#[test]
+fn a_one_channel_cube_has_a_per_channel_briggs_density() {
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+    let observation = Observation::synthesise_band(4, &[("point", POINT)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let sumwt = |name: &str, weighting: serde_json::Value| {
+        let mut controls = json!({ "specmode": "cube", "nchan": 1, "start": 1, "niter": 0 });
+        controls
+            .as_object_mut()
+            .expect("controls")
+            .extend(weighting.as_object().expect("weighting").clone());
+        observation
+            .image(name, controls)
+            .1
+            .get(".sumwt")
+            .channel_values()[0]
+    };
+    let natural = sumwt("one-natural", json!({ "weighting": "natural" }));
+    let briggs = sumwt(
+        "one-briggs",
+        json!({ "weighting": "briggs", "robust": 0.5, "perchanweightdensity": true }),
+    );
+    assert!(
+        briggs > 0.0 && briggs < natural,
+        "Briggs sumwt {briggs}, natural {natural}"
+    );
+}
+
+/// A cube reads a window its axis does not reach as `spw` selects it,
+/// tuned or not, and its `VisImagingWeight` density counts that window's
+/// samples, as CASA's does (#980): CASA forms the density over the
+/// untuned selection of the imager defining the cube, and the tuned
+/// selection of the imager gridding it keeps a window none of whose bands
+/// the image's band overlaps. CASA 6.7.6.14, `refim_point.ms` split into
+/// two ten-channel windows, a five-channel uniform cube on the first:
+/// `spw='*'`'s sum of weights and PSF differ from `spw='0'`'s (PSF by 14%),
+/// and alike whether the selection is tuned (`savemodel='modelcolumn'`) or
+/// not. Over two adjacent 30-channel windows here, the first window's
+/// buffer tunes the selection; the cube of both windows grids the samples
+/// of the first's alone, and weighs them otherwise: the second window's
+/// samples add to the uniform density, so every plane's sum of weights
+/// falls, and with them flagged the cube of both windows weighs as the
+/// first's alone.
+#[test]
+fn a_cube_density_counts_a_window_its_axis_misses() {
+    use casa_ms::MeasurementSet;
+    use casa_types::{ScalarValue, Value};
+    let (observation, _) = adjacent_windows(30);
+    let cube = |name: &str, spw: &str| {
+        observation.image(
+            name,
+            json!({
+                "specmode": "cube", "spw": spw, "nchan": 10, "niter": 0,
+                "weighting": "uniform", "perchanweightdensity": false,
+            }),
+        )
+    };
+    let (both_report, both) = cube("tuned-both", "*");
+    let (alone_report, alone) = cube("tuned-alone", "0");
+    assert!(alone_report.gridded_samples > 0);
+    assert_eq!(both_report.gridded_samples, alone_report.gridded_samples);
+    let [ours, theirs] = [&both, &alone].map(|products| products.get(".sumwt").channel_values());
+    for (channel, (ours, theirs)) in ours.iter().zip(&theirs).enumerate() {
+        assert!(
+            *ours < theirs * (1.0 - 1.0e-3),
+            "sumwt of channel {channel}: {ours} with the missed window, {theirs} without"
+        );
+    }
+    // The missed window's rows flagged, its samples leave the density.
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    for row in 0..ms.row_count() {
+        let description = ms
+            .main_table()
+            .cell_accessor(row, "DATA_DESC_ID")
+            .unwrap()
+            .scalar()
+            .unwrap()
+            .clone();
+        if description == ScalarValue::Int32(1) {
+            ms.main_table_mut()
+                .row_accessor_mut()
+                .set_cell(row, "FLAG_ROW", Value::Scalar(ScalarValue::Bool(true)))
+                .unwrap();
+        }
+    }
+    ms.save().unwrap();
+    drop(ms);
+    let flagged = cube("tuned-both-flagged", "*")
+        .1
+        .get(".sumwt")
+        .channel_values();
+    for (channel, (flagged, theirs)) in flagged.iter().zip(&theirs).enumerate() {
+        assert!(
+            (flagged - theirs).abs() <= 1.0e-6 * theirs,
+            "sumwt of channel {channel}: {flagged} with the missed window flagged, {theirs} \
+             without it"
+        );
+    }
+}
+
+/// A cube with per-channel Briggs density pads its density cube whatever
+/// its channel count and interpolation, as CASA's `BriggsCubeWeightor`
+/// always does (`estimateSwingChanPad`, whose edge step is the image's
+/// increment for one channel), so a one-channel cube
+/// (`test_onefield_pcwdT_and_pcwdF.1`: `refim_twochan.ms`, `spw='0:1'`) and
+/// a nearest-interpolation cube image, with a sum of weights on every plane
+/// and a PSF peaking at 1 (#980). Padding only linearly interpolated cubes
+/// of several channels left both without the density padding their
+/// per-channel weighting needs, and the run refused them.
+#[test]
+fn a_one_channel_or_nearest_cube_pads_its_per_channel_density() {
+    let observation = Observation::synthesise_band(2, &[("point", POINT)]);
+    for (name, controls) in [
+        (
+            "one-channel-briggs",
+            json!({
+                "specmode": "cube", "nchan": 1, "spw": "0:1", "perchanweightdensity": true,
+                "weighting": "briggs", "niter": 0,
+            }),
+        ),
+        (
+            "nearest-briggs",
+            json!({
+                "specmode": "cube", "interpolation": "nearest", "perchanweightdensity": true,
+                "weighting": "briggs", "niter": 0,
+            }),
+        ),
+    ] {
+        let (_, products) = observation.image(name, controls);
+        let sumwt = products.get(".sumwt").channel_values();
+        assert!(
+            !sumwt.is_empty() && sumwt.iter().all(|sumwt| sumwt.is_finite() && *sumwt > 0.0),
+            "{name}: sumwt {sumwt:?}"
+        );
+        let psf = products.get(".psf");
+        assert_eq!(psf.channels(), sumwt.len(), "{name}");
+        for channel in 0..psf.channels() {
+            let peak = psf
+                .plane(channel)
+                .iter()
+                .fold(f32::NEG_INFINITY, |peak, value| peak.max(*value));
+            assert!(
+                peak.is_finite() && (peak - 1.0).abs() < 1.0e-3,
+                "{name}: PSF peak {peak} on plane {channel}"
+            );
+        }
+    }
+}
+
+/// tclean selects a `cubedata` cube's channels in the data's frame
+/// (`ignoreframe`: its selection frame is `Undefined`), by a band from the
+/// lowest to the highest channel centre of each range `spw` names, so a
+/// range with a stride is read whole, as a `cube`'s is (#980): the cube of
+/// `spw='0:0~10^2'` is the cube of `spw='0:0~10'`. Reading the named
+/// channels alone filled each odd plane by interpolating its neighbours'
+/// noisy samples, where it holds its own channel's.
+#[test]
+fn a_cubedata_range_with_a_stride_is_read_whole() {
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
+    let cube = |name: &str, spw: &str| {
+        observation
+            .image(
+                name,
+                json!({
+                    "specmode": "cubedata", "spw": spw, "start": 0, "width": 1, "nchan": 11,
+                    "niter": 0,
+                }),
+            )
+            .1
+    };
+    let strided = cube("cubedata-strided", "0:0~10^2");
+    let whole = cube("cubedata-whole", "0:0~10");
+    assert_eq!(
+        strided.get(".sumwt").channel_values(),
+        whole.get(".sumwt").channel_values()
+    );
+    let [strided, whole] = [&strided, &whole].map(|products| products.get(".image").values());
+    let peak = whole
+        .iter()
+        .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+    let worst = strided
+        .iter()
+        .zip(&whole)
+        .fold(0.0_f32, |worst, (a, b)| worst.max((a - b).abs()));
+    assert!(
+        worst <= 1.0e-6 * peak,
+        "the strided cube differs from the whole range's by {worst} of a peak {peak}"
+    );
+}
+
+/// CASA's visibility iterator selects a cube's channels at each time by
+/// frequency (`vi::FrequencySelectionUsingFrame`, #980): by the LSRK band
+/// from the lowest to the highest frequency the channels `spw` names take
+/// over the track, narrowed to the image's band, a time reads the channels
+/// whose extent meets the band converted to that time. With TOPO channels
+/// narrower than the LSRK drift across the track, the channels a time
+/// reads move with it, so the edge plane on the band's end is bracketed by
+/// two read channels at about half the times, as the plane's frequency
+/// falls in the upper or lower half of the last channel read: CASA's
+/// `test_cube_D2` keeps 2460.56 of 5020.51 there. Every other plane keeps
+/// every sample. Reading every channel at every time kept the edge plane
+/// whole.
+#[test]
+fn a_cube_reads_at_each_time_the_channels_its_band_selects_then() {
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+    const NAMED: usize = 30;
+    // 2 kHz channels at 44 GHz: an hour's LSRK drift is several channels.
+    let mut setup = super::fixture::Setup::vla_q_band(NAMED + 10);
+    setup.spectral_windows[0].channel_width_hz = 2.0e3;
+    let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let (_, products) = observation.image(
+        "drift",
+        json!({
+            "specmode": "cube", "spw": format!("0:5~{}", 4 + NAMED), "start": 5, "width": 1,
+            "nchan": NAMED, "niter": 0,
+        }),
+    );
+    let sumwt = products.get(".sumwt").channel_values();
+    let samples = observation.stokes_i_samples_per_channel() as f32;
+    assert_eq!(sumwt.len(), NAMED);
+    for (channel, sumwt) in sumwt.iter().enumerate().take(NAMED - 1).skip(1) {
+        assert_eq!(*sumwt, samples, "interior channel {channel}");
+    }
+    let [low, high] = [sumwt[0], sumwt[NAMED - 1]];
+    let edge = low.min(high);
+    assert_eq!(
+        low.max(high),
+        samples,
+        "edges {low} and {high} of {samples}"
+    );
+    assert!(
+        (0.3 * samples..=0.7 * samples).contains(&edge),
+        "the edge plane on the band's end keeps {edge} of {samples}"
+    );
+}
+
+/// Two adjacent Q-band windows of `channels` 128 MHz channels each, the
+/// second starting where the first ends, and the first window's setup.
+fn adjacent_windows(channels: usize) -> (Observation, casa_ms::SyntheticSpectralSetup) {
+    let mut setup = super::fixture::Setup::vla_q_band(channels);
+    let low = setup.spectral_windows[0].clone();
+    setup
+        .spectral_windows
+        .push(casa_ms::SyntheticSpectralSetup {
+            name: "t1-qband-next".to_string(),
+            start_frequency_hz: low.start_frequency_hz + channels as f64 * low.channel_width_hz,
+            ..low.clone()
+        });
+    (
+        Observation::synthesise_setup(setup, &[("point", POINT)]),
+        low,
+    )
+}
+
 /// The `maxpsfsidelobe` of a tclean return.
 fn sidelobe(value: &CasaValue) -> f64 {
     let CasaValue::Dict { entries } = value else {

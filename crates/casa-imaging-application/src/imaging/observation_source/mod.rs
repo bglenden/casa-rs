@@ -285,6 +285,7 @@ impl<'a> ObservationSource<'a> {
             route,
             packer: Packer {
                 problem,
+                plans: route.stores.iter().map(|store| &store.plan).collect(),
                 charts: layout.domains,
                 pointing,
                 keys: route.keys(),

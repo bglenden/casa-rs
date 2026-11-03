@@ -108,7 +108,8 @@ fn weight_cells(
     cf: &dyn ConvolutionFunctionSet,
     geometry: &GridGeometry,
 ) -> Option<CellBox> {
-    if cf.grid_edge() == GridEdge::Whole {
+    // Only the mosaic clips weight taps; W projection has none.
+    if cf.grid_edge() != GridEdge::Clipped {
         return None;
     }
     let half = cf

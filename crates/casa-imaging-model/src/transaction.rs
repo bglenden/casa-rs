@@ -262,6 +262,9 @@ fn output_role_selection(
                     .with_first_buffer_lsrk_factor(factor)
                     .expect("a bound factor is finite and positive");
             }
+            if let Some(bands) = selection.frequency_bands() {
+                output = output.with_frequency_bands(bands.clone());
+            }
             Ok(output)
         })
         .collect::<Result<Vec<_>, _>>()?;

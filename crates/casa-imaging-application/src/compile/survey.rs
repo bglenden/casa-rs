@@ -29,7 +29,7 @@ use casa_types::measures::MjdHighPrec;
 
 use super::PrepareError;
 use super::partitions::{Candidate, Candidates, field_selection};
-use super::selection::{SourceSpectralWindow, WindowChannels};
+use super::selection::{SourceSpectralWindow, WindowChannels, WindowRanges};
 
 /// The least bytes one batch of the survey holds: enough for several times
 /// of a large array, so a partition's survey is not a batch per time.
@@ -106,6 +106,8 @@ pub(super) struct Survey {
     /// (`DATA_DESC_ID`, `FIELD_ID`) of the selected samples, an MSv4's
     /// window standing for its data description ([`FirstVisibility`]).
     pub(super) first_visibility_field_id: usize,
+    /// The spectral window of that first buffer.
+    pub(super) first_visibility_spw_id: usize,
     pub(super) observation_ids: BTreeSet<i32>,
     /// The earliest selected time: the anchor of the spectral frame and of
     /// the image's observation date.
@@ -121,6 +123,10 @@ pub(super) struct Survey {
     /// The channels the request's `spw` names per window
     /// ([`super::selection::SpwChoice::channels`]), set after the survey.
     pub(super) spw_channels: WindowChannels,
+    /// The channel ranges the request's `spw` names per window
+    /// ([`super::selection::SpwChoice::ranges`]), set with
+    /// [`spw_channels`](Self::spw_channels).
+    pub(super) spw_ranges: WindowRanges,
     /// The selection `savemodel='virtual'` writes its model for, resolved
     /// beside the survey from the same selection
     /// ([`super::virtual_selection`]).
@@ -163,11 +169,13 @@ pub(super) struct SurveyPlan<'a> {
 /// states the array its rows share, and a partition whose rows hold several
 /// reads its selected rows' arrays ([`Msv2Observation::array_ids`]). An
 /// MSv4 has no arrays, and its window stands for the data description.
+/// The window follows from the data description, so it orders nothing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct FirstVisibility {
     array: i32,
     description: u32,
     field_id: i32,
+    spw_id: usize,
 }
 
 impl FirstVisibility {
@@ -444,6 +452,9 @@ pub(super) fn survey(
     let mut spectral_windows = spectral_windows;
     spectral_windows.retain(|window| facts.epochs.contains_key(&window.spw_id));
     let source_frequency_reference = super::selection::one_source_frame(&spectral_windows)?;
+    let first_visibility = facts
+        .first_visibility
+        .expect("a survey holding samples observed a first visibility");
     Ok(Admitted {
         value: Survey {
             row_selection: plan.row_selection,
@@ -452,13 +463,9 @@ pub(super) fn survey(
             spectral_windows,
             source_frequency_reference,
             fields: facts.fields,
-            first_visibility_field_id: usize::try_from(
-                facts
-                    .first_visibility
-                    .expect("a survey holding samples observed a first visibility")
-                    .field_id,
-            )
-            .expect("a FIELD row is nonnegative"),
+            first_visibility_field_id: usize::try_from(first_visibility.field_id)
+                .expect("a FIELD row is nonnegative"),
+            first_visibility_spw_id: first_visibility.spw_id,
             observation_ids: facts.observation_ids,
             first_time_mjd_seconds: facts.time_bounds_mjd_seconds[0],
             time_bounds_mjd_seconds: facts.time_bounds_mjd_seconds,
@@ -466,6 +473,7 @@ pub(super) fn survey(
             w: facts.w,
             epochs: facts.epochs,
             spw_channels: WindowChannels::new(),
+            spw_ranges: WindowRanges::new(),
             virtual_model: None,
         },
         reservation,
@@ -560,6 +568,7 @@ fn survey_partition(
                     array,
                     description,
                     field_id,
+                    spw_id: candidate.spectral_window,
                 },
             );
             let bounds = &mut facts.time_bounds_mjd_seconds;
@@ -778,6 +787,7 @@ mod tests {
                         array,
                         description,
                         field_id,
+                        spw_id: description as usize,
                     },
                 );
             }
@@ -786,7 +796,8 @@ mod tests {
                 Some(FirstVisibility {
                     array: 1,
                     description: 2,
-                    field_id: 7
+                    field_id: 7,
+                    spw_id: 2,
                 })
             );
         }

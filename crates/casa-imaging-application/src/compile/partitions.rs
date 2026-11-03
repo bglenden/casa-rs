@@ -220,17 +220,17 @@ pub(crate) fn resolve_partitions(
             ));
         }
         let window = selected.spectral_window_id();
-        let channels = selection
+        let window_selection = selection
             .spectral_windows()
             .iter()
             .find(|selected| selected.spectral_window_id() == window)
-            .map(|selected| selected.channel_indices().to_vec())
-            .filter(|channels| !channels.is_empty())
+            .filter(|selected| !selected.channel_indices().is_empty())
             .ok_or_else(|| {
                 PartitionSelectionError::Inconsistent(format!(
                     "spectral window {window} has no selected channel"
                 ))
             })?;
+        let channels = window_selection.channel_indices().to_vec();
         let correlations: Vec<Correlation> = selected
             .products()
             .iter()
@@ -248,6 +248,7 @@ pub(crate) fn resolve_partitions(
             id: selected.partition(),
             spectral_window: window,
             channels,
+            frequency_bands: window_selection.frequency_bands().cloned(),
             correlations,
             wavelength_m: wavelength(catalogue, entry, rows)?,
         });

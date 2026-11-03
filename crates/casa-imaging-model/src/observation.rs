@@ -517,6 +517,71 @@ impl SpectralWindowCoordinateCatalog {
     }
 }
 
+/// CASA's frame-based frequency selection of one spectral window
+/// (`vi::FrequencySelectionUsingFrame`): frequency bands in one frame that
+/// each visibility time selects channels by.
+///
+/// At each time the bands are converted from their frame to the window's
+/// at that time, towards the time's field, and the time reads the channels
+/// whose extent, centre less and plus half its width, meets a band at
+/// either end (`SpectralWindowChannels::getIntersection`). So a Doppler
+/// shift across an observation selects different channels at different
+/// times, and a channel never selected at some time is read as if it were
+/// not in the window. The bands are `SynthesisImagerVi2::selectData`'s,
+/// narrowed to the image's band where `SynthesisImager::tuneSelectData`
+/// tunes it. A band may reach zero hertz or below, as the image's band of
+/// a few wide channels padded below a low first channel does: it selects
+/// every channel up to its upper end.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FrequencyBands {
+    frame: crate::FrequencyFrame,
+    bands_hz: Vec<[f64; 2]>,
+}
+
+impl FrequencyBands {
+    /// Bands `bands_hz`, each `[lower, upper]` in hertz in `frame`.
+    ///
+    /// # Errors
+    ///
+    /// [`CompileObservationError::InvalidFrequencyBands`] when there is no
+    /// band, or a band's ends are not finite or its lower end lies above
+    /// its upper.
+    pub fn new(
+        frame: crate::FrequencyFrame,
+        bands_hz: Vec<[f64; 2]>,
+    ) -> Result<Self, CompileObservationError> {
+        if bands_hz.is_empty()
+            || !bands_hz
+                .iter()
+                .all(|[lower, upper]| lower.is_finite() && upper.is_finite() && lower <= upper)
+        {
+            return Err(CompileObservationError::InvalidFrequencyBands);
+        }
+        Ok(Self { frame, bands_hz })
+    }
+
+    /// The frame the bands are stated in.
+    #[must_use]
+    pub const fn frame(&self) -> crate::FrequencyFrame {
+        self.frame
+    }
+
+    /// The bands, each `[lower, upper]` in hertz.
+    #[must_use]
+    pub fn bands_hz(&self) -> &[[f64; 2]] {
+        &self.bands_hz
+    }
+
+    /// Whether a channel whose extent is `[lower_hz, upper_hz]`, in the
+    /// bands' frame scaled by `factor`, meets a band at either end.
+    #[must_use]
+    pub fn meets(&self, factor: f64, [lower_hz, upper_hz]: [f64; 2]) -> bool {
+        self.bands_hz
+            .iter()
+            .any(|[lower, upper]| upper_hz >= lower * factor && lower_hz <= upper * factor)
+    }
+}
+
 /// Exact channels selected from one spectral window.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectralWindowSelection {
@@ -524,6 +589,7 @@ pub struct SpectralWindowSelection {
     channel_indices: Vec<u32>,
     coordinate_catalog: Option<SpectralWindowCoordinateCatalog>,
     first_buffer_lsrk_factor: Option<f64>,
+    frequency_bands: Option<FrequencyBands>,
 }
 
 // Construction rejects every non-finite factor, so IEEE equality is
@@ -539,7 +605,24 @@ impl SpectralWindowSelection {
             channel_indices,
             coordinate_catalog: None,
             first_buffer_lsrk_factor: None,
+            frequency_bands: None,
         }
+    }
+
+    /// Bind CASA's per-time frequency selection of the window
+    /// ([`FrequencyBands`]): each time reads only those of the selected
+    /// channels the bands select then.
+    #[must_use]
+    pub fn with_frequency_bands(mut self, bands: FrequencyBands) -> Self {
+        self.frequency_bands = Some(bands);
+        self
+    }
+
+    /// The per-time frequency selection [`Self::with_frequency_bands`]
+    /// bound, if any; without one every time reads every selected channel.
+    #[must_use]
+    pub const fn frequency_bands(&self) -> Option<&FrequencyBands> {
+        self.frequency_bands.as_ref()
     }
 
     /// Bind the factor that takes the window's frequencies to LSRK at the
@@ -1053,6 +1136,10 @@ pub enum CompileObservationError {
     /// A UV range was unbounded, non-finite, or inverted.
     #[error("selection range is unbounded, non-finite, or inverted")]
     InvalidScalarRange,
+    /// A window's frequency selection held no band, or one whose ends are
+    /// not finite or inverted ([`FrequencyBands::new`]).
+    #[error("a frequency selection needs a band, each with finite ends in ascending order")]
+    InvalidFrequencyBands,
     /// A UV-distance range used a negative bound.
     #[error("UV-distance selection bounds must be non-negative")]
     NegativeUvDistance,
