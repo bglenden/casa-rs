@@ -358,6 +358,10 @@ class Refusals:
             self.add(f"datacolumn={column!r} (neither data nor corrected)", CASA_RS)
         if self.measurement_sets() == 0:
             self.add("vis: an empty list", PARITY)
+        vis = self.values.get("vis")
+        names = vis if isinstance(vis, list) else [vis]
+        if len({str(name) for name in names}) < len(names):
+            self.add("vis: a MeasurementSet named twice", PARITY)
         for name in (
             "field",
             "spw",
@@ -501,7 +505,7 @@ class Refusals:
         text = ",".join(entries)
         if "[" in text:
             if not crtf_pixel_boxes(text):
-                self.add("mask: a region other than integer pixel boxes", NOT_YET, 980)
+                self.add("mask: a region other than pixel boxes and circles", NOT_YET, 980)
         elif pixel_box_list(text) is None and len(entries) > 1:
             self.add("mask: more than one mask image", NOT_YET, 980)
 
@@ -560,31 +564,83 @@ def pixel_box_list(text):
 
 
 def crtf_pixel_boxes(text):
-    """Whether `crtf_pixel_boxes` reads `text` (only `box[[Xpix,Ypix],[Xpix,Ypix]]`)."""
+    """Whether `crtf_pixel_boxes` reads `text`: `box[[Xpix,Ypix],[Xpix,Ypix]]`
+    of integer pixels and `circle[[Xpix,Ypix],Rpix]` of finite pixels and a
+    positive radius, each optionally limited by `range=[<low>, <high>]`, both
+    ends frequencies (Hz to THz) or both pixels (`spectral_range`)."""
+
+    def pixels(value, integer=False):
+        value = value.strip()
+        if not value.endswith("pix"):
+            return None
+        try:
+            number = float(value[:-3].strip())
+        except ValueError:
+            return None
+        if number != number or number in (float("inf"), float("-inf")):
+            return None
+        if integer and number != int(number):
+            return None
+        return number
+
+    units = {"Hz": "Hz", "kHz": "Hz", "MHz": "Hz", "GHz": "Hz", "THz": "Hz", "pix": "pix"}
+
+    def quantity_kind(end):
+        end = end.strip()
+        split = next(
+            (i for i, c in enumerate(end) if c.isalpha() and c not in "eE"), len(end)
+        )
+        try:
+            float(end[:split].strip())
+        except ValueError:
+            return None
+        return units.get(end[split:].strip())
+
     for line in (line.strip() for line in text.splitlines()):
         if line.startswith("#"):
             continue
         rest = line
         while rest:
-            if not rest.startswith("box"):
-                return False
-            body = rest[3:].lstrip()
-            if not body.startswith("[["):
-                return False
-            inside, found, after = body[2:].partition("]]")
-            if not found:
-                return False
-            corners = [corner.strip().strip("[] ") for corner in inside.split(",")]
-            if len(corners) != 4:
-                return False
-            for corner in corners:
-                number = corner.strip()[:-3].strip() if corner.strip().endswith("pix") else None
-                try:
-                    if number is None or float(number) != int(float(number)):
-                        return False
-                except ValueError:
+            if rest.startswith("circle"):
+                body = rest[6:].lstrip()
+                if not body.startswith("[["):
                     return False
+                centre, found, after = body[2:].partition("]")
+                if not found or len(centre.split(",")) != 2:
+                    return False
+                if any(pixels(value) is None for value in centre.split(",")):
+                    return False
+                after = after.lstrip()
+                if not after.startswith(","):
+                    return False
+                radius, found, after = after[1:].partition("]")
+                if not found or (pixels(radius) or 0.0) <= 0.0:
+                    return False
+            elif rest.startswith("box"):
+                body = rest[3:].lstrip()
+                if not body.startswith("[["):
+                    return False
+                inside, found, after = body[2:].partition("]]")
+                if not found:
+                    return False
+                corners = [corner.strip().strip("[] ") for corner in inside.split(",")]
+                if len(corners) != 4 or any(pixels(c, integer=True) is None for c in corners):
+                    return False
+            else:
+                return False
             rest = after.lstrip(", \t")
+            while rest.startswith("range"):
+                value = rest[5:].lstrip()
+                if not value.startswith("="):
+                    return False
+                value = value[1:].lstrip()
+                if not value.startswith("["):
+                    return False
+                ends, found, after = value[1:].partition("]")
+                kinds = [quantity_kind(end) for end in ends.split(",")]
+                if not found or len(kinds) != 2 or None in kinds or kinds[0] != kinds[1]:
+                    return False
+                rest = after.lstrip(", \t")
     return True
 
 
