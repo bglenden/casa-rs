@@ -176,10 +176,17 @@ pub(crate) fn apparent_model(
     }
     let sensitivity = plane.read_sensitivity()?;
     // A plane no sample reached holds no model; CASA leaves it as it is.
+    // So does a Stokes plane no correlation feeds: the mosaic's
+    // sensitivity is shared by every Stokes plane, but such a plane's sum
+    // of weights is zero (`StokesImageUtil::ToStokesSumWt`).
+    let sum_weight = plane.sum_weight();
     let Some(response) = MosaicSensitivity::try_new(&sensitivity)? else {
         return Ok(model);
     };
-    let response = response.with_normal_sum_weight(plane.sum_weight())?;
+    if !sum_weight.is_finite() || sum_weight <= 0.0 {
+        return Ok(model);
+    }
+    let response = response.with_normal_sum_weight(sum_weight)?;
     model
         .into_iter()
         .enumerate()
