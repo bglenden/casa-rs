@@ -202,6 +202,23 @@ fn unique_prefixes_follow_minimax() {
 }
 
 #[test]
+fn catalog_names_follow_minimax_with_their_spaces() {
+    let names = ["ALMA", "VLA", "VLBA", "IRAM PDB", "IRAM_PDB", "alma"];
+    let find =
+        |input: &str| unique_prefix_position(input, &names, |name| *name).map(|at| names[at]);
+    assert_eq!(find("alma"), Some("ALMA"), "the first exact match");
+    assert_eq!(find("ALM"), None, "ALMA and alma both agree");
+    assert_eq!(find("VLA2"), Some("VLA"));
+    assert_eq!(find("VL"), None);
+    assert_eq!(find("VLB"), Some("VLBA"));
+    assert_eq!(find("IRAM"), None);
+    assert_eq!(find("IRAM "), Some("IRAM PDB"));
+    assert_eq!(find("VLA "), Some("VLA"));
+    assert_eq!(find(" VLA"), None);
+    assert_eq!(find(""), None);
+}
+
+#[test]
 fn unit_names_follow_casacore() {
     assert_eq!(casacore_unit_name(" MHz"), "MHz");
     assert_eq!(casacore_unit_name("km s-1"), "km.s-1");
