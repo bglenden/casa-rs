@@ -826,8 +826,11 @@ mod tests {
     /// directions of six pixels of the 100 × 100 image of 8″ cells tclean
     /// makes of refim_twochan.ms in each projection, read with casatools
     /// (`tests/data/projections-casa-6.7.6.14.json`, written by
-    /// `tools/casa-compat/probe_tclean_projections.py`). CASA writes every
-    /// projection with the parameters `[0, 0]` and NCP as a slanted SIN.
+    /// `tools/casa-compat/probe_tclean_projections.py`), and of the same
+    /// images centred at declination −40.7°, where a projection whose
+    /// reference is on its native equator takes the native pole at 180°.
+    /// CASA writes every projection with the parameters `[0, 0]` and NCP as
+    /// a slanted SIN.
     #[test]
     fn each_projection_places_pixels_as_casa_does() {
         let casa: serde_json::Value = serde_json::from_str(include_str!(
@@ -842,7 +845,7 @@ mod tests {
                 .map(|value| value.as_f64().expect("a number"))
                 .collect()
         };
-        for (name, projection) in [
+        let north = [
             ("SIN", Projection::Sin),
             ("NCP", Projection::Ncp),
             ("TAN", Projection::Tan),
@@ -853,8 +856,26 @@ mod tests {
             ("SFL", Projection::Sfl),
             ("MER", Projection::Mer),
             ("AIT", Projection::Ait),
-        ] {
-            let entry = &casa["projections"][name];
+        ];
+        let south = [
+            ("SIN", Projection::Sin),
+            ("NCP", Projection::Ncp),
+            ("TAN", Projection::Tan),
+            ("CAR", Projection::Car),
+            ("SFL", Projection::Sfl),
+            ("AIT", Projection::Ait),
+            ("MER", Projection::Mer),
+        ];
+        let cases = north
+            .into_iter()
+            .map(|case| (&casa["projections"], case))
+            .chain(
+                south
+                    .into_iter()
+                    .map(|case| (&casa["south"]["projections"], case)),
+            );
+        for (images, (name, projection)) in cases {
+            let entry = &images[name];
             let reference = numbers(&entry["crval_rad"]);
             let spec = direction_spec(
                 [100, 100],
