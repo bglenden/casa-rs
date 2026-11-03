@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 
 use casa_imaging_model::{
     DirectionCoordinateSpec, DopplerConvention, Epoch, FrequencyBands, FrequencyFrame,
-    ItrfPosition, ReconstructionBasis, RestFrequency, SpectralCoordinateSpec,
-    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, TimeScale,
+    ItrfPosition, ReconstructionBasis, RestFrequency, SpectralCoordinateSpec, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, TimeScale,
 };
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeInterpolation, CubeSpectralSetup, MeasurementSet,
@@ -738,7 +738,9 @@ fn spectral_frame_anchor(
     })
 }
 
-pub(super) fn imaging_frequency_frame(reference: FrequencyRef) -> Result<FrequencyFrame, PrepareError> {
+pub(super) fn imaging_frequency_frame(
+    reference: FrequencyRef,
+) -> Result<FrequencyFrame, PrepareError> {
     match reference {
         FrequencyRef::REST => Ok(FrequencyFrame::Rest),
         FrequencyRef::TOPO => Ok(FrequencyFrame::Topocentric),

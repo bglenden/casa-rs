@@ -268,7 +268,13 @@ impl Packer<'_> {
                         batch.time.seconds_since(time, origin),
                         batch.time.reference(),
                     )?;
-                    in_band(bands, factor, layout, &scratch.frequencies_hz, &mut scratch.in_band);
+                    in_band(
+                        bands,
+                        factor,
+                        layout,
+                        &scratch.frequencies_hz,
+                        &mut scratch.in_band,
+                    );
                 }
                 packed_time = Some(time);
             }

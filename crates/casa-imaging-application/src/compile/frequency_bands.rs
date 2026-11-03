@@ -7,7 +7,7 @@
 //! `SynthesisImagerVi2::selectData` states each channel range `spw` names
 //! as a band in the selection's frame, tclean's `outframe`: the range's
 //! lowest and highest channel centres converted at every epoch of the
-//! window's samples ([`envelope::selection_band`]). A cube is gridded by
+//! window's samples ([`selection_band`]). A cube is gridded by
 //! `CubeMajorCycleAlgorithm`'s own imager, which selects the same way and,
 //! where `SynthesisImagerVi2::tuneSelectData` tunes the selection
 //! ([`super::spectral`]), narrows each band that the image's LSRK band
@@ -191,17 +191,14 @@ impl CubeBands {
                 PreparedFrequencyConversion::new(self.frame, source, Some(&frame), Some(&frame))?
                     .convert_hz(1.0)
             };
-            for (count, (centre, width)) in counts.iter_mut().zip(
-                window
-                    .frequencies_hz
-                    .iter()
-                    .zip(&window.channel_widths_hz),
-            ) {
+            for (count, (centre, width)) in counts
+                .iter_mut()
+                .zip(window.frequencies_hz.iter().zip(&window.channel_widths_hz))
+            {
                 let half = width.abs() / 2.0;
-                if bands
-                    .iter()
-                    .any(|[lower, upper]| centre + half >= lower * factor && centre - half <= upper * factor)
-                {
+                if bands.iter().any(|[lower, upper]| {
+                    centre + half >= lower * factor && centre - half <= upper * factor
+                }) {
                     *count += 1;
                 }
             }
@@ -225,7 +222,10 @@ impl CubeBands {
         spw_id: usize,
     ) -> Result<Option<FrequencyBands>, PrepareError> {
         let frame = super::spectral::imaging_frequency_frame(self.frame)?;
-        Ok(FrequencyBands::new(frame, self.window_bands(spw_id).to_vec()))
+        Ok(FrequencyBands::new(
+            frame,
+            self.window_bands(spw_id).to_vec(),
+        ))
     }
 }
 

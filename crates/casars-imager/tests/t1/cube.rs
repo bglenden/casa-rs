@@ -650,7 +650,11 @@ fn a_cube_reads_at_each_time_the_channels_its_band_selects_then() {
     }
     let [low, high] = [sumwt[0], sumwt[NAMED - 1]];
     let edge = low.min(high);
-    assert_eq!(low.max(high), samples, "edges {low} and {high} of {samples}");
+    assert_eq!(
+        low.max(high),
+        samples,
+        "edges {low} and {high} of {samples}"
+    );
     assert!(
         (0.3 * samples..=0.7 * samples).contains(&edge),
         "the edge plane on the band's end keeps {edge} of {samples}"

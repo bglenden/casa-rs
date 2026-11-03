@@ -171,12 +171,13 @@ pub(super) fn selection_band(
     [first, last]: [usize; 2],
     output: FrequencyRef,
 ) -> Result<Option<[f64; 2]>, PrepareError> {
-    let centres = window
-        .frequencies_hz
-        .get(first..=last)
-        .ok_or(PrepareError::SpectralWindowCoordinates {
-            spw_id: window.spw_id,
-        })?;
+    let centres =
+        window
+            .frequencies_hz
+            .get(first..=last)
+            .ok_or(PrepareError::SpectralWindowCoordinates {
+                spw_id: window.spw_id,
+            })?;
     let lowest = centres.iter().copied().fold(f64::INFINITY, f64::min);
     let highest = centres.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let mut band = [f64::INFINITY, f64::NEG_INFINITY];
@@ -241,7 +242,8 @@ fn fold_over_epochs(
                 direction
             }
         };
-        let frame = engine.spectral_frame_observatory_direction(epoch.time_mjd_seconds, direction)?;
+        let frame =
+            engine.spectral_frame_observatory_direction(epoch.time_mjd_seconds, direction)?;
         for &hz in frequencies_hz {
             fold(converter.convert_hz(hz, &frame)?.hz());
         }
