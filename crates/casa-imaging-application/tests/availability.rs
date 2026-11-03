@@ -114,6 +114,48 @@ fn a_taylor_basis_reconstructs_any_polarization() {
     }
 }
 
+/// A Taylor basis of Stokes planes other than I alone waits for #1112 with
+/// the mosaic and W-projection kernel sets; Stokes I alone runs with them.
+#[test]
+fn a_polarized_taylor_basis_grids_with_the_standard_kernel_set() {
+    let taylor = |polarizations: Vec<PolarizationCoordinate>| ProblemFixture {
+        basis: ReconstructionBasis::Taylor { terms: 2 },
+        algorithm: ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        polarizations,
+        ..ProblemFixture::standard()
+    };
+    let mosaic = |polarizations| {
+        let mut fixture = taylor(polarizations)
+            .with_primary_beam(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
+        fixture.uvw = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
+        fixture.products.push(ProductKind::Sensitivity);
+        fixture
+    };
+    for polarizations in [
+        vec![PolarizationCoordinate::StokesQ],
+        vec![
+            PolarizationCoordinate::StokesI,
+            PolarizationCoordinate::StokesV,
+        ],
+    ] {
+        let mut w = taylor(polarizations.clone());
+        w.measurement_equation = w
+            .measurement_equation
+            .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
+        for fixture in [mosaic(polarizations), w] {
+            assert_exactly_unsupported(
+                on_cpu(&fixture.compile()),
+                [Unsupported::PolarizedTaylorKernelSet],
+            );
+        }
+    }
+    on_cpu(&mosaic(vec![PolarizationCoordinate::StokesI]).compile())
+        .expect("a Stokes I mosaic Taylor basis runs");
+}
+
 #[test]
 fn a_taylor_basis_images_one_domain() {
     let taylor = || ProblemFixture {

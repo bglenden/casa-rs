@@ -519,6 +519,10 @@ class Refusals:
         faceted = isinstance(facets, int) and facets > 1
         if faceted and modes["gridder"] in ("standard", "wproject") and (taylor or modes["cube"]):
             self.add("facets beyond single-term MFS", GATE)
+        stokes = self.values.get("stokes", "I")
+        if taylor and stokes != "I" and modes["gridder"] != "standard":
+            self.add("mtmfs of Stokes planes other than I alone beyond the standard gridder",
+                     GATE, 1112)
         if modes["gridder"] == "awproject":
             if modes["cube"]:
                 self.add("AW projection of a cube (#719)", GATE, 719)

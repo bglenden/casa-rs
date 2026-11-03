@@ -376,9 +376,9 @@ fn full_stokes_taylor_families_image_each_stokes_plane_on_its_own() {
 /// A polarized Taylor family is imaged on its own Stokes plane. Linear
 /// feeds observe the point 40 % circularly polarized, so Stokes V holds
 /// 0.4 of Stokes I's flux and spectrum. `stokes='IV'` recovers it on V's
-/// plane (index 1) of every term and images Stokes I as an I-only run
-/// does; `stokes='IQUV'` images the same V family on index 3, with Q and U
-/// at the noise. A family written to another polarization's plane fails
+/// plane (index 1) of every term, with Stokes I's PSF the I-only run's and
+/// its image the I-only run's to clean's resolution; `stokes='IQUV'` images
+/// the same V family on index 3, with Q and U at the noise. A family written to another polarization's plane fails
 /// both. With `restoringbeam='common'` the image records one beam for all
 /// its planes, as `SDAlgorithmMSMFS::restore` sets one restoring beam.
 #[test]
@@ -407,13 +407,24 @@ fn a_polarized_taylor_family_is_imaged_on_its_own_stokes_plane() {
     let (i_run, i_only) = observation.image("i", controls("I", ""));
     let (iv_run, iv) = observation.image("iv", controls("IV", ""));
     let (_, full) = observation.image("iquv", controls("IQUV", "common"));
+    // V's family is cleaned too, in the same major cycles. The families
+    // share each cycle's iteration control, so Stokes I's agrees with an
+    // I-only run's to clean's resolution, not to rounding.
     assert!(iv_run.actual_minor_iterations > i_run.actual_minor_iterations);
-    let [x, y] = component_pixel(POINT);
-    for suffix in [".image.tt0", ".image.tt1", ".residual.tt0", ".model.tt0"] {
+    assert_eq!(iv_run.major_cycles, i_run.major_cycles);
+    for suffix in [".psf.tt0", ".psf.tt1", ".psf.tt2"] {
+        assert_eq!(
+            stokes_plane(&iv.get(suffix).values(), 0),
+            stokes_plane(&i_only.get(suffix).values(), 0),
+            "{suffix}"
+        );
+    }
+    for suffix in [".image.tt0", ".model.tt0", ".model.tt1"] {
         let i = stokes_plane(&i_only.get(suffix).values(), 0);
         let error = plane_nrms(&stokes_plane(&iv.get(suffix).values(), 0), &i);
-        assert!(error < 1e-6, "{suffix} Stokes I NRMS {error:e}");
+        assert!(error < 1e-3, "{suffix} Stokes I NRMS {error:e}");
     }
+    let [x, y] = component_pixel(POINT);
     for (suffix, tolerance) in [(".image.tt0", 0.01), (".image.tt1", 0.03)] {
         let i = i_only.get(suffix).values()[&[x, y, 0, 0][..]];
         let v = iv.get(suffix).values()[&[x, y, 1, 0][..]];
@@ -431,7 +442,15 @@ fn a_polarized_taylor_family_is_imaged_on_its_own_stokes_plane() {
             "Stokes plane {stokes}: {peak}, V {v_peak}"
         );
     }
-    for suffix in [".model.tt0", ".model.tt1", ".residual.tt0", ".residual.tt1"] {
+    // Q and U clean nothing, so V's family is the IV run's to rounding,
+    // restored with the same beam under 'common'.
+    for suffix in [
+        ".model.tt0",
+        ".model.tt1",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".image.tt0",
+    ] {
         let error = plane_nrms(
             &stokes_plane(&full.get(suffix).values(), 3),
             &stokes_plane(&iv.get(suffix).values(), 1),

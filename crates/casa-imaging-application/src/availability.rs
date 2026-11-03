@@ -23,6 +23,11 @@ pub enum Unsupported {
     /// A Taylor basis reconstructs one image domain: the Taylor products
     /// have no outlier fields.
     MultiDomainTaylorBasis,
+    /// A Taylor basis of Stokes planes other than I alone grids with the
+    /// standard kernel set, where every plane takes the first correlation's
+    /// PSF as CASA's do; the mosaic, W- and AW-projection sets wait for
+    /// #1112.
+    PolarizedTaylorKernelSet,
     /// The Metal backend needs a Metal device, which the host lacks.
     NoMetalDevice,
     /// Metal accumulates its grids in `f32` (ADR-0016 decision 6).
@@ -61,6 +66,10 @@ impl fmt::Display for Unsupported {
             Self::MultiDomainTaylorBasis => {
                 formatter.write_str("a Taylor basis reconstructs one image domain, no outliers")
             }
+            Self::PolarizedTaylorKernelSet => formatter.write_str(
+                "deconvolver='mtmfs' images Stokes planes other than I alone with the standard \
+                 gridder only; the mosaic, W- and AW-projection gridders wait for #1112",
+            ),
             Self::NoMetalDevice => {
                 formatter.write_str("the Metal backend needs a unified-memory Metal 3 device")
             }
@@ -188,6 +197,15 @@ pub fn check(
     ) && problem.geometry().domains().len() != 1
     {
         unsupported.push(Unsupported::MultiDomainTaylorBasis);
+    }
+    if matches!(
+        problem.reconstruction().basis(),
+        ReconstructionBasis::Taylor { .. }
+    ) && problem.reconstruction().polarization().coordinates()
+        != [PolarizationCoordinate::StokesI]
+        && !crate::imaging::standard_kernel_set(problem)
+    {
+        unsupported.push(Unsupported::PolarizedTaylorKernelSet);
     }
     if problem
         .required_capabilities()
