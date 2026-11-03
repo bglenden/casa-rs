@@ -219,6 +219,111 @@
      "note": "the recorded floor(width) tie divergence of round 5, unchanged"
     }
    }
+  },
+  "cube-axes-review": {
+   "purpose": "The case file with two cubic cases beside a flagged channel, at the review fixes (6f760ec525; 04c94a900a adds the cases): CASA leaves the model zero at a flagged channel and casa-rs fits the channel's stored value with no model there.",
+   "case_file": "resources/casa-compat/tclean-cube-axes-cases.json",
+   "case_file_sha256": "32747b0f8552fd31e0d6f83fb06343e21424362cccd6a4d36d67c56e55440b0e",
+   "data_root": "a local mirror of refim_point.ms and refim_point_withline.ms, beside refim_point_withline_flag9.ms (channel 9 flagged by CASA's flagdata, as the case file's note says)",
+   "binary_sha256": "9615333a596aa70fcf35bd026aaa05afa383ca80e574ab64de1b8d4599b82288",
+   "receipt_sha256": "050b25f582bed40d3a720bb11f2b5260e9643f16983c13f777c123aa01195d9b",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 18,
+    "total": 18
+   },
+   "cases": {
+    "derived_start_channel": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 2.38e-07
+    },
+    "derived_width_channel": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 1.05e-07
+    },
+    "derived_start_frequency": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 3.11e-07
+    },
+    "derived_width_frequency": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 9.51e-08
+    },
+    "derived_start_velocity": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 2.7e-07
+    },
+    "derived_width_velocity": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 1.02e-07
+    },
+    "derived_spw_range": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 2.94e-07
+    },
+    "derived_spw_range_start": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 1.02e-07
+    },
+    "derived_spw_range_width": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 1.01e-07
+    },
+    "derived_negative_width_from_start_error": {
+     "passed": true,
+     "products": 0,
+     "worst_nrms": 0.0
+    },
+    "strided_default_start": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 3.48e-07
+    },
+    "strided_explicit_axis": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 2.79e-07
+    },
+    "cubic_line": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 3.58e-07
+    },
+    "cubic_line_offset": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 2.87e-07
+    },
+    "cubic_line_wide": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 4.93e-07
+    },
+    "cubic_line_briggs": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 8.8e-07
+    },
+    "cubic_line_flagged_channel": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 3.54e-07
+    },
+    "cubic_line_flagged_channel_wide": {
+     "passed": true,
+     "products": 6,
+     "worst_nrms": 4.32e-07
+    }
+   }
   }
  },
  "not_run": [
@@ -233,5 +338,78 @@
    "m2 (test-cube-sweep)"
   ],
   "note": "staged inputs excluded; the sha256 was taken by rereading the archive on the NAS"
+ },
+ "review_revision": "04c94a900a97478c32a33c2871900c213ba58346",
+ "performance": {
+  "purpose": "The linear cube's native-residual records grew to four points (NativeSource 24 to 40 bytes, NativeTerm 20 to 40): wall time and peak RSS of a linear cube clean, main against the branch.",
+  "host": "Mac mini (Apple M2, 8 cores), load below 4 before each series",
+  "builds": {
+   "A (main 49c810c572)": "856f766d11cf0c50bcfc47dbfcdba642bc514c156ad287ca082e51b2883ce258",
+   "B (branch 6f760ec525)": "9615333a596aa70fcf35bd026aaa05afa383ca80e574ab64de1b8d4599b82288"
+  },
+  "workload": "casars.tasks.tclean on refim_Cband.G37line.ms, field 1, spw 0:60~180, specmode cube (LSRK, linear interpolation, residuals at native channels), nchan 60, start 60, width 2, imsize 512, cell 0.01arcmin, hogbom, niter 2000, cycleniter 200: 3338 iterations in 4 major cycles on every run",
+  "protocol": "A B B A A B per backend, one quiet host, wall from the task call's start to its end (Python start-up included), peak RSS from /usr/bin/time -l",
+  "runs_seconds": {
+   "cpu f64": {
+    "A": [
+     9.39,
+     8.87,
+     8.94
+    ],
+    "B": [
+     8.93,
+     8.86,
+     9.06
+    ]
+   },
+   "metal": {
+    "A": [
+     11.14,
+     11.09,
+     10.93
+    ],
+    "B": [
+     11.03,
+     10.98,
+     11.09
+    ]
+   }
+  },
+  "peak_rss_bytes": {
+   "cpu f64": {
+    "A": [
+     1152548864,
+     1150386176,
+     1150238720
+    ],
+    "B": [
+     1153695744,
+     1153761280,
+     1153728512
+    ]
+   },
+   "metal": {
+    "A": [
+     1482850304,
+     1482915840,
+     1482801152
+    ],
+    "B": [
+     1485701120,
+     1485783040,
+     1485733888
+    ]
+   }
+  },
+  "finding": "no slowdown beyond noise on either backend (CPU means 9.07 s and 8.95 s, Metal 11.05 s and 11.03 s); peak RSS 2 to 3 MB (0.2%) higher"
+ },
+ "archive_review": {
+  "nas": "/Volumes/home/casa-rs/tclean/20261103/tclean-cube-axes-review-04c94a900a.tar",
+  "sha256": "0653b72562b12a31543f16933362ab3054c9752de6dee839b168f1ac08a8b4cb",
+  "bytes": 103057920,
+  "members": [
+   "m3 (cube-axes-review)",
+   "perf (results.txt and the timing script)"
+  ]
  }
 }
