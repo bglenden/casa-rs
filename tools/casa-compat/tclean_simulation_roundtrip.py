@@ -36,6 +36,7 @@ import argparse
 import ast
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -51,6 +52,10 @@ CORE = {
     "totaltime": "600s",
     "thermalnoise": "",
 }
+
+# A 4-channel cube derived from `CORE`'s model ([`cube_model`]), so that
+# simanalyze images a cube.
+CUBE = "@cube4"
 
 # name: (observations [(project suffix, simobserve overrides)], imaging).
 SCENARIOS = {
@@ -78,7 +83,52 @@ SCENARIOS = {
         ],
         {"niter": 500, "threshold": "0.1mJy", "weighting": "briggs"},
     ),
+    # One pointing of a 4-channel model: simanalyze's cube.
+    "alma12_single_cube": (
+        [("12m", {"skymodel": CUBE, "antennalist": "alma.cycle10.1.cfg", "mapsize": ["", ""]})],
+        {"niter": 500, "threshold": "0.1mJy", "weighting": "briggs"},
+    ),
+    # A mosaic of the 4-channel model: a cube mosaic, whose Briggs density
+    # tclean grids per field and channel (mosweight, perchanweightdensity).
+    "alma12_mosaic_cube": (
+        [("12m", {"skymodel": CUBE, "antennalist": "alma.cycle10.1.cfg", "mapsize": ["30arcsec", "30arcsec"]})],
+        {"niter": 500, "threshold": "0.1mJy", "weighting": "briggs"},
+    ),
 }
+
+
+def skymodel_path(name: str, args) -> str:
+    """The sky model `name` names, a local copy of casatestdata's (the NAS
+    refuses table locks), or [`CUBE`]'s."""
+    if name == CUBE:
+        return cube_model(args)
+    path = os.path.join(args.out, "models", os.path.basename(name))
+    if not os.path.isdir(path):
+        shutil.copytree(os.path.join(args.casatestdata, name), path)
+    return path
+
+
+def cube_model(args) -> str:
+    """`CORE`'s model as 4 channels 10 MHz apart, channel k scaled by
+    `1 + 0.1 k`: a cube whose planes differ."""
+    import numpy
+    from casatools import image
+
+    path = os.path.join(args.out, "models", "core5ps_cube4.im")
+    if os.path.isdir(path):
+        return path
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    ia = image()
+    ia.open(skymodel_path(CORE["skymodel"], args))
+    plane = ia.getchunk()
+    coordinates = ia.coordsys().torecord()
+    brightness = ia.brightnessunit()
+    ia.close()
+    cube = numpy.concatenate([plane * (1.0 + 0.1 * k) for k in range(4)], axis=3)
+    ia.fromarray(path, pixels=cube, csys=coordinates, overwrite=True)
+    ia.setbrightnessunit(brightness)
+    ia.close()
+    return path
 
 
 def simulate(name: str, suffix: str, overrides: dict, args) -> str:
@@ -88,7 +138,7 @@ def simulate(name: str, suffix: str, overrides: dict, args) -> str:
     os.makedirs(work, exist_ok=True)
     project = f"{name}_{suffix}"
     params = dict(CORE, **overrides)
-    params["skymodel"] = os.path.join(args.casatestdata, params["skymodel"])
+    params["skymodel"] = skymodel_path(params["skymodel"], args)
     # The configuration from CASA's own data tree, by path, whatever data
     # directories casa-rs's simobserve finds.
     params["antennalist"] = antenna_list(params["antennalist"])
@@ -134,7 +184,18 @@ def literal(text: str):
         import numpy
 
         value = eval(text, {"__builtins__": {}}, {"np": numpy, "numpy": numpy, "array": numpy.array})
-        return value.tolist() if hasattr(value, "tolist") else value
+        return plain(value)
+
+
+def plain(value):
+    """`value` with NumPy scalars and arrays, at any depth, as Python's."""
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    if isinstance(value, (list, tuple)):
+        return [plain(item) for item in value]
+    if isinstance(value, dict):
+        return {key: plain(item) for key, item in value.items()}
+    return value
 
 
 def source_fields(ms: str) -> int:
@@ -148,7 +209,7 @@ def source_fields(ms: str) -> int:
     return sum(1 for code in codes if code == "OBJ") or len(set(codes))
 
 
-def simanalyze_call(name: str, ms_paths: list[str], imaging: dict, args) -> dict:
+def simanalyze_call(name: str, ms_paths: list[str], imaging: dict, args, skymodel: str) -> dict:
     """The tclean call simanalyze makes for `ms_paths`, from CASA's own
     `simutil.imtclean` (dryrun), with the model's cell, size and direction
     as simanalyze takes them when its own are unset."""
@@ -157,7 +218,7 @@ def simanalyze_call(name: str, ms_paths: list[str], imaging: dict, args) -> dict
 
     qa = quanta()
     ia = image()
-    ia.open(os.path.join(args.casatestdata, CORE["skymodel"]))
+    ia.open(skymodel)
     coordinates = ia.coordsys()
     shape = ia.shape()
     increment = coordinates.increment(type="direction", format="q")["quantity"]
@@ -226,7 +287,8 @@ def main() -> int:
         ms_paths = [simulate(name, suffix, overrides, args) for suffix, overrides in observations]
         for path in ms_paths:
             inputs[path] = path
-        call = simanalyze_call(name, ms_paths, imaging, args)
+        skymodel = skymodel_path(observations[0][1].get("skymodel", CORE["skymodel"]), args)
+        call = simanalyze_call(name, ms_paths, imaging, args, skymodel)
         vis = call.pop("vis")
         call.pop("imagename", None)
         names = [os.path.relpath(path, os.path.join(args.out, "sim")) for path in (vis if isinstance(vis, list) else [vis])]
