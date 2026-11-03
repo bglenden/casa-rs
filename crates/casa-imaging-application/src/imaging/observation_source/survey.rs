@@ -10,7 +10,7 @@ use casa_imaging_runtime::pass::SourceError;
 use casa_observation::{BatchBuffers, ReadEvent};
 use casa_types::measures::MjdHighPrec;
 
-use super::BatchRoute;
+use super::StoreRoute;
 use super::requests;
 use super::window::FactorRange;
 
@@ -26,13 +26,14 @@ pub(super) struct PartitionSurvey {
     pub(super) factors: Option<FactorRange>,
 }
 
-/// Each of `route`'s partitions surveyed, with their conversion factors
-/// when `factors`. The survey's batches hold at most its admitted bytes
-/// ([`super::Batching::survey_bytes`]), in buffers of their own.
-/// Partitions observed at the same times towards the same field in the same
-/// frame share each conversion.
+/// Each of one store's `route`'s partitions surveyed, with their conversion
+/// factors when `factors`. The survey's batches hold at most its admitted
+/// `survey_bytes` ([`super::Batching::survey_bytes`]), in buffers of their
+/// own. Partitions observed at the same times towards the same field in
+/// the same frame share each conversion.
 pub(super) fn survey(
-    route: &BatchRoute,
+    route: &StoreRoute,
+    survey_bytes: usize,
     factors: bool,
 ) -> Result<Vec<PartitionSurvey>, SourceError> {
     let catalogue = route.observation().catalogue();
@@ -49,7 +50,7 @@ pub(super) fn survey(
                 (&route.selection, &route.plan),
                 entry,
                 partition,
-                route.batching.survey_bytes(),
+                survey_bytes,
             );
             let mut traversal = route.observation().bind_read(&request)?;
             let mut span: Option<[f64; 2]> = None;

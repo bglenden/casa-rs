@@ -15,6 +15,7 @@ use casa_observation::{Correlation, PartitionEntry, VisibilityBatch};
 use casa_types::measures::MjdHighPrec;
 use num_complex::Complex32;
 
+use super::keys::StoreKeys;
 use super::selection::{PartitionSelection, SelectedPartition};
 use crate::imaging::continuum::{ContinuumRow, flag_unimaged_channels, subtract_continuum};
 
@@ -133,16 +134,18 @@ pub(super) fn select_samples(
 /// laws, fixed for a run.
 pub(super) struct Packer<'p> {
     pub(super) problem: &'p CompiledProblem,
-    /// The run's geometry: what converts a window's frequency bands to a
-    /// time's rows.
-    pub(super) plan: &'p GeometryPlan,
+    /// Each store's geometry, in store order: what converts a window's
+    /// frequency bands to a time's rows.
+    pub(super) plans: Vec<&'p GeometryPlan>,
     /// Projections per row: one per chart.
     pub(super) charts: usize,
     /// Each chart's direction law when a kernel set ramps each row to its
     /// pointing; empty otherwise.
     pub(super) pointing: Vec<DirectionCoordinateSpec>,
-    /// The aperture classes in dish order.
-    pub(super) dish_classes: Vec<AntennaResponseClass>,
+    /// The keys of the route's stores: the aperture classes a row's
+    /// antenna types index, and the window and field keys its context
+    /// carries.
+    pub(super) keys: StoreKeys,
 }
 
 /// Buffers packing reuses from batch to batch.
@@ -213,12 +216,18 @@ impl<'b> Arrays<'b> {
 
 impl Packer<'_> {
     /// Pack `batch`'s samples `keep` names into `out` under `layout`, with
-    /// `geometry` applied to those samples. Unread visibilities are zero.
+    /// `geometry` applied to those samples; the rows are keyed as store
+    /// `store`'s ([`StoreKeys`]). Unread visibilities are zero.
     /// A non-finite input fails the run under [`FiniteValuePolicy`], naming
     /// the sample.
     pub(super) fn pack(
         &self,
-        (batch, partition, layout): (&VisibilityBatch<'_>, &SelectedPartition, &Layout),
+        (batch, store, partition, layout): (
+            &VisibilityBatch<'_>,
+            usize,
+            &SelectedPartition,
+            &Layout,
+        ),
         geometry: &BatchGeometry,
         keep: &[bool],
         values: bool,
@@ -262,7 +271,7 @@ impl Packer<'_> {
                     .extend(layout.channels.iter().map(|channel| frequencies[*channel]));
                 scratch.in_band.clear();
                 if let Some(bands) = bands {
-                    let factor = self.plan.frequency_factor(
+                    let factor = self.plans[store].frequency_factor(
                         bands.frame().frequency_ref(),
                         batch.field[time],
                         batch.time.seconds_since(time, origin),
@@ -312,11 +321,11 @@ impl Packer<'_> {
                     antennas: [baseline.antenna1.0, baseline.antenna2.0],
                     antenna_types: antenna_types(
                         geometry.antenna_responses(sample),
-                        &self.dish_classes,
+                        &self.keys.dish_classes,
                     ),
                     parallactic_angle_rad: geometry.parallactic_angles(sample).unwrap_or([0.0; 2]),
-                    field: field.0,
-                    spectral_window: partition.spectral_window,
+                    field: self.keys.field(store, field.0),
+                    spectral_window: self.keys.window(store, partition.spectral_window),
                 },
                 address: RowAddress::UNADDRESSED,
             };
@@ -387,7 +396,9 @@ impl Packer<'_> {
                 Some(direction) => pointing_offset(
                     *direction,
                     geometry.aw_pointing_pixel(sample, chart),
-                    geometry.pointing(sample).antenna1,
+                    geometry
+                        .chart_pointing(sample, chart)
+                        .unwrap_or(geometry.pointing(sample).antenna1),
                 )?,
                 None => [0.0; 2],
             };
@@ -535,7 +546,9 @@ fn antenna_types(
 /// when the selection evaluated one, else the antenna-1 pointing direction
 /// on the image plane (`SimplePBConvFunc::findConvFunction` takes the
 /// buffer's first `direction1`; under tclean `usepointing=False` the
-/// selection evaluates it as the field's phase-tracking centre).
+/// selection evaluates it as the field's phase-tracking centre), placed in
+/// the chart's frame and less a moving source's shift when the geometry
+/// placed it ([`BatchGeometry::chart_pointing`]).
 fn pointing_offset(
     direction: DirectionCoordinateSpec,
     aw_pixel: Option<[f64; 2]>,

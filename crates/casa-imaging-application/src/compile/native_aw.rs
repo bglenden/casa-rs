@@ -36,7 +36,7 @@ pub(super) fn resolve(
     };
     let surface = evla_dish(surveyed.catalogue, first_cross, evla_surface, aw.aterm)?;
     let reference_frequency_hz = surveyed.spectral.reference_frequency_hz;
-    let frequencies = frequency_groups(surveyed.survey, surveyed.spectral);
+    let frequencies = frequency_groups((surveyed.reference, surveyed.survey), surveyed.spectral);
     let feed_angle = receptor_zero_angle(
         surveyed.catalogue,
         surveyed.msv2,
@@ -137,9 +137,10 @@ fn evla_dish(
     Ok(EvlaDishSurface::from_surface_text(text)?)
 }
 
-/// One frequency group per selected SPW, in increasing CF frequency.
+/// One frequency group per selected SPW of the store `store` surveyed
+/// (`survey`), in increasing CF frequency.
 fn frequency_groups(
-    survey: &Survey,
+    (store, survey): (usize, &Survey),
     spectral: &PreparedSpectralAxis,
 ) -> Vec<NativeAwFrequencyGroup> {
     let mut frequencies = survey
@@ -147,7 +148,7 @@ fn frequency_groups(
         .iter()
         .map(|window| {
             let channel_frequencies_hz = spectral
-                .window_channels(window.spw_id)
+                .window_channels(store, window.spw_id)
                 .iter()
                 .map(|index| {
                     *window

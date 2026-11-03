@@ -107,6 +107,17 @@ pub enum PrepareError {
     /// The selection holds no sample.
     #[error("selection resolved to no samples")]
     NoSelectedSamples,
+    /// A stage that images one MeasurementSet was given several.
+    #[error(
+        "{stage} images one MeasurementSet; several ({count}) are not implemented by casa-rs \
+         yet (#980)"
+    )]
+    SeveralMeasurementSets {
+        /// The stage.
+        stage: &'static str,
+        /// The MeasurementSets imaged.
+        count: usize,
+    },
     /// A continuum `reffreq` with an `outframe` other than LSRK: CASA
     /// converts the header's reference to LSRK for gridding and Taylor
     /// expansion through the image's frame conversion, which casa-rs does
@@ -233,6 +244,16 @@ pub enum PrepareError {
     OneSpectralWindow {
         /// The stage.
         stage: &'static str,
+        /// The number selected.
+        selected: usize,
+    },
+    /// A source-frame cube (`specmode='cubesource'`) over several spectral
+    /// windows, which casa-rs has not ported from CASA yet.
+    #[error(
+        "a source-frame cube (specmode cubesource) over several spectral windows ({selected} \
+         are selected) is not implemented by casa-rs yet (#1059)"
+    )]
+    SourceFrameCubeWindows {
         /// The number selected.
         selected: usize,
     },

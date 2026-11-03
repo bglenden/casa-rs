@@ -174,28 +174,35 @@ pub(super) fn candidates(
     })
 }
 
-/// `problem`'s selection resolved to `observation`'s partitions, in
-/// partition order: the partitions compile chose, the channels of their
+/// The selection of `problem`'s source `source` (its MeasurementSet's place
+/// in the snapshot) resolved to that source's `observation`'s partitions,
+/// in partition order: the partitions compile chose, the channels of their
 /// windows, their correlations, the data group holding the visibility
 /// column, and the per-sample predicates.
 ///
 /// # Errors
 ///
-/// [`PartitionSelectionError::Unsupported`] for several MeasurementSets,
-/// `FLOAT_DATA` and partitions whose column belongs to different data
-/// groups; [`PartitionSelectionError::Inconsistent`] for a window the
-/// selection names no channel of, a correlation a partition does not hold,
-/// and a window without a positive reference frequency under a UV-distance
-/// interval in wavelengths.
+/// [`PartitionSelectionError::Unsupported`] for `FLOAT_DATA` and
+/// partitions whose column belongs to different data groups;
+/// [`PartitionSelectionError::Inconsistent`] for a source the snapshot does
+/// not hold, a window the selection names no channel of, a correlation a
+/// partition does not hold, and a window without a positive reference
+/// frequency under a UV-distance interval in wavelengths.
 pub(crate) fn resolve_partitions(
     problem: &CompiledProblem,
+    source: usize,
     observation: &dyn Observation,
 ) -> Result<PartitionSelection, PartitionSelectionError> {
-    let [source] = problem.observation_transaction().read_set().sources() else {
-        return Err(PartitionSelectionError::Unsupported(
-            "more than one MeasurementSet",
-        ));
-    };
+    let source = problem
+        .observation_transaction()
+        .read_set()
+        .sources()
+        .get(source)
+        .ok_or_else(|| {
+            PartitionSelectionError::Inconsistent(format!(
+                "the observation has no MeasurementSet {source}"
+            ))
+        })?;
     let selection = source.selection();
     let visibility = source.selected_columns().visibility();
     if visibility == VisibilityColumn::FloatData {

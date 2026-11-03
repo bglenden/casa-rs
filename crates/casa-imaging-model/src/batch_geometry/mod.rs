@@ -191,6 +191,10 @@ pub struct GeometryPlan {
     pointing: PointingCentreLaw,
     charts: Vec<Chart>,
     mosaic: bool,
+    /// Whether each row's pointing is placed on each chart
+    /// ([`BatchGeometry::chart_pointing`]): under the mosaic law, when the
+    /// phase centre moves or a chart is outside J2000.
+    chart_pointing: bool,
     output_frame: FrequencyRef,
     /// `A`, the factor that takes an output-frame frequency to LSRK at the
     /// image's anchor, for a cube gridded through LSRK.
@@ -208,6 +212,7 @@ impl fmt::Debug for GeometryPlan {
             .field("pointing", &self.pointing)
             .field("charts", &self.charts.len())
             .field("mosaic", &self.mosaic)
+            .field("chart_pointing", &self.chart_pointing)
             .field("output_frame", &self.output_frame)
             .field("output_in_lsrk", &self.output_in_lsrk)
             .field("parallactic", &self.parallactic)
@@ -313,6 +318,7 @@ pub struct BatchGeometry {
     pointing: Vec<SelectedPointingDirections>,
     parallactic: Vec<[f64; 2]>,
     aw_pixels: Vec<[f64; 2]>,
+    chart_pointing: Vec<SkyDirection>,
     responses: Vec<Option<SelectedAntennaResponses>>,
     frequencies_hz: Vec<f64>,
 }
@@ -344,6 +350,20 @@ impl BatchGeometry {
         self.aw_pixels.get(sample * self.charts + chart).copied()
     }
 
+    /// Sample `sample`'s antenna-1 pointing on chart `chart`, in the
+    /// chart's frame and less the moving phase centre's shift since the
+    /// image's epoch, as CASA's `SimplePBConvFunc::toPix` places a mosaic
+    /// row's pointing (`MosaicFT` passes it the shift negated); `None`
+    /// where the chart takes the J2000 pointing as it is
+    /// ([`Self::pointing`]): a fixed phase centre with every chart in
+    /// J2000, or a law other than the mosaic's.
+    #[must_use]
+    pub fn chart_pointing(&self, sample: usize, chart: usize) -> Option<SkyDirection> {
+        self.chart_pointing
+            .get(sample * self.charts + chart)
+            .copied()
+    }
+
     /// Sample `sample`'s antennas' aperture classes, when the instrument
     /// model assigns them.
     #[must_use]
@@ -367,6 +387,7 @@ impl BatchGeometry {
             + self.pointing.capacity() * size_of::<SelectedPointingDirections>()
             + self.parallactic.capacity() * size_of::<[f64; 2]>()
             + self.aw_pixels.capacity() * size_of::<[f64; 2]>()
+            + self.chart_pointing.capacity() * size_of::<SkyDirection>()
             + self.responses.capacity() * size_of::<Option<SelectedAntennaResponses>>()
             + self.frequencies_hz.capacity() * size_of::<f64>()
     }
@@ -432,6 +453,11 @@ impl GeometryPlan {
             .model_phase_centre();
         let phase = PhaseCentre::resolve(centres.phase_tracking(), phase_table, &frames)?;
         let (charts, mosaic) = projection::charts(problem)?;
+        let chart_pointing = mosaic
+            && (phase.moves()
+                || charts
+                    .iter()
+                    .any(|chart| chart.centre.frame() != DirectionFrame::J2000));
         let responses = match problem.science().instrument_model() {
             None | Some(InstrumentModel::CasaEvlaWidebandAwV1) => Responses::None,
             Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => {
@@ -456,6 +482,7 @@ impl GeometryPlan {
             pointing: centres.pointing().clone(),
             charts,
             mosaic,
+            chart_pointing,
             output_frame: spectral.output_frame().frequency_ref(),
             parallactic: problem.requires_parallactic_angles(),
             responses,
@@ -528,6 +555,9 @@ impl GeometryPlan {
         }
         if self.aw.is_some() {
             per_sample += charts * size_of::<[f64; 2]>();
+        }
+        if self.chart_pointing {
+            per_sample += charts * size_of::<SkyDirection>();
         }
         if !matches!(self.responses, Responses::None) {
             per_sample += size_of::<Option<SelectedAntennaResponses>>();
@@ -659,6 +689,9 @@ impl GeometryPlan {
             self.antenna_quantities(&context, &field_direction, out)?;
             directions.clear();
             self.pointing_directions(&context, pointing, &mut directions, out)?;
+            if self.chart_pointing {
+                self.chart_pointings(&context, out)?;
+            }
             if let Some(grouping) = &self.aw {
                 let series =
                     pointing.ok_or(BatchGeometryError::MissingInput("pointing samples"))?;
@@ -717,6 +750,12 @@ impl GeometryPlan {
             0
         };
         refill(&mut out.aw_pixels, aw, [f64::NAN; 2]);
+        let charted = if self.chart_pointing {
+            samples * out.charts
+        } else {
+            0
+        };
+        refill(&mut out.chart_pointing, charted, nowhere);
         let responses = if matches!(self.responses, Responses::None) {
             0
         } else {

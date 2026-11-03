@@ -54,12 +54,16 @@ fn vector(value: Option<&ArrayValue>, column: &str) -> Result<Option<Vec<f64>>, 
     }
 }
 
-/// `value`, a `column` cell, as exactly `N` values on one axis.
+/// `value`, a `column` cell, as exactly `N` values on one axis; `None` for
+/// an undefined cell and for a defined one of no values, which states none
+/// either: a split MeasurementSet's `SOURCE` holds one for `POSITION`
+/// (CASA's `refim_point_onespw1.ms`), and CASA's imaging reads neither.
 fn fixed<const N: usize>(
     value: Option<&ArrayValue>,
     column: &str,
 ) -> Result<Option<[f64; N]>, ObservationError> {
     vector(value, column)?
+        .filter(|values| !values.is_empty())
         .map(|values| {
             <[f64; N]>::try_from(values.as_slice())
                 .map_err(|_| invalid(format!("{column} holds {} values, not {N}", values.len())))
@@ -510,6 +514,43 @@ mod tests {
                 .is_some_and(|reason| reason.contains("POSITION") && reason.contains("one axis")),
             "{refused:?}"
         );
+    }
+
+    /// A SOURCE vector of no values states none, as an undefined cell does;
+    /// one of another count is refused.
+    #[test]
+    fn an_empty_source_vector_states_none() {
+        for (values, accepted) in [(0, true), (2, false)] {
+            let mut ms = with_lines();
+            let table = ms.subtable_mut(SubtableId::Source).expect("SOURCE");
+            table
+                .add_column(
+                    ColumnSchema::array_variable(
+                        "POSITION",
+                        casa_types::PrimitiveType::Float64,
+                        None,
+                    ),
+                    None,
+                )
+                .expect("POSITION");
+            source(&mut ms, (0, 0, "M51"), 0, None);
+            ms.subtable_mut(SubtableId::Source)
+                .expect("SOURCE")
+                .row_accessor_mut()
+                .set_cell(
+                    0,
+                    "POSITION",
+                    Value::Array(ArrayValue::Float64(ArrayD::zeros(vec![values]))),
+                )
+                .expect("a position");
+            let read = read_sources(&ms, 1);
+            if accepted {
+                let sources = read.expect("an empty position is no position");
+                assert!(sources.entries[0].records[0].position.is_none());
+            } else {
+                assert!(read.is_err(), "{values} values");
+            }
+        }
     }
 
     /// Without a SOURCE table there are no sources.

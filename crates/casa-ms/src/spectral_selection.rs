@@ -2070,6 +2070,16 @@ impl CubeSpectralSetup {
     /// channel below and two above: the channels CASA reads of the window
     /// when `SynthesisImager::tuneSelectData` replaces the selection by the
     /// image's band. Empty when none reaches the axis.
+    ///
+    /// The window and `field_id` are `derived_engine`'s MeasurementSet's,
+    /// which may be another than the one the axis was made from (CASA's
+    /// tclean images several MeasurementSets on one's axis), so the output
+    /// frame is taken at this axis's reference time towards that field.
+    ///
+    /// # Errors
+    ///
+    /// A frame conversion that fails, or widths that do not match the
+    /// frequencies.
     pub fn source_channel_support(
         &self,
         window_frequencies_hz: &[f64],
@@ -2078,10 +2088,14 @@ impl CubeSpectralSetup {
         field_id: usize,
         derived_engine: &MsCalEngine,
     ) -> MsResult<ResolvedChannelSelection> {
+        let setup = Self {
+            output_frame_field_id: field_id,
+            ..self.clone()
+        };
         let mut first_index = None::<usize>;
         let mut last_index = None::<usize>;
         for row_time_mjd_sec in [time_bounds_mjd_sec[0], time_bounds_mjd_sec[1]] {
-            let contributions = self.row_spectral_contributions(
+            let contributions = setup.row_spectral_contributions(
                 window_frequencies_hz,
                 window_channel_widths_hz,
                 row_time_mjd_sec,

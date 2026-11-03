@@ -48,7 +48,7 @@ use num_complex::Complex32;
 
 use crate::imaging::{self, ImagingError, KernelAdmission};
 use crate::native::NativeError;
-use crate::{ApplicationRuntime, ImagingRequest};
+use crate::{ApplicationRuntime, ImagingRequest, MeasurementSetSelection};
 use record::{FirstBuffer, GridFt};
 
 /// The selection a virtual model is written for, as the run resolved it
@@ -82,16 +82,19 @@ pub(crate) struct VirtualModelPlan {
 }
 
 impl VirtualModelPlan {
-    /// The plan of `request`, whose main image has `coordinates`, for the
-    /// rows and channels of `selection`.
+    /// The plan of `vis`, one MeasurementSet of `request`, whose main image
+    /// has `coordinates`, for the rows and channels of `selection` as the
+    /// run resolved them there. CASA saves the model in each MeasurementSet
+    /// of its list (`saveVirtualModel` per MeasurementSet), so a run has one
+    /// plan per MeasurementSet it reads.
     pub(crate) fn new(
-        request: &ImagingRequest,
+        (request, vis): (&ImagingRequest, &MeasurementSetSelection),
         selection: CompiledSelection,
         coordinates: CoordinateSystem,
         measures: Arc<dyn MeasuresProvider>,
     ) -> Self {
         Self {
-            ms: request.vis.clone(),
+            ms: vis.vis.clone(),
             selection,
             coordinates,
             interpolation: match request.interpolation {
@@ -338,7 +341,7 @@ fn write_machine(
         BackendChoice::Cpu,
         Some(GridPrecision::F64),
         None,
-        &[],
+        &imaging::StoreKeys::single(),
         KernelAdmission {
             host: &runtime.host,
             policy: &runtime.resource_policy,

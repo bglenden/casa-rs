@@ -2,14 +2,14 @@
 format = 1
 surface = "tclean"
 kind = "task"
-contract = 37
+contract = 38
 
 [parameters]
 vis = ["VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"]
-field = "1525"
-spw = "2~17"
-uvrange = "<12km"
-intent = "OBSERVE_TARGET#UNSPECIFIED"
+field = ["1525"]
+spw = ["2~17"]
+uvrange = ["<12km"]
+intent = ["OBSERVE_TARGET#UNSPECIFIED"]
 datacolumn = "data"
 imagename = "products/vlass-single-field"
 imsize = [12150, 12150]
