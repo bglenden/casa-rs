@@ -12,7 +12,9 @@ use casa_imaging_deconvolution::{
     FinalNormalState, ImageDomainReconstructionMasks, MajorCycleCompletion, ModelGeneration,
     NormalBasis, ReconstructionMask,
 };
-use casa_imaging_model::{CompiledProblem, ImageDomainRole, ReconstructionBasis};
+use casa_imaging_model::{
+    CompiledImageDomain, CompiledProblem, ImageDomainRole, ReconstructionBasis,
+};
 
 /// Where an analytic primary beam is centred on each image domain: the
 /// pixel position `[x, y]` of every selected field's phase direction.
@@ -142,16 +144,31 @@ impl<'a> ContinuumProductInputs<'a> {
             .map(Vec::as_slice)
     }
 
+    /// Whether `mask` covers every plane of `domain`: its grid, and each of
+    /// the state's channels and polarizations (a Taylor family is one
+    /// channel).
+    fn covers(&self, mask: &ReconstructionMask, domain: &CompiledImageDomain) -> bool {
+        let normal = self.normal_state;
+        let channels = if normal.basis() == NormalBasis::Taylor {
+            1
+        } else {
+            normal.channel_count()
+        };
+        mask.shape() == domain.shape().pixels()
+            && mask.coordinate() == domain.direction()
+            && mask.planes().covers(channels, normal.polarization_count())
+    }
+
     /// Bind the exact reconstruction mask used by the final bounded solve.
     ///
     /// # Panics
     ///
-    /// If the mask does not cover the main domain's grid.
+    /// If the mask does not cover every plane of the main domain.
     #[must_use]
     pub fn with_reconstruction_mask(mut self, mask: &'a ReconstructionMask) -> Self {
         let main = self.domain(&ImageDomainRole::Main);
         assert!(
-            mask.shape() == main.shape().pixels() && mask.coordinate() == main.direction(),
+            self.covers(mask, main),
             "the run's reconstruction mask covers its main domain"
         );
         self.reconstruction_mask = Some(mask);
@@ -159,11 +176,13 @@ impl<'a> ContinuumProductInputs<'a> {
         self
     }
 
-    /// Bind the exact spatial support for every canonical image domain.
+    /// Bind the exact support of every plane of every canonical image
+    /// domain.
     ///
     /// # Panics
     ///
-    /// If the masks are not one per domain, each covering its domain.
+    /// If the masks are not one per domain, each covering its domain's
+    /// planes.
     #[must_use]
     pub fn with_domain_reconstruction_masks(
         mut self,
@@ -172,10 +191,10 @@ impl<'a> ContinuumProductInputs<'a> {
         let domains = self.problem.geometry().domains();
         assert!(
             masks.len() == domains.len()
-                && masks.iter().zip(domains).all(|(mask, domain)| {
-                    mask.shape() == domain.shape().pixels()
-                        && mask.coordinate() == domain.direction()
-                }),
+                && masks
+                    .iter()
+                    .zip(domains)
+                    .all(|(mask, domain)| self.covers(mask, domain)),
             "the run's reconstruction masks cover its domains, one each"
         );
         self.reconstruction_mask = None;

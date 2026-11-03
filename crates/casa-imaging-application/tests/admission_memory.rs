@@ -630,6 +630,64 @@ fn cubes_stay_within_their_admission_resident_and_in_waves() {
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 
+/// CASA's automatic mask of every channel and Stokes plane (#980) through
+/// the cycle loop: a run keeps the generation of masks in use and the one
+/// being made, every holder of a generation (the plan the next boundary
+/// evolves from, the minor cycle that cleans within it, the outcome)
+/// sharing its support, and admits them twice. A cube of 16 channels and
+/// four Stokes planes, 512 pixels square, holds 16.8 MB a generation, above
+/// what the law resolves; each boundary once copied a generation into the
+/// plan and the outcome, four held at once. Several minor cycles run, so
+/// the masks evolve.
+#[test]
+fn an_automatic_cube_mask_stays_within_its_admission() {
+    if !alone("an_automatic_cube_mask_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), CUBE_CHANNELS);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    let measured = check(
+        &mut breaches,
+        "automatic IQUV cube",
+        &request(
+            &measurement_set,
+            &root.path().join("automask"),
+            512,
+            json!({
+                "deconvolver": "hogbom",
+                "specmode": "cube",
+                "outframe": "TOPO",
+                "spw": "0",
+                "channel_start": 0,
+                "channel_count": CUBE_CHANNELS,
+                "start": "0",
+                "width": "1",
+                "stokes": "IQUV",
+                "usemask": "auto-multithresh",
+                // A ten-minute snapshot's PSF sidelobes are high: CASA's
+                // default sidelobethreshold of 3 would mask nothing.
+                "sidelobethreshold": 1.0,
+                "noisethreshold": 3.0,
+                "niter": 400,
+                "cycleniter": 20,
+            }),
+        ),
+        4,
+        AMPLE,
+    );
+    if let Ok(outcome) = &measured.outcome {
+        assert!(
+            outcome.minor_cycles.len() >= 3,
+            "the masks evolve over several boundaries: {} minor cycles, stop {:?}",
+            outcome.minor_cycles.len(),
+            outcome.stop
+        );
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
 /// Run `request` on four workers just above what it needs, recording
 /// breaches under `label`: the ceiling rises from 1 MiB by what each
 /// refusal reports missing, and a third more, until the run completes, so

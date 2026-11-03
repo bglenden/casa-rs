@@ -165,11 +165,15 @@ fn common_enclosing_iterative(
             .max_by(|(_, lhs), (_, rhs)| lhs.area().total_cmp(&rhs.area()))
             .ok_or(EllipticalGaussianError::EmptySet)?;
 
+        // CASA skips every beam equal to the largest (`*iBeam != maxBeam`),
+        // not only the largest itself: a duplicate (Stokes planes share a
+        // beam) can fail the enclosure test by rounding, and enclosing a
+        // beam with itself gives no ellipse.
         let problem = gaussians
             .iter()
             .copied()
             .enumerate()
-            .filter(|(index, _)| *index != max_index)
+            .filter(|(index, gaussian)| *index != max_index && *gaussian != max_gaussian)
             .map(|(_, gaussian)| gaussian)
             .find(|gaussian| !encloses(max_gaussian, *gaussian));
         let Some(problem) = problem else {
@@ -218,6 +222,14 @@ fn common_enclosing_iterative(
             1.0 / y_scale,
         );
         let position_angle = common_angle + normalize_position_angle(max_gaussian.position_angle);
+        // A degenerate construction would never enclose the pair: refuse it
+        // rather than grow it for ever.
+        if !(major.is_finite() && minor.is_finite() && position_angle.is_finite())
+            || major <= 0.0
+            || minor <= 0.0
+        {
+            return Err(EllipticalGaussianError::InvalidGaussian);
+        }
         let mut enclosing =
             EllipticalGaussian::new(major, minor, normalize_position_angle(position_angle));
         while !(encloses(enclosing, max_gaussian) && encloses(enclosing, problem)) {
@@ -324,8 +336,12 @@ fn transform_ellipse_by_scaling(
     let axis1 = (1.0 / k1).sqrt();
     let axis2 = (1.0 / k2).sqrt();
 
-    if (axis1 - axis2).abs() <= 1.0e-12 {
-        return (k1.sqrt(), k1.sqrt(), 0.0);
+    // CASA's `_transformEllipseByScaling` takes the ellipse for a circle
+    // only when its axes are exactly equal, whatever their unit. (Its circle
+    // has the reciprocal of the axis, `sqrt(k1)`, against its evident intent;
+    // the circle has the axis.)
+    if axis1 == axis2 {
+        return (axis1, axis1, 0.0);
     }
     if axis1 > axis2 {
         (
@@ -386,6 +402,171 @@ mod tests {
             (common.position_angle.to_degrees() - 23.593_728_922_728_804).abs() < 1.0e-6,
             "computed common beam: {common:?}"
         );
+    }
+
+    /// A beam equal to the largest is passed over, as CASA passes it over:
+    /// two Stokes planes' equal 0.09 by 0.05 arcsec beams (radians) failed
+    /// the enclosure test by rounding, and enclosing the largest with its
+    /// own copy gave no ellipse.
+    #[test]
+    fn a_copy_of_the_largest_beam_is_passed_over() {
+        let largest = EllipticalGaussian::new(
+            4.471_597_567_379_012e-7,
+            2.275_313_022_046_005_3e-7,
+            -0.006_651_467_446_095_271,
+        );
+        let smaller = EllipticalGaussian::new(
+            4.459_097_676_174_015e-7,
+            2.269_180_481_074_049_3e-7,
+            -0.006_636_139_185_516_454,
+        );
+        assert_eq!(
+            common_enclosing_gaussian(&[largest, largest, smaller, smaller]),
+            Ok(largest)
+        );
+    }
+
+    /// A scaled ellipse that is nearly, not exactly, a circle keeps its
+    /// axes: an absolute tolerance of 1e-12 took sub-arcsecond beams in
+    /// radians (a few 1e-7) within 1e-5 of circular for a circle of the
+    /// reciprocal axis, about 3e6, from which the common beam grew a
+    /// non-finite ellipse for ever.
+    #[test]
+    fn a_nearly_circular_scaled_ellipse_keeps_its_scale() {
+        let (major, minor): (f64, f64) = (4.471_597_567_379_012e-7, 2.275_313_022_046_005e-7);
+        // Scale it to a circle of the equal-area axis, then stretch x by a
+        // part in a million.
+        let equal = (major * minor).sqrt();
+        let (x_scale, y_scale) = (equal / major * (1.0 + 1.0e-6), equal / minor);
+        let (axis1, axis2, _) = transform_ellipse_by_scaling(major, minor, 0.0, x_scale, y_scale);
+        assert!(
+            (axis1 / equal - 1.0).abs() < 1.0e-5 && (axis2 / equal - 1.0).abs() < 1.0e-5,
+            "{axis1:e}, {axis2:e} for a circle of {equal:e}"
+        );
+    }
+
+    /// The common beam of a block of a cube's I and V beams, about 0.09 by
+    /// 0.05 arcsec (radians), is found, and is the set's beam in arcseconds,
+    /// the unit CASA's `getCommonBeam` works in, within one step of the
+    /// 0.1% growth by which that algorithm encloses a pair (rounding in
+    /// either unit can take one more). It once grew a non-finite ellipse for
+    /// ever; it runs on a thread here so that a regression fails rather than
+    /// hangs.
+    #[test]
+    fn the_common_beam_of_sub_arcsecond_beams_is_found_whatever_the_unit() {
+        let beams = [
+            (
+                4.471_597_567_379_012e-7,
+                2.275_313_022_046_005e-7,
+                -0.006_651_467_446_095_271,
+            ),
+            (
+                4.459_097_676_174_015e-7,
+                2.269_180_481_074_049e-7,
+                -0.006_636_139_185_516_454,
+            ),
+            (
+                4.446_663_714_896_679e-7,
+                2.263_097_828_255_912e-7,
+                -0.006_620_643_437_072_206,
+            ),
+            (
+                4.434_288_632_217_844e-7,
+                2.257_043_733_320_881e-7,
+                -0.006_610_111_467_198_782,
+            ),
+            (
+                4.422_028_486_204_345e-7,
+                2.251_034_414_326_026e-7,
+                -0.006_595_494_249_825_071,
+            ),
+            (
+                4.409_816_641_795_604e-7,
+                2.245_055_063_480_108e-7,
+                -0.006_582_559_193_186_771,
+            ),
+            (
+                4.397_669_669_615_152e-7,
+                2.239_118_549_458_848e-7,
+                -0.006_568_831_950_153_904,
+            ),
+            (
+                4.385_620_358_343_588e-7,
+                2.233_217_644_649_855e-7,
+                -0.006_560_902_283_978_464,
+            ),
+            (
+                4.373_624_989_740_112e-7,
+                2.227_353_759_318_961e-7,
+                -0.006_543_279_647_702_705,
+            ),
+            (
+                4.361_700_839_561_17e-7,
+                2.221_524_072_934_501e-7,
+                -0.006_530_641_075_795_137,
+            ),
+            (
+                4.349_845_439_841_554e-7,
+                2.215_731_582_311_37e-7,
+                -0.006_516_701_091_964_254,
+            ),
+            (
+                4.338_077_476_603_544e-7,
+                2.209_976_992_582_482e-7,
+                -0.006_506_659_622_268_164,
+            ),
+            (
+                4.324_544_213_109_895e-7,
+                2.204_539_888_949_102e-7,
+                -0.006_672_069_493_840_556,
+            ),
+            (
+                4.312_872_853_081_4e-7,
+                2.198_860_748_442_245e-7,
+                -0.006_660_263_679_922_289,
+            ),
+            (
+                4.298_355_576_603_232e-7,
+                2.193_680_489_473_581e-7,
+                -0.006_413_735_586_021_764,
+            ),
+        ];
+        let arcsec = std::f64::consts::PI / (180.0 * 3_600.0);
+        let set = move |unit: f64| {
+            beams
+                .iter()
+                .flat_map(|&(major, minor, angle)| {
+                    // Each beam twice, as Stokes I and V share it.
+                    [EllipticalGaussian::new(major / unit, minor / unit, angle); 2]
+                })
+                .collect::<Vec<_>>()
+        };
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let found = (
+                common_enclosing_gaussian(&set(1.0)),
+                common_enclosing_gaussian(&set(arcsec)),
+            );
+            sender.send(found).expect("the test waits");
+        });
+        let (radians, arcseconds) = receiver
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("the common beam is found");
+        let radians = radians.expect("a common beam in radians");
+        let arcseconds = arcseconds.expect("a common beam in arcseconds");
+        let step = 1.001_f64 * (1.0 + 1.0e-9) - 1.0;
+        assert!(
+            (radians.major / arcsec / arcseconds.major - 1.0).abs() <= step
+                && (radians.minor / arcsec / arcseconds.minor - 1.0).abs() <= step
+                && (radians.position_angle - arcseconds.position_angle).abs() < 1.0e-9,
+            "{radians:?} in radians, {arcseconds:?} in arcseconds"
+        );
+        for beam in set(1.0) {
+            assert!(
+                beam == radians || encloses(radians, beam),
+                "{radians:?} encloses {beam:?}"
+            );
+        }
     }
 
     #[test]
