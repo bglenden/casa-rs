@@ -62,8 +62,18 @@ pub struct AutoMaskPlane {
     /// The residual in the units the minor cycle cleans, CASA's
     /// `.residual` plane, x-major.
     pub residual: Vec<f64>,
-    /// The plane's valid pixels, x-major.
+    /// The valid pixels the residual's pixel mask keeps, x-major: its
+    /// statistics, its pruned regions and its mask read only these
+    /// (`SDMaskHandler::autoMask` attaches the residual's mask, the
+    /// `.pb`'s above `pblimit`, `SIImageStore::divideResidualByWeight`).
     pub valid: Vec<bool>,
+    /// The pixels the plane's median and noise are measured on when they
+    /// are not `valid`, x-major. At a run's first boundary with `nsigma`,
+    /// tclean's automatic mask takes the median and noise
+    /// `SIImageStore::calcRobustRMS` measured where the `.pb` exceeds
+    /// `pbmask` (`SDMaskHandler::autoMask` reuses them while `iterdone` is
+    /// 0); its peak is still the pixel mask's.
+    pub statistics: Option<Vec<bool>>,
 }
 
 /// A plane's residual and valid pixels; `None` for a plane with no data.

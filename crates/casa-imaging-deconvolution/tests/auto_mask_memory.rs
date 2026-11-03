@@ -152,6 +152,7 @@ fn measure(shape: [usize; 2], fwhm: f64) -> (u64, usize) {
             .map(|value| value.re / sum_weight)
             .collect(),
         valid: vec![true; shape[0] * shape[1]],
+        statistics: None,
     };
     let inherited = vec![false; shape[0] * shape[1]];
     let cycle = AutoMaskCycle {
@@ -246,6 +247,9 @@ fn materializing_every_channel_holds_at_most_its_charge() {
         Ok::<_, MaskError>(Some(AutoMaskPlane {
             residual,
             valid: vec![true; width * width],
+            // The first boundary of a run with `nsigma`: the noise reads
+            // pixels of its own.
+            statistics: Some(vec![true; width * width]),
         }))
     };
     let psf = |_: MaskPlaneKey| Some(summary);

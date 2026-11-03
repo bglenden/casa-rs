@@ -97,8 +97,12 @@ locations are in `docs/agent-reference.md`.
   are disposable. Tools and tests write them under `target/`, where
   housekeeping clears them; keep only what an issue or PR needs as
   evidence, summarized there.
-- Worktrees share the main `target/` (`CARGO_TARGET_DIR`) or delete their own
-  `target/` when done; a separate build tree is tens of GB.
+- Each worktree builds in a target of its own and deletes it when done.
+  Worktrees that share one `target/` link each other's builds of the
+  workspace crates (cargo names them by their path within the workspace
+  and judges freshness by file times), so a test can run another branch's
+  code. A full debug tree is tens of GB; `CARGO_PROFILE_DEV_DEBUG=0` and
+  `CARGO_PROFILE_TEST_DEBUG=0` keep one small.
 - Check free space before large runs; the laptop's 40 GB floor is on the
   stop list below.
 - Evidence needed later never lives only in a temporary directory.

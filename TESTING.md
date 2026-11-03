@@ -88,7 +88,11 @@ Verification: just verify
   `just arch-check`, needs no CASA. It checks the CASA 6.7.6.14 fixtures in
   `resources/casa-compat/casa-6.7.6.14/` and that
   `docs/reference/casa-compatibility.md` is current; `--write` regenerates
-  the report after a surface changes. CASA compatibility acceptance also
+  the report after a surface changes. The reviewed semantics
+  (`resources/casa-compat/semantics/`) pin evidence to exact commits, which
+  must be on `main` or kept by the `evidence-pins` branch: a squash merge
+  leaves a pull request's own commits reachable from its branch alone (its
+  `EVIDENCE-PINS.md` says how to add one). CASA compatibility acceptance also
   needs `scripts/test-casa-inventory.sh`, which compares the fixtures with an
   installed CASA 6.7.6.14 (`CASA_RS_CASA_PYTHON` or `/Applications/CASA.app`)
   and fails, rather than skips, without it

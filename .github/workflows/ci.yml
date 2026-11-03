@@ -23,9 +23,6 @@ jobs:
       # Line tables keep file:line in panic backtraces while avoiding full
       # debug info in ~130 linked test binaries.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
-      # Make PyO3's cached configuration follow the interpreter installed
-      # below, even when ubuntu-latest changes its system Python.
-      PYO3_PYTHON: python3
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -43,6 +40,15 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      # PyO3 configures itself once per build cache: the restored cache keeps
+      # the library directory of the interpreter it was built with. Naming
+      # the interpreter by its versioned path makes PyO3 configure itself
+      # again when "3.12" moves to a new patch release (PYO3_PYTHON is one of
+      # its rerun triggers); a fixed `python3` linked against a directory
+      # the new runner no longer has.
+      - name: Point PyO3 at the interpreter installed
+        run: echo "PYO3_PYTHON=$pythonLocation/bin/python3" >> "$GITHUB_ENV"
 
       - name: Install FFTW development libraries
         run: sudo apt-get update && sudo apt-get install -y libfftw3-dev pkg-config

@@ -110,7 +110,7 @@ const METHODS: &[Method] = &[
     method("gettype", &V, R::Text, Yes),
     method("getvalue", &V, R::Record, Yes),
     method("ismeasure", &V, R::Bool, Yes),
-    method("linelist", &[], R::Text, No),
+    method("linelist", &[], R::Text, Yes),
     method(
         "listcodes",
         &[param("ms", K::Record, Required)],
@@ -133,7 +133,7 @@ const METHODS: &[Method] = &[
         R::Record,
         Yes,
     ),
-    method("obslist", &[], R::Texts, No),
+    method("obslist", &[], R::Texts, Yes),
     method("posangle", &PAIR, R::Record, Yes),
     method("position", &POSITION, R::Record, Yes),
     method("radialvelocity", &RADIALVELOCITY, R::Record, No),
@@ -166,7 +166,7 @@ const METHODS: &[Method] = &[
         R::Record,
         Yes,
     ),
-    method("sourcelist", &[], R::Text, No),
+    method("sourcelist", &[], R::Text, Yes),
     method(
         "spectralline",
         &[param("name", K::Text, Text("HI"))],

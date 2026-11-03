@@ -194,13 +194,54 @@ fn a_cache_in_use_is_not_regenerated_under_its_run() {
     );
 }
 
+/// Run the calling test's `body` in a process of its own (#1082).
+///
+/// Admission charges one process-wide ledger: another test's run holds its
+/// reservations while it lasts, and the first run admitted holds the
+/// process caches' charge until the process ends. A law about exactly what
+/// a policy fits holds only with nothing else charged, so under a
+/// single-process `cargo test` the parent re-runs just the calling test in
+/// a child process, which runs `body`, and checks that it did.
+fn in_own_process(body: impl FnOnce()) {
+    const ALONE: &str = "CASA_RS_AW_PLAN_TEST_ALONE";
+    // libtest names each test's thread after the test.
+    let name = std::thread::current()
+        .name()
+        .expect("libtest names the test's thread")
+        .to_owned();
+    let ran = format!("{name} ran alone");
+    if std::env::var_os(ALONE).is_some_and(|alone| alone == name.as_str()) {
+        body();
+        println!("{ran}");
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([name.as_str(), "--exact", "--test-threads=1", "--nocapture"])
+        .env(ALONE, &name)
+        .output()
+        .expect("the test's own process runs");
+    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{name} alone: {}\n{stdout}",
+        output.status
+    );
+    assert!(stdout.contains(&ran), "{name} did not run alone:\n{stdout}");
+}
+
 /// #708, #747 review: generation runs on the most workers whose workspaces
 /// fit the policy, and on no more than there are cells to generate. Of
 /// eight cells, under a policy of four workers that holds two workspaces,
 /// it runs on two, where three would be refused; a fill of one missing cell
-/// runs on one, however many fit; and a complete cache is reused.
+/// runs on one, however many fit; and a complete cache is reused. The
+/// policy fits exactly, so the law runs in a process of its own.
 #[test]
 fn native_generation_takes_the_workers_its_policy_fits() {
+    in_own_process(native_generation_fits_its_policy);
+}
+
+fn native_generation_fits_its_policy() {
     let root = tempfile::tempdir().expect("cache directory");
     let host = HostResources {
         threads: 4,
