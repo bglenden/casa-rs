@@ -293,9 +293,13 @@ fn keys_follow_the_pair_plane_and_the_window_cells() {
         CfKey { group: 2, cube: 3 }
     );
     // Every cell has ten fine offsets, at least five taps each side, and
-    // weight taps of the same support; the halo is the largest support.
+    // weight taps of the same support; every pair of a cell's window grids
+    // with the same support, the widest pair's (`MosaicFT` takes
+    // `max(convSupportPlanes_p)` for every row); the halo is the largest
+    // support.
     let mut hold = CellHold::new();
     let mut largest = 0;
+    let mut cube_half = [None; 4];
     for group in 0..3 {
         for cube in 0..4 {
             let key = CfKey { group, cube };
@@ -308,6 +312,11 @@ fn keys_follow_the_pair_plane_and_the_window_cells() {
             let mut weight_hold = CellHold::new();
             let weight = set.weight_taps(key, &mut weight_hold).expect("weight taps");
             assert_eq!(weight.half_support(), half);
+            assert_eq!(
+                *cube_half[usize::from(cube)].get_or_insert(half[0]),
+                half[0],
+                "{key:?}: every pair of a window grids with one support"
+            );
             largest = largest.max(half[0]);
         }
     }
@@ -339,11 +348,13 @@ fn pair_supports(
 
 /// CASA 6.7.6 logs "convolution function support" `[6, 6, 6]` for
 /// `sm.predict` and `[7, 6, 6]` for `tclean(gridder='mosaic')` on the #875
-/// probe (320² cells of 0.3″ at 230 GHz, ALMA 12 m and ACA 7 m). On 4.1″
-/// cells at 100 GHz the 7 m class alone finds six taps, yet the simulator
-/// grids every pair of the heterogeneous set with the widest pair's seven:
-/// both sets share one screen, since every simulator dish has a 150″
-/// radius. The simulator's screen has no least size.
+/// probe (320² cells of 0.3″ at 230 GHz, ALMA 12 m and ACA 7 m): the
+/// supports the pairs find, which the law asserts apart. Both machines'
+/// `MosaicFT` grid every pair with the widest (`max(convSupportPlanes_p)`),
+/// so tclean's cells hold seven taps each. On 4.1″ cells at 100 GHz the 7 m class alone finds six taps,
+/// yet the simulator grids every pair of the heterogeneous set with the
+/// widest pair's seven: both sets share one screen, since every simulator
+/// dish has a 150″ radius. The simulator's screen has no least size.
 #[test]
 fn the_simulator_rules_find_casa_v1_supports() {
     let square = |side: usize, cell_arcsec: f64| {
@@ -363,13 +374,21 @@ fn the_simulator_rules_find_casa_v1_supports() {
         AiryDish::casa_alma_simulator(7.0).into(),
     ];
     let probe = square(320, 0.3);
+    let found = |rules, dishes: &[PrimaryBeam]| {
+        let windows = [window(0, vec![230.0e9], 230.0e9)];
+        MosaicPb::screens(rules, &probe, &routing(), 230.0e9, dishes, &windows)
+            .expect("mosaic screens")
+            .found_supports()
+    };
+    assert_eq!(found(MosaicRules::Simulator, &simulator), [6, 6, 6]);
+    assert_eq!(found(MosaicRules::Tclean, &dishes(&probe)), [7, 6, 6]);
     assert_eq!(
         pair_supports(MosaicRules::Simulator, &probe, 230.0e9, &simulator),
         [6, 6, 6]
     );
     assert_eq!(
         pair_supports(MosaicRules::Tclean, &probe, 230.0e9, &dishes(&probe)),
-        [7, 6, 6]
+        [7, 7, 7]
     );
     let coarse = square(IMAGE, 4.125);
     assert_eq!(

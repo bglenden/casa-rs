@@ -28,8 +28,8 @@ note, by which awproject reads an existing CASA cache and never writes one,
 so a cache the test does not stage from casatestdata is missing; and the
 availability gate (`casa-imaging-application/src/availability.rs`, `check`)
 for what the parameters alone decide (a polarized Taylor basis, facets beyond
-single-term MFS with the standard gridder, AW projection of a cube or of a
-non-square grid).
+single-term MFS with the standard gridder, AW projection of a cube, of a
+non-square grid or of a list of MeasurementSets).
 
 The output lists the gaps (every source but the parity refusals) most-hit
 first, with how many cases each blocks alone (`sole_blocker`) and examples;
@@ -223,12 +223,12 @@ class Refusals:
                         DEFAULT_ONLY,
                         marker.get("issue"),
                     )
-        vis = self.given.get("vis")
-        if isinstance(vis, list) and len(vis) > 1:
-            self.add("vis: a list of more than one MeasurementSet", FORMS, 980)
         for name in ("scan", "observation"):
-            text = self.given.get(name)
-            if isinstance(text, str) and text != "" and not selector_ids(text):
+            value = self.given.get(name)
+            texts = value if isinstance(value, list) else [value]
+            if any(
+                isinstance(text, str) and text != "" and not selector_ids(text) for text in texts
+            ):
                 self.add(f"{name}: selector beyond numeric IDs, lists and a~b ranges", FORMS, 980)
 
     @staticmethod
@@ -281,7 +281,7 @@ class Refusals:
         """`Tclean::modes`."""
         specmode = self.text("specmode")
         if specmode == "mvc":
-            self.add("specmode='mvc'", NOT_YET, 823)
+            self.add("specmode='mvc'", NOT_YET, 1069)
         cube = specmode not in ("cont", "mfs")
         planes = self.values.get("wprojplanes")
         name = self.text("gridder")
@@ -300,10 +300,11 @@ class Refusals:
         elif name == "awprojectft":
             self.add("gridder='awprojectft' (CASA's other name for awproject)", NOT_YET, 980)
         elif name != "awproject":
-            self.add(f"gridder={name!r}", NOT_YET, 980)
+            issue = 1071 if name in ("awp2", "awphpg", "imagemosaic") else 980
+            self.add(f"gridder={name!r}", NOT_YET, issue)
         deconvolver = self.text("deconvolver")
         if deconvolver not in ("hogbom", "clark", "multiscale", "mtmfs"):
-            issue = 223 if deconvolver == "asp" else 823
+            issue = 223 if deconvolver == "asp" else 1060
             self.add(f"deconvolver={deconvolver!r}", NOT_YET, issue)
         weighting = self.text("weighting")
         if weighting not in ("natural", "uniform", "briggs", "briggsbwtaper"):
@@ -312,7 +313,7 @@ class Refusals:
             self.add("weighting='briggsbwtaper' with specmode='mfs'", PARITY)
         usemask = self.text("usemask")
         if usemask == "pb":
-            self.add("usemask='pb'", NOT_YET, 823)
+            self.add("usemask='pb'", NOT_YET, 1061)
         return {
             "cube": cube,
             "gridder": gridder,
@@ -323,13 +324,51 @@ class Refusals:
             "user_mask": usemask == "user",
         }
 
+    def measurement_sets(self):
+        """How many MeasurementSets `vis` names."""
+        vis = self.values.get("vis")
+        return len(vis) if isinstance(vis, list) else 1
+
+    def per_measurement_set(self, name):
+        """`Tclean::per_measurement_set`: one selector for every
+        MeasurementSet, or one each (`checkAndFixSelectionPars`)."""
+        value = self.values.get(name)
+        items = value if isinstance(value, list) else [value]
+        count = self.measurement_sets()
+        if len(items) not in (1, count):
+            self.add(f"{name}: a list matching neither one nor every MeasurementSet", PARITY)
+            return []
+        normal = self.surface.concepts[name].get("normalization", {}).get("kind")
+        texts = []
+        for item in items:
+            number = isinstance(item, (int, float)) and not isinstance(item, bool)
+            if number and normal == "number_as_text":
+                item = str(item)
+            if not isinstance(item, str):
+                if name not in self.bad_shape:
+                    self.add(f"{name}: expected text (Tclean::per_measurement_set)", CASA_RS)
+                return []
+            texts.append(item.strip())
+        return texts * count if len(texts) == 1 else texts
+
     def selection(self):
         """`Tclean::selection`."""
         column = (self.text("datacolumn") or "").lower()
         if column not in ("corrected", "data", "observed"):
             self.add(f"datacolumn={column!r} (neither data nor corrected)", CASA_RS)
-        for name in ("field", "spw", "uvrange", "intent", "scan", "observation"):
-            self.text(name)
+        if self.measurement_sets() == 0:
+            self.add("vis: an empty list", PARITY)
+        for name in (
+            "field",
+            "spw",
+            "uvrange",
+            "intent",
+            "scan",
+            "observation",
+            "antenna",
+            "timerange",
+        ):
+            self.per_measurement_set(name)
 
     def geometry(self):
         """`Tclean::geometry`."""
@@ -356,13 +395,13 @@ class Refusals:
             if restfreq:
                 self.add("restfreq with specmode='mfs'", NOT_YET, 980)
             return
-        spw = self.text("spw") or ""
-        selected = ":" in spw
+        # A channel selection in any MeasurementSet's spw.
+        selected = any(":" in spw for spw in self.per_measurement_set("spw"))
         if nchan == -1 and (selected or width not in ("", "1", None) or start not in ("", None)):
             self.add(
                 "nchan=-1 with a channel selection, start or width (derived cube extent)",
                 NOT_YET,
-                980,
+                1066,
             )
         if selected and start == "":
             self.add("start='' with a channel selection in spw", NOT_YET, 980)
@@ -373,7 +412,7 @@ class Refusals:
         if len(restfreq) > 1:
             self.add("restfreq: a list of rest frequencies", NOT_YET, 980)
         if interpolation == "cubic":
-            self.add("interpolation='cubic'", NOT_YET, 823)
+            self.add("interpolation='cubic'", NOT_YET, 1066)
 
     def gridding(self, modes):
         """`Tclean::gridding` and `aw_terms`."""
@@ -382,7 +421,8 @@ class Refusals:
         if gridder == "mosaic" and facets not in (1, None):
             self.add("facets>1 with the mosaic gridder", PARITY)
         if gridder in ("wproject", "awproject") and facets not in (1, None):
-            self.add(f"facets>1 with gridder={gridder!r}", NOT_YET, 980)
+            issue = 1070 if gridder == "awproject" else 1063
+            self.add(f"facets>1 with gridder={gridder!r}", NOT_YET, issue)
         planes = self.integer("wprojplanes")
         if (
             gridder in ("wproject", "awproject")
@@ -393,7 +433,7 @@ class Refusals:
             self.add("wprojplanes below 1 (other than -1)", CASA_RS)
         normtype = self.text("normtype")
         if gridder in ("mosaic", "awproject") and normtype == "pbsquare":
-            self.add("normtype='pbsquare'", NOT_YET, 823)
+            self.add("normtype='pbsquare'", NOT_YET, 1061)
         per_channel = (
             modes["cube"]
             and self.flag("perchanweightdensity") is not False
@@ -442,7 +482,7 @@ class Refusals:
     def deconvolution(self, modes):
         """`Tclean::deconvolution`."""
         if modes["deconvolver"] == "mtmfs" and self.integer("nterms") == 1:
-            self.add("nterms=1 with deconvolver='mtmfs'", NOT_YET, 980)
+            self.add("nterms=1 with deconvolver='mtmfs'", NOT_YET, 1065)
         beam = self.texts("restoringbeam")
         if beam not in ([], ["common"]):
             self.add("restoringbeam: a beam given by its axes", NOT_YET, 980)
@@ -488,6 +528,8 @@ class Refusals:
         if modes["gridder"] == "awproject":
             if modes["cube"]:
                 self.add("AW projection of a cube (#719)", GATE, 719)
+            if self.measurement_sets() > 1:
+                self.add("AW projection of a list of MeasurementSets", GATE, 980)
             imsize, cell = self.values.get("imsize"), self.values.get("cell")
             imsize = imsize if isinstance(imsize, list) else [imsize]
             cell = cell if isinstance(cell, list) else [cell]

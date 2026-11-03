@@ -170,7 +170,14 @@ impl SpectralAxis {
     }
 
     /// The axis extended by `planes_per_side` channels of the same width at
-    /// each end; the new first centre must stay positive.
+    /// each end.
+    ///
+    /// The padded axis only numbers the planes of a cube's density grid
+    /// (`BriggsCubeWeightor`), whose spectral coordinate CASA extends the
+    /// same way without asking it to stay a frequency: a few wide channels
+    /// padded below a low first channel reach zero hertz or below (three
+    /// 500 MHz channels from 1 GHz, padded by two, start at 0 Hz). Its
+    /// centres need only be finite.
     pub fn padded(self, planes_per_side: u32) -> Result<Self, OperatorError> {
         let channels = planes_per_side
             .checked_mul(2)
@@ -178,11 +185,17 @@ impl SpectralAxis {
             .ok_or(OperatorError::SpectralAxis {
                 reason: "the padded axis has too many channels",
             })?;
-        Self::new(
-            self.first_hz - f64::from(planes_per_side) * self.increment_hz,
-            self.increment_hz,
+        let first_hz = self.first_hz - f64::from(planes_per_side) * self.increment_hz;
+        if !first_hz.is_finite() {
+            return Err(OperatorError::SpectralAxis {
+                reason: "the padded axis's first channel centre must be finite",
+            });
+        }
+        Ok(Self {
+            first_hz,
             channels,
-        )
+            ..self
+        })
     }
 
     /// `FTMachine::matchChannel`: the channel whose rounded spectral pixel

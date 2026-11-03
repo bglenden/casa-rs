@@ -41,6 +41,17 @@ impl SpectralEnvelope {
     pub(super) fn midpoint_hz(self) -> f64 {
         (self.edges_hz[0] + self.edges_hz[1]) / 2.0
     }
+
+    /// The envelope of both: the least lower and the greatest upper edge, as
+    /// `buildCoordinateSystem` spans every MeasurementSet's band.
+    pub(super) fn union(self, other: Self) -> Self {
+        Self {
+            edges_hz: [
+                self.edges_hz[0].min(other.edges_hz[0]),
+                self.edges_hz[1].max(other.edges_hz[1]),
+            ],
+        }
+    }
 }
 
 /// The observatory frame towards `epoch`'s field at its time: a moving

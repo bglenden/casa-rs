@@ -790,6 +790,64 @@ fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis()
     );
 }
 
+/// A cube of a few wide channels pads its density axis to zero hertz and
+/// below, as CASA's `BriggsCubeWeightor` pads its density cube's spectral
+/// coordinate (CASA's `test_stokes_weighting` cube on three 500 MHz
+/// channels from 1 GHz): the padded axis only numbers density planes, and
+/// each native channel's weight comes from the plane its rounded spectral
+/// pixel names on it.
+#[test]
+fn a_density_axis_padded_below_zero_hertz_still_numbers_its_planes() {
+    for padding in [2, 3] {
+        let padded = axis(1.0, 0.5, 3).padded(padding).expect("a padded axis");
+        assert_eq!(padded.first_hz(), 1.0e9 - f64::from(padding) * 0.5e9);
+        assert_eq!(padded.channels(), 3 + 2 * padding);
+        for (channel, ghz) in [1.0, 1.5, 2.0].into_iter().enumerate() {
+            assert_eq!(
+                padded.nearest_channel(ghz * 1.0e9),
+                Some(padding + channel as u32)
+            );
+        }
+    }
+    assert!(axis(1.0, 0.5, 3).padded(u32::MAX).is_err());
+
+    let resampler = SpectralResampler::channel_local(axis(1.0, 0.5, 3), SpectralKernel::Linear);
+    let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+    let shape = density_shape(&resampler, 3);
+    let frequencies = [1.0e9, 1.5e9, 2.0e9];
+    let values = vec![Complex32::new(1.0, 0.0); 6];
+    let weights = vec![1.0_f32; 6];
+    let flags = vec![false; 6];
+    let row = NativeRow {
+        uvw_m: [10.0, 0.0, 0.0],
+        phase_shift_m: 0.0,
+        pointing_offset_rad: [0.0; 2],
+        frequencies_hz: &frequencies,
+        values: &values,
+        weights: &weights,
+        flags: &flags,
+        row_flag: false,
+        context: context(),
+    };
+    let mut density = SampleBuffer::new(1);
+    resampler
+        .place_density(&operator, &row, &shape, &mut density)
+        .expect("a density on the padded axis");
+    let grid = build_density_grid(std::iter::once(density.block()), shape);
+    let uniform = WeightingGeneration::density(grid, None, None, None).expect("uniform");
+    let mut out = SampleBuffer::new(2);
+    resampler
+        .place(&operator, &uniform, &row, &mut out)
+        .expect("placed samples");
+    let block = out.block();
+    let placed = (0..out.len())
+        .map(|sample| (out.placements()[sample].plane, block.weights_of(sample)[0]))
+        .collect::<Vec<_>>();
+    // Each channel is alone on its plane, its sample and conjugate in one
+    // cell, holding its weight once per parallel hand: 1/4 uniform.
+    assert_eq!(placed, [(0, 0.25), (1, 0.25), (2, 0.25)]);
+}
+
 /// On identical output and native grids every output sample lies on a
 /// native channel, where casacore `InterpolateArray1D` takes that channel
 /// alone: a flagged non-finite neighbour must not reach it.

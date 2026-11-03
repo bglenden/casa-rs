@@ -41,7 +41,7 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
 {
     let bundle = builtin_surface_bundle("tclean")?;
     // The imager's contract-28 profiles migrate; none older is read.
-    assert_eq!(bundle.surface.migrations().len(), 9);
+    assert_eq!(bundle.surface.migrations().len(), 10);
     assert_eq!(bundle.surface.migrations()[0].from_contract, 28);
     assert_eq!(bundle.surface.migrations()[1].from_contract, 29);
     assert_eq!(bundle.surface.migrations()[2].from_contract, 30);
@@ -51,6 +51,7 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
     assert_eq!(bundle.surface.migrations()[6].from_contract, 34);
     assert_eq!(bundle.surface.migrations()[7].from_contract, 35);
     assert_eq!(bundle.surface.migrations()[8].from_contract, 36);
+    assert_eq!(bundle.surface.migrations()[9].from_contract, 37);
     assert!(
         bundle
             .surface
@@ -115,11 +116,12 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
 
         let request = request_from_profile(name, source)?;
         request.validate()?;
-        assert_eq!(request.vis, PathBuf::from(measurement_set));
+        assert_eq!(request.vis.len(), 1);
+        assert_eq!(request.vis[0].vis, PathBuf::from(measurement_set));
         match name {
             "vlass-single" => {
-                assert_eq!(request.field.as_deref(), Some("1525"));
-                assert_eq!(request.spw.as_deref(), Some("2~17"));
+                assert_eq!(request.vis[0].field.as_deref(), Some("1525"));
+                assert_eq!(request.vis[0].spw.as_deref(), Some("2~17"));
                 assert!(!request.parallel);
                 let Gridder::Awproject(AwProjection {
                     wprojplanes,
@@ -136,7 +138,7 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
             }
             "vlass-all" => {
                 assert_eq!(
-                    request.field.as_deref(),
+                    request.vis[0].field.as_deref(),
                     Some("1107~1127,1512~1532,1542~1562")
                 );
                 assert!(matches!(request.gridder, Gridder::Awproject(_)));
@@ -144,7 +146,7 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
             "standard-continuum" => {
                 assert_eq!(request.imsize, [1024; 2]);
                 assert_eq!(request.cell, [0.25; 2]);
-                assert_eq!(request.field.as_deref(), Some("0~2"));
+                assert_eq!(request.vis[0].field.as_deref(), Some("0~2"));
                 assert_eq!(request.stokes, [PolarizationCoordinate::StokesQ]);
                 assert_eq!(request.deconvolver, Deconvolver::Multiscale);
                 assert_eq!(request.scales, [0.0, 4.0, 12.0]);

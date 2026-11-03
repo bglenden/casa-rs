@@ -20,24 +20,25 @@ use super::PrepareError;
 use super::opening::OpenedStore;
 use super::selection::{WindowChannels, WindowChoice};
 use super::time_selection::OtherSelections;
-use crate::ImagingRequest;
+use crate::MeasurementSetSelection;
 use crate::virtual_model::CompiledSelection;
 
-/// The virtual model's selection of `request` on `observation`, with its
-/// windows, channels, rows and states as the run resolved them.
+/// The virtual model's selection of `selection`, one MeasurementSet of the
+/// request, on `observation`, with its windows, channels, rows and states
+/// as the run resolved them.
 ///
 /// # Errors
 ///
 /// A MAIN or DATA_DESCRIPTION column that cannot be read.
 pub(super) fn resolve(
-    request: &ImagingRequest,
+    selection: &MeasurementSetSelection,
     (store, observation): (&OpenedStore, &Msv2Observation),
     (windows, channels): (&WindowChoice, &WindowChannels),
     (rows, states): (&RowSelection, &BTreeSet<StateId>),
 ) -> Result<CompiledSelection, PrepareError> {
     let ms = observation.measurement_set();
     let catalogue = store.catalogue();
-    let clear_fields = if request.field.is_some() {
+    let clear_fields = if selection.field.is_some() {
         (0..catalogue.fields.len())
             .filter_map(|field| i32::try_from(field).ok())
             .filter(|field| rows.fields().holds(i64::from(*field)))
@@ -60,7 +61,7 @@ pub(super) fn resolve(
             set.into_iter().collect()
         }
     };
-    let spw_given = request
+    let spw_given = selection
         .spw
         .as_deref()
         .is_some_and(|text| !text.trim().is_empty());

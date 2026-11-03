@@ -110,18 +110,22 @@ fn analytic_primary_beam_model_for_telescopes(
     }
 }
 
-/// The instrument response of a direction-dependent gridder; `None` for the
-/// others.
+/// The instrument response of a direction-dependent gridder over the
+/// stores of `catalogues`; `None` for the others.
 ///
 /// The mosaic's is the one `SynthesisImagerVi2::createMosFTMachine` gives
 /// `HetArrayConvFunc`: for ALMA and ACA, an Airy aperture per class of
 /// dish; for the EVLA, CASA's common EVLA beam for every antenna, whatever
-/// its dish (`PBMathInterface::COMMONPB`).
+/// its dish (`PBMathInterface::COMMONPB`). One response holds for every
+/// store's telescopes and dishes.
 pub(super) fn scientific_instrument_model(
     gridder: &Gridder,
-    catalogue: &Catalogue,
+    catalogues: &[&Catalogue],
 ) -> Result<Option<InstrumentModel>, PrepareError> {
-    let telescopes = telescopes(catalogue);
+    let telescopes = catalogues
+        .iter()
+        .flat_map(|catalogue| telescopes(catalogue))
+        .collect::<BTreeSet<_>>();
     let all = |known: fn(&str) -> bool| {
         !telescopes.is_empty() && telescopes.iter().all(|name| known(name))
     };
@@ -147,17 +151,19 @@ pub(super) fn scientific_instrument_model(
         }
         Gridder::Standard { .. } | Gridder::Wproject { .. } => return Ok(None),
     };
-    let diameters = dish_diameters(catalogue);
-    if diameters.is_empty() {
-        return Err(PrepareError::NoAntennaDishes);
-    }
-    for (row, diameter_m) in diameters.into_iter().enumerate() {
-        if !(diameter_m.is_finite() && dishes(diameter_m)) {
-            return Err(PrepareError::DishOutsideResponse {
-                model,
-                row,
-                diameter_m,
-            });
+    for catalogue in catalogues {
+        let diameters = dish_diameters(catalogue);
+        if diameters.is_empty() {
+            return Err(PrepareError::NoAntennaDishes);
+        }
+        for (row, diameter_m) in diameters.into_iter().enumerate() {
+            if !(diameter_m.is_finite() && dishes(diameter_m)) {
+                return Err(PrepareError::DishOutsideResponse {
+                    model,
+                    row,
+                    diameter_m,
+                });
+            }
         }
     }
     Ok(Some(model))

@@ -159,16 +159,19 @@ fn parameters_a_mode_does_not_read_are_ignored() {
 /// What the catalog takes only at tclean's default, wherever CASA reads it.
 #[test]
 fn the_catalog_refuses_what_casa_reads_in_every_mode() {
-    for overrides in [
+    for (overrides, issue) in [
         // CASA projects with any projection in every mode.
-        json!({ "projection": "NCP" }),
+        (json!({ "projection": "NCP" }), "#1064"),
         // CASA masks within the primary beam with pbmask in every mask mode.
-        json!({ "pbmask": 0.5 }),
+        (json!({ "pbmask": 0.5 }), "#1061"),
         // CASA reads psfphasecenter for every gridder named for a mosaic.
-        json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" }),
+        (
+            json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" }),
+            "#1062",
+        ),
     ] {
         let error = resolved(overrides.clone()).expect_err("refused at the catalog");
-        assert!(error.to_string().contains("#980"), "{overrides}: {error}");
+        assert!(error.to_string().contains(issue), "{overrides}: {error}");
     }
 }
 
@@ -311,14 +314,14 @@ fn an_automatic_mask_of_a_cube_or_stokes_planes_is_read() {
 #[test]
 fn values_casa_rs_cannot_honour_are_refused() {
     for (overrides, parameter, issue) in [
-        (json!({ "specmode": "mvc" }), "specmode", "#823"),
-        (json!({ "deconvolver": "mem" }), "deconvolver", "#823"),
+        (json!({ "specmode": "mvc" }), "specmode", "#1069"),
+        (json!({ "deconvolver": "mem" }), "deconvolver", "#1060"),
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
-        (json!({ "usemask": "pb" }), "usemask", "#823"),
+        (json!({ "usemask": "pb" }), "usemask", "#1061"),
         (
             json!({ "specmode": "cube", "interpolation": "cubic" }),
             "interpolation",
-            "#823",
+            "#1066",
         ),
         (
             json!({ "specmode": "cube", "outframe": "GALACTO" }),
@@ -333,16 +336,16 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (
             json!({ "gridder": "wproject", "wprojplanes": -1, "facets": 2 }),
             "facets",
-            "#980",
+            "#1063",
         ),
-        (json!({ "gridder": "awp2" }), "gridder", "#980"),
+        (json!({ "gridder": "awp2" }), "gridder", "#1071"),
         (
             json!({ "gridder": "mosaic", "weighting": "briggs", "specmode": "cube", "nchan": 4 }),
             "mosweight",
             "#818",
         ),
         (
-            json!({ "mask": "circle[[10pix,10pix],5pix]" }),
+            json!({ "mask": "circle[[50pix,50pix],10pix],range=[1.1GHz,1.5GHz]" }),
             "mask",
             "#980",
         ),
@@ -359,13 +362,13 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (
             json!({ "deconvolver": "mtmfs", "nterms": 1 }),
             "nterms",
-            "#980",
+            "#1065",
         ),
         (
             json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
                     "wprojplanes": 32, "facets": 2 }),
             "facets",
-            "#980",
+            "#1070",
         ),
         // Astra's #1015 F1: CASA derives a cube's extent from the selected
         // channels, the start and the width (probed: spw='0:2~4' gives three
@@ -374,17 +377,17 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (
             json!({ "specmode": "cubedata", "spw": "0:2~4" }),
             "nchan",
-            "#980",
+            "#1066",
         ),
         (
             json!({ "specmode": "cubedata", "width": "2" }),
             "nchan",
-            "#980",
+            "#1066",
         ),
         (
             json!({ "specmode": "cube", "start": "1.4GHz" }),
             "nchan",
-            "#980",
+            "#1066",
         ),
     ] {
         let refused = refusal(overrides.clone());
@@ -478,18 +481,65 @@ fn scan_and_observation_selectors_keep_their_exact_text_with_either_selectdata()
         let request = request(json!({
             "selectdata": selectdata, "scan": "1,3~5", "observation": "0",
         }));
-        assert_eq!(request.scan.as_deref(), Some("1,3~5"));
-        assert_eq!(request.observation.as_deref(), Some("0"));
+        assert_eq!(request.vis[0].scan.as_deref(), Some("1,3~5"));
+        assert_eq!(request.vis[0].observation.as_deref(), Some("0"));
     }
     // Only exact empty is unset: CASA's tclean refuses blanks and `none`
     // and accepts padded IDs, so their text reaches the selector's parser.
     for text in ["  ", "none", "None", " none ", " 1 ", ">1"] {
         let request = request(json!({"scan": text, "observation": text}));
-        assert_eq!(request.scan.as_deref(), Some(text));
-        assert_eq!(request.observation.as_deref(), Some(text));
+        assert_eq!(request.vis[0].scan.as_deref(), Some(text));
+        assert_eq!(request.vis[0].observation.as_deref(), Some(text));
     }
     let request = request(json!({"scan": "", "observation": ""}));
-    assert_eq!((request.scan, request.observation), (None, None));
+    assert_eq!(
+        (&request.vis[0].scan, &request.vis[0].observation),
+        (&None, &None)
+    );
+}
+
+/// A list of MeasurementSets pairs each with its own selectors, or with
+/// the one a selector gives all, as CASA's `checkAndFixSelectionPars`
+/// pairs them; a list of another length is refused with CASA's message.
+#[test]
+fn each_measurement_set_takes_its_own_selectors_or_one_for_all() {
+    let request = request(json!({
+        "vis": ["a.ms", "b.ms"],
+        "spw": ["0", "1:2~5"],
+        "field": "0",
+        "scan": ["", " 3"],
+        "timerange": [""],
+    }));
+    let selections = request
+        .vis
+        .iter()
+        .map(|selection| {
+            (
+                selection.vis.to_str().expect("a path"),
+                selection.spw.as_deref(),
+                selection.field.as_deref(),
+                selection.scan.as_deref(),
+                selection.timerange.as_deref(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        selections,
+        [
+            ("a.ms", Some("0"), Some("0"), None, None),
+            ("b.ms", Some("1:2~5"), Some("0"), Some(" 3"), None),
+        ]
+    );
+    let refused = crate::request::tests::read(json!({
+        "vis": ["a.ms", "b.ms", "c.ms"],
+        "field": ["0", "1"],
+    }))
+    .expect_err("two fields for three MeasurementSets");
+    assert_eq!(refused.parameter, "field");
+    assert_eq!(
+        refused.message,
+        "field must have a single entry, or 3 entries to match vis list"
+    );
 }
 
 /// The request tclean's `overrides` make with `resolved` set over the
@@ -795,4 +845,30 @@ fn automask_controls_and_the_noise_estimate_are_read() {
             factor
         );
     }
+}
+
+/// A CRTF circle holds the pixels casacore's `LCEllipsoid` holds: those
+/// whose offset from the centre is at most one radius. CASA's
+/// test_mask_1 mask, `circle[[50pix,80pix],10pix]`, holds 317 pixels from
+/// x 40 to 60 and y 70 to 90 (read from its tst2.mask).
+#[test]
+fn a_crtf_circle_masks_the_pixels_casa_masks() {
+    let boxes = super::crtf_pixel_boxes("circle[[50pix,80pix],10pix]").expect("a circle");
+    let rows = boxes
+        .iter()
+        .map(|text| {
+            let corners = text
+                .split(',')
+                .map(|corner| corner.parse::<i64>().expect("a corner"))
+                .collect::<Vec<_>>();
+            assert_eq!(corners[1], corners[3], "one row per box");
+            corners
+        })
+        .collect::<Vec<_>>();
+    let pixels: i64 = rows.iter().map(|corners| corners[2] - corners[0] + 1).sum();
+    assert_eq!(pixels, 317);
+    assert_eq!(rows.iter().map(|corners| corners[0]).min(), Some(40));
+    assert_eq!(rows.iter().map(|corners| corners[2]).max(), Some(60));
+    assert_eq!(rows.first().map(|corners| corners[1]), Some(70));
+    assert_eq!(rows.last().map(|corners| corners[1]), Some(90));
 }

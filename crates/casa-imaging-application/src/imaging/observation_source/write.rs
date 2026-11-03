@@ -32,21 +32,28 @@ use casa_imaging_model::SequentialContinuumTransform;
 use casa_imaging_runtime::pass::{NativeBlock, STREAM_SLOTS, SourceError};
 use casa_ms::observation_io::UpdateSession;
 use casa_observation::{
-    AccessRequest, BatchAddress, Correlation, Deliver, Observation, ObservationError, PatchValues,
-    UpdateTarget, Updater, WritableRole,
+    AccessRequest, BatchAddress, Correlation, Deliver, ObservationError, PatchValues, UpdateTarget,
+    Updater, WritableRole,
 };
 use casa_types::measures::MjdHighPrec;
 use ndarray::ArrayView3;
 use num_complex::Complex32;
 
+use super::BatchRoute;
 use crate::compile::OpenedStore;
 use crate::imaging::visibility_write::writes_channel;
 
 /// What a writing traversal queues for its sink, in delivery order.
 #[derive(Debug)]
 pub(super) enum Delivered {
-    /// A partition bound: the request the sink binds its updater to.
-    Partition(AccessRequest),
+    /// A partition bound: its store, and the request the sink binds that
+    /// store's updater to.
+    Partition {
+        /// The store's place in the route.
+        store: usize,
+        /// The partition's request.
+        request: AccessRequest,
+    },
     /// A block filled.
     Block(Provenance),
 }
@@ -58,7 +65,7 @@ pub(super) struct Provenance {
     pub(super) address: BatchAddress,
     /// The batch sample of each of its rows.
     pub(super) samples: Vec<u32>,
-    /// The spectral window its rows carry.
+    /// The spectral window key its rows carry ([`super::StoreKeys`]).
     pub(super) spectral_window: u32,
 }
 
@@ -69,11 +76,10 @@ struct Queue {
     entries: VecDeque<Delivered>,
 }
 
-/// The update session a writing run reads and writes, the columns it
-/// writes, and the queue between its source and its sink.
+/// What a writing run's stores share: the columns each store's update
+/// session writes, and the queue between the source and its sink.
 pub(crate) struct WriteBack {
-    session: UpdateSession,
-    /// Whether the session's targets are the model's (first) and the
+    /// Whether the sessions' targets are the model's (first) and the
     /// corrected data's.
     model: bool,
     corrected: bool,
@@ -81,49 +87,48 @@ pub(crate) struct WriteBack {
 }
 
 impl WriteBack {
-    /// An update session over `observation`, writing the model when
-    /// `model` and the corrected data when `corrected`. A MeasurementSet's
-    /// `MODEL_DATA` MAIN lacks is created with CASA's initial model; an
-    /// MSv4 cannot add a data group, so its `model` group must exist.
-    /// `CORRECTED_DATA` is written only where it exists.
+    /// The write-back of a run writing the model when `model` and the
+    /// corrected data when `corrected`.
+    pub(crate) fn new(model: bool, corrected: bool) -> Self {
+        Self {
+            model,
+            corrected,
+            queue: Mutex::default(),
+        }
+    }
+
+    /// An update session over `observation`, one store of the run, writing
+    /// this write-back's columns. A MeasurementSet's `MODEL_DATA` MAIN lacks
+    /// is created with CASA's initial model; an MSv4 cannot add a data
+    /// group, so its `model` group must exist. `CORRECTED_DATA` is written
+    /// only where it exists.
     ///
     /// # Errors
     ///
     /// When the session cannot open over the observation or a target
     /// cannot be resolved ([`UpdateSession::over_msv2`],
     /// [`UpdateSession::over_msv4`]).
-    pub(crate) fn open(
+    pub(crate) fn session(
+        &self,
         observation: OpenedStore,
-        model: bool,
-        corrected: bool,
-    ) -> Result<Self, ObservationError> {
+    ) -> Result<UpdateSession, ObservationError> {
         let mut targets = Vec::with_capacity(2);
-        if model {
+        if self.model {
             targets.push(UpdateTarget {
                 create: true,
                 ..UpdateTarget::new("model", WritableRole::Visibilities)
             });
         }
-        if corrected {
+        if self.corrected {
             targets.push(UpdateTarget::new("corrected", WritableRole::Visibilities));
         }
-        Ok(Self {
-            session: match observation {
-                OpenedStore::V2(observation) => UpdateSession::over_msv2(*observation, &targets)?,
-                OpenedStore::V4(observation) => UpdateSession::over_msv4(observation, &targets)?,
-            },
-            model,
-            corrected,
-            queue: Mutex::default(),
-        })
+        match observation {
+            OpenedStore::V2(observation) => UpdateSession::over_msv2(*observation, &targets),
+            OpenedStore::V4(observation) => UpdateSession::over_msv4(observation, &targets),
+        }
     }
 
-    /// The observation the session reads.
-    pub(crate) fn observation(&self) -> &dyn Observation {
-        self.session.observation()
-    }
-
-    /// The session's targets, every one of which each write gives values
+    /// The sessions' targets, every one of which each write gives values
     /// for.
     fn targets(&self) -> Vec<usize> {
         (0..usize::from(self.model) + usize::from(self.corrected)).collect()
@@ -155,17 +160,21 @@ impl WriteBack {
     }
 
     /// What one partition's write holds beyond the passes', for its
-    /// traversal `request` ([`WriteCharge`]).
-    pub(super) fn write_bytes(&self, request: &AccessRequest) -> Result<WriteCharge, SourceError> {
+    /// traversal `request` of its store's `session` ([`WriteCharge`]).
+    pub(super) fn write_bytes(
+        &self,
+        session: &UpdateSession,
+        request: &AccessRequest,
+    ) -> Result<WriteCharge, SourceError> {
         let targets = self.targets();
-        let updater = self.session.write_bytes(request, &targets)?;
-        let estimate = self.observation().estimate(request)?;
+        let updater = session.write_bytes(request, &targets)?;
+        let estimate = session.observation().estimate(request)?;
         let partition = estimate
             .partitions
             .first()
             .ok_or("an estimate without its partition")?;
         let samples = partition.samples_per_batch();
-        let entry = self
+        let entry = session
             .observation()
             .catalogue()
             .partition(partition.partition);
@@ -224,8 +233,9 @@ impl WriteCharge {
 
 /// The sink of a writing pass on the batch route: each block's values
 /// written to its batch, at the samples, channels and products the block
-/// holds.
+/// holds, through its store's update session.
 pub(crate) struct BatchWriter<'a> {
+    route: &'a BatchRoute,
     write_back: &'a WriteBack,
     transform: Option<&'a SequentialContinuumTransform>,
     updater: Option<Box<dyn Updater + 'a>>,
@@ -238,13 +248,16 @@ pub(crate) struct BatchWriter<'a> {
 }
 
 impl<'a> BatchWriter<'a> {
-    /// A sink for the next visibility traversal, which the source then
-    /// records the provenance of. `CORRECTED_DATA` holds the output of
-    /// `transform`.
+    /// A sink for the next visibility traversal of `route`, which the
+    /// source then records the provenance of. `CORRECTED_DATA` holds the
+    /// output of `transform`.
     pub(crate) fn begin(
-        write_back: &'a WriteBack,
+        route: &'a BatchRoute,
         transform: Option<&'a SequentialContinuumTransform>,
     ) -> Result<Self, SourceError> {
+        let write_back = route
+            .write_back()
+            .ok_or("the batch route was opened to read only")?;
         if write_back.corrected && transform.is_none() {
             return Err("CORRECTED_DATA is written only by a continuum transform".into());
         }
@@ -253,6 +266,7 @@ impl<'a> BatchWriter<'a> {
         queue.armed = true;
         drop(queue);
         Ok(Self {
+            route,
             write_back,
             transform,
             updater: None,
@@ -314,6 +328,8 @@ impl<'a> BatchWriter<'a> {
         let columns = u64::from(model) + u64::from(corrected);
         for (row, sample) in samples.iter().enumerate() {
             let context = block.header(row).context;
+            // A continuum transform reads one MeasurementSet (compile
+            // refuses several), whose keys are its own numbers.
             let rule = self.transform.and_then(|transform| {
                 transform.rule(context.field as i32, context.spectral_window)
             });
@@ -360,20 +376,20 @@ impl<'a> BatchWriter<'a> {
         loop {
             let next = self.write_back.queue().entries.pop_front();
             match next.ok_or("a block without its batch's provenance")? {
-                Delivered::Partition(request) => self.bind(&request)?,
+                Delivered::Partition { store, request } => self.bind(store, &request)?,
                 Delivered::Block(provenance) => return Ok(provenance),
             }
         }
     }
 
-    /// Bind the updater of the partition `request` reads, then finish the
-    /// last partition's: the two overlap, so an MSv2 session keeps MAIN's
-    /// lock.
-    fn bind(&mut self, request: &AccessRequest) -> Result<(), SourceError> {
-        let updater = self
-            .write_back
-            .session
-            .updater(request, &self.write_back.targets())?;
+    /// Bind the updater of the partition `request` of store `store` reads,
+    /// then finish the last partition's: the two overlap, so an MSv2
+    /// session keeps MAIN's lock from one of its partitions to the next.
+    fn bind(&mut self, store: usize, request: &AccessRequest) -> Result<(), SourceError> {
+        let session = self.route.stores[store]
+            .session()
+            .ok_or("a writing run's store was opened to read only")?;
+        let updater = session.updater(request, &self.write_back.targets())?;
         if let Some(last) = self.updater.replace(updater) {
             last.finish()?;
         }
@@ -386,10 +402,10 @@ impl<'a> BatchWriter<'a> {
         // their updaters prepare the columns as the others did.
         let rest: Vec<Delivered> = self.write_back.queue().entries.drain(..).collect();
         for entry in rest {
-            let Delivered::Partition(request) = entry else {
+            let Delivered::Partition { store, request } = entry else {
                 return Err("a block's provenance was left unwritten".into());
             };
-            self.bind(&request)?;
+            self.bind(store, &request)?;
         }
         if let Some(last) = self.updater.take() {
             last.finish()?;

@@ -1050,6 +1050,44 @@ impl CubeSpectralSetup {
         Ok((setup, support))
     }
 
+    /// The source channels of another window that this axis reads, as
+    /// [`Self::for_casa_cube_axis`] resolves its own window's: those whose
+    /// samples reach an output channel at either of `time_bounds_mjd_sec`,
+    /// with one more channel below and two above. The window
+    /// (`all_source_frequencies_hz`, `all_source_channel_widths_hz`, in
+    /// this axis's source frame) and `field_id` are `derived_engine`'s
+    /// MeasurementSet's, which may be another than the one the axis was
+    /// made from (CASA's tclean images several MeasurementSets on the first
+    /// one's axis); the output frame is taken at this axis's reference time
+    /// towards that field. An empty selection means the window reaches no
+    /// output channel.
+    ///
+    /// # Errors
+    ///
+    /// A frame conversion that fails, or widths that do not match the
+    /// frequencies.
+    pub fn source_channel_support(
+        &self,
+        all_source_frequencies_hz: &[f64],
+        all_source_channel_widths_hz: &[f64],
+        time_bounds_mjd_sec: [f64; 2],
+        field_id: usize,
+        derived_engine: &MsCalEngine,
+    ) -> MsResult<ResolvedChannelSelection> {
+        let setup = Self {
+            output_frame_field_id: field_id,
+            ..self.clone()
+        };
+        cube_source_channel_support(
+            all_source_frequencies_hz,
+            all_source_channel_widths_hz,
+            &setup,
+            time_bounds_mjd_sec,
+            field_id,
+            derived_engine,
+        )
+    }
+
     /// Build all per-row spectral interpolation products needed by cube
     /// preparation and major-cycle prediction.
     pub fn row_spectral_contributions(

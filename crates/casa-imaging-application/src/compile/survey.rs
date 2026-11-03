@@ -28,7 +28,6 @@ use casa_observation::{
 use casa_types::measures::MjdHighPrec;
 
 use super::PrepareError;
-use super::envelope::SpectralEnvelope;
 use super::partitions::{Candidate, Candidates, field_selection};
 use super::selection::{SourceSpectralWindow, WindowChannels};
 
@@ -58,6 +57,17 @@ impl WRange {
         self.minimum_abs_m = self.minimum_abs_m.min(w_m.abs());
         self.sum_squares_m2 += w_m * w_m;
         self.samples += 1;
+    }
+
+    /// The envelope of the samples of both: those of several
+    /// MeasurementSets, which one image grids.
+    pub(super) fn union(self, other: Self) -> Self {
+        Self {
+            maximum_abs_m: self.maximum_abs_m.max(other.maximum_abs_m),
+            minimum_abs_m: self.minimum_abs_m.min(other.minimum_abs_m),
+            sum_squares_m2: self.sum_squares_m2 + other.sum_squares_m2,
+            samples: self.samples + other.samples,
+        }
     }
 }
 
@@ -108,13 +118,8 @@ pub(super) struct Survey {
     pub(super) w: WRange,
     /// Each selected window's epochs, ascending in time, each once.
     pub(super) epochs: BTreeMap<usize, Vec<Epoch>>,
-    /// A continuum run's selected channels per window and their envelopes:
-    /// LSRK, where CASA grids the samples, and in the image's `outframe`,
-    /// which its header records.
-    pub(super) continuum: Option<(WindowChannels, SpectralEnvelope, SpectralEnvelope)>,
     /// The channels the request's `spw` names per window
-    /// ([`super::selection::SpwChoice::channels`]), set after the survey as
-    /// [`continuum`](Self::continuum) is.
+    /// ([`super::selection::SpwChoice::channels`]), set after the survey.
     pub(super) spw_channels: WindowChannels,
     /// The selection `savemodel='virtual'` writes its model for, resolved
     /// beside the survey from the same selection
@@ -460,7 +465,6 @@ pub(super) fn survey(
             first_cross,
             w: facts.w,
             epochs: facts.epochs,
-            continuum: None,
             spw_channels: WindowChannels::new(),
             virtual_model: None,
         },

@@ -10,7 +10,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 554
+- Concepts: 562
 - Surfaces: 27 (27 task, 0 session)
 - Surface bindings: 791
 
@@ -19,7 +19,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 7 | <code>msexplore</code> | 66 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 6 | <code>calibration</code> | 53 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 5 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Tclean](#surface-tclean)<br><code>tclean</code> | task | 37 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
+| [Tclean](#surface-tclean)<br><code>tclean</code> | task | 38 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 8 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
 | [Image Header](#surface-imhead)<br><code>imhead</code> | task | 5 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
@@ -219,7 +219,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Tclean (<code>tclean</code>)
 
 - Kind: `task`
-- Contract version: `37`
+- Contract version: `38`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.
@@ -228,14 +228,14 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>""</code>; required | Context | Input MeasurementSet path or paths. |
 | <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Context | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Selections apply with either selectdata value, as CASA's tclean does; unsupported selectors are still refused. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>""</code>; optional | Context | CASA field selector. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>timerange</code> | <code>ms.selection.timerange@r2</code> | <code>string</code> | <code>""</code>; optional | Context | CASA time selection, exact text |
-| <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>""</code>; optional | Context | UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
-| <code>antenna</code> | <code>ms.selection.antenna@r2</code> | <code>string</code> | <code>""</code>; optional | Context | CASA antenna (baseline) selection, exact text |
-| <code>scan</code> | <code>ms.selection.scan@r2</code> | <code>string</code> | <code>""</code>; optional | Context | Syntax-preserving numeric scan selection |
-| <code>observation</code> | <code>ms.selection.observation@r2</code> | <code>string</code> | <code>""</code>; optional | Context | Syntax-preserving numeric observation selection |
-| <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>""</code>; optional | Context | Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |
+| <code>field</code> | <code>ms.selection.field@r2</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | CASA field selector, one per MeasurementSet or one for all |
+| <code>spw</code> | <code>ms.selection.spw@r2</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | Comma-separated SPECTRAL_WINDOW_ID integers, one per MeasurementSet or one for all |
+| <code>timerange</code> | <code>ms.selection.timerange@r3</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | CASA time selection, exact text, one per MeasurementSet or one for all |
+| <code>uvrange</code> | <code>ms.selection.uvrange@r2</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | UV range selector, one per MeasurementSet or one for all<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
+| <code>antenna</code> | <code>ms.selection.antenna@r3</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | CASA antenna (baseline) selection, exact text, one per MeasurementSet or one for all |
+| <code>scan</code> | <code>ms.selection.scan@r3</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | Syntax-preserving numeric scan selection, one per MeasurementSet or one for all |
+| <code>observation</code> | <code>ms.selection.observation@r3</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | Syntax-preserving numeric observation selection, one per MeasurementSet or one for all |
+| <code>intent</code> | <code>ms.selection.intent@r2</code> | <code>array&lt;string&gt;</code> | <code>""</code>; optional | Context | Intent selector, one per MeasurementSet or one for all<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"corrected"</code>; optional | Context | Visibility data column used by the surface.<br><em>Surface:</em> 'corrected' images CORRECTED_DATA, or DATA when the MeasurementSet has no CORRECTED_DATA, as CASA's tclean does. |
 | <code>imagename</code> | <code>image.output.imagename@r1</code> | <code>path (image)</code> | <code>""</code>; required | Products | Output CASA image prefix |
 | <code>imsize</code> | <code>image.geometry.imsize@r3</code> | <code>array&lt;integer&gt;</code> | <code>[100]</code>; optional | Stage Parameters | Image dimensions in pixels |

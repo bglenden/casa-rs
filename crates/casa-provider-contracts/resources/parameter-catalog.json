@@ -777,6 +777,43 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ms.selection.field",
+      "semantic_revision": 2,
+      "casa_name": "field",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "casa_selector",
+        "grammar": "field",
+        "capabilities": [
+          "ids",
+          "names",
+          "ranges",
+          "wildcards"
+        ]
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA field selector, one per MeasurementSet or one for all",
+        "details": "Accepts field IDs, names, ranges, and wildcards subject to surface and provider capabilities. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "examples": [
+          "0",
+          "calibrator",
+          "0~2"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "ms.selection.intent",
       "semantic_revision": 1,
       "casa_name": "intent",
@@ -799,6 +836,41 @@
       "documentation": {
         "summary": "Intent selector.",
         "details": null,
+        "examples": [
+          ""
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.intent",
+      "semantic_revision": 2,
+      "casa_name": "intent",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "casa_selector",
+        "grammar": "intent",
+        "capabilities": [
+          "ids",
+          "names",
+          "ranges",
+          "wildcards"
+        ]
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Intent selector, one per MeasurementSet or one for all",
+        "details": "A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
         "examples": [
           ""
         ]
@@ -920,6 +992,41 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ms.selection.spw",
+      "semantic_revision": 2,
+      "casa_name": "spw",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "casa_selector",
+        "grammar": "spectral_window",
+        "capabilities": [
+          "ids",
+          "names",
+          "ranges",
+          "wildcards"
+        ]
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Comma-separated SPECTRAL_WINDOW_ID integers, one per MeasurementSet or one for all",
+        "details": "A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "examples": [
+          ""
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "ms.selection.timerange",
       "semantic_revision": 1,
       "casa_name": "timerange",
@@ -971,6 +1078,41 @@
       "documentation": {
         "summary": "UV range selector.",
         "details": null,
+        "examples": [
+          ""
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.uvrange",
+      "semantic_revision": 2,
+      "casa_name": "uvrange",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "casa_selector",
+        "grammar": "uv_range",
+        "capabilities": [
+          "ids",
+          "names",
+          "ranges",
+          "wildcards"
+        ]
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "UV range selector, one per MeasurementSet or one for all",
+        "details": "A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
         "examples": [
           ""
         ]
@@ -10545,6 +10687,37 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ms.selection.observation",
+      "semantic_revision": 3,
+      "casa_name": "observation",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Syntax-preserving numeric observation selection, one per MeasurementSet or one for all",
+        "details": "Only the exact empty string is unset. Whitespace-only text and literal none are invalid. Numeric IDs, comma-separated ID lists, and strictly ascending inclusive ranges are supported. Selector grammar beyond this numeric subset remains unfinished (#980); unsupported input is not thereby classified as CASA-invalid. Preserve the original string for native grammar validation. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "examples": [
+          "",
+          "1",
+          "1,3",
+          "1~3"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "ms.selection.scan",
       "semantic_revision": 2,
       "casa_name": "scan",
@@ -10560,6 +10733,37 @@
       "documentation": {
         "summary": "Syntax-preserving numeric scan selection",
         "details": "Only the exact empty string is unset. Whitespace-only text and literal none are invalid. Numeric IDs, comma-separated ID lists, and strictly ascending inclusive ranges are supported. Richer CASA-valid expressions such as >1 remain unfinished (#980), rather than CASA-invalid. Preserve the original string for native grammar validation.",
+        "examples": [
+          "",
+          "1",
+          "1,3",
+          "1~3"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.scan",
+      "semantic_revision": 3,
+      "casa_name": "scan",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "Syntax-preserving numeric scan selection, one per MeasurementSet or one for all",
+        "details": "Only the exact empty string is unset. Whitespace-only text and literal none are invalid. Numeric IDs, comma-separated ID lists, and strictly ascending inclusive ranges are supported. Richer CASA-valid expressions such as >1 remain unfinished (#980), rather than CASA-invalid. Preserve the original string for native grammar validation. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
         "examples": [
           "",
           "1",
@@ -10596,6 +10800,38 @@
       "persistence_class": "profile"
     },
     {
+      "id": "ms.selection.antenna",
+      "semantic_revision": 3,
+      "casa_name": "antenna",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA antenna (baseline) selection, exact text, one per MeasurementSet or one for all",
+        "details": "Only the exact empty string is unset. The exact text reaches casa-rs's port of CASA's antenna grammar (MSAntennaGram): IDs, names, stations, patterns, regular expressions, &/&&/&&& baseline forms, ! negation, ; terms, @station and baseline-length forms. Whitespace-only text and literal none are invalid, as in CASA. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
+        "examples": [
+          "",
+          "ea05",
+          "ea01&ea02",
+          "!ea01",
+          "ea0*&&"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "ms.selection.timerange",
       "semantic_revision": 2,
       "casa_name": "timerange",
@@ -10611,6 +10847,37 @@
       "documentation": {
         "summary": "CASA time selection, exact text",
         "details": "Only the exact empty string is unset. The exact text reaches casa-rs's port of CASA's time grammar (MSTimeGram): absolute and partial dates, ranges, >, <, T+dT durations and comma lists, with CASA's defaults from the first logical row.",
+        "examples": [
+          "",
+          "09:00:00~09:30:00",
+          ">2017/03/01/09:00:00",
+          "2017/03/01/09:00:00+10m"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ms.selection.timerange",
+      "semantic_revision": 3,
+      "casa_name": "timerange",
+      "value_domain": {
+        "kind": "array",
+        "element": {
+          "kind": "string"
+        },
+        "min_items": 1,
+        "max_items": null,
+        "allow_scalar": true
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "selection",
+      "documentation": {
+        "summary": "CASA time selection, exact text, one per MeasurementSet or one for all",
+        "details": "Only the exact empty string is unset. The exact text reaches casa-rs's port of CASA's time grammar (MSTimeGram): absolute and partial dates, ranges, >, <, T+dT durations and comma lists, with CASA's defaults from the first logical row. A list gives one selector per MeasurementSet of tclean's vis list, in its order; one text, or a list of one, applies to every MeasurementSet, as CASA's tclean replicates it (input_parameters.checkAndFixSelectionPars).",
         "examples": [
           "",
           "09:00:00~09:30:00",
