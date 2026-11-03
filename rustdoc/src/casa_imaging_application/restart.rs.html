@@ -123,7 +123,7 @@
 <a href=#123 id=123 data-nosnippet>123</a>                <span class="string">"it is not a product of this run's {family} images; choose a new imagename"
 <a href=#124 id=124 data-nosnippet>124</a>            </span>)));
 <a href=#125 id=125 data-nosnippet>125</a>        }
-<a href=#126 id=126 data-nosnippet>126</a>        <span class="kw">if </span>suffix.starts_with(<span class="string">"model"</span>) &amp;&amp; request.startmodel.is_some() {
+<a href=#126 id=126 data-nosnippet>126</a>        <span class="kw">if </span>suffix.starts_with(<span class="string">"model"</span>) &amp;&amp; request.has_start_model() {
 <a href=#127 id=127 data-nosnippet>127</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(refuse(
 <a href=#128 id=128 data-nosnippet>128</a>                <span class="string">"startmodel cannot be supplied when the output model already exists"</span>.into(),
 <a href=#129 id=129 data-nosnippet>129</a>            ));

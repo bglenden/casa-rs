@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["RegridMethod"],"fn":["check_regrid","regrid"],"struct":["RegridTemplate","Regridded"]};
+window.SIDEBAR_ITEMS = {"enum":["RegridMethod"],"fn":["check_regrid","check_regrid_along_frequency","regrid","regrid_along_frequency"],"struct":["RegridTemplate","Regridded"]};

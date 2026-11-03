@@ -398,7 +398,7 @@
 <a href=#398 id=398 data-nosnippet>398</a>    <span class="comment">// CASA makes the model when the minor cycle, the restoration or a
 <a href=#399 id=399 data-nosnippet>399</a>    // start model needs it: tclean sets up no deconvolver for `niter=0`
 <a href=#400 id=400 data-nosnippet>400</a>    // with `restoration=False`, and nothing else writes one.
-<a href=#401 id=401 data-nosnippet>401</a>    </span><span class="kw">if </span>residual &amp;&amp; (minor_cycle || restored || request.startmodel.is_some()) {
+<a href=#401 id=401 data-nosnippet>401</a>    </span><span class="kw">if </span>residual &amp;&amp; (minor_cycle || restored || request.has_start_model()) {
 <a href=#402 id=402 data-nosnippet>402</a>        products.push(ProductKind::Model);
 <a href=#403 id=403 data-nosnippet>403</a>    }
 <a href=#404 id=404 data-nosnippet>404</a>    <span class="kw">if </span>restored {

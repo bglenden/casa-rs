@@ -4379,6 +4379,31 @@ through <code>swapyz(flipgrid, copyOfFlag, flipdata)</code>, which skips every e
 casa-rs follows. Evidence: the operator laws in
 <code>casa-imaging-operator/tests/cubic.rs</code> and the cubic cases of
 <code>resources/casa-compat/tclean-cube-axes-cases.json</code>.</p>
+<h2 id="a-one-channel-start-model-is-regridded-onto-a-cube-by-reading-past-its-axis">A one-channel start model is regridded onto a cube by reading past its axis<a class="headerlink" href="#a-one-channel-start-model-is-regridded-onto-a-cube-by-reading-past-its-axis" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: CASA bug casa-rs corrects, by refusing (#1067)</li>
+<li>Affected code: casatools <code>synthesis/ImagerObjects/SIImageStore.cc</code>
+  (<code>regridToModelImage</code>), casacore <code>images/Images/ImageRegrid.tcc</code>
+  (<code>regrid1D</code>) and <code>scimath/Mathematics/InterpolateArray1D.tcc</code> (<code>linear</code>)</li>
+</ul>
+<p><code>SIImageStore::regridToModelImage</code> regrids a start model over its direction
+and spectral axes with <code>ImageRegrid</code> and <code>Interpolate2D::LINEAR</code>. Along
+frequency, <code>regrid1D</code> hands casacore's linear interpolation the input's
+channel pixels, and for a model of one channel onto a cube of several the
+interpolation steps its bracketing index to -1 and reads before the start
+of its arrays. casa-rs refuses a one-channel start model on a cube's
+spectral axis ("a spectral regrid interpolates between two channels"). A
+one-plane model of an MFS image keeps its plane at any frequency, as CASA's
+regrid leaves a degenerate axis. Beyond the model's channels CASA's
+interpolation takes the end channel's value and only masks it; the model
+image has no mask, so those planes start from the end channel's model.
+casa-rs follows that, and also CASA's restoration of such a plane where no
+sample reaches it: <code>SIImageStore::restore</code> restores every plane, and
+<code>makeImageBeamSet</code> gives a blank PSF the largest beam, so the restored image
+there is the model convolved with that beam. Evidence: <code>casa-images</code> <code>regrid::spectral</code> laws, the
+start-model axis laws, and CASA's <code>test_modelvis_7</code> and
+<code>test_startmodel_regrid_cube</code>.</p>
 
 
 
