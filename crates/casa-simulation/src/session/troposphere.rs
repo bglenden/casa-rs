@@ -112,7 +112,7 @@ impl Simulator {
             "screen" => true,
             "test" => {
                 return Err(SimulatorError::not_yet_implemented(
-                    "settrop(mode='test'), CASA's debugging ramp, is not implemented in casa-rs",
+                    "settrop(mode='test'), CASA's debugging ramp, is not implemented in casa-rs (#1053)",
                 ));
             }
             other => {

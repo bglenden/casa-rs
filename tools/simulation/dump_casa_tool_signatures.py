@@ -12,9 +12,8 @@ XML text is not. The Python tests under `crates/casars-python/python/tests/`
 compare each casa-rs class with the checked-in output in
 `crates/casars-python/python/tests/data/casa_<tool>_signatures.json`.
 
-For `simutil` only the methods casa-rs declares are recorded (`--methods`):
-the rest of the helper belongs to simulation Phase 5. Task signatures are in
-the CASA task inventory (`tools/casa-compat/dump_casa_task_inventory.py`).
+`--methods` records only the methods named. Task signatures are in the CASA
+task inventory (`tools/casa-compat/dump_casa_task_inventory.py`).
 
     python3 -I dump_casa_tool_signatures.py --tool measures --out casa_measures_signatures.json
 """

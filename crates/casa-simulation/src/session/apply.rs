@@ -106,7 +106,7 @@ fn raised(reason: impl std::fmt::Display) -> SimulatorError {
 
 fn not_yet(what: impl std::fmt::Display) -> SimulatorError {
     SimulatorError::not_yet_implemented(format!(
-        "setapply {what} is not yet implemented in casa-rs (simulation Phase 3)"
+        "setapply {what} is not yet implemented in casa-rs (#1053)"
     ))
 }
 

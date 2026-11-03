@@ -74,7 +74,7 @@ impl Simulator {
         if !MOSAIC_TELESCOPES.contains(&telescope) {
             return Err(SimulatorError::not_yet_implemented(format!(
                 "predict with setoptions(ftmachine='mosaic') for telescope {telescope} is not \
-                 yet implemented in casa-rs (#841); ALMA's and ACA's heterogeneous-array beams \
+                 yet implemented in casa-rs (#1053); ALMA's and ACA's heterogeneous-array beams \
                  are"
             )));
         }
@@ -88,7 +88,7 @@ impl Simulator {
             if antenna.diameter_m.is_nan() || antenna.diameter_m <= 0.0 {
                 return Err(SimulatorError::not_yet_implemented(format!(
                     "predict with setoptions(ftmachine='mosaic') for antenna {} of diameter {} \
-                     m is not yet implemented in casa-rs (#841)",
+                     m is not yet implemented in casa-rs (#1053)",
                     antenna.name, antenna.diameter_m
                 )));
             }
@@ -111,7 +111,7 @@ impl Simulator {
             classes.push(u8::try_from(class).map_err(|_| {
                 SimulatorError::not_yet_implemented(
                     "predict with setoptions(ftmachine='mosaic') for more than 255 dish \
-                     diameters is not yet implemented in casa-rs (#841)",
+                     diameters is not yet implemented in casa-rs (#1053)",
                 )
             })?);
         }
@@ -160,7 +160,7 @@ impl Simulator {
                 .ok_or_else(|| {
                     SimulatorError::not_yet_implemented(format!(
                         "predict with setoptions(ftmachine='mosaic') for field {} pointed \
-                         outside the model image is not yet implemented in casa-rs (#841); \
+                         outside the model image is not yet implemented in casa-rs (#1053); \
                          CASA predicts nothing for it",
                         self.fields[scan.field_id].name
                     ))

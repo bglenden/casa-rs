@@ -150,7 +150,7 @@ impl Returns {
 pub(crate) enum Status {
     /// Implemented.
     Implemented,
-    /// Raises `NotImplementedError` until a later phase.
+    /// Raises `NotImplementedError`, naming the issue that records it.
     NotYetImplemented,
     /// Disabled in CASA itself: logs CASA's error and returns `False`.
     DisabledInCasa,

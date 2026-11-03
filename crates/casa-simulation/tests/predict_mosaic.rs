@@ -68,7 +68,7 @@ fn setoptions_takes_the_mosaic_machine_but_not_both_or_pbwproject() {
         }));
         assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{machine}");
         assert!(
-            message.contains(machine) && message.contains("#841"),
+            message.contains(machine) && message.contains("#1053"),
             "{message}"
         );
     }

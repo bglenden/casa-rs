@@ -391,7 +391,7 @@ impl Simulator {
         let ftmachine = options.ftmachine.to_lowercase();
         if OTHER_FTMACHINES.contains(&ftmachine.as_str()) {
             return Err(SimulatorError::not_yet_implemented(format!(
-                "setoptions(ftmachine='{ftmachine}') is not yet implemented in casa-rs (#841)"
+                "setoptions(ftmachine='{ftmachine}') is not yet implemented in casa-rs (#1053)"
             )));
         }
         let single_dish = if ftmachine == "sd" {
@@ -399,7 +399,7 @@ impl Simulator {
                 SingleDishKernel::from_grid_function(&options.grid_function).ok_or_else(|| {
                     SimulatorError::not_yet_implemented(format!(
                         "setoptions(ftmachine='sd', gridfunction='{}') is not yet implemented \
-                         in casa-rs (#841); 'PB', 'BOX' and 'SF' are",
+                         in casa-rs (#1053); 'PB', 'BOX' and 'SF' are",
                         options.grid_function
                     ))
                 })?,
@@ -407,7 +407,7 @@ impl Simulator {
         } else {
             if options.grid_function.to_lowercase() != "sf" {
                 return Err(SimulatorError::not_yet_implemented(format!(
-                    "setoptions(gridfunction='{}') is not yet implemented in casa-rs (#841); \
+                    "setoptions(gridfunction='{}') is not yet implemented in casa-rs (#1053); \
                      'SF' is",
                     options.grid_function
                 )));
@@ -465,7 +465,7 @@ impl Simulator {
                 if self.options.resources.backend() == BackendRequest::Metal {
                     return Err(SimulatorError::not_yet_implemented(
                         "predict with setoptions(ftmachine='wproject') on the Metal backend is \
-                         not yet implemented in casa-rs (#841); backend 'auto' or 'cpu' \
+                         not yet implemented in casa-rs (#1053); backend 'auto' or 'cpu' \
                          predicts it on the CPU",
                     ));
                 }
@@ -483,7 +483,7 @@ impl Simulator {
     pub fn set_vp(&mut self, spec: &VoltagePatternSpec) -> SimulatorResult<()> {
         if !spec.use_default_vp && !spec.vp_table.is_empty() {
             return Err(SimulatorError::not_yet_implemented(format!(
-                "setvp(vptable='{}') is not yet implemented in casa-rs (#841); the default \
+                "setvp(vptable='{}') is not yet implemented in casa-rs (#1053); the default \
                  voltage patterns are",
                 spec.vp_table
             )));
@@ -545,8 +545,8 @@ impl Simulator {
         }
         if images.len() > 1 {
             return Err(SimulatorError::not_yet_implemented(format!(
-                "predict from {} model images is not yet implemented in casa-rs (simulation \
-                 Phase 2); one image is",
+                "predict from {} model images is not yet implemented in casa-rs (#1053); one \
+                 image is",
                 images.len()
             )));
         }
@@ -555,7 +555,7 @@ impl Simulator {
         if spec.incremental && self.data_plan.corrupts_by_jones() {
             return Err(SimulatorError::not_yet_implemented(
                 "an incremental predict after a corrupt with setgain or setleakage terms is not \
-                 yet implemented in casa-rs (simulation Phase 3)",
+                 yet implemented in casa-rs (#1053)",
             ));
         }
         if images.is_empty() && lists.is_empty() {
@@ -568,7 +568,7 @@ impl Simulator {
         {
             return Err(SimulatorError::not_yet_implemented(format!(
                 "predict refocused to the distance {} m of field {} is not yet implemented in \
-                 casa-rs (#841)",
+                 casa-rs (#1053)",
                 field.distance_m, field.name
             )));
         }
@@ -613,7 +613,7 @@ impl Simulator {
             let Some(model) = model.filter(|_| list.is_none()) else {
                 return Err(SimulatorError::not_yet_implemented(
                     "predict(complist=…) after setoptions(ftmachine='sd') is not yet \
-                     implemented in casa-rs (#841); a model image is",
+                     implemented in casa-rs (#1053); a model image is",
                 ));
             };
             return self.predict_single_dish(model, kernel, beam, spec.incremental);
@@ -727,7 +727,7 @@ impl Simulator {
         {
             return Err(SimulatorError::not_yet_implemented(format!(
                 "predict(complist='{label}') under the {beam:?} primary beam with beam squint \
-                 is not yet implemented in casa-rs (#841): CASA squints the RR and LL beams \
+                 is not yet implemented in casa-rs (#1053): CASA squints the RR and LL beams \
                  for components; setvp(dosquint=False) predicts them unsquinted"
             )));
         }
@@ -792,7 +792,7 @@ impl Simulator {
         let prediction = ComponentPrediction::new(&list, targets, reservation).map_err(
             |ComponentRefusal::NotYetImplemented(reason)| {
                 SimulatorError::not_yet_implemented(format!(
-                    "predict(complist='{label}'): {reason} (#841)"
+                    "predict(complist='{label}'): {reason} (#1053)"
                 ))
             },
         )?;
@@ -820,7 +820,7 @@ impl Simulator {
         {
             return Err(SimulatorError::not_yet_implemented(
                 "predicting scans whose spectral windows have different correlations is not yet \
-                 implemented in casa-rs (#841)",
+                 implemented in casa-rs (#1053)",
             ));
         }
         first
@@ -829,7 +829,7 @@ impl Simulator {
                 Correlation::from_casacore_code(code).ok_or_else(|| {
                     SimulatorError::not_yet_implemented(format!(
                         "predicting correlation code {code} is not yet implemented in casa-rs \
-                         (#841)"
+                         (#1053)"
                     ))
                 })
             })
@@ -848,7 +848,7 @@ impl Simulator {
             .ok_or_else(|| {
                 SimulatorError::not_yet_implemented(format!(
                     "setvp(dovp=True) for telescope {telescope} is not yet implemented in \
-                     casa-rs (#841); the default patterns of ALMA, ACA, VLA and EVLA are"
+                     casa-rs (#1053); the default patterns of ALMA, ACA, VLA and EVLA are"
                 ))
             })?;
         Ok(Some(beam))
@@ -886,7 +886,7 @@ impl Simulator {
         match moved {
             Some(scan) => Err(SimulatorError::not_yet_implemented(format!(
                 "predict with {what} for scan {} pointed away from its field {} is not yet \
-                 implemented in casa-rs (simulation Phase 2, #884); pointings at their \
+                 implemented in casa-rs (#1053); pointings at their \
                  fields' centres are",
                 scan.scan_number, self.fields[scan.field_id].name
             ))),
@@ -1206,7 +1206,7 @@ fn read_component_list(
 fn model_error(error: PredictError) -> SimulatorError {
     match error {
         PredictError::UnsupportedModel(reason) => SimulatorError::not_yet_implemented(format!(
-            "predict from this model is not yet implemented in casa-rs (#841): {reason}"
+            "predict from this model is not yet implemented in casa-rs (#1053): {reason}"
         )),
         PredictError::Image { path, .. } => {
             SimulatorError::raised(format!("Unable to open image {path}."))
@@ -1222,7 +1222,7 @@ fn correlation_error(error: PredictError, correlations: &[Correlation]) -> Simul
         PredictError::Operator(OperatorError::Polarization { reason }) => {
             SimulatorError::not_yet_implemented(format!(
                 "predicting a Stokes I model into the correlations {correlations:?} is not yet \
-                 implemented in casa-rs (#841): {reason}"
+                 implemented in casa-rs (#1053): {reason}"
             ))
         }
         other => model_error(other),

@@ -277,7 +277,7 @@ impl<'a> Run<'a> {
         run.check_sky_inputs()?;
         if !matches!(parameters.graphics.as_str(), "none" | "") {
             let warning = format!(
-                "graphics='{}' is not yet implemented in casa-rs (#841 Phase 5e): no .png or \
+                "graphics='{}' is not yet implemented in casa-rs (#1025): no .png or \
                  .quick.psf is written",
                 parameters.graphics
             );

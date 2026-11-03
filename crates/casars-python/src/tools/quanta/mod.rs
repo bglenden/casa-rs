@@ -5,7 +5,7 @@
 //! The class declares every method of CASA's installed binding with CASA's
 //! names, parameter order and effective defaults ([`surface`]); the
 //! methods casa-rs implements delegate to `ops`, and the rest raise
-//! `NotImplementedError`. Quantities are casacore's quantity records,
+//! `NotImplementedError` naming #1053. Quantities are casacore's quantity records,
 //! `{'unit': ..., 'value': ...}`. The tool has no state; each call releases
 //! the GIL while it computes. A failure CASA raises is a `RuntimeError`
 //! with CASA's message (CASA also logs it at SEVERE; casa-rs only raises).
@@ -17,7 +17,7 @@ use pyo3::prelude::*;
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, StringList, Variant};
-use crate::tools::{LogLine, emit, not_yet_implemented};
+use crate::tools::{LogLine, emit, not_yet_implemented_in};
 
 /// The Python logger the tool's warnings go to.
 const LOGGER: &str = "casars.tools.quanta";
@@ -34,9 +34,10 @@ fn call(
     py.detach(work)?.into_python(py)
 }
 
-/// A method a later phase implements.
+/// A method casa-rs does not implement yet, refused naming #1053, which
+/// classifies them.
 fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented("quanta", method)
+    not_yet_implemented_in("quanta", method, 1053)
 }
 
 #[pymethods]

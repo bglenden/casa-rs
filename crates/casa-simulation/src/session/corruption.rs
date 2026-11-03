@@ -175,7 +175,7 @@ impl Simulator {
         if !spec.on_the_fly {
             return Err(SimulatorError::not_yet_implemented(
                 "setnoise(OTF=False), which writes a calibration table, is not yet implemented \
-                 in casa-rs (simulation Phase 3)",
+                 in casa-rs (#1053)",
             ));
         }
         if mode == NoiseMode::Simple {
@@ -332,8 +332,8 @@ impl Simulator {
                 if !term.covers(scan.spectral_window_id) {
                     return Err(SimulatorError::not_yet_implemented(format!(
                         "corrupt of spectral window {}, observed after a setgain, setleakage or \
-                         settrop term was set, is not yet implemented in casa-rs (simulation \
-                         Phases 3 and 4): CASA leaves it uncorrupted",
+                         settrop term was set, is not yet implemented in casa-rs (#1053): \
+                         CASA leaves it uncorrupted",
                         window.name
                     )));
                 }
@@ -357,7 +357,7 @@ impl Simulator {
             {
                 return Err(SimulatorError::not_yet_implemented(format!(
                     "corrupt of spectral window {}, defined after a setnoise(mode='tsys-atm') \
-                     term was set, is not yet implemented in casa-rs (simulation Phase 4): \
+                     term was set, is not yet implemented in casa-rs (#1053): \
                      the term has no atmosphere for it",
                     self.spectral_windows[scan.spectral_window_id].name
                 )));
@@ -431,7 +431,7 @@ fn check_tsys_spec(spec: &NoiseSpec) -> SimulatorResult<()> {
     if let Some(table) = calibration_table_root(&spec.table) {
         return Err(SimulatorError::not_yet_implemented(format!(
             "setnoise(mode='{}', table=...), which writes the T calibration table {table}.T.cal, \
-             is not yet implemented in casa-rs (simulation Phase 3)",
+             is not yet implemented in casa-rs (#1053)",
             spec.mode
         )));
     }

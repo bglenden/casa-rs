@@ -55,7 +55,7 @@ impl Simulator {
                     .ok_or_else(|| {
                         SimulatorError::not_yet_implemented(format!(
                             "setoptions(ftmachine='sd', gridfunction='PB') for telescope \
-                             {telescope} is not yet implemented in casa-rs (#841); ALMA's and \
+                             {telescope} is not yet implemented in casa-rs (#1053); ALMA's and \
                              ACA's patterns are"
                         ))
                     })?,
