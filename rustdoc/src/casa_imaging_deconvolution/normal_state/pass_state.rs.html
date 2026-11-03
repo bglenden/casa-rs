@@ -439,22 +439,22 @@
 <a href=#439 id=439 data-nosnippet>439</a><span class="doccomment">/// The coefficient basis of `problem`. A constant or Taylor basis needs a
 <a href=#440 id=440 data-nosnippet>440</a>/// linear spectral axis, whose reference frequency it expands about.
 <a href=#441 id=441 data-nosnippet>441</a></span><span class="kw">fn </span>basis_plan(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; <span class="prelude-ty">Result</span>&lt;SpectralBasisPlan, NormalStateError&gt; {
-<a href=#442 id=442 data-nosnippet>442</a>    <span class="kw">let </span>polynomial = |terms: usize| {
-<a href=#443 id=443 data-nosnippet>443</a>        <span class="kw">if </span><span class="macro">matches!</span>(
-<a href=#444 id=444 data-nosnippet>444</a>            problem.geometry().spectral().wcs(),
-<a href=#445 id=445 data-nosnippet>445</a>            SpectralWcs::Tabular { .. }
-<a href=#446 id=446 data-nosnippet>446</a>        ) {
-<a href=#447 id=447 data-nosnippet>447</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(NormalStateError::UnsupportedProblem);
-<a href=#448 id=448 data-nosnippet>448</a>        }
-<a href=#449 id=449 data-nosnippet>449</a>        terms
-<a href=#450 id=450 data-nosnippet>450</a>            .checked_mul(<span class="number">2</span>)
-<a href=#451 id=451 data-nosnippet>451</a>            .map(|<span class="kw">_</span>| SpectralBasisPlan::Polynomial { terms })
-<a href=#452 id=452 data-nosnippet>452</a>            .ok_or(NormalStateError::ResidencyOverflow)
-<a href=#453 id=453 data-nosnippet>453</a>    };
-<a href=#454 id=454 data-nosnippet>454</a>    <span class="kw">match </span>problem.reconstruction().basis() {
-<a href=#455 id=455 data-nosnippet>455</a>        ReconstructionBasis::ChannelLocal { .. } =&gt; <span class="prelude-val">Ok</span>(SpectralBasisPlan::ChannelLocal),
-<a href=#456 id=456 data-nosnippet>456</a>        ReconstructionBasis::Constant =&gt; polynomial(<span class="number">1</span>),
-<a href=#457 id=457 data-nosnippet>457</a>        ReconstructionBasis::Taylor { terms } =&gt; polynomial(terms),
+<a href=#442 id=442 data-nosnippet>442</a>    <span class="kw">let </span>basis = problem.reconstruction().basis();
+<a href=#443 id=443 data-nosnippet>443</a>    <span class="kw">if </span>!<span class="macro">matches!</span>(basis, ReconstructionBasis::ChannelLocal { .. })
+<a href=#444 id=444 data-nosnippet>444</a>        &amp;&amp; <span class="macro">matches!</span>(
+<a href=#445 id=445 data-nosnippet>445</a>            problem.geometry().spectral().wcs(),
+<a href=#446 id=446 data-nosnippet>446</a>            SpectralWcs::Tabular { .. }
+<a href=#447 id=447 data-nosnippet>447</a>        )
+<a href=#448 id=448 data-nosnippet>448</a>    {
+<a href=#449 id=449 data-nosnippet>449</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(NormalStateError::UnsupportedProblem);
+<a href=#450 id=450 data-nosnippet>450</a>    }
+<a href=#451 id=451 data-nosnippet>451</a>    <span class="kw">match </span>basis {
+<a href=#452 id=452 data-nosnippet>452</a>        ReconstructionBasis::ChannelLocal { .. } =&gt; <span class="prelude-val">Ok</span>(SpectralBasisPlan::ChannelLocal),
+<a href=#453 id=453 data-nosnippet>453</a>        ReconstructionBasis::Constant =&gt; <span class="prelude-val">Ok</span>(SpectralBasisPlan::Constant),
+<a href=#454 id=454 data-nosnippet>454</a>        ReconstructionBasis::Taylor { terms } =&gt; terms
+<a href=#455 id=455 data-nosnippet>455</a>            .checked_mul(<span class="number">2</span>)
+<a href=#456 id=456 data-nosnippet>456</a>            .map(|<span class="kw">_</span>| SpectralBasisPlan::Taylor { terms })
+<a href=#457 id=457 data-nosnippet>457</a>            .ok_or(NormalStateError::ResidencyOverflow),
 <a href=#458 id=458 data-nosnippet>458</a>    }
 <a href=#459 id=459 data-nosnippet>459</a>}
 </code></pre></div></section></main></body></html>

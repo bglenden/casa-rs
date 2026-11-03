@@ -100,28 +100,35 @@
 <a href=#100 id=100 data-nosnippet>100</a>        </span>term: ProductTerm,
 <a href=#101 id=101 data-nosnippet>101</a>    },
 <a href=#102 id=102 data-nosnippet>102</a>    <span class="doccomment">/// A Taylor run's principal sum of weights, normal or published, is not
-<a href=#103 id=103 data-nosnippet>103</a>    /// positive and finite: no weighted sample reached the image.
-<a href=#104 id=104 data-nosnippet>104</a>    </span><span class="attr">#[error(<span class="string">"Taylor products need a positive principal sum of weights, not {sum_weight}"</span>)]
-<a href=#105 id=105 data-nosnippet>105</a>    </span>PrincipalSumWeight {
-<a href=#106 id=106 data-nosnippet>106</a>        <span class="doccomment">/// The principal sum of weights.
-<a href=#107 id=107 data-nosnippet>107</a>        </span>sum_weight: f64,
-<a href=#108 id=108 data-nosnippet>108</a>    },
-<a href=#109 id=109 data-nosnippet>109</a>    <span class="doccomment">/// A produced payload length disagreed with its declared shape.
-<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="attr">#[error(<span class="string">"member payload requires {expected} values but carries {actual}"</span>)]
-<a href=#111 id=111 data-nosnippet>111</a>    </span>PayloadLengthMismatch {
-<a href=#112 id=112 data-nosnippet>112</a>        <span class="doccomment">/// Shape-derived value count.
-<a href=#113 id=113 data-nosnippet>113</a>        </span>expected: usize,
-<a href=#114 id=114 data-nosnippet>114</a>        <span class="doccomment">/// Actual payload length.
-<a href=#115 id=115 data-nosnippet>115</a>        </span>actual: usize,
-<a href=#116 id=116 data-nosnippet>116</a>    },
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// Beam fitting failed for products that carry fitted beam metadata.
-<a href=#118 id=118 data-nosnippet>118</a>    </span><span class="attr">#[error(<span class="string">"restoring-beam fitting failed: {0}"</span>)]
-<a href=#119 id=119 data-nosnippet>119</a>    </span>BeamFitFailed(String),
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Solver arithmetic produced a non-finite product value.
-<a href=#121 id=121 data-nosnippet>121</a>    </span><span class="attr">#[error(<span class="string">"product arithmetic generated a non-finite value"</span>)]
-<a href=#122 id=122 data-nosnippet>122</a>    </span>GeneratedNonfinite,
-<a href=#123 id=123 data-nosnippet>123</a>    <span class="doccomment">/// Checked product-generation resource arithmetic exceeded `u64`.
-<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="attr">#[error(<span class="string">"continuum generation demand overflowed while calculating {0}"</span>)]
-<a href=#125 id=125 data-nosnippet>125</a>    </span>ResourceDemandOverflow(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
-<a href=#126 id=126 data-nosnippet>126</a>}
+<a href=#103 id=103 data-nosnippet>103</a>    /// positive and finite. Every Stokes plane takes the first gridded
+<a href=#104 id=104 data-nosnippet>104</a>    /// correlation's sum (`MultiTermFTNew`), so this is a run whose first
+<a href=#105 id=105 data-nosnippet>105</a>    /// correlation has no weight: CASA writes every plane as zeros, and
+<a href=#106 id=106 data-nosnippet>106</a>    /// casa-rs refuses it until #1109.
+<a href=#107 id=107 data-nosnippet>107</a>    </span><span class="attr">#[error(
+<a href=#108 id=108 data-nosnippet>108</a>        <span class="string">"Taylor products need a positive principal sum of weights, not {sum_weight}: every \
+<a href=#109 id=109 data-nosnippet>109</a>         Stokes plane takes the first gridded correlation's sum, which has no weight; casa-rs \
+<a href=#110 id=110 data-nosnippet>110</a>         does not image this yet (#1109)"
+<a href=#111 id=111 data-nosnippet>111</a>    </span>)]
+<a href=#112 id=112 data-nosnippet>112</a>    </span>PrincipalSumWeight {
+<a href=#113 id=113 data-nosnippet>113</a>        <span class="doccomment">/// The principal sum of weights.
+<a href=#114 id=114 data-nosnippet>114</a>        </span>sum_weight: f64,
+<a href=#115 id=115 data-nosnippet>115</a>    },
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="doccomment">/// A produced payload length disagreed with its declared shape.
+<a href=#117 id=117 data-nosnippet>117</a>    </span><span class="attr">#[error(<span class="string">"member payload requires {expected} values but carries {actual}"</span>)]
+<a href=#118 id=118 data-nosnippet>118</a>    </span>PayloadLengthMismatch {
+<a href=#119 id=119 data-nosnippet>119</a>        <span class="doccomment">/// Shape-derived value count.
+<a href=#120 id=120 data-nosnippet>120</a>        </span>expected: usize,
+<a href=#121 id=121 data-nosnippet>121</a>        <span class="doccomment">/// Actual payload length.
+<a href=#122 id=122 data-nosnippet>122</a>        </span>actual: usize,
+<a href=#123 id=123 data-nosnippet>123</a>    },
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="doccomment">/// Beam fitting failed for products that carry fitted beam metadata.
+<a href=#125 id=125 data-nosnippet>125</a>    </span><span class="attr">#[error(<span class="string">"restoring-beam fitting failed: {0}"</span>)]
+<a href=#126 id=126 data-nosnippet>126</a>    </span>BeamFitFailed(String),
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="doccomment">/// Solver arithmetic produced a non-finite product value.
+<a href=#128 id=128 data-nosnippet>128</a>    </span><span class="attr">#[error(<span class="string">"product arithmetic generated a non-finite value"</span>)]
+<a href=#129 id=129 data-nosnippet>129</a>    </span>GeneratedNonfinite,
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="doccomment">/// Checked product-generation resource arithmetic exceeded `u64`.
+<a href=#131 id=131 data-nosnippet>131</a>    </span><span class="attr">#[error(<span class="string">"continuum generation demand overflowed while calculating {0}"</span>)]
+<a href=#132 id=132 data-nosnippet>132</a>    </span>ResourceDemandOverflow(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
+<a href=#133 id=133 data-nosnippet>133</a>}
 </code></pre></div></section></main></body></html>

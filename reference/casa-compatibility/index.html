@@ -1656,6 +1656,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#mtmfs-nterms1-polarized-20261103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mtmfs-nterms1-polarized-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mtmfs-polarized-review-20261103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mtmfs-polarized-review-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4901,6 +4923,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#mtmfs-nterms1-polarized-20261103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mtmfs-nterms1-polarized-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#mtmfs-polarized-review-20261103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mtmfs-polarized-review-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -7907,8 +7951,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'I'</code></td>
 <td><code>'I'</code>; <code>stokes</code> → <code>stokes</code></td>
 <td>Partial</td>
-<td>Native Stokes/correlation coordinates; full-Stokes and basis-dependent combinations require their own acceptance, not an I-plane inference. <a href="#tclean-behavior-returns">returns</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
+<td>Native Stokes/correlation coordinates; full-Stokes and basis-dependent combinations require their own acceptance, not an I-plane inference. With mtmfs every Stokes plane is a Taylor family of its own, cleaned and restored with its own beam (one beam under restoringbeam='common' or a given beam), and the spectral index is written only for Stokes I alone (issue 1065); Stokes planes other than I alone take the standard gridder only, the mosaic, W- and AW-projection gridders refused (issue 1112), and a Taylor run whose first gridded correlation has no weight is refused (issue 1109). <a href="#tclean-behavior-returns">returns</a><br>Catalog domain: <code>string</code></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-mtmfs-nterms1-polarized-20261103">mtmfs-nterms1-polarized-20261103</a>, <a href="#tclean-evidence-mtmfs-polarized-review-20261103">mtmfs-polarized-review-20261103</a></td>
 </tr>
 <tr>
 <td><code>projection</code></td>
@@ -8147,8 +8191,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'hogbom'</code></td>
 <td><code>'hogbom'</code>; <code>deconvolver</code> → <code>deconvolver</code></td>
 <td>Partial</td>
-<td>hogbom/clark/multiscale/mtmfs pass; asp refused with issue 223; other CASA algorithms refused with issue 823. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>asp</code>, <code>clark</code>, <code>clark_exp</code>, <code>clarkstokes</code>, <code>clarkstokes_exp</code>, <code>hogbom</code>, <code>mem</code>, <code>mtmfs</code>, <code>multiscale</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
+<td>hogbom/clark/multiscale/mtmfs pass; asp refused with issue 223; other CASA algorithms refused with issue 823. mtmfs with specmode cube or cubedata is refused, as CASA's tclean warns and images nothing. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>asp</code>, <code>clark</code>, <code>clark_exp</code>, <code>clarkstokes</code>, <code>clarkstokes_exp</code>, <code>hogbom</code>, <code>mem</code>, <code>mtmfs</code>, <code>multiscale</code></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-mtmfs-nterms1-polarized-20261103">mtmfs-nterms1-polarized-20261103</a>, <a href="#tclean-evidence-mtmfs-polarized-review-20261103">mtmfs-polarized-review-20261103</a></td>
 </tr>
 <tr>
 <td><code>scales</code></td>
@@ -8163,8 +8207,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>2</code></td>
 <td><code>2</code>; <code>nterms</code> → <code>nterms</code></td>
 <td>Partial</td>
-<td>Used only by mtmfs; other deconvolvers force one. mtmfs nterms=1 refused (issue 980); request enforces &gt;1 exactly for mtmfs. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>integer</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
+<td>Used only by mtmfs; other deconvolvers force one. mtmfs takes nterms &gt;= 1: one term images a Taylor family of one (.tt0 products, no spectral index), as CASA does (issue 1065); request refuses more than one term without mtmfs. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>integer</code></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-mtmfs-nterms1-polarized-20261103">mtmfs-nterms1-polarized-20261103</a></td>
 </tr>
 <tr>
 <td><code>smallscalebias</code></td>
@@ -8204,7 +8248,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>[]</code>; <code>restoringbeam</code> → <code>restoringbeam</code></td>
 <td>Implemented</td>
 <td>As SynthesisParamsDeconv::fromRecord: empty -&gt; each plane's fitted beam; common -&gt; one enclosing beam; one, two or three quantities -&gt; a circular beam, an ellipse at angle 0 or an ellipse at an angle, which restores every plane and is the image's one beam, the residual rescaled from the fitted beam as rescaleResolution does (left as it is, with a warning, when the fitted beam does not deconvolve); any other count or a zero axis -&gt; fitted beams; non-angular, negative or inverted axes refused as CASA refuses them. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: list[<code>string</code>], length 0..many; scalar allowed</td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-mtmfs-polarized-review-20261103">mtmfs-polarized-review-20261103</a></td>
 </tr>
 <tr>
 <td><code>pbcor</code></td>
@@ -9045,6 +9089,32 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>cf872db418c7988c0e919b2fca5a973da94702f6</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
 <li>Command: <code>tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with resources/casa-compat/tclean-pb-masks-cases.json, and with tclean-casa-test-cases.json --case test_widefield.test_widefield_mosaicft_mtmfs_pbsquare.1 and four test_widefield mosaic cases</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-pbsquare-20261103.json</code>.</li>
+</ul>
+<p><a id="tclean-evidence-mtmfs-nterms1-polarized-20261103"></a></p>
+<h5 id="mtmfs-nterms1-polarized-20261103">mtmfs-nterms1-polarized-20261103<a class="headerlink" href="#mtmfs-nterms1-polarized-20261103" title="Permanent link">&para;</a></h5>
+<p><strong>CASA tclean test-case matrix and T1 imaging laws — passed.</strong> tclean deconvolver='mtmfs' with nterms=1 and Taylor families of every Stokes plane (#1065). 13 of 14 cases pass every product within 5.3e-6 NRMS with exact counts: test_onefield_mtmfs_nterms1.1, test_onefield_mtmfs_smallscalebias.1, test_stokes_mtmfs_Q.1, test_stokes_weighting.8 (IQUV, Briggs), seven MT-MFS regression cases, and the CASA-skipped test_cube_mtmfs_nterms1.1 and test_cubedata_mtmfs_nterms1.1, which CASA declines and casa-rs refuses. test_stokes_mtmfs_IQUV.1+2 stays refused by usemask='pb' (#1061). Every Stokes plane's .sumwt.ttN is the first correlation's, as MultiTermFTNew writes it; multi-Stokes images record one beam per plane; a spectral index is written for Stokes I alone.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/79e72c040612a599e89fcb9810b3bc0d611fbbc5/resources/casa-compat/evidence/tclean-mtmfs-nterms1-polarized-20261103.json">resources/casa-compat/evidence/tclean-mtmfs-nterms1-polarized-20261103.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/79e72c040612a599e89fcb9810b3bc0d611fbbc5/crates/casa-imaging-products/src/taylor.rs">crates/casa-imaging-products/src/taylor.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/79e72c040612a599e89fcb9810b3bc0d611fbbc5/crates/casa-imaging-runtime/src/minor.rs">crates/casa-imaging-runtime/src/minor.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/79e72c040612a599e89fcb9810b3bc0d611fbbc5/crates/casa-imaging-operator/src/operator.rs">crates/casa-imaging-operator/src/operator.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/79e72c040612a599e89fcb9810b3bc0d611fbbc5/crates/casars-imager/tests/t1/mtmfs.rs">crates/casars-imager/tests/t1/mtmfs.rs</a></li>
+<li>Revision: <code>356aa9bba082223dcf6dc8df0d6b357333cc3708</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-casa-test-cases.json --backend cpu --precision f64 --include-skipped --case &lt;each case of the receipt&gt;</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-mtmfs-nterms1-polarized-20261103.json</code>.</li>
+</ul>
+<p><a id="tclean-evidence-mtmfs-polarized-review-20261103"></a></p>
+<h5 id="mtmfs-polarized-review-20261103">mtmfs-polarized-review-20261103<a class="headerlink" href="#mtmfs-polarized-review-20261103" title="Permanent link">&para;</a></h5>
+<p><strong>CASA tclean test-case matrix, casa-rs's own polarized MT-MFS cases, T1 imaging laws — passed.</strong> tclean deconvolver='mtmfs' of polarized Taylor families after #1104's review (#1065). #1065's 14 cases pass as before (13 of 14, worst NRMS 5.3e-6; test_stokes_mtmfs_IQUV.1+2 refused by usemask='pb', #1061). Of casa-rs's own cases, refim_point_linRL's polarized point in IQUV, and in IQUV with restoringbeam='common' (one beam recorded, as CASA records it), passes every product; in IV every product but a tt1 model that is rounding in both. The refim_mawproject mosaic in IQUV failed (zero Q and U PSF moments), so Stokes planes other than I alone are refused beyond the standard gridder (issue 1112). The T1 law a_polarized_taylor_family_is_imaged_on_its_own_stokes_plane puts a circularly polarized point's V on V's plane of each term.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/2c0aa26bca18b4b8301e0eee2540ba9273bf8770/resources/casa-compat/evidence/tclean-mtmfs-polarized-review-20261103.json">resources/casa-compat/evidence/tclean-mtmfs-polarized-review-20261103.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/2c0aa26bca18b4b8301e0eee2540ba9273bf8770/resources/casa-compat/tclean-mtmfs-polarized-cases.json">resources/casa-compat/tclean-mtmfs-polarized-cases.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/2c0aa26bca18b4b8301e0eee2540ba9273bf8770/crates/casars-imager/tests/t1/mtmfs.rs">crates/casars-imager/tests/t1/mtmfs.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/2c0aa26bca18b4b8301e0eee2540ba9273bf8770/crates/casa-imaging-products/src/generation.rs">crates/casa-imaging-products/src/generation.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/2c0aa26bca18b4b8301e0eee2540ba9273bf8770/crates/casa-imaging-application/src/availability.rs">crates/casa-imaging-application/src/availability.rs</a></li>
+<li>Revision: <code>f051e3b71b2d8e890a33ea4607cea5ca1c01b683</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with tclean-casa-test-cases.json (#1065's 14 cases, --include-skipped) and tclean-mtmfs-polarized-cases.json</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-mtmfs-polarized-review-20261103.json</code>.</li>
 </ul>
 <h2 id="tools">Tools<a class="headerlink" href="#tools" title="Permanent link">&para;</a></h2>
 <p>Each CASA class casa-rs presents in Python, against the signatures recorded from CASA 6.7.6.14 (<code>crates/casars-python/python/tests/data/casa_&lt;class&gt;_signatures.json</code>), which the Python tests hold the classes to. A reviewed class has a file under <code>resources/casa-compat/semantics/tools/</code> giving each method's status, scope and evidence; the others are not reviewed yet. The simulation classes (<code>simulator</code>, <code>componentlist</code>, <code>measures</code>, <code>quanta</code> and <code>simutil</code>) are reviewed in #1053, and <code>image</code>, <code>coordsys</code>, <code>table</code>, <code>msmetadata</code> and <code>ms</code> in #1025.</p>

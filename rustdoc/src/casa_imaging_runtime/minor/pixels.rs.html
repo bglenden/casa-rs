@@ -206,42 +206,43 @@
 <a href=#206 id=206 data-nosnippet>206</a>}
 <a href=#207 id=207 data-nosnippet>207</a>
 <a href=#208 id=208 data-nosnippet>208</a><span class="doccomment">/// Whether plane `key`'s `.pb` exceeds its cutoff anywhere: the weight
-<a href=#209 id=209 data-nosnippet>209</a>/// image's Float beam under a response (a Taylor family's principal one),
-<a href=#210 id=210 data-nosnippet>210</a>/// else the analytic beam at the plane's channel; true for a run without
-<a href=#211 id=211 data-nosnippet>211</a>/// a beam, which never falls back.
-<a href=#212 id=212 data-nosnippet>212</a></span><span class="kw">fn </span>beam_keeps_a_pixel(
-<a href=#213 id=213 data-nosnippet>213</a>    normal: <span class="kw-2">&amp;</span>FinalNormalState,
-<a href=#214 id=214 data-nosnippet>214</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#215 id=215 data-nosnippet>215</a>    (roles, key, taylor): (<span class="kw-2">&amp;</span>[ImageDomainRole], PlaneKey, bool),
-<a href=#216 id=216 data-nosnippet>216</a>) -&gt; <span class="prelude-ty">Result</span>&lt;bool, MinorCycleRunError&gt; {
-<a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(response) = setup.response <span class="kw">else </span>{
-<a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">return match </span><span class="kw-2">&amp;</span>setup.primary_beam {
-<a href=#219 id=219 data-nosnippet>219</a>            <span class="prelude-val">Some</span>(beam) =&gt; <span class="prelude-val">Ok</span>(beam
-<a href=#220 id=220 data-nosnippet>220</a>                .support(<span class="kw-2">&amp;</span>roles[key.domain], <span class="kw">if </span>taylor { <span class="number">0 </span>} <span class="kw">else </span>{ key.channel })<span class="question-mark">?
-<a href=#221 id=221 data-nosnippet>221</a>                </span>.iter()
-<a href=#222 id=222 data-nosnippet>222</a>                .any(|kept| <span class="kw-2">*</span>kept)),
-<a href=#223 id=223 data-nosnippet>223</a>            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>),
-<a href=#224 id=224 data-nosnippet>224</a>        };
-<a href=#225 id=225 data-nosnippet>225</a>    };
-<a href=#226 id=226 data-nosnippet>226</a>    <span class="kw">let </span>(sensitivity, sum_weight) = <span class="kw">if </span>taylor {
-<a href=#227 id=227 data-nosnippet>227</a>        <span class="kw">let </span>window = normal.read_window(normal.slab().core_range())<span class="question-mark">?</span>;
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw">let </span>principal = window
-<a href=#229 id=229 data-nosnippet>229</a>            .normal_moment(<span class="number">0</span>)
-<a href=#230 id=230 data-nosnippet>230</a>            .expect(<span class="string">"a Taylor family has its zeroth moment"</span>);
-<a href=#231 id=231 data-nosnippet>231</a>        (
-<a href=#232 id=232 data-nosnippet>232</a>            Cow::Owned(principal.sensitivity().to_vec()),
-<a href=#233 id=233 data-nosnippet>233</a>            principal.sum_weight(),
-<a href=#234 id=234 data-nosnippet>234</a>        )
-<a href=#235 id=235 data-nosnippet>235</a>    } <span class="kw">else </span>{
-<a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">let </span>plane = normal.read_plane(key.domain, key.channel, key.polarization)<span class="question-mark">?</span>;
-<a href=#237 id=237 data-nosnippet>237</a>        (plane.read_sensitivity()<span class="question-mark">?</span>, plane.sum_weight())
-<a href=#238 id=238 data-nosnippet>238</a>    };
-<a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">let </span>beam = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity)<span class="question-mark">?</span>.with_normal_sum_weight(sum_weight)<span class="question-mark">?</span>;
-<a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..sensitivity.len() {
-<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">if </span>beam.weighted_primary_beam_positive_at(index, response.policy())<span class="question-mark">? </span>{
-<a href=#242 id=242 data-nosnippet>242</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">true</span>);
-<a href=#243 id=243 data-nosnippet>243</a>        }
-<a href=#244 id=244 data-nosnippet>244</a>    }
-<a href=#245 id=245 data-nosnippet>245</a>    <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>)
-<a href=#246 id=246 data-nosnippet>246</a>}
+<a href=#209 id=209 data-nosnippet>209</a>/// image's Float beam under a response (its polarization's Taylor family's
+<a href=#210 id=210 data-nosnippet>210</a>/// principal one),
+<a href=#211 id=211 data-nosnippet>211</a>/// else the analytic beam at the plane's channel; true for a run without
+<a href=#212 id=212 data-nosnippet>212</a>/// a beam, which never falls back.
+<a href=#213 id=213 data-nosnippet>213</a></span><span class="kw">fn </span>beam_keeps_a_pixel(
+<a href=#214 id=214 data-nosnippet>214</a>    normal: <span class="kw-2">&amp;</span>FinalNormalState,
+<a href=#215 id=215 data-nosnippet>215</a>    setup: <span class="kw-2">&amp;</span>MinorCycleSetup&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#216 id=216 data-nosnippet>216</a>    (roles, key, taylor): (<span class="kw-2">&amp;</span>[ImageDomainRole], PlaneKey, bool),
+<a href=#217 id=217 data-nosnippet>217</a>) -&gt; <span class="prelude-ty">Result</span>&lt;bool, MinorCycleRunError&gt; {
+<a href=#218 id=218 data-nosnippet>218</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(response) = setup.response <span class="kw">else </span>{
+<a href=#219 id=219 data-nosnippet>219</a>        <span class="kw">return match </span><span class="kw-2">&amp;</span>setup.primary_beam {
+<a href=#220 id=220 data-nosnippet>220</a>            <span class="prelude-val">Some</span>(beam) =&gt; <span class="prelude-val">Ok</span>(beam
+<a href=#221 id=221 data-nosnippet>221</a>                .support(<span class="kw-2">&amp;</span>roles[key.domain], <span class="kw">if </span>taylor { <span class="number">0 </span>} <span class="kw">else </span>{ key.channel })<span class="question-mark">?
+<a href=#222 id=222 data-nosnippet>222</a>                </span>.iter()
+<a href=#223 id=223 data-nosnippet>223</a>                .any(|kept| <span class="kw-2">*</span>kept)),
+<a href=#224 id=224 data-nosnippet>224</a>            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>),
+<a href=#225 id=225 data-nosnippet>225</a>        };
+<a href=#226 id=226 data-nosnippet>226</a>    };
+<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">let </span>(sensitivity, sum_weight) = <span class="kw">if </span>taylor {
+<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw">let </span>window = normal.read_window(normal.slab().core_range())<span class="question-mark">?</span>;
+<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw">let </span>principal = window
+<a href=#230 id=230 data-nosnippet>230</a>            .normal_moment(<span class="number">0</span>, key.polarization)
+<a href=#231 id=231 data-nosnippet>231</a>            .expect(<span class="string">"a Taylor family has its zeroth moment"</span>);
+<a href=#232 id=232 data-nosnippet>232</a>        (
+<a href=#233 id=233 data-nosnippet>233</a>            Cow::Owned(principal.sensitivity().to_vec()),
+<a href=#234 id=234 data-nosnippet>234</a>            principal.sum_weight(),
+<a href=#235 id=235 data-nosnippet>235</a>        )
+<a href=#236 id=236 data-nosnippet>236</a>    } <span class="kw">else </span>{
+<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">let </span>plane = normal.read_plane(key.domain, key.channel, key.polarization)<span class="question-mark">?</span>;
+<a href=#238 id=238 data-nosnippet>238</a>        (plane.read_sensitivity()<span class="question-mark">?</span>, plane.sum_weight())
+<a href=#239 id=239 data-nosnippet>239</a>    };
+<a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">let </span>beam = MosaicSensitivity::new(<span class="kw-2">&amp;</span>sensitivity)<span class="question-mark">?</span>.with_normal_sum_weight(sum_weight)<span class="question-mark">?</span>;
+<a href=#241 id=241 data-nosnippet>241</a>    <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..sensitivity.len() {
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">if </span>beam.weighted_primary_beam_positive_at(index, response.policy())<span class="question-mark">? </span>{
+<a href=#243 id=243 data-nosnippet>243</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">true</span>);
+<a href=#244 id=244 data-nosnippet>244</a>        }
+<a href=#245 id=245 data-nosnippet>245</a>    }
+<a href=#246 id=246 data-nosnippet>246</a>    <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>)
+<a href=#247 id=247 data-nosnippet>247</a>}
 </code></pre></div></section></main></body></html>
