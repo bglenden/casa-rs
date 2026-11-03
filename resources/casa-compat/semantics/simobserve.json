@@ -347,7 +347,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "casa-suite-20261103"
+    "casa-suite-20261103",
+    "noise-seeds-20261103"
    ],
    "behaviors": [
     "noise"
@@ -360,7 +361,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "casa-suite-20261103"
+    "casa-suite-20261103",
+    "noise-seeds-20261103"
    ],
    "behaviors": [
     "noise"
@@ -397,7 +399,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "casa-suite-20261103"
+    "casa-suite-20261103",
+    "noise-seeds-20261103"
    ],
    "behaviors": [
     "noise"
@@ -409,7 +412,8 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-20261103"
+    "parity-20261103",
+    "noise-seeds-20261103"
    ],
    "behaviors": [
     "noise"
@@ -537,11 +541,12 @@
    "title": "Thermal noise and leakage",
    "status": "Partial",
    "scope": "thermalnoise 'tsys-atm', 'tsys-manual' and '' with user_pwv, t_ground, t_sky, tau0, seed, leakage and correlator.",
-   "gap": "Noise is compared statistically (variances and KS tests), since draws differ; each environment parameter is exercised once; seed is casa-rs's own stream. In CASA's own suite, tsys-manual interferometer noise is 5.8% below CASA's recorded level and tsys-atm single-dish noise 5.05% above it, just outside its 5% band; not yet attributed (#1053).",
+   "gap": "Noise is compared statistically (variances and KS tests), since draws differ; each environment parameter is exercised once; seed is casa-rs's own stream. CASA's own suite holds its noise tests to CASA's seed-11111 draws within 5%, which casa-rs's random stream cannot reproduce; over 20 seeds the two implementations' noise levels agree to 0.5%.",
    "evidence": [
     "task-tests",
     "parity-20261103",
-    "casa-suite-20261103"
+    "casa-suite-20261103",
+    "noise-seeds-20261103"
    ]
   },
   {
@@ -740,7 +745,7 @@
   "casa-suite-20261103": {
    "kind": "CASA's test_task_simobserve with casa-rs in place of CASA's task",
    "state": "measured",
-   "result": "Of the 54 cases CASA 6.7.6.14 passes on this host, casa-rs passes 45. Of the other 9, 3 refuse as CASA does in casa-rs's own words: an empty project, and comp_nchan and sdant of the wrong type. The other 6 are noise levels just outside the suite's 5% band: tsys-manual interferometer noise 5.8% below CASA's recorded value, and tsys-atm single-dish noise 5.05% above it in all five variants. Not yet attributed. 23 cases fail with CASA's own task too and 16 are skipped by both.",
+   "result": "Of the 54 cases CASA 6.7.6.14 passes on this host, casa-rs passes 45. Of the other 9, 3 refuse as CASA does in casa-rs's own words: an empty project, and comp_nchan and sdant of the wrong type. The other 6 are noise levels just outside the suite's 5% band: tsys-manual interferometer noise 5.8% below CASA's recorded value, and tsys-atm single-dish noise 5.05% above it in all five variants. Those six are CASA's own seed-11111 draws, which casa-rs's random stream cannot reproduce; over 20 seeds the levels agree to 0.5% (noise-seeds-20261103). 23 cases fail with CASA's own task too and 16 are skipped by both.",
    "scope": "CASA's own simobserve suite (93 cases): sky models, component lists, both, noise, bad inputs and correlators, judged by the suite's checks against casatestdata's reference products.",
    "links": [
     "tools/simulation/simobserve_casa_suite.py"
@@ -750,6 +755,17 @@
    "command": "CASAPY tools/simulation/simobserve_casa_suite.py --test-file CASA6/casatasks/tests/tasks/test_task_simobserve.py --casatestdata LOCAL_COPY --casars-bin TARGET/release/simobserve --out OUT (bg-mac-mini)",
    "receipt": "resources/casa-compat/evidence/simobserve-casa-suite-20261103.json",
    "source_revision": "d5c88b52b718e4b3834447724d66371f269a0083"
+  },
+  "noise-seeds-20261103": {
+   "kind": "CASA-paired noise levels over 20 seeds",
+   "state": "passed",
+   "result": "The suite's two noise cases, 20 seeds each: casa-rs's mean level over CASA's is 1.002 for testNZ_sdAtm (tsys-atm single dish) and 1.005 for testNZ_intMan (tsys-manual interferometer), within 0.2 and 0.9 standard errors. The levels CASA's suite records are CASA's own seed-11111 draws, 1.8 and 2.9 of CASA's standard deviations from its mean, which a different random stream cannot reproduce: they explain the suite's six noise failures.",
+   "scope": "testNZ_sdAtm and testNZ_intMan of CASA's test_task_simobserve, the suite's noise level (noisy minus original, real part, standard deviation) per run.",
+   "links": [],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "d5c88b52b718e4b3834447724d66371f269a0083",
+   "command": "CASAPY tools/simulation/simobserve_noise_seeds.py --casatestdata LOCAL_COPY --casars-bin TARGET/release/simobserve --out OUT (bg-mac-mini)",
+   "receipt": "resources/casa-compat/evidence/simobserve-noise-seeds-20261103.json"
   }
  }
 }
