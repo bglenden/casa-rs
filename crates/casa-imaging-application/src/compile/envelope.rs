@@ -46,7 +46,7 @@ impl SpectralEnvelope {
 /// The observatory frame towards `epoch`'s field at its time: a moving
 /// field's direction then, else a fixed field's stored phase centre, in its
 /// stored frame, as the deleted MAIN walk read `PHASE_DIR`.
-fn epoch_frame(
+pub(super) fn epoch_frame(
     (catalogue, engine): (&Catalogue, &MsCalEngine),
     epoch: Epoch,
 ) -> Result<MeasFrame, PrepareError> {
@@ -136,54 +136,118 @@ pub(super) fn continuum_envelope(
     let mut edges_hz = [f64::INFINITY, f64::NEG_INFINITY];
     // Each field's direction, once: only the conversion epoch varies.
     let mut directions = BTreeMap::<i32, MDirection>::new();
-    let mut fold = |hz: f64| {
-        edges_hz[0] = edges_hz[0].min(hz);
-        edges_hz[1] = edges_hz[1].max(hz);
-    };
     for window in &survey.spectral_windows {
         let channels = selected
             .get(&window.spw_id)
             .expect("the continuum selects channels of every selected window");
-        let [lower_hz, upper_hz] = selected_edges(window, channels)?;
-        let source = window.frequency_reference;
-        if source == FrequencyRef::REST || (source == output && source != FrequencyRef::TOPO) {
-            fold(lower_hz);
-            fold(upper_hz);
-            continue;
-        }
-        let mut converter = MFrequencyConverter::new(source, output);
-        for epoch in survey.window_epochs(window.spw_id) {
-            let direction = match directions.get(&epoch.field_id) {
-                Some(direction) => direction.clone(),
-                None => {
-                    // Only a moving field without its own reference epoch
-                    // (an MSv4's) reads its first selected time; finding it
-                    // scans every window's epochs, so fixed fields skip it.
-                    let field =
-                        usize::try_from(epoch.field_id).expect("a surveyed field is a FIELD row");
-                    let first = if engine.field_moves(field) {
-                        survey
-                            .first_time_of(epoch.field_id)
-                            .unwrap_or(epoch.time_mjd_seconds)
-                    } else {
-                        epoch.time_mjd_seconds
-                    };
-                    let direction =
-                        continuum_direction((catalogue, engine), epoch.field_id, first)?;
-                    directions.insert(epoch.field_id, direction.clone());
-                    direction
-                }
-            };
-            let frame =
-                engine.spectral_frame_observatory_direction(epoch.time_mjd_seconds, direction)?;
-            fold(converter.convert_hz(lower_hz, &frame)?.hz());
-            fold(converter.convert_hz(upper_hz, &frame)?.hz());
-        }
+        let edges = selected_edges(window, channels)?;
+        fold_over_epochs(
+            (catalogue, engine),
+            (survey, window),
+            &edges,
+            output,
+            &mut directions,
+            &mut |hz| {
+                edges_hz[0] = edges_hz[0].min(hz);
+                edges_hz[1] = edges_hz[1].max(hz);
+            },
+        )?;
     }
     if !(edges_hz[0].is_finite() && edges_hz[1].is_finite() && edges_hz[1] > edges_hz[0]) {
         return Err(PrepareError::SpectralEnvelope { edges_hz });
     }
     Ok(SpectralEnvelope { edges_hz })
+}
+
+/// CASA's band of channels `[first, last]` of `window` in frame `output`
+/// (`SynthesisImagerVi2::selectData`, by `MSUtil::getFreqRangeInSpw`
+/// without `fromEdge`): the lowest and highest of the channels' centres
+/// converted at each epoch of the window's samples, as
+/// [`continuum_envelope`] converts edges. `None` when the window has no
+/// epoch to convert at, where CASA selects nothing of it by frequency.
+pub(super) fn selection_band(
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
+    (survey, window): (&Survey, &SourceSpectralWindow),
+    [first, last]: [usize; 2],
+    output: FrequencyRef,
+) -> Result<Option<[f64; 2]>, PrepareError> {
+    let centres = window
+        .frequencies_hz
+        .get(first..=last)
+        .ok_or(PrepareError::SpectralWindowCoordinates {
+            spw_id: window.spw_id,
+        })?;
+    let lowest = centres.iter().copied().fold(f64::INFINITY, f64::min);
+    let highest = centres.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let mut band = [f64::INFINITY, f64::NEG_INFINITY];
+    let converted = fold_over_epochs(
+        (catalogue, engine),
+        (survey, window),
+        &[lowest, highest],
+        output,
+        &mut BTreeMap::new(),
+        &mut |hz| {
+            band[0] = band[0].min(hz);
+            band[1] = band[1].max(hz);
+        },
+    )?;
+    Ok(converted.then_some(band))
+}
+
+/// Fold each of `frequencies_hz`, in `window`'s frame, into `fold` in frame
+/// `output`, as `MSUtil::getFreqRangeInSpw` converts a window's
+/// frequencies: at each epoch of the window's samples in time order,
+/// through **one** `MFrequency::Convert`, whose aberration and dUT1 are
+/// anchored at the first epoch and extrapolated across 0.04 days
+/// ([`MFrequencyConverter`]); that moves the far end of a long track by
+/// about 1e-12. CASA keys its epochs by `TIME·(DATA_DESC_ID+1)`, each
+/// standing for the earliest row with the key; a window's samples at one
+/// time towards one field are one epoch here. CASA takes `REST`
+/// frequencies, and those already in a frame other than `TOPO` that is the
+/// output's, as they are. Whether any frequency was folded.
+fn fold_over_epochs(
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
+    (survey, window): (&Survey, &SourceSpectralWindow),
+    frequencies_hz: &[f64],
+    output: FrequencyRef,
+    directions: &mut BTreeMap<i32, MDirection>,
+    fold: &mut impl FnMut(f64),
+) -> Result<bool, PrepareError> {
+    let source = window.frequency_reference;
+    if source == FrequencyRef::REST || (source == output && source != FrequencyRef::TOPO) {
+        frequencies_hz.iter().copied().for_each(&mut *fold);
+        return Ok(true);
+    }
+    let mut converter = MFrequencyConverter::new(source, output);
+    let mut converted = false;
+    for epoch in survey.window_epochs(window.spw_id) {
+        let direction = match directions.get(&epoch.field_id) {
+            Some(direction) => direction.clone(),
+            None => {
+                // Only a moving field without its own reference epoch
+                // (an MSv4's) reads its first selected time; finding it
+                // scans every window's epochs, so fixed fields skip it.
+                let field =
+                    usize::try_from(epoch.field_id).expect("a surveyed field is a FIELD row");
+                let first = if engine.field_moves(field) {
+                    survey
+                        .first_time_of(epoch.field_id)
+                        .unwrap_or(epoch.time_mjd_seconds)
+                } else {
+                    epoch.time_mjd_seconds
+                };
+                let direction = continuum_direction((catalogue, engine), epoch.field_id, first)?;
+                directions.insert(epoch.field_id, direction.clone());
+                direction
+            }
+        };
+        let frame = engine.spectral_frame_observatory_direction(epoch.time_mjd_seconds, direction)?;
+        for &hz in frequencies_hz {
+            fold(converter.convert_hz(hz, &frame)?.hz());
+        }
+        converted = true;
+    }
+    Ok(converted)
 }
 
 /// Each selected window's factor from its frame to LSRK at the first

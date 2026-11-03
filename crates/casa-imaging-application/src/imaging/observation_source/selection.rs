@@ -20,6 +20,9 @@ pub(crate) struct SelectedPartition {
     pub(crate) spectral_window: u32,
     /// The selected native channels, ascending.
     pub(crate) channels: Vec<u32>,
+    /// The window's per-time frequency selection, when a time reads only
+    /// some of `channels` ([`casa_imaging_model::FrequencyBands`]).
+    pub(crate) frequency_bands: Option<casa_imaging_model::FrequencyBands>,
     /// The correlation products the operator routes, in its order.
     pub(crate) correlations: Vec<Correlation>,
     /// The window's reference wavelength, when a UV-distance interval is

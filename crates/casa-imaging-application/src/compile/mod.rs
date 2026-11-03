@@ -16,6 +16,7 @@ mod direction;
 mod domains;
 mod envelope;
 mod error;
+mod frequency_bands;
 mod instrument;
 mod intents;
 mod native_aw;
@@ -204,7 +205,6 @@ pub(crate) fn prepare(
         &frame,
         moving_rest_frame.as_ref(),
     )?;
-    survey.retain_windows(&spectral.selected_source_channels);
     let surveyed_observation = Surveyed {
         catalogue,
         msv2: store.msv2(),
@@ -266,7 +266,7 @@ pub(crate) fn prepare(
         request,
         (store, columns),
         survey,
-        (&channels, &lsrk_factors),
+        (&channels, &lsrk_factors, &spectral.frequency_bands),
     )?;
     // A moving phase centre names a body and a table alike; the table, when
     // it is one, was read here.
@@ -338,6 +338,7 @@ fn survey_observation(
     let selection::SpwChoice {
         windows,
         channels: spw_channels,
+        ranges: spw_ranges,
     } = selection::window_choice(request, store)?;
     let (row_selection, states) = selection::row_selection(request, catalogue)?;
     let times = time_selection::resolve_times(request, store, &windows, (&row_selection, &states))?;
@@ -372,6 +373,7 @@ fn survey_observation(
     };
     let mut surveyed = survey::survey(plan, spectral_windows, (&context.host, &context.policy))?;
     surveyed.value.spw_channels = spw_channels;
+    surveyed.value.spw_ranges = spw_ranges;
     Ok((surveyed, columns))
 }
 
@@ -492,7 +494,11 @@ fn snapshot_input(
     request: &ImagingRequest,
     (store, columns): (&OpenedStore, Columns),
     survey: Survey,
-    (channels, lsrk_factors): (&WindowChannels, &BTreeMap<usize, f64>),
+    (channels, lsrk_factors, bands): (
+        &WindowChannels,
+        &BTreeMap<usize, f64>,
+        &spectral::WindowBands,
+    ),
 ) -> Result<ObservationSnapshotInput, PrepareError> {
     let visibility = columns.visibility;
     let weights = partitions::stored_weights(
@@ -500,7 +506,7 @@ fn snapshot_input(
         survey.partitions.iter().map(PartitionSelection::partition),
         visibility,
     );
-    let selection = selection::observation_selection(survey, channels, lsrk_factors)?;
+    let selection = selection::observation_selection(survey, channels, lsrk_factors, bands)?;
     Ok(ObservationSnapshotInput::new(vec![
         ObservationSourceInput::new(
             ObservationSourceProvenance::new(request.vis.display().to_string()),

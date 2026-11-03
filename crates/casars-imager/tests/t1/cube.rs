@@ -570,15 +570,20 @@ fn a_one_channel_cube_has_a_per_channel_briggs_density() {
     );
 }
 
-/// A cube whose first window has 30 or more channels reads the data by its
-/// band (`SynthesisImager::tuneSelectData`), so a window its axis does not
-/// reach is not read at all (#980): over two adjacent 30-channel windows, a
-/// ten-channel cube on the first reads and images what the cube of the
-/// first window alone does. Its uniform weights come from one density over
-/// every channel read (`VisImagingWeight`), which the second window's
-/// channels would change were they read.
+/// A cube reads a window its axis does not reach as `spw` selects it,
+/// tuned or not, and its `VisImagingWeight` density counts that window's
+/// samples, as CASA's does (#980): CASA forms the density over the
+/// untuned selection of the imager defining the cube, and the tuned
+/// selection of the imager gridding it keeps a window none of whose bands
+/// the image's band overlaps. CASA 6.7.6.14, `refim_point.ms` split into
+/// two ten-channel windows, a five-channel uniform cube on the first:
+/// `spw='*'`'s sum of weights and PSF differ from `spw='0'`'s (PSF by 14%),
+/// and alike whether the selection is tuned (`savemodel='modelcolumn'`) or
+/// not. Over two adjacent 30-channel windows here, the first window's
+/// buffer tunes the selection; the cube of both windows grids the samples
+/// of the first's alone, and weighs them otherwise.
 #[test]
-fn a_tuned_cube_does_not_read_a_window_its_axis_misses() {
+fn a_cube_density_counts_a_window_its_axis_misses() {
     let (observation, _) = adjacent_windows(30);
     let cube = |name: &str, spw: &str| {
         observation.image(
@@ -593,20 +598,63 @@ fn a_tuned_cube_does_not_read_a_window_its_axis_misses() {
     let (alone_report, alone) = cube("tuned-alone", "0");
     assert!(alone_report.gridded_samples > 0);
     assert_eq!(both_report.gridded_samples, alone_report.gridded_samples);
-    for suffix in [".psf", ".residual", ".sumwt"] {
-        let [ours, theirs] = [&both, &alone].map(|products| products.get(suffix).values());
-        assert_eq!(ours.shape(), theirs.shape(), "{suffix}");
-        let scale = theirs
-            .iter()
-            .fold(0.0_f32, |peak, value| peak.max(value.abs()));
-        let difference = (&ours - &theirs)
-            .iter()
-            .fold(0.0_f32, |largest, value| largest.max(value.abs()));
+    let [ours, theirs] = [&both, &alone].map(|products| products.get(".sumwt").channel_values());
+    for (channel, (ours, theirs)) in ours.iter().zip(&theirs).enumerate() {
         assert!(
-            difference <= 1.0e-5 * scale,
-            "{suffix} differs by {difference} of {scale}"
+            (ours - theirs).abs() > 1.0e-3 * theirs,
+            "sumwt of channel {channel}: {ours} with the missed window, {theirs} without"
         );
     }
+}
+
+/// CASA's visibility iterator selects a cube's channels at each time by
+/// frequency (`vi::FrequencySelectionUsingFrame`, #980): by the LSRK band
+/// from the lowest to the highest frequency the channels `spw` names take
+/// over the track, narrowed to the image's band, a time reads the channels
+/// whose extent meets the band converted to that time. With TOPO channels
+/// narrower than the LSRK drift across the track, the channels a time
+/// reads move with it, so the edge plane on the band's end is bracketed by
+/// two read channels at about half the times, as the plane's frequency
+/// falls in the upper or lower half of the last channel read: CASA's
+/// `test_cube_D2` keeps 2460.56 of 5020.51 there. Every other plane keeps
+/// every sample. Reading every channel at every time kept the edge plane
+/// whole.
+#[test]
+fn a_cube_reads_at_each_time_the_channels_its_band_selects_then() {
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+    const NAMED: usize = 30;
+    // 2 kHz channels at 44 GHz: an hour's LSRK drift is several channels.
+    let mut setup = super::fixture::Setup::vla_q_band(NAMED + 10);
+    setup.spectral_windows[0].channel_width_hz = 2.0e3;
+    let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let (_, products) = observation.image(
+        "drift",
+        json!({
+            "specmode": "cube", "spw": format!("0:5~{}", 4 + NAMED), "start": 5, "width": 1,
+            "nchan": NAMED, "niter": 0,
+        }),
+    );
+    let sumwt = products.get(".sumwt").channel_values();
+    let samples = observation.stokes_i_samples_per_channel() as f32;
+    assert_eq!(sumwt.len(), NAMED);
+    for (channel, sumwt) in sumwt.iter().enumerate().take(NAMED - 1).skip(1) {
+        assert_eq!(*sumwt, samples, "interior channel {channel}");
+    }
+    let [low, high] = [sumwt[0], sumwt[NAMED - 1]];
+    let edge = low.min(high);
+    assert_eq!(low.max(high), samples, "edges {low} and {high} of {samples}");
+    assert!(
+        (0.3 * samples..=0.7 * samples).contains(&edge),
+        "the edge plane on the band's end keeps {edge} of {samples}"
+    );
 }
 
 /// Two adjacent Q-band windows of `channels` 128 MHz channels each, the

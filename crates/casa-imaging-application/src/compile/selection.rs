@@ -271,7 +271,15 @@ impl WindowChoice {
 pub(super) struct SpwChoice {
     pub(super) windows: WindowChoice,
     pub(super) channels: WindowChannels,
+    /// The first and last channel of each channel range `spw` names, per
+    /// window, in its order (`MSSelection::getChanList`'s rows); a window
+    /// `spw` names without channels is absent, as from `channels`.
+    pub(super) ranges: WindowRanges,
 }
+
+/// The first and last channel of each channel range of a window, by window
+/// number ([`SpwChoice::ranges`]).
+pub(super) type WindowRanges = BTreeMap<usize, Vec<[usize; 2]>>;
 
 /// The windows and channels `request` selects in `store` ([`SpwChoice`]):
 /// those its `spw` selects, except that a `ddid` (casa-rs's own parameter)
@@ -292,6 +300,7 @@ pub(super) fn window_choice(
         None => SpwChoice {
             windows: WindowChoice::All,
             channels: WindowChannels::new(),
+            ranges: WindowRanges::new(),
         },
     };
     // casa-rs's `ddid` names the partitions; `spw` still names their
@@ -369,6 +378,7 @@ fn spw_choice(text: &str, store: &OpenedStore) -> Result<SpwChoice, PrepareError
     // Every listed window has a data description among `rows`.
     let row_windows = selection.spw_ids().iter().copied().collect::<BTreeSet<_>>();
     let mut channels = WindowChannels::new();
+    let mut named = WindowRanges::new();
     for &spw in &row_windows {
         let ranges = selection
             .channel_list()
@@ -397,6 +407,17 @@ fn spw_choice(text: &str, store: &OpenedStore) -> Result<SpwChoice, PrepareError
             .find(|entry| entry.window.0 as usize == spw)
             .map_or(0, |entry| entry.frequencies_hz.len());
         if !(union.len() == whole && ranges.len() == 1 && ranges[0].step == 1) {
+            named.insert(
+                spw,
+                ranges
+                    .iter()
+                    .filter_map(|range| {
+                        let mut channels = range.channels()?;
+                        let first = channels.next()?;
+                        Some([first, channels.last().unwrap_or(first)])
+                    })
+                    .collect(),
+            );
             channels.insert(spw, union);
         }
     }
@@ -411,7 +432,11 @@ fn spw_choice(text: &str, store: &OpenedStore) -> Result<SpwChoice, PrepareError
     } else {
         WindowChoice::Windows(as_u32(rows))
     };
-    Ok(SpwChoice { windows, channels })
+    Ok(SpwChoice {
+        windows,
+        channels,
+        ranges: named,
+    })
 }
 
 /// [`casa_ms::resolve_spw_selector`] over an MSv4's catalogue: window `i`
@@ -497,11 +522,14 @@ pub(super) fn selected_channels(
 /// `channels` per window with the window's whole frequency axis (CASA's
 /// mosaic kernels select by the complete `CHAN_FREQ` and
 /// `|CHAN_WIDTH[0]|`) and its factor to LSRK at its first visibility
-/// buffer, from `lsrk_factors` ([`super::envelope::first_buffer_lsrk_factors`]).
+/// buffer, from `lsrk_factors` ([`super::envelope::first_buffer_lsrk_factors`]),
+/// and the per-time frequency selection of a window in `bands`
+/// ([`super::frequency_bands`]).
 pub(super) fn observation_selection(
     survey: Survey,
     channels: &WindowChannels,
     lsrk_factors: &BTreeMap<usize, f64>,
+    bands: &super::spectral::WindowBands,
 ) -> Result<ObservationSelection, PrepareError> {
     let spectral_windows = channels
         .iter()
@@ -531,6 +559,10 @@ pub(super) fn observation_selection(
             )
             .with_coordinate_catalog(catalog)
             .with_first_buffer_lsrk_factor(factor)
+            .map(|selection| match bands.get(spw_id) {
+                Some(bands) => selection.with_frequency_bands(bands.clone()),
+                None => selection,
+            })
             .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: *spw_id })
         })
         .collect::<Result<Vec<_>, PrepareError>>()?;

@@ -228,6 +228,7 @@ impl<'a> ObservationSource<'a> {
             route,
             packer: Packer {
                 problem,
+                plan: &route.plan,
                 charts: layout.domains,
                 pointing,
                 dish_classes: route.dish_classes(),

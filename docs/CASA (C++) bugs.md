@@ -24,6 +24,7 @@ CASA behaviours casa-rs does not follow:
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
 [an unflagged non-finite sample](#an-unflagged-non-finite-sample-turns-the-image-to-nan),
+[a tuned cube's frequency selection](#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones),
 [`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
 [`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0),
 [`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process),
@@ -3011,3 +3012,37 @@ window 0). `( ... )` skips `endOfCeremony`, so the expression keeps every MAIN
 row. All are in the evidence file; `casa-ms` reproduces them, and `tclean`
 refuses the parenthesized form and a window kept without channels, whose
 imaging in CASA is not established.
+
+## A tuned cube selection compares `outframe` frequencies with LSRK ones
+
+- Date noted: 2026-11-03
+- Status: CASA bug casa-rs does not follow (#980,
+  `casa-imaging-application` `compile::frequency_bands`)
+- Affected code: casatools `synthesis/ImagerObjects/SynthesisImagerVi2.cc`
+  (`selectData`, `andFreqSelection`), `SynthesisImager.cc`
+  (`tuneSelectData`), `CubeMajorCycleAlgorithm.cc` (`task`)
+
+A cube is gridded by `CubeMajorCycleAlgorithm`'s own `SynthesisImagerVi2`.
+Its `selectData` states each channel range `spw` names as a frequency band in
+tclean's `outframe` (`MSUtil::getFreqRangeInSpw` over the range's channel
+centres at every time of the window's rows) and stores it in `freqBegs_p` and
+`freqEnds_p`. Where `tuneSelectData` tunes the selection (the first visibility
+buffer's window has 30 or more channels, or the model is saved to
+`MODEL_DATA`), it calls `selectData` again with the image's band, pixel −1.5 to
+`nchan + 0.5`, in LSRK, and `andFreqSelection` narrows each stored band that
+band overlaps to their intersection, without converting either: a band in
+`TOPO` or `BARY` numbers is intersected with one in LSRK numbers, and the
+result is read as LSRK (`FrequencySelectionUsingFrame(LSRK)`). The two frames
+differ by up to tens of km/s, so with channels narrower than that, an image
+whose band overlaps the stored one in those numbers loses the image's edge
+channels (or gains channels CASA never meant to read) at every time. The same
+`andFreqSelection` narrows two of a window's own channel ranges to their
+intersection when a Doppler shift across the track makes their bands
+overlap, which keeps almost nothing of either. casa-rs states a tuned
+selection's bands in LSRK before intersecting them with the image's, and
+keeps each named range's band whole; with `outframe='LSRK'`, the default, and
+ranges further apart than the shift, the selections agree. No case of CASA's
+test suite reaches either difference: the one tuned cube with channels
+narrower than the shift, `test_cube_D2`, images in LSRK, where casa-rs and
+CASA select the same channels at every time (its edge plane keeps 2460.56 of
+5020.51 in both).

@@ -30,7 +30,7 @@ use casa_types::measures::MjdHighPrec;
 use super::PrepareError;
 use super::envelope::SpectralEnvelope;
 use super::partitions::{Candidate, Candidates, field_selection};
-use super::selection::{SourceSpectralWindow, WindowChannels};
+use super::selection::{SourceSpectralWindow, WindowChannels, WindowRanges};
 
 /// The least bytes one batch of the survey holds: enough for several times
 /// of a large array, so a partition's survey is not a batch per time.
@@ -88,8 +88,6 @@ pub(super) struct Survey {
     pub(super) partitions: Vec<PartitionSelection>,
     /// The selected samples, padding excluded.
     pub(super) samples: u64,
-    /// The selected samples of each window, by window number.
-    window_samples: BTreeMap<usize, u64>,
     /// The selected partitions' spectral windows, in one source frame.
     pub(super) spectral_windows: Vec<SourceSpectralWindow>,
     pub(super) source_frequency_reference: casa_types::measures::frequency::FrequencyRef,
@@ -120,28 +118,16 @@ pub(super) struct Survey {
     /// ([`super::selection::SpwChoice::channels`]), set after the survey as
     /// [`continuum`](Self::continuum) is.
     pub(super) spw_channels: WindowChannels,
+    /// The channel ranges the request's `spw` names per window
+    /// ([`super::selection::SpwChoice::ranges`]), set with
+    /// [`spw_channels`](Self::spw_channels).
+    pub(super) spw_ranges: WindowRanges,
 }
 
 impl Survey {
     /// The epochs of window `spw_id`'s selected samples.
     pub(super) fn window_epochs(&self, spw_id: usize) -> &[Epoch] {
         self.epochs.get(&spw_id).map_or(&[], Vec::as_slice)
-    }
-
-    /// Keep only the windows `read` names, with their partitions, epochs
-    /// and samples: what a cube reads once CASA's tuned selection drops the
-    /// windows its axis does not reach (`SynthesisImager::tuneSelectData`).
-    /// The facts CASA fixes the image by before it tunes, the fields, first
-    /// visibility, times and W range, stay those of the whole selection.
-    pub(super) fn retain_windows(&mut self, read: &WindowChannels) {
-        self.partitions
-            .retain(|partition| read.contains_key(&(partition.spectral_window_id() as usize)));
-        self.spectral_windows
-            .retain(|window| read.contains_key(&window.spw_id));
-        self.epochs.retain(|spw_id, _| read.contains_key(spw_id));
-        self.window_samples
-            .retain(|spw_id, _| read.contains_key(spw_id));
-        self.samples = self.window_samples.values().sum();
     }
 
     /// The earliest selected time of field `field_id`, if it has one.
@@ -405,7 +391,6 @@ pub(super) fn survey(
     let mut buffers = BatchBuffers::default();
     let mut partitions = Vec::new();
     let mut samples = 0;
-    let mut window_samples = BTreeMap::<usize, u64>::new();
     let mut first_cross: Option<FirstCrossSample> = None;
     for candidate in &plan.candidates.partitions {
         let entry = catalogue.partition(candidate.id);
@@ -415,7 +400,6 @@ pub(super) fn survey(
             continue;
         }
         samples += selected;
-        *window_samples.entry(candidate.spectral_window).or_default() += selected;
         if plan.first_cross
             && let Some(sample) = first_cross_sample(
                 &plan,
@@ -467,7 +451,6 @@ pub(super) fn survey(
             row_selection: plan.row_selection,
             partitions,
             samples,
-            window_samples,
             spectral_windows,
             source_frequency_reference,
             fields: facts.fields,
@@ -482,6 +465,7 @@ pub(super) fn survey(
             epochs: facts.epochs,
             continuum: None,
             spw_channels: WindowChannels::new(),
+            spw_ranges: WindowRanges::new(),
         },
         reservation,
     })
