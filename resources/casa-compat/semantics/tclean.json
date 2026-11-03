@@ -1780,7 +1780,7 @@
     "mosweight-cube-20261103": {
       "kind": "CASA tclean test-case matrix, ad hoc mosaic cubes, per-sample weight attribution, T0/T1 laws",
       "state": "measured: test_mosaic_cube briggsbwtaper 1-2 pass (5.6e-4/6.4e-4 NRMS); off-centre fields differ by CASA's two-frame cube density, attributed per sample",
-      "source_revision": "4d85b91e9596d36846727ca4abf64df6e9a53f94",
+      "source_revision": "53e504eed2954070761bb5b2bd0a9cc427ad0b36",
       "revision": "ab3c883f3e4682a35b2aec0cc65bc364c3642220",
       "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
       "command": "tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with resources/casa-compat/tclean-mosweight-cube-cases.json (19 cases), and with tclean-casa-test-cases.json --case-prefix test_mosaic_cube. --include-skipped and 16 cube density cases",
