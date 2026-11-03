@@ -511,12 +511,16 @@
   },
   "casa-values": {
    "kind": "CASA-probed values",
-   "state": "measured",
-   "result": "Values probed from the Mac mini's CASA on 2026-10-21 (the test file says CASA 6.7.6; the signatures recorded with them name casatools 6.7.6-14). Conversions without Earth orientation match to the last bit or stated tolerances; UT1, AZEL and HADEC are checked loosely. Re-probe on 6.7.6.14 with a receipt to pass.",
+   "state": "passed",
+   "result": "39 of the 78 tests pass against CASA 6.7.6.14's own me tool, including every measure, conversion and query value. Of the 39 others, 30 test what only casa-rs has, 8 assert messages CASA writes to its own log, and 1 is the recorded empty-frame decision; the receipt classifies each. casa-rs passes the same tests in CI.",
    "scope": "Every implemented method, with CASA's messages.",
    "links": [
     "crates/casars-python/python/tests/test_tools_measures.py"
-   ]
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool measures (bg-mac-mini)",
+   "receipt": "resources/casa-compat/evidence/me-on-casa-20261103.json"
   },
   "bugs-record": {
    "kind": "Deviation record",

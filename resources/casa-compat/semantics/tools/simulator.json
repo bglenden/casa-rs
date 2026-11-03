@@ -10,7 +10,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe",
+    "observe-20261103",
     "scripts"
    ]
   },
@@ -20,7 +20,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "openfromms",
+    "openfromms-20261103",
     "refusals"
    ],
    "issue": 1053
@@ -31,7 +31,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe"
+    "observe-20261103"
    ]
   },
   "done": {
@@ -72,7 +72,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe",
+    "observe-20261103",
     "scripts"
    ]
   },
@@ -82,7 +82,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe",
+    "observe-20261103",
     "scripts",
     "refusals"
    ],
@@ -94,7 +94,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe",
+    "observe-20261103",
     "refusals"
    ],
    "issue": 1053
@@ -105,7 +105,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe"
+    "observe-20261103"
    ]
   },
   "setauto": {
@@ -114,8 +114,8 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe",
-    "predict-image"
+    "observe-20261103",
+    "predict-image-20261103"
    ]
   },
   "setconfig": {
@@ -124,7 +124,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe",
+    "observe-20261103",
     "scripts"
    ]
   },
@@ -134,7 +134,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe",
+    "observe-20261103",
     "scripts"
    ]
   },
@@ -144,7 +144,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe",
+    "observe-20261103",
     "scripts"
    ]
   },
@@ -162,7 +162,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe",
+    "observe-20261103",
     "scripts"
    ]
   },
@@ -172,7 +172,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "observe",
+    "observe-20261103",
     "refusals"
    ],
    "issue": 1053
@@ -183,10 +183,10 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "predict-image",
-    "predict-components",
-    "predict-sd",
-    "openfromms",
+    "predict-image-20261103",
+    "predict-components-20261103",
+    "predict-sd-20261103",
+    "openfromms-20261103",
     "refusals"
    ],
    "issue": 1053
@@ -197,8 +197,8 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "predict-image",
-    "predict-sd",
+    "predict-image-20261103",
+    "predict-sd-20261103",
     "refusals"
    ],
    "issue": 1053
@@ -209,7 +209,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "predict-image",
+    "predict-image-20261103",
     "refusals"
    ],
    "issue": 1053
@@ -220,9 +220,9 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "noise",
-    "corruptions",
-    "troposphere",
+    "noise-20261103",
+    "corruptions-20261103",
+    "troposphere-20261103",
     "refusals"
    ],
    "issue": 1053
@@ -249,7 +249,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "corruptions",
+    "corruptions-20261103",
     "refusals"
    ],
    "issue": 1053
@@ -260,7 +260,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "corruptions"
+    "corruptions-20261103"
    ]
   },
   "settrop": {
@@ -269,7 +269,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "troposphere",
+    "troposphere-20261103",
     "refusals"
    ],
    "issue": 1053
@@ -288,7 +288,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "corruptions"
+    "corruptions-20261103"
    ]
   },
   "oldsetnoise": {
@@ -305,7 +305,7 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "noise",
+    "noise-20261103",
     "refusals"
    ],
    "issue": 1053
@@ -324,8 +324,8 @@
    "evidence": [
     "signature",
     "binding-tests",
-    "noise",
-    "corruptions"
+    "noise-20261103",
+    "corruptions-20261103"
    ]
   }
  },
@@ -1002,7 +1002,7 @@
   },
   "observe": {
    "kind": "CASA-paired MeasurementSets (PR-reported)",
-   "state": "measured",
+   "state": "superseded",
    "result": "10/10 agree with the 10 recorded descriptor differences; UVW within 3.4 um, 107 um on the 36 km VLA A. CASA 6.7.6 (6.7.6-14 per the reviews); records on the NAS (issue-841/evidence-2c-observemany-4cb59c6d3c). Not re-run at a current revision.",
    "scope": "open, setconfig, setfeed, setspwindow, setfield, settimes, setlimits, setauto, observe and observemany: every subtable, row and cell of 10 scenarios.",
    "links": [
@@ -1012,7 +1012,8 @@
     "tools/simulation/sm_observe_scenarios.json",
     "tools/simulation/casa_sm_observe_oracle.py",
     "tools/simulation/compare_sm_ms.py"
-   ]
+   ],
+   "superseded_by": "observe-20261103"
   },
   "scripts": {
    "kind": "CASA sm scripts run unchanged (PR-reported)",
@@ -1026,7 +1027,7 @@
   },
   "predict-image": {
    "kind": "CASA-paired predictions (PR-reported)",
-   "state": "measured",
+   "state": "superseded",
    "result": "21 predict scenarios agree; DATA NRMS 1.3e-7 to 1.35e-5 (limit 1e-3), mosaic 2.6e-7 to 6.6e-7 on CPU and Metal. CASA 6.7.6; records on the NAS (issue-841/evidence-855-d6ab21e2de, -2d-wproject-06737ef31a, -2e-vla-evla-16e61ae0c7). Not re-run at a current revision.",
    "scope": "predict of image models through GridFT, WProjectFT and the mosaic machine, with and without setvp (ALMA, ACA, VLA, EVLA), padding, several fields, incremental predicts and cubes with autocorrelations.",
    "links": [
@@ -1039,41 +1040,45 @@
     "tools/simulation/sm_predict_scenarios.json",
     "tools/simulation/casa_sm_predict_oracle.py",
     "tools/simulation/compare_sm_ms.py"
-   ]
+   ],
+   "superseded_by": "predict-image-20261103"
   },
   "predict-components": {
    "kind": "CASA-paired component predictions (PR-reported)",
-   "state": "measured",
+   "state": "superseded",
    "result": "7/7 agree; NRMS 3.2e-7 to 1.0e-4, the beam cases' 7e-5 to 1e-4 attributed but not isolated. Tabular spectra not covered. NAS issue-841/evidence-2f-complist-b2971f1923.tar. Not re-run.",
    "scope": "predict(complist=...) of point, Gaussian and disk components with polarization, spectra, a beam and incremental predicts.",
    "links": [
     "https://github.com/bglenden/casa-rs/pull/872",
     "tools/simulation/sm_components_scenarios.json"
-   ]
+   ],
+   "superseded_by": "predict-components-20261103"
   },
   "predict-sd": {
    "kind": "CASA-paired total-power predictions (PR-reported)",
-   "state": "measured",
+   "state": "superseded",
    "result": "7/7 agree: six bit-identical, one at 6.3e-8 NRMS. NAS issue-841/evidence-2g-sd-c76220b9fa.tar. Not re-run.",
    "scope": "setoptions(ftmachine='sd') with the PB, SF and BOX kernels, the beam twice, four correlations and incremental predicts.",
    "links": [
     "https://github.com/bglenden/casa-rs/pull/874",
     "tools/simulation/sm_sd_scenarios.json"
-   ]
+   ],
+   "superseded_by": "predict-sd-20261103"
   },
   "openfromms": {
    "kind": "CASA-paired openfromms runs (PR-reported)",
-   "state": "measured",
+   "state": "superseded",
    "result": "7/7 agree on CPU and Metal; NRMS up to 9.0e-6. Not re-run.",
    "scope": "openfromms then predict, corrupt, a moved pointing and the mosaic machine, on CASA's MeasurementSet and on casa-rs's.",
    "links": [
     "https://github.com/bglenden/casa-rs/pull/886",
     "tools/simulation/sm_openfromms_scenarios.json"
-   ]
+   ],
+   "superseded_by": "openfromms-20261103"
   },
   "noise": {
    "kind": "CASA-paired noise statistics (PR-reported)",
-   "state": "measured",
+   "state": "superseded",
    "result": "tsys-manual sigma within 1.9e-6 of CASA's T table; variances within 1 percent, KS p 0.11 to 0.84. tsys-predict UVW differs by 3.7 to 4.6 mm beyond +1 h, unexplained. After #902 the ATM corrections differ from CASA's at tool deliberately (decisions). Not re-run.",
    "scope": "setnoise simplenoise, tsys-manual and tsys-atm (with pground, relhum, altitude, waterheight) then corrupt: per-row sigma and normalized variances.",
    "links": [
@@ -1084,11 +1089,12 @@
     "tools/simulation/sm_noise_scenarios.json",
     "tools/simulation/sm_atm_scenarios.json",
     "tools/simulation/corruption_stats.py"
-   ]
+   ],
+   "superseded_by": "noise-20261103"
   },
   "corruptions": {
    "kind": "CASA-paired corruption statistics and tables (PR-reported)",
-   "state": "measured",
+   "state": "superseded",
    "result": "Statistics agree (screen autocorrelation 0.386/0.226/0.086 against CASA's 0.366/0.223/0.086); the leakage scale test has low power. CASA's applycal of casa-rs's G and D tables corrects to 4.9e-7 and 4.6e-9; setapply NRMS 4.3e-8 to 5.8e-9. Not re-run.",
    "scope": "setgain (fBM, random), setleakage, their tables, and setapply of CASA-written G and D tables.",
    "links": [
@@ -1097,11 +1103,12 @@
     "https://github.com/bglenden/casa-rs/pull/893",
     "tools/simulation/sm_corrupt_scenarios.json",
     "tools/simulation/corruption_stats.py"
-   ]
+   ],
+   "superseded_by": "corruptions-20261103"
   },
   "troposphere": {
    "kind": "CASA-paired tropospheric phase (PR-reported)",
-   "state": "measured",
+   "state": "superseded",
    "result": "DATA against its own table to 9e-8; CASA applies casa-rs's tables to 1.7e-7. CASA's predict of a component list segfaulted on a 12 m and 7 m mix, so the scenarios use 12 m dishes. Not re-run.",
    "scope": "settrop individual and screen modes, and CASA applying casa-rs's tables.",
    "links": [
@@ -1109,7 +1116,8 @@
     "https://github.com/bglenden/casa-rs/pull/902",
     "tools/simulation/sm_trop_scenarios.json",
     "tools/simulation/troposphere_stats.py"
-   ]
+   ],
+   "superseded_by": "troposphere-20261103"
   },
   "bugs-record": {
    "kind": "Deviation record",
@@ -1118,6 +1126,127 @@
    "links": [
     "docs/CASA (C++) bugs.md"
    ]
+  },
+  "observe-20261103": {
+   "kind": "CASA-paired scenarios",
+   "state": "passed",
+   "result": "10/10 agree: every subtable, row and cell, with the 9 known descriptor differences; UVW within 1.07e-4 m (the 36 km VLA A), 3.9e-6 m elsewhere. Each comparison is in the receipt.",
+   "scope": "open, setconfig, setfeed, setspwindow, setfield, settimes, setlimits, setauto, observe and observemany: every subtable, row and cell of 10 scenarios.",
+   "links": [
+    "tools/simulation/sm_observe_scenarios.json",
+    "tools/simulation/casa_sm_observe_oracle.py",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT observe (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+  },
+  "predict-image-20261103": {
+   "kind": "CASA-paired scenarios",
+   "state": "passed",
+   "result": "26/26 agree: DATA NRMS at most 1.35e-5 (limit 1e-3) through GridFT, WProjectFT, the mosaic machine and setvp beams; noise twins by statistics. Each comparison is in the receipt.",
+   "scope": "predict of image models through GridFT, WProjectFT and the mosaic machine, with and without setvp (ALMA, ACA, VLA, EVLA), padding, several fields, incremental predicts and cubes with autocorrelations.",
+   "links": [
+    "tools/simulation/sm_predict_scenarios.json",
+    "tools/simulation/casa_sm_observe_oracle.py",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT predict (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+  },
+  "predict-components-20261103": {
+   "kind": "CASA-paired scenarios",
+   "state": "passed",
+   "result": "8/8 agree: DATA NRMS at most 1.0e-4 (the beam cases), the rest below. Each comparison is in the receipt.",
+   "scope": "predict(complist=...) of point, Gaussian and disk components with polarization, spectra, a beam and incremental predicts.",
+   "links": [
+    "tools/simulation/sm_components_scenarios.json",
+    "tools/simulation/casa_sm_observe_oracle.py",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT components (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+  },
+  "predict-sd-20261103": {
+   "kind": "CASA-paired scenarios",
+   "state": "passed",
+   "result": "7/7 agree: DATA NRMS at most 6.3e-8. Each comparison is in the receipt.",
+   "scope": "setoptions(ftmachine='sd') with the PB, SF and BOX kernels, the beam twice, four correlations and incremental predicts.",
+   "links": [
+    "tools/simulation/sm_sd_scenarios.json",
+    "tools/simulation/casa_sm_observe_oracle.py",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT sd (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+  },
+  "openfromms-20261103": {
+   "kind": "CASA-paired scenarios",
+   "state": "passed",
+   "result": "7/7 agree: DATA NRMS at most 9.0e-6; noise by statistics. Each comparison is in the receipt.",
+   "scope": "openfromms then predict, corrupt, a moved pointing and the mosaic machine, on CASA's MeasurementSet and on casa-rs's.",
+   "links": [
+    "tools/simulation/sm_openfromms_scenarios.json",
+    "tools/simulation/casa_sm_observe_oracle.py",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT openfromms (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+  },
+  "noise-20261103": {
+   "kind": "CASA-paired scenarios",
+   "state": "passed",
+   "result": "noise 6/6 and atm 4/4 agree: tsys-manual and tsys-atm noise over each side's sigma within the comparator's variance, KS and group limits. Each comparison is in the receipt.",
+   "scope": "setnoise simplenoise, tsys-manual and tsys-atm (with pground, relhum, altitude, waterheight) then corrupt: per-row sigma and normalized variances.",
+   "links": [
+    "tools/simulation/sm_noise_scenarios.json",
+    "tools/simulation/sm_atm_scenarios.json",
+    "tools/simulation/casa_sm_observe_oracle.py",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT noise atm (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+  },
+  "corruptions-20261103": {
+   "kind": "CASA-paired scenarios",
+   "state": "passed",
+   "result": "12/12 agree: gain and leakage statistics, their tables, and setapply of CASA's G and D tables (DATA NRMS at most 5.4e-8). Each comparison is in the receipt.",
+   "scope": "setgain (fBM, random), setleakage, their tables, and setapply of CASA-written G and D tables.",
+   "links": [
+    "tools/simulation/sm_corrupt_scenarios.json",
+    "tools/simulation/casa_sm_observe_oracle.py",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT corrupt (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
+  },
+  "troposphere-20261103": {
+   "kind": "CASA-paired scenarios",
+   "state": "passed",
+   "result": "3/3 agree: DATA against each side's tropospheric table. Each comparison is in the receipt.",
+   "scope": "settrop individual and screen modes, and CASA applying casa-rs's tables.",
+   "links": [
+    "tools/simulation/sm_trop_scenarios.json",
+    "tools/simulation/casa_sm_observe_oracle.py",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT trop (bg-mac-mini, CPU backend), then sm_parity_receipt.py",
+   "receipt": "resources/casa-compat/evidence/sm-parity-20261103.json"
   }
  }
 }

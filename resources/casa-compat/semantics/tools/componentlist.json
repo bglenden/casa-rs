@@ -18,7 +18,8 @@
    "scope": "Adds point, Gaussian and disk components with constant or spectral-index spectra, call by call as CASA 6.7.6.14 does (`casa_componentlist_tool.json`); shapes CASA cannot construct raise and add nothing.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "asciitocomponentlist": {
@@ -36,7 +37,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "table-fixtures"
+    "table-fixtures",
+    "casa-on-casa"
    ]
   },
   "concatenate": {
@@ -107,7 +109,8 @@
    "scope": "As close, and frees the tool.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "edit": {
@@ -133,7 +136,8 @@
    "scope": "CASA's record of one component, with CASA's index errors.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "getfluxerror": {
@@ -159,7 +163,8 @@
    "scope": "A component's flux unit.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "getfluxvalue": {
@@ -167,7 +172,8 @@
    "scope": "A component's flux values.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "getfreq": {
@@ -220,7 +226,8 @@
    "scope": "A component's label.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "getrefdir": {
@@ -228,7 +235,8 @@
    "scope": "A component's reference direction as a measure record.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "getrefdirdec": {
@@ -272,7 +280,8 @@
    "scope": "A component's spectrum record.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "haskeyword": {
@@ -316,7 +325,8 @@
    "scope": "The number of components.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "open": {
@@ -325,7 +335,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "table-fixtures"
+    "table-fixtures",
+    "casa-on-casa"
    ]
   },
   "purge": {
@@ -370,7 +381,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "table-fixtures"
+    "table-fixtures",
+    "casa-on-casa"
    ]
   },
   "replace": {
@@ -495,7 +507,8 @@
    "scope": "A component's shape name.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "simulate": {
@@ -521,7 +534,8 @@
    "scope": "A component's spectrum name.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "summarize": {
@@ -538,7 +552,8 @@
    "scope": "CASA's record of the list.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-on-casa"
    ]
   }
  },
@@ -683,6 +698,19 @@
    "links": [
     "docs/CASA (C++) bugs.md"
    ]
+  },
+  "casa-on-casa": {
+   "kind": "casa-rs's tests run on CASA itself",
+   "state": "passed",
+   "result": "11 of the 21 tests pass against CASA 6.7.6.14's own cl tool; the others test what only casa-rs has, compare log lines with CASA's timestamps or Python's log, or (rename) meet a CASA assertion failure. The receipt classifies each.",
+   "scope": "The cl tests' expectations, checked against CASA itself.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_componentlist.py"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool componentlist (bg-mac-mini)",
+   "receipt": "resources/casa-compat/evidence/cl-on-casa-20261103.json"
   }
  }
 }

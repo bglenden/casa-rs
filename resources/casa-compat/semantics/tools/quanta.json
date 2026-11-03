@@ -532,12 +532,16 @@
   },
   "casa-values": {
    "kind": "CASA-probed values",
-   "state": "measured",
-   "result": "Values and messages probed from the Mac mini's CASA on 2026-10-21 (the test file says CASA 6.7.6; the signatures recorded with them name casatools 6.7.6-14); all match to the last bit. Re-probe on 6.7.6.14 with a receipt to pass.",
+   "state": "passed",
+   "result": "96 of the 131 tests pass against CASA 6.7.6.14's own qa tool: every test of a value or a raised message. The 35 others test what only casa-rs has (its refusals, bundle and import) or one message CASA writes to its own log; the receipt classifies each. casa-rs passes the same tests in CI.",
    "scope": "Every implemented method, with CASA's messages.",
    "links": [
     "crates/casars-python/python/tests/test_tools_quanta.py"
-   ]
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool quanta (bg-mac-mini)",
+   "receipt": "resources/casa-compat/evidence/qa-on-casa-20261103.json"
   },
   "bugs-record": {
    "kind": "Deviation record",
