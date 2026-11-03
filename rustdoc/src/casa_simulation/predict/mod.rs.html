@@ -64,11 +64,11 @@
 <a href=#64 id=64 data-nosnippet>64</a><span class="kw">use </span>casa_images::ImageError;
 <a href=#65 id=65 data-nosnippet>65</a><span class="kw">use </span>casa_imaging_model::PolarizationCoordinate;
 <a href=#66 id=66 data-nosnippet>66</a><span class="kw">use </span>casa_imaging_operator::{
-<a href=#67 id=67 data-nosnippet>67</a>    AiryDish, ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision,
-<a href=#68 id=68 data-nosnippet>68</a>    ImageExtent, MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, MosaicPb, MosaicRules,
-<a href=#69 id=69 data-nosnippet>69</a>    MosaicWindow, NativeRow, OperatorError, PaddingFactor, PlaneRange, PolarizationRouting,
-<a href=#70 id=70 data-nosnippet>70</a>    PredictionScratch, PreparedModelGrids, RowContext, SpectralAxis, SpectralKernel,
-<a href=#71 id=71 data-nosnippet>71</a>    SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+<a href=#67 id=67 data-nosnippet>67</a>    ConvolutionFunctionSet, CpuBackend, GridGeometry, GridPadding, GridPrecision, ImageExtent,
+<a href=#68 id=68 data-nosnippet>68</a>    MeasurementOperator, ModeSet, ModelPlane, ModelPlaneGrids, MosaicPb, MosaicRules, MosaicWindow,
+<a href=#69 id=69 data-nosnippet>69</a>    NativeRow, OperatorError, PaddingFactor, PlaneRange, PolarizationRouting, PredictionScratch,
+<a href=#70 id=70 data-nosnippet>70</a>    PreparedModelGrids, RowContext, SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal,
+<a href=#71 id=71 data-nosnippet>71</a>    WPlaneCount, WPlanes,
 <a href=#72 id=72 data-nosnippet>72</a>};
 <a href=#73 id=73 data-nosnippet>73</a><span class="kw">use </span>casa_imaging_runtime::pass::WorkerTeam;
 <a href=#74 id=74 data-nosnippet>74</a><span class="kw">use </span>casa_types::Correlation;
@@ -135,8 +135,8 @@
 <a href=#135 id=135 data-nosnippet>135</a>/// and the spectral windows predicted.
 <a href=#136 id=136 data-nosnippet>136</a></span><span class="attr">#[derive(Clone, Debug, PartialEq)]
 <a href=#137 id=137 data-nosnippet>137</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>MosaicBeams {
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="doccomment">/// One dish per class, in class order.
-<a href=#139 id=139 data-nosnippet>139</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) dishes: Vec&lt;AiryDish&gt;,
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="doccomment">/// One dish's Airy pattern per class, in class order.
+<a href=#139 id=139 data-nosnippet>139</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) dishes: Vec&lt;PrimaryBeam&gt;,
 <a href=#140 id=140 data-nosnippet>140</a>    <span class="doccomment">/// The windows of the scans predicted, every channel selected.
 <a href=#141 id=141 data-nosnippet>141</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) windows: Vec&lt;MosaicWindow&gt;,
 <a href=#142 id=142 data-nosnippet>142</a>}

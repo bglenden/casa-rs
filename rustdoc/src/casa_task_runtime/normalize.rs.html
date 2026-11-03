@@ -1134,68 +1134,99 @@
 <a href=#1134 id=1134 data-nosnippet>1134</a>    </span><span class="kw">fn </span>legacy_empty_shared_selectors_normalize_to_canonical_none() {
 <a href=#1135 id=1135 data-nosnippet>1135</a>        <span class="kw">let </span>catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
 <a href=#1136 id=1136 data-nosnippet>1136</a>        <span class="kw">for </span>concept <span class="kw">in </span>catalog.catalog.concepts.iter().filter(|concept| {
-<a href=#1137 id=1137 data-nosnippet>1137</a>            concept.id.as_str().starts_with(<span class="string">"ms.selection."</span>)
-<a href=#1138 id=1138 data-nosnippet>1138</a>                || concept.id.as_str().starts_with(<span class="string">"image.selection."</span>)
-<a href=#1139 id=1139 data-nosnippet>1139</a>        }) {
-<a href=#1140 id=1140 data-nosnippet>1140</a>            <span class="macro">assert_eq!</span>(
-<a href=#1141 id=1141 data-nosnippet>1141</a>                normalize_value(<span class="kw-2">&amp;</span>ParameterValue::String(<span class="string">"  "</span>.into()), concept).unwrap(),
-<a href=#1142 id=1142 data-nosnippet>1142</a>                ParameterValue::String(<span class="string">"none"</span>.into()),
-<a href=#1143 id=1143 data-nosnippet>1143</a>                <span class="string">"{}"</span>,
-<a href=#1144 id=1144 data-nosnippet>1144</a>                concept.id
-<a href=#1145 id=1145 data-nosnippet>1145</a>            );
-<a href=#1146 id=1146 data-nosnippet>1146</a>            <span class="macro">assert!</span>(
-<a href=#1147 id=1147 data-nosnippet>1147</a>                semantic_eq(
-<a href=#1148 id=1148 data-nosnippet>1148</a>                    <span class="kw-2">&amp;</span>ParameterValue::String(String::new()),
-<a href=#1149 id=1149 data-nosnippet>1149</a>                    <span class="kw-2">&amp;</span>ParameterValue::String(<span class="string">"none"</span>.into()),
-<a href=#1150 id=1150 data-nosnippet>1150</a>                    concept
-<a href=#1151 id=1151 data-nosnippet>1151</a>                )
-<a href=#1152 id=1152 data-nosnippet>1152</a>                .unwrap()
-<a href=#1153 id=1153 data-nosnippet>1153</a>            );
-<a href=#1154 id=1154 data-nosnippet>1154</a>        }
-<a href=#1155 id=1155 data-nosnippet>1155</a>    }
-<a href=#1156 id=1156 data-nosnippet>1156</a>
-<a href=#1157 id=1157 data-nosnippet>1157</a>    <span class="attr">#[test]
-<a href=#1158 id=1158 data-nosnippet>1158</a>    </span><span class="kw">fn </span>selector_capability_refinements_reject_disabled_grammar_features() {
-<a href=#1159 id=1159 data-nosnippet>1159</a>        <span class="kw">let </span>selector_concept = concept(
-<a href=#1160 id=1160 data-nosnippet>1160</a>            ParameterType::String,
-<a href=#1161 id=1161 data-nosnippet>1161</a>            NormalizationRule::CasaSelector {
-<a href=#1162 id=1162 data-nosnippet>1162</a>                grammar: SelectorGrammar::Field,
-<a href=#1163 id=1163 data-nosnippet>1163</a>                capabilities: <span class="macro">vec!</span>[
-<a href=#1164 id=1164 data-nosnippet>1164</a>                    <span class="string">"ids"</span>.into(),
-<a href=#1165 id=1165 data-nosnippet>1165</a>                    <span class="string">"names"</span>.into(),
-<a href=#1166 id=1166 data-nosnippet>1166</a>                    <span class="string">"ranges"</span>.into(),
-<a href=#1167 id=1167 data-nosnippet>1167</a>                    <span class="string">"wildcards"</span>.into(),
-<a href=#1168 id=1168 data-nosnippet>1168</a>                ],
-<a href=#1169 id=1169 data-nosnippet>1169</a>            },
-<a href=#1170 id=1170 data-nosnippet>1170</a>        );
-<a href=#1171 id=1171 data-nosnippet>1171</a>        <span class="kw">let </span>refinements = <span class="macro">vec!</span>[NarrowingConstraint::SelectorCapabilities {
-<a href=#1172 id=1172 data-nosnippet>1172</a>            capabilities: <span class="macro">vec!</span>[<span class="string">"ids"</span>.into(), <span class="string">"names"</span>.into()],
-<a href=#1173 id=1173 data-nosnippet>1173</a>        }];
-<a href=#1174 id=1174 data-nosnippet>1174</a>
-<a href=#1175 id=1175 data-nosnippet>1175</a>        <span class="kw">for </span>accepted <span class="kw">in </span>[<span class="string">"0,target"</span>, <span class="string">"17"</span>, <span class="string">"target"</span>] {
-<a href=#1176 id=1176 data-nosnippet>1176</a>            <span class="kw">let </span>normalized =
-<a href=#1177 id=1177 data-nosnippet>1177</a>                normalize_value(<span class="kw-2">&amp;</span>ParameterValue::String(accepted.into()), <span class="kw-2">&amp;</span>selector_concept)
-<a href=#1178 id=1178 data-nosnippet>1178</a>                    .unwrap();
-<a href=#1179 id=1179 data-nosnippet>1179</a>            validate_value(<span class="kw-2">&amp;</span>normalized, <span class="kw-2">&amp;</span>selector_concept, <span class="kw-2">&amp;</span>refinements).unwrap();
-<a href=#1180 id=1180 data-nosnippet>1180</a>        }
-<a href=#1181 id=1181 data-nosnippet>1181</a>        <span class="kw">for </span>rejected <span class="kw">in </span>[<span class="string">"0~3"</span>, <span class="string">"target*"</span>] {
-<a href=#1182 id=1182 data-nosnippet>1182</a>            <span class="kw">let </span>normalized =
-<a href=#1183 id=1183 data-nosnippet>1183</a>                normalize_value(<span class="kw-2">&amp;</span>ParameterValue::String(rejected.into()), <span class="kw-2">&amp;</span>selector_concept)
-<a href=#1184 id=1184 data-nosnippet>1184</a>                    .unwrap();
-<a href=#1185 id=1185 data-nosnippet>1185</a>            <span class="macro">assert!</span>(
-<a href=#1186 id=1186 data-nosnippet>1186</a>                validate_value(<span class="kw-2">&amp;</span>normalized, <span class="kw-2">&amp;</span>selector_concept, <span class="kw-2">&amp;</span>refinements).is_err(),
-<a href=#1187 id=1187 data-nosnippet>1187</a>                <span class="string">"accepted selector with disabled capability: {rejected}"
-<a href=#1188 id=1188 data-nosnippet>1188</a>            </span>);
-<a href=#1189 id=1189 data-nosnippet>1189</a>        }
-<a href=#1190 id=1190 data-nosnippet>1190</a>
-<a href=#1191 id=1191 data-nosnippet>1191</a>        <span class="kw">let </span>base_restricted = concept(
-<a href=#1192 id=1192 data-nosnippet>1192</a>            ParameterType::String,
-<a href=#1193 id=1193 data-nosnippet>1193</a>            NormalizationRule::CasaSelector {
-<a href=#1194 id=1194 data-nosnippet>1194</a>                grammar: SelectorGrammar::Field,
-<a href=#1195 id=1195 data-nosnippet>1195</a>                capabilities: <span class="macro">vec!</span>[<span class="string">"ids"</span>.into(), <span class="string">"names"</span>.into()],
-<a href=#1196 id=1196 data-nosnippet>1196</a>            },
-<a href=#1197 id=1197 data-nosnippet>1197</a>        );
-<a href=#1198 id=1198 data-nosnippet>1198</a>        <span class="macro">assert!</span>(normalize_value(<span class="kw-2">&amp;</span>ParameterValue::String(<span class="string">"0~3"</span>.into()), <span class="kw-2">&amp;</span>base_restricted).is_err());
-<a href=#1199 id=1199 data-nosnippet>1199</a>    }
-<a href=#1200 id=1200 data-nosnippet>1200</a>}
+<a href=#1137 id=1137 data-nosnippet>1137</a>            concept.semantic_revision.<span class="number">0 </span>== <span class="number">1
+<a href=#1138 id=1138 data-nosnippet>1138</a>                </span>&amp;&amp; (concept.id.as_str().starts_with(<span class="string">"ms.selection."</span>)
+<a href=#1139 id=1139 data-nosnippet>1139</a>                    || concept.id.as_str().starts_with(<span class="string">"image.selection."</span>))
+<a href=#1140 id=1140 data-nosnippet>1140</a>        }) {
+<a href=#1141 id=1141 data-nosnippet>1141</a>            <span class="macro">assert_eq!</span>(
+<a href=#1142 id=1142 data-nosnippet>1142</a>                normalize_value(<span class="kw-2">&amp;</span>ParameterValue::String(<span class="string">"  "</span>.into()), concept).unwrap(),
+<a href=#1143 id=1143 data-nosnippet>1143</a>                ParameterValue::String(<span class="string">"none"</span>.into()),
+<a href=#1144 id=1144 data-nosnippet>1144</a>                <span class="string">"{}"</span>,
+<a href=#1145 id=1145 data-nosnippet>1145</a>                concept.id
+<a href=#1146 id=1146 data-nosnippet>1146</a>            );
+<a href=#1147 id=1147 data-nosnippet>1147</a>            <span class="macro">assert!</span>(
+<a href=#1148 id=1148 data-nosnippet>1148</a>                semantic_eq(
+<a href=#1149 id=1149 data-nosnippet>1149</a>                    <span class="kw-2">&amp;</span>ParameterValue::String(String::new()),
+<a href=#1150 id=1150 data-nosnippet>1150</a>                    <span class="kw-2">&amp;</span>ParameterValue::String(<span class="string">"none"</span>.into()),
+<a href=#1151 id=1151 data-nosnippet>1151</a>                    concept
+<a href=#1152 id=1152 data-nosnippet>1152</a>                )
+<a href=#1153 id=1153 data-nosnippet>1153</a>                .unwrap()
+<a href=#1154 id=1154 data-nosnippet>1154</a>            );
+<a href=#1155 id=1155 data-nosnippet>1155</a>        }
+<a href=#1156 id=1156 data-nosnippet>1156</a>    }
+<a href=#1157 id=1157 data-nosnippet>1157</a>
+<a href=#1158 id=1158 data-nosnippet>1158</a>    <span class="attr">#[test]
+<a href=#1159 id=1159 data-nosnippet>1159</a>    </span><span class="kw">fn </span>numeric_selector_revision_two_preserves_validity_distinctions() {
+<a href=#1160 id=1160 data-nosnippet>1160</a>        <span class="kw">let </span>catalog = casa_provider_contracts::builtin_surface_catalog().unwrap();
+<a href=#1161 id=1161 data-nosnippet>1161</a>        <span class="kw">for </span>concept <span class="kw">in </span>catalog.catalog.concepts.iter().filter(|concept| {
+<a href=#1162 id=1162 data-nosnippet>1162</a>            concept.semantic_revision.<span class="number">0 </span>== <span class="number">2
+<a href=#1163 id=1163 data-nosnippet>1163</a>                </span>&amp;&amp; <span class="macro">matches!</span>(
+<a href=#1164 id=1164 data-nosnippet>1164</a>                    concept.id.as_str(),
+<a href=#1165 id=1165 data-nosnippet>1165</a>                    <span class="string">"ms.selection.scan"
+<a href=#1166 id=1166 data-nosnippet>1166</a>                        </span>| <span class="string">"ms.selection.observation"
+<a href=#1167 id=1167 data-nosnippet>1167</a>                        </span>| <span class="string">"ms.selection.antenna"
+<a href=#1168 id=1168 data-nosnippet>1168</a>                        </span>| <span class="string">"ms.selection.timerange"
+<a href=#1169 id=1169 data-nosnippet>1169</a>                </span>)
+<a href=#1170 id=1170 data-nosnippet>1170</a>        }) {
+<a href=#1171 id=1171 data-nosnippet>1171</a>            <span class="kw">for </span>text <span class="kw">in </span>[<span class="string">""</span>, <span class="string">"  "</span>, <span class="string">"none"</span>, <span class="string">"None"</span>, <span class="string">" none "</span>, <span class="string">" 1 "</span>, <span class="string">"1~2"</span>, <span class="string">"&gt;1"</span>] {
+<a href=#1172 id=1172 data-nosnippet>1172</a>                <span class="kw">let </span>value = ParameterValue::String(text.into());
+<a href=#1173 id=1173 data-nosnippet>1173</a>                <span class="macro">assert_eq!</span>(normalize_value(<span class="kw-2">&amp;</span>value, concept).unwrap(), value);
+<a href=#1174 id=1174 data-nosnippet>1174</a>            }
+<a href=#1175 id=1175 data-nosnippet>1175</a>            <span class="kw">for </span>text <span class="kw">in </span>[<span class="string">"  "</span>, <span class="string">"none"</span>, <span class="string">"None"</span>, <span class="string">" none "</span>] {
+<a href=#1176 id=1176 data-nosnippet>1176</a>                <span class="macro">assert!</span>(
+<a href=#1177 id=1177 data-nosnippet>1177</a>                    !semantic_eq(
+<a href=#1178 id=1178 data-nosnippet>1178</a>                        <span class="kw-2">&amp;</span>ParameterValue::String(String::new()),
+<a href=#1179 id=1179 data-nosnippet>1179</a>                        <span class="kw-2">&amp;</span>ParameterValue::String(text.into()),
+<a href=#1180 id=1180 data-nosnippet>1180</a>                        concept
+<a href=#1181 id=1181 data-nosnippet>1181</a>                    )
+<a href=#1182 id=1182 data-nosnippet>1182</a>                    .unwrap()
+<a href=#1183 id=1183 data-nosnippet>1183</a>                );
+<a href=#1184 id=1184 data-nosnippet>1184</a>            }
+<a href=#1185 id=1185 data-nosnippet>1185</a>        }
+<a href=#1186 id=1186 data-nosnippet>1186</a>    }
+<a href=#1187 id=1187 data-nosnippet>1187</a>
+<a href=#1188 id=1188 data-nosnippet>1188</a>    <span class="attr">#[test]
+<a href=#1189 id=1189 data-nosnippet>1189</a>    </span><span class="kw">fn </span>selector_capability_refinements_reject_disabled_grammar_features() {
+<a href=#1190 id=1190 data-nosnippet>1190</a>        <span class="kw">let </span>selector_concept = concept(
+<a href=#1191 id=1191 data-nosnippet>1191</a>            ParameterType::String,
+<a href=#1192 id=1192 data-nosnippet>1192</a>            NormalizationRule::CasaSelector {
+<a href=#1193 id=1193 data-nosnippet>1193</a>                grammar: SelectorGrammar::Field,
+<a href=#1194 id=1194 data-nosnippet>1194</a>                capabilities: <span class="macro">vec!</span>[
+<a href=#1195 id=1195 data-nosnippet>1195</a>                    <span class="string">"ids"</span>.into(),
+<a href=#1196 id=1196 data-nosnippet>1196</a>                    <span class="string">"names"</span>.into(),
+<a href=#1197 id=1197 data-nosnippet>1197</a>                    <span class="string">"ranges"</span>.into(),
+<a href=#1198 id=1198 data-nosnippet>1198</a>                    <span class="string">"wildcards"</span>.into(),
+<a href=#1199 id=1199 data-nosnippet>1199</a>                ],
+<a href=#1200 id=1200 data-nosnippet>1200</a>            },
+<a href=#1201 id=1201 data-nosnippet>1201</a>        );
+<a href=#1202 id=1202 data-nosnippet>1202</a>        <span class="kw">let </span>refinements = <span class="macro">vec!</span>[NarrowingConstraint::SelectorCapabilities {
+<a href=#1203 id=1203 data-nosnippet>1203</a>            capabilities: <span class="macro">vec!</span>[<span class="string">"ids"</span>.into(), <span class="string">"names"</span>.into()],
+<a href=#1204 id=1204 data-nosnippet>1204</a>        }];
+<a href=#1205 id=1205 data-nosnippet>1205</a>
+<a href=#1206 id=1206 data-nosnippet>1206</a>        <span class="kw">for </span>accepted <span class="kw">in </span>[<span class="string">"0,target"</span>, <span class="string">"17"</span>, <span class="string">"target"</span>] {
+<a href=#1207 id=1207 data-nosnippet>1207</a>            <span class="kw">let </span>normalized =
+<a href=#1208 id=1208 data-nosnippet>1208</a>                normalize_value(<span class="kw-2">&amp;</span>ParameterValue::String(accepted.into()), <span class="kw-2">&amp;</span>selector_concept)
+<a href=#1209 id=1209 data-nosnippet>1209</a>                    .unwrap();
+<a href=#1210 id=1210 data-nosnippet>1210</a>            validate_value(<span class="kw-2">&amp;</span>normalized, <span class="kw-2">&amp;</span>selector_concept, <span class="kw-2">&amp;</span>refinements).unwrap();
+<a href=#1211 id=1211 data-nosnippet>1211</a>        }
+<a href=#1212 id=1212 data-nosnippet>1212</a>        <span class="kw">for </span>rejected <span class="kw">in </span>[<span class="string">"0~3"</span>, <span class="string">"target*"</span>] {
+<a href=#1213 id=1213 data-nosnippet>1213</a>            <span class="kw">let </span>normalized =
+<a href=#1214 id=1214 data-nosnippet>1214</a>                normalize_value(<span class="kw-2">&amp;</span>ParameterValue::String(rejected.into()), <span class="kw-2">&amp;</span>selector_concept)
+<a href=#1215 id=1215 data-nosnippet>1215</a>                    .unwrap();
+<a href=#1216 id=1216 data-nosnippet>1216</a>            <span class="macro">assert!</span>(
+<a href=#1217 id=1217 data-nosnippet>1217</a>                validate_value(<span class="kw-2">&amp;</span>normalized, <span class="kw-2">&amp;</span>selector_concept, <span class="kw-2">&amp;</span>refinements).is_err(),
+<a href=#1218 id=1218 data-nosnippet>1218</a>                <span class="string">"accepted selector with disabled capability: {rejected}"
+<a href=#1219 id=1219 data-nosnippet>1219</a>            </span>);
+<a href=#1220 id=1220 data-nosnippet>1220</a>        }
+<a href=#1221 id=1221 data-nosnippet>1221</a>
+<a href=#1222 id=1222 data-nosnippet>1222</a>        <span class="kw">let </span>base_restricted = concept(
+<a href=#1223 id=1223 data-nosnippet>1223</a>            ParameterType::String,
+<a href=#1224 id=1224 data-nosnippet>1224</a>            NormalizationRule::CasaSelector {
+<a href=#1225 id=1225 data-nosnippet>1225</a>                grammar: SelectorGrammar::Field,
+<a href=#1226 id=1226 data-nosnippet>1226</a>                capabilities: <span class="macro">vec!</span>[<span class="string">"ids"</span>.into(), <span class="string">"names"</span>.into()],
+<a href=#1227 id=1227 data-nosnippet>1227</a>            },
+<a href=#1228 id=1228 data-nosnippet>1228</a>        );
+<a href=#1229 id=1229 data-nosnippet>1229</a>        <span class="macro">assert!</span>(normalize_value(<span class="kw-2">&amp;</span>ParameterValue::String(<span class="string">"0~3"</span>.into()), <span class="kw-2">&amp;</span>base_restricted).is_err());
+<a href=#1230 id=1230 data-nosnippet>1230</a>    }
+<a href=#1231 id=1231 data-nosnippet>1231</a>}
 </code></pre></div></section></main></body></html>

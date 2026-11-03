@@ -1,0 +1,89 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="CASA’s antenna (baseline) selection expressions, ported from casacore."><title>casa_ms::selection::antenna_expr - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_ms" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module antenna_expr</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../casa_ms/index.html">casa_ms</a><span class="version">0.27.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module antenna_<wbr>expr</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#expressions" title="Expressions">Expressions</a></li><li><a href="#casa-quirks-this-port-keeps" title="CASA quirks this port keeps">CASA quirks this port keeps</a></li><li><a href="#not-ported" title="Not ported">Not ported</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In casa_<wbr>ms::<wbr>selection</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">casa_ms</a>::<wbr><a href="../index.html">selection</a></div><h1>Module <span>antenna_<wbr>expr</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/casa_ms/selection/antenna_expr.rs.html#2-361">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>CASA’s antenna (baseline) selection expressions, ported from casacore.</p>
+<p><a href="fn.resolve_antenna_selector.html" title="fn casa_ms::selection::antenna_expr::resolve_antenna_selector"><code>resolve_antenna_selector</code></a> parses the <code>antenna=</code> text of an
+<code>MSSelection</code> and resolves it against the ANTENNA table into a
+<a href="struct.BaselineSelection.html" title="struct casa_ms::selection::antenna_expr::BaselineSelection"><code>BaselineSelection</code></a>: for every ordered (<code>ANTENNA1</code>, <code>ANTENNA2</code>) pair of
+a MAIN row, whether CASA would select that row. It follows casacore at
+commit <code>aaf72eb7</code> (the casacore of CASA 6.7.6.14): the scanner
+<code>ms/MSSel/MSAntennaGram.ll</code>, the grammar <code>MSAntennaGram.yy</code>, the
+selection logic <code>MSAntennaParse.cc</code> and the name lookups
+<code>MSAntennaIndex.cc</code>. Where these have quirks, CASA’s behaviour is kept
+and the quirk is noted below.</p>
+<h2 id="expressions"><a class="doc-anchor" href="#expressions">§</a>Expressions</h2>
+<p>An expression is one or more <em>terms</em> separated by <code>;</code>. A term is a
+baseline form applied to antenna lists, a baseline-regex list or a
+baseline-length list, optionally negated by a leading <code>!</code>.</p>
+<div><table><thead><tr><th>Form</th><th>Selects (cross = <code>ANTENNA1 != ANTENNA2</code>)</th><th>C++</th></tr></thead><tbody>
+<tr><td><code>L</code></td><td>cross baselines with an antenna of <code>L</code> on either side</td><td><code>MSAntennaGram.yy:193-201</code>, <code>MSAntennaParse.cc:123-130,84-89</code></td></tr>
+<tr><td><code>L1&amp;L2</code></td><td>cross baselines with one side in <code>L1</code> and the other in <code>L2</code>, in either order</td><td><code>.yy:168-178</code>, <code>.cc:157-176</code></td></tr>
+<tr><td><code>L&amp;</code></td><td>cross baselines between antennas of <code>L</code></td><td><code>.yy:179-192</code></td></tr>
+<tr><td><code>L1&amp;&amp;L2</code></td><td>as <code>L1&amp;L2</code>, also the autocorrelations of antennas in both lists</td><td><code>.yy:202-212</code></td></tr>
+<tr><td><code>L&amp;&amp;</code></td><td>as <code>L&amp;</code> plus the autocorrelations of <code>L</code></td><td><code>.yy:213-221</code></td></tr>
+<tr><td><code>L&amp;&amp;&amp;</code></td><td>only the autocorrelations of <code>L</code></td><td><code>.yy:222-230</code>, <code>.cc:105-121</code></td></tr>
+<tr><td><code>/A&amp;B/</code> (a regex holding <code>&amp;</code>)</td><td>ordered pairs whose <code>NAME1&amp;NAME2</code> the regex matches in full; autocorrelations too</td><td><code>.ll:83-86</code>, <code>.cc:250-277</code></td></tr>
+<tr><td><code>&lt;x</code>, <code>&lt;=x</code>, <code>&gt;x</code>, <code>&gt;=x</code>, <code>a~b</code> with a length unit</td><td>baselines whose ITRF length lies in the interval, autocorrelations (length 0) too</td><td><code>.yy:453-506</code>, <code>.cc:230-248,311-334</code></td></tr>
+<tr><td><code>!T</code></td><td>the rows <code>T</code> does not select</td><td><code>.yy:165</code>, <code>.cc:91</code></td></tr>
+<tr><td><code>T1;T2</code></td><td>left to right: a plain term ORs with what precedes it, a <code>!</code> term ANDs</td><td><code>.cc:92-95</code></td></tr>
+</tbody></table>
+</div>
+<p>An antenna list <code>L</code> is a comma-separated list of:</p>
+<div><table><thead><tr><th>Item</th><th>Antennas</th><th>C++</th></tr></thead><tbody>
+<tr><td>name, e.g. <code>ea01</code></td><td>rows whose NAME equals it; if none, rows whose STATION equals it</td><td><code>.yy:293-306</code>, <code>MSAntennaIndex.cc:126-158</code></td></tr>
+<tr><td>integer, e.g. <code>5</code></td><td>the first row whose NAME (else STATION) is that text, else antenna ID 5</td><td><code>.yy:336-357</code></td></tr>
+<tr><td>range <code>3~7</code></td><td>each integer as above, its name written in plain decimal</td><td><code>.yy:358-380</code></td></tr>
+<tr><td>pattern, quoted (<code>"ea0*"</code>, <code>'ea{01,02}'</code>) or bare (<code>ea0*</code>, <code>ea0[1-3]</code>)</td><td>rows whose NAME, else STATION, matches in full; a leading <code>^</code> negates</td><td><code>.ll:46-63,111-116</code>, <code>MSAntennaIndex.cc:82-122</code>, <code>Regex::fromPattern</code></td></tr>
+<tr><td>regex <code>/ea0[1-3]/</code>, negated <code>^/.../</code></td><td>as a pattern, the text an ECMAScript regex</td><td><code>.ll:49,77-87</code></td></tr>
+<tr><td><code>\text</code></td><td>the name <code>text</code>, which may then hold any non-blank characters</td><td><code>.ll:59,104-109</code></td></tr>
+<tr><td><code>A@S</code>, <code>(A1,A2)@S</code>, <code>A@(S1,S2)</code>, <code>@S</code></td><td>antennas of <code>A</code> standing at a station of <code>S</code> (exact STATION, pattern or regex)</td><td><code>.yy:249-289,416-438</code></td></tr>
+</tbody></table>
+</div>
+<p>Every name, pattern, station or ID that matches nothing is an error,
+raised once the whole expression has been read (<code>reportError</code>,
+<code>MSSelection.cc:858-864</code>), as are scanner and syntax errors, units that
+are not lengths and regexes that do not compile. The empty string is no
+constraint (<code>MSSelection.cc:590</code>); text of only blanks is a syntax error.</p>
+<h2 id="casa-quirks-this-port-keeps"><a class="doc-anchor" href="#casa-quirks-this-port-keeps">§</a>CASA quirks this port keeps</h2>
+<ul>
+<li>A purely numeric item is a NAME first: with an antenna named <code>"3"</code>,
+<code>3</code> selects that antenna, not ID 3; only its first such row is kept
+(<code>.yy:352-355</code>). A range looks up <code>std::ostringstream</code> decimal names,
+so <code>01~02</code> looks up <code>"1"</code> and <code>"2"</code> while a lone <code>01</code> looks up <code>"01"</code>.</li>
+<li>Integers are read with <code>atoi</code>: <code>4294967296</code> is antenna 0 (glibc keeps
+the low 32 bits). A range <code>a~b</code> whose length <code>b - a + 1</code> is below zero
+or overflows <code>Int</code> (<code>0~2147483647</code>) is an error, as the C++ <code>Vector</code>
+allocation fails; a range reaching past the last antenna selects the
+antennas that exist without complaint.</li>
+<li><code>!T</code> also selects every autocorrelation <code>T</code> excludes: <code>!ea01</code> selects
+ea01’s own autocorrelation, since <code>T</code> masks autocorrelations before
+the negation (<code>.cc:84-91</code>).</li>
+<li><code>;</code> is not commutative: <code>ea01;!ea02</code> is (ea01 baselines) AND NOT
+(ea02 baselines), but <code>!ea02;ea01</code> is (NOT ea02 baselines) OR (ea01
+baselines).</li>
+<li>A leading <code>^</code> inside a regex or pattern is negation, not an anchor:
+<code>/^ea0[12]/</code> selects every antenna but ea01 and ea02.</li>
+<li>Patterns and regexes fall back to STATION per antenna; exact names fall
+back to STATION only when no NAME matches at all.</li>
+<li>A baseline regex is matched against the ordered string
+<code>NAME(ANTENNA1)&amp;NAME(ANTENNA2)</code>, so <code>/ea01&amp;ea02/</code> selects the rows with
+ANTENNA1 = ea01 and ANTENNA2 = ea02 but not the reverse; one that
+matches nothing selects nothing silently (<code>.cc:299-308</code>).</li>
+<li>Length forms: <code>&lt;x</code> and <code>&gt;x</code> move the bound by 1e-9 m; a range of plain
+integers with a unit (<code>100~200m</code>) is an antenna-ID range followed by a
+stray unit, hence a syntax error: write <code>100m~200m</code> or <code>100.~200.m</code>.</li>
+<li>Concatenated quotes keep their inner quotes (<code>"ea"'01'</code> is the
+pattern <code>ea"'01</code>, <code>.ll:69-75</code>).</li>
+</ul>
+<h2 id="not-ported"><a class="doc-anchor" href="#not-ported">§</a>Not ported</h2>
+<ul>
+<li>ECMAScript backreferences, lookahead and <code>\u</code> escapes in regexes are
+refused: the <code>regex</code> crate has none of them.</li>
+<li>ANTENNA <code>POSITION</code> is read as ITRF, as everywhere in casa-ms; CASA
+converts other reference frames with <code>MPosition::Convert</code>.</li>
+<li>The side lists <code>MSSelection::getAntenna1List</code>, <code>getAntenna2List</code> and
+<code>getBaselineList</code> are not produced; only the row predicate is.</li>
+<li>Messages follow CASA’s wording but not its character positions
+exactly.</li>
+</ul>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.AntennaRow.html" title="struct casa_ms::selection::antenna_expr::AntennaRow">Antenna<wbr>Row</a></dt><dd>One ANTENNA table row as antenna selection reads it. In a slice of these,
+row <code>i</code> is antenna ID <code>i</code>.</dd><dt><a class="struct" href="struct.BaselineSelection.html" title="struct casa_ms::selection::antenna_expr::BaselineSelection">Baseline<wbr>Selection</a></dt><dd>A resolved antenna selection: which ordered (<code>ANTENNA1</code>, <code>ANTENNA2</code>)
+pairs of MAIN rows CASA’s <code>MSSelection</code> would keep.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.resolve_antenna_selector.html" title="fn casa_ms::selection::antenna_expr::resolve_antenna_selector">resolve_<wbr>antenna_<wbr>selector</a></dt><dd>Resolve CASA antenna selection <code>text</code> against <code>antennas</code>, the ANTENNA
+table’s rows in row order.</dd></dl></section></div></main></body></html>

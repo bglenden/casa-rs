@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["resolve_spw_selector"],"struct":["ChannelFrequencyRange","ChannelRange","DataDescriptionRow","SpectralWindowRow","SpwSelection"]};

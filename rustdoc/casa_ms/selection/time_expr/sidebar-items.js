@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["LogicalRowFilter","TimeCondition"],"fn":["msselection_first_logical_row","resolve_time_selector"],"struct":["TimeDefaults","TimeListEntry","TimeSelection","TimeSelector","TimeSelectorDefaults","TimeTerm"]};

@@ -1352,7 +1352,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 550</li>
+<li>Concepts: 554</li>
 <li>Surfaces: 27 (27 task, 0 session)</li>
 <li>Surface bindings: 791</li>
 </ul>
@@ -1395,7 +1395,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-tclean">Tclean</a><br><code>tclean</code></td>
 <td>task</td>
-<td style="text-align: right;">29</td>
+<td style="text-align: right;">37</td>
 <td><code>imager</code></td>
 <td style="text-align: right;">114</td>
 <td>Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.</td>
@@ -2707,7 +2707,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="tclean-tclean">Tclean (<code>tclean</code>)<a class="headerlink" href="#tclean-tclean" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>29</code></li>
+<li>Contract version: <code>37</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.</li>
@@ -2738,7 +2738,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>bool</code></td>
 <td><code>true</code>; optional</td>
 <td>Context</td>
-<td>Whether detailed data-selection controls are enabled.<br><em>Surface:</em> False ignores the selection parameters, as CASA's tclean does.</td>
+<td>Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Selections apply with either selectdata value, as CASA's tclean does; unsupported selectors are still refused.</td>
 </tr>
 <tr>
 <td><code>field</code></td>
@@ -2758,11 +2758,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>timerange</code></td>
-<td><code>ms.selection.timerange@r1</code></td>
+<td><code>ms.selection.timerange@r2</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>Inclusive TIME range in MJD seconds</td>
+<td>CASA time selection, exact text</td>
 </tr>
 <tr>
 <td><code>uvrange</code></td>
@@ -2774,27 +2774,27 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>antenna</code></td>
-<td><code>ms.selection.antenna@r1</code></td>
+<td><code>ms.selection.antenna@r2</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>Comma-separated antenna ids matched against ANTENNA1/ANTENNA2</td>
+<td>CASA antenna (baseline) selection, exact text</td>
 </tr>
 <tr>
 <td><code>scan</code></td>
-<td><code>ms.selection.scan@r1</code></td>
+<td><code>ms.selection.scan@r2</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>Comma-separated scan numbers</td>
+<td>Syntax-preserving numeric scan selection</td>
 </tr>
 <tr>
 <td><code>observation</code></td>
-<td><code>ms.selection.observation@r1</code></td>
+<td><code>ms.selection.observation@r2</code></td>
 <td><code>string</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>Comma-separated OBSERVATION_ID integers</td>
+<td>Syntax-preserving numeric observation selection</td>
 </tr>
 <tr>
 <td><code>intent</code></td>
@@ -2978,7 +2978,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>integer</code></td>
 <td><code>1</code>; optional</td>
 <td>Stages</td>
-<td>Explicit wproject plane budget<br><em>Surface:</em> -1 derives the W planes from the selected W range; awproject takes CASA's 32-plane EVLA cache.</td>
+<td>Explicit wproject plane budget<br><em>Surface:</em> -1 derives the W planes from the selected W range with wproject; awproject takes a positive count (one images co-planar), which a native EVLA cache generates and an imported CASA cache already holds.</td>
 </tr>
 <tr>
 <td><code>vptable</code></td>
@@ -3002,7 +3002,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>bool</code></td>
 <td><code>true</code>; optional</td>
 <td>Advanced Wide-Field</td>
-<td>Include the antenna aperture illumination in the AW-projection kernels.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another aterm is refused.</td>
+<td>Include the antenna aperture illumination in the AW-projection kernels.<br><em>Surface:</em> awproject reads it as CASA does: a native EVLA cache generates its cells without the aperture when False (and then without wideband cells, and for a VLA observation too); an imported CASA cache holds the cells its run made. aterm=False with psterm=False is refused, as CASA refuses it. Other gridders ignore it.</td>
 </tr>
 <tr>
 <td><code>psterm</code></td>
@@ -3010,7 +3010,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
 <td>Advanced Wide-Field</td>
-<td>Include the prolate-spheroidal anti-aliasing function in the AW-projection kernels.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another psterm is refused.</td>
+<td>Include the prolate-spheroidal anti-aliasing function in the AW-projection kernels.<br><em>Surface:</em> awproject reads it as CASA does: a native EVLA cache generates its cells with the prolate spheroidal when True; an imported CASA cache holds the cells its run made. Other gridders ignore it.</td>
 </tr>
 <tr>
 <td><code>wbawp</code></td>
@@ -3018,7 +3018,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>bool</code></td>
 <td><code>true</code>; optional</td>
 <td>Advanced Wide-Field</td>
-<td>Use frequency-dependent A-terms in wideband AW projection.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another wbawp is refused.</td>
+<td>Use frequency-dependent A-terms in wideband AW projection.<br><em>Surface:</em> awproject reads it as CASA does: a native EVLA cache generates cells at each selected window's frequency when True (with the aperture), else at the image reference frequency alone; an imported CASA cache holds the cells its run made. Other gridders ignore it.</td>
 </tr>
 <tr>
 <td><code>conjbeams</code></td>
@@ -3026,7 +3026,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>bool</code></td>
 <td><code>false</code>; optional</td>
 <td>Advanced Wide-Field</td>
-<td>Grid with the beam at the conjugate frequency, removing the beam's spectral index.<br><em>Surface:</em> casa-rs's awproject runs with aterm=True, psterm=False, wbawp=True and conjbeams=True, and its mosaic with conjbeams=False; another conjbeams is refused.</td>
+<td>Grid with the beam at the conjugate frequency, removing the beam's spectral index.<br><em>Surface:</em> awproject grids each sample with the cell nearest its conjugate frequency when True, else its own, and a native EVLA cache weighs with the beam there; the mosaic grids with conjugate beams on an image of one plane. Other gridders ignore it.</td>
 </tr>
 <tr>
 <td><code>cfcache</code></td>
@@ -3418,7 +3418,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>bool</code></td>
 <td><code>true</code>; optional</td>
 <td>Products</td>
-<td>Continue from the products of an earlier run with the same imagename.<br><em>Surface:</em> casa-rs overwrites existing products: it never restarts from them (#944).</td>
+<td>Continue from the products of an earlier run with the same imagename.<br><em>Surface:</em> restart=true continues on an earlier run's products at imagename on the same grid, as CASA's SIImageStore opens them: the model (every Taylor term, cube channel and Stokes plane) is the start model, a CLEAN mask is reused when no new mask is given, and with calcpsf=false or calcres=false the PSF, sums of weights and residual are read rather than formed. restart=false selects the next single-main-image namespace using CASA filename numbering. Refused (#944, #980): continuing outlier fields or another deconvolver family's products, a new user mask or auto-multithresh over an existing CLEAN mask when cleaning, a CLEAN mask whose planes differ, and calcpsf=false or calcres=false with facets, mosaic, A-projection or outlier fields, or with no earlier PSF (calcpsf) or residual to clean (calcres with niter &gt; 0).</td>
 </tr>
 <tr>
 <td><code>savemodel</code></td>
@@ -3488,15 +3488,15 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>hogbom_iteration_mode</code></td>
 <td><code>parameter.hogbom_iteration_mode@r1</code></td>
 <td><code>string</code></td>
-<td><code>"strict"</code>; optional</td>
+<td><code>"casa-inclusive"</code>; optional</td>
 <td>Stage Parameters</td>
-<td>Hogbom iteration accounting policy: strict is the corrected default; casa reproduces CASA's inclusive off-by-one behavior for parity comparisons</td>
+<td>Hogbom iteration accounting policy: casa-inclusive (default) reproduces CASA's inclusive terminal component and reported count; strict limits physical updates to the requested budget</td>
 </tr>
 <tr>
 <td><code>write_pb</code></td>
 <td><code>parameter.write_pb@r1</code></td>
 <td><code>bool</code></td>
-<td><code>false</code>; optional</td>
+<td><code>true</code>; optional</td>
 <td>Stages</td>
 <td>Write the primary-beam image; without it or pbcor, the standard and W-projection gridders write no .pb and no PB pixel mask, unlike CASA</td>
 </tr>

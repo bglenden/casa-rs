@@ -327,7 +327,7 @@
 <a href=#327 id=327 data-nosnippet>327</a>
 <a href=#328 id=328 data-nosnippet>328</a><span class="doccomment">/// How a changed table is written.
 <a href=#329 id=329 data-nosnippet>329</a></span><span class="attr">#[derive(Clone, Copy)]
-<a href=#330 id=330 data-nosnippet>330</a></span><span class="kw">enum </span>Write {
+<a href=#330 id=330 data-nosnippet>330</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>Write {
 <a href=#331 id=331 data-nosnippet>331</a>    <span class="doccomment">/// In full, with the storage managers [`MeasurementSet::save`] uses.
 <a href=#332 id=332 data-nosnippet>332</a>    </span>Full,
 <a href=#333 id=333 data-nosnippet>333</a>    <span class="doccomment">/// Its keywords and description alone, its storage left as it is.
@@ -355,7 +355,7 @@
 <a href=#355 id=355 data-nosnippet>355</a>/// taken here has the table reloaded as it is on disk and is released, and
 <a href=#356 id=356 data-nosnippet>356</a>/// under `held` the table is reloaded and the lock left to the caller; a
 <a href=#357 id=357 data-nosnippet>357</a>/// lock the handle holds is left to it.
-<a href=#358 id=358 data-nosnippet>358</a></span><span class="kw">fn </span>change_in_place(
+<a href=#358 id=358 data-nosnippet>358</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>change_in_place(
 <a href=#359 id=359 data-nosnippet>359</a>    table: <span class="kw-2">&amp;mut </span>Table,
 <a href=#360 id=360 data-nosnippet>360</a>    attempts: u32,
 <a href=#361 id=361 data-nosnippet>361</a>    write: Write,
@@ -418,7 +418,7 @@
 <a href=#418 id=418 data-nosnippet>418</a><span class="doccomment">/// Where the table at `path` is held open, as `TableUtil::canDeleteTable`
 <a href=#419 id=419 data-nosnippet>419</a>/// asks, read from its lock file without opening the table or waiting for
 <a href=#420 id=420 data-nosnippet>420</a>/// a lock.
-<a href=#421 id=421 data-nosnippet>421</a></span><span class="kw">fn </span>held_open(path: <span class="kw-2">&amp;</span>Path) -&gt; std::io::Result&lt;<span class="prelude-ty">Option</span>&lt;casa_tables::TableHolder&gt;&gt; {
+<a href=#421 id=421 data-nosnippet>421</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>held_open(path: <span class="kw-2">&amp;</span>Path) -&gt; std::io::Result&lt;<span class="prelude-ty">Option</span>&lt;casa_tables::TableHolder&gt;&gt; {
 <a href=#422 id=422 data-nosnippet>422</a>    <span class="attr">#[cfg(unix)]
 <a href=#423 id=423 data-nosnippet>423</a>    </span>{
 <a href=#424 id=424 data-nosnippet>424</a>        casa_tables::table_holder(path)

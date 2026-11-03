@@ -902,7 +902,7 @@ designed to paste cleanly into Markdown:</p>
 <span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
 <span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"tclean"</span>
 <span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"task"</span>
-<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">29</span>
+<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">30</span>
 
 <span class="k">[parameters]</span>
 <span class="n">vis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"data/target.ms"</span>
@@ -936,6 +936,13 @@ CASA's (<code>phasecenter_field</code> to <code>phasecenter</code>, <code>mask_b
 <code>niter = 0</code>), its values to CASA's forms, and an omitted value whose default
 changed (<code>imsize</code>, <code>cell</code>, <code>cycleniter</code>, <code>nterms</code>) takes tclean's with a
 warning. Older imager contracts are refused.</p>
+<p>Contract 30 changes casa-rs's keyword-only <code>write_pb</code> extra to default to
+<code>True</code>, so an ordinary <code>tclean</code> call writes the <code>.pb</code> product CASA writes.
+This changes none of CASA's 92 parameters or their defaults; <code>pbcor=False</code>
+still leaves the restored image uncorrected. A contract-29 profile with
+<code>write_pb</code> omitted adopts the new default with a warning. An explicit
+<code>write_pb=False</code> remains an opt-out. The owner approved this change on
+2026-10-31 (#980).</p>
 <p>Relative dataset and product paths resolve against the explicit workspace or
 the process current directory. They do not resolve relative to the profile file
 merely because the file lives elsewhere.</p>
@@ -958,6 +965,12 @@ available through the same CLI flags, task JSON, sparse profiles, and generated
 Python wrapper. Profiles store the requested paths/action/bounds, not compiled
 plans, generated cells, cache inventory, or publication state. This exposes the
 frozen EVLA case, not general telescope support.</p>
+<p>The native cells follow tclean's terms as CASA's <code>AWProjectFT</code> reads them:
+<code>aterm</code>, <code>psterm</code>, <code>wbawp</code> (cells at each window's frequency, or at the image
+reference frequency alone; without the aperture CASA drops it), <code>conjbeams</code>
+(the weight cell's conjugate beam) and <code>wprojplanes</code> (one plane is co-planar).
+An imported CASA cache already holds the cells its run made; with it only
+<code>conjbeams</code> changes the run, choosing the cell each sample grids with.</p>
 <h2 id="sources-and-precedence">Sources and precedence<a class="headerlink" href="#sources-and-precedence" title="Permanent link">&para;</a></h2>
 <p>Every task run resolves its parameters from exactly one base source:</p>
 <ul>

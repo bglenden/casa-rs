@@ -195,37 +195,45 @@
 <a href=#195 id=195 data-nosnippet>195</a>    }
 <a href=#196 id=196 data-nosnippet>196</a>
 <a href=#197 id=197 data-nosnippet>197</a>    <span class="doccomment">/// The power at `radius_arcmin_ghz`, the radius in arcmin times the
-<a href=#198 id=198 data-nosnippet>198</a>    /// frequency in GHz. As CASA tabulates the pattern
-<a href=#199 id=199 data-nosnippet>199</a>    /// (`PBMath1DPoly::fillPBArray`, `PBMath1D::apply`): 10,000 samples to
-<a href=#200 id=200 data-nosnippet>200</a>    /// [`Self::MAXIMUM_RADIUS_ARCMIN_GHZ`], the lower sample taken, the
-<a href=#201 id=201 data-nosnippet>201</a>    /// voltage stored as `Float` (the square root of the power) and
-<a href=#202 id=202 data-nosnippet>202</a>    /// squared. Zero beyond the table and where the polynomial is not
-<a href=#203 id=203 data-nosnippet>203</a>    /// positive.
-<a href=#204 id=204 data-nosnippet>204</a>    </span><span class="attr">#[must_use]
-<a href=#205 id=205 data-nosnippet>205</a>    </span><span class="kw">pub fn </span>power(<span class="kw-2">&amp;</span><span class="self">self</span>, radius_arcmin_ghz: f64) -&gt; f32 {
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">if </span>!(radius_arcmin_ghz.is_finite()
-<a href=#207 id=207 data-nosnippet>207</a>            &amp;&amp; (<span class="number">0.0</span>..=<span class="self">Self</span>::MAXIMUM_RADIUS_ARCMIN_GHZ).contains(<span class="kw-2">&amp;</span>radius_arcmin_ghz))
-<a href=#208 id=208 data-nosnippet>208</a>        {
-<a href=#209 id=209 data-nosnippet>209</a>            <span class="kw">return </span><span class="number">0.0</span>;
-<a href=#210 id=210 data-nosnippet>210</a>        }
-<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">let </span>inverse_increment = (<span class="self">Self</span>::SAMPLES - <span class="number">1.0</span>) / <span class="self">Self</span>::MAXIMUM_RADIUS_ARCMIN_GHZ;
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span>sampled = (radius_arcmin_ghz * inverse_increment).floor() / inverse_increment;
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span>x2 = sampled * sampled;
-<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">let </span><span class="kw-2">mut </span>response = <span class="number">0.0</span>;
-<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw">let </span><span class="kw-2">mut </span>power = <span class="number">1.0</span>;
-<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">for </span>coefficient <span class="kw">in </span><span class="self">self</span>.coefficients {
-<a href=#217 id=217 data-nosnippet>217</a>            response += coefficient * power;
-<a href=#218 id=218 data-nosnippet>218</a>            power <span class="kw-2">*</span>= x2;
+<a href=#198 id=198 data-nosnippet>198</a>    /// frequency in GHz: the square of [`Self::voltage`], in `Float`, as
+<a href=#199 id=199 data-nosnippet>199</a>    /// `PBMath1D::apply` squares the voltage it looks up.
+<a href=#200 id=200 data-nosnippet>200</a>    </span><span class="attr">#[must_use]
+<a href=#201 id=201 data-nosnippet>201</a>    </span><span class="kw">pub fn </span>power(<span class="kw-2">&amp;</span><span class="self">self</span>, radius_arcmin_ghz: f64) -&gt; f32 {
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">let </span>voltage = <span class="self">self</span>.voltage(radius_arcmin_ghz);
+<a href=#203 id=203 data-nosnippet>203</a>        voltage * voltage
+<a href=#204 id=204 data-nosnippet>204</a>    }
+<a href=#205 id=205 data-nosnippet>205</a>
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="doccomment">/// The voltage at `radius_arcmin_ghz`, the radius in arcmin times the
+<a href=#207 id=207 data-nosnippet>207</a>    /// frequency in GHz. As CASA tabulates the pattern
+<a href=#208 id=208 data-nosnippet>208</a>    /// (`PBMath1DPoly::fillPBArray` for a power pattern, `PBMath1D::apply`):
+<a href=#209 id=209 data-nosnippet>209</a>    /// 10,000 samples to [`Self::MAXIMUM_RADIUS_ARCMIN_GHZ`], the lower
+<a href=#210 id=210 data-nosnippet>210</a>    /// sample taken, and the square root of the fit's power stored as
+<a href=#211 id=211 data-nosnippet>211</a>    /// `Float`. Zero beyond the table and where the polynomial is not
+<a href=#212 id=212 data-nosnippet>212</a>    /// positive (CASA stores a NaN there, which its lookup skips).
+<a href=#213 id=213 data-nosnippet>213</a>    </span><span class="attr">#[must_use]
+<a href=#214 id=214 data-nosnippet>214</a>    </span><span class="kw">pub fn </span>voltage(<span class="kw-2">&amp;</span><span class="self">self</span>, radius_arcmin_ghz: f64) -&gt; f32 {
+<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw">if </span>!(radius_arcmin_ghz.is_finite()
+<a href=#216 id=216 data-nosnippet>216</a>            &amp;&amp; (<span class="number">0.0</span>..=<span class="self">Self</span>::MAXIMUM_RADIUS_ARCMIN_GHZ).contains(<span class="kw-2">&amp;</span>radius_arcmin_ghz))
+<a href=#217 id=217 data-nosnippet>217</a>        {
+<a href=#218 id=218 data-nosnippet>218</a>            <span class="kw">return </span><span class="number">0.0</span>;
 <a href=#219 id=219 data-nosnippet>219</a>        }
-<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">if </span>response &lt;= <span class="number">0.0 </span>{
-<a href=#221 id=221 data-nosnippet>221</a>            <span class="number">0.0
-<a href=#222 id=222 data-nosnippet>222</a>        </span>} <span class="kw">else </span>{
-<a href=#223 id=223 data-nosnippet>223</a>            <span class="kw">let </span>voltage = response.sqrt() <span class="kw">as </span>f32;
-<a href=#224 id=224 data-nosnippet>224</a>            voltage * voltage
-<a href=#225 id=225 data-nosnippet>225</a>        }
-<a href=#226 id=226 data-nosnippet>226</a>    }
-<a href=#227 id=227 data-nosnippet>227</a>}
-<a href=#228 id=228 data-nosnippet>228</a>
-<a href=#229 id=229 data-nosnippet>229</a><span class="attr">#[cfg(test)]
-<a href=#230 id=230 data-nosnippet>230</a></span><span class="kw">mod </span>tests;
+<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">let </span>inverse_increment = (<span class="self">Self</span>::SAMPLES - <span class="number">1.0</span>) / <span class="self">Self</span>::MAXIMUM_RADIUS_ARCMIN_GHZ;
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span>sampled = (radius_arcmin_ghz * inverse_increment).floor() / inverse_increment;
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">let </span>x2 = sampled * sampled;
+<a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">let </span><span class="kw-2">mut </span>response = <span class="number">0.0</span>;
+<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw">let </span><span class="kw-2">mut </span>power = <span class="number">1.0</span>;
+<a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">for </span>coefficient <span class="kw">in </span><span class="self">self</span>.coefficients {
+<a href=#226 id=226 data-nosnippet>226</a>            response += coefficient * power;
+<a href=#227 id=227 data-nosnippet>227</a>            power <span class="kw-2">*</span>= x2;
+<a href=#228 id=228 data-nosnippet>228</a>        }
+<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw">if </span>response &lt;= <span class="number">0.0 </span>{
+<a href=#230 id=230 data-nosnippet>230</a>            <span class="number">0.0
+<a href=#231 id=231 data-nosnippet>231</a>        </span>} <span class="kw">else </span>{
+<a href=#232 id=232 data-nosnippet>232</a>            response.sqrt() <span class="kw">as </span>f32
+<a href=#233 id=233 data-nosnippet>233</a>        }
+<a href=#234 id=234 data-nosnippet>234</a>    }
+<a href=#235 id=235 data-nosnippet>235</a>}
+<a href=#236 id=236 data-nosnippet>236</a>
+<a href=#237 id=237 data-nosnippet>237</a><span class="attr">#[cfg(test)]
+<a href=#238 id=238 data-nosnippet>238</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

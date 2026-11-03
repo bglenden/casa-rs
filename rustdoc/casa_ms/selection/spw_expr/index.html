@@ -1,0 +1,124 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="CASA’s MeasurementSet spectral-window and channel selection: the `spw` expressions of casacore’s `MSSelection`, ported from `MSSpwGram.ll`, `MSSpwGram.yy`, `MSSpwParse.cc` and `MSSpwIndex.cc` at casacore `aaf72eb7`, the commit CASA 6.7.6.14 builds."><title>casa_ms::selection::spw_expr - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_ms" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module spw_expr</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../casa_ms/index.html">casa_ms</a><span class="version">0.27.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module spw_<wbr>expr</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#forms" title="Forms">Forms</a></li><li><a href="#refusals" title="Refusals">Refusals</a></li><li><a href="#casa-quirks-this-port-keeps" title="CASA quirks this port keeps">CASA quirks this port keeps</a></li><li><a href="#not-ported" title="Not ported">Not ported</a></li><li><a href="#evidence" title="Evidence">Evidence</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In casa_<wbr>ms::<wbr>selection</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">casa_ms</a>::<wbr><a href="../index.html">selection</a></div><h1>Module <span>spw_<wbr>expr</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/casa_ms/selection/spw_expr.rs.html#2-475">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>CASA’s MeasurementSet spectral-window and channel selection: the <code>spw</code>
+expressions of casacore’s <code>MSSelection</code>, ported from <code>MSSpwGram.ll</code>,
+<code>MSSpwGram.yy</code>, <code>MSSpwParse.cc</code> and <code>MSSpwIndex.cc</code> at casacore
+<code>aaf72eb7</code>, the commit CASA 6.7.6.14 builds.</p>
+<p><a href="fn.resolve_spw_selector.html" title="fn casa_ms::selection::spw_expr::resolve_spw_selector"><code>resolve_spw_selector</code></a> resolves an expression against the
+SPECTRAL_WINDOW rows (<a href="struct.SpectralWindowRow.html" title="struct casa_ms::selection::spw_expr::SpectralWindowRow"><code>SpectralWindowRow</code></a>) and the DATA_DESCRIPTION
+rows (<a href="struct.DataDescriptionRow.html" title="struct casa_ms::selection::spw_expr::DataDescriptionRow"><code>DataDescriptionRow</code></a>) into a <a href="struct.SpwSelection.html" title="struct casa_ms::selection::spw_expr::SpwSelection"><code>SpwSelection</code></a> holding what
+<code>MSSelection</code> reports for it: the windows (<code>getSpwList</code>), their data
+descriptions (<code>getSPWDDIDList</code>), the channel list (<code>getChanList</code>, from
+which <code>getChanFreqList</code> and <code>getChanSlices</code> follow) and the data
+descriptions whose MAIN rows the selection keeps.
+<a href="../../ms/struct.MeasurementSet.html#method.resolve_spw_selector" title="method casa_ms::ms::MeasurementSet::resolve_spw_selector"><code>MeasurementSet::resolve_spw_selector</code></a> reads those rows from a
+MeasurementSet.</p>
+<h2 id="forms"><a class="doc-anchor" href="#forms">§</a>Forms</h2>
+<p>An expression is a comma-separated list of window terms, each optionally
+followed by <code>:</code> and a channel list; <code>( ... )</code> around the whole list is
+also accepted (see <a href="#casa-quirks-this-port-keeps">Quirks</a>). A window term
+is one of:</p>
+<div><table><thead><tr><th>Form</th><th>Windows</th><th>C++</th></tr></thead><tbody>
+<tr><td><code>3</code>, <code>1.7</code></td><td>window 3, window 1 (numbers are truncated)</td><td><code>MSSpwGram.yy:219-224, 393-408</code></td></tr>
+<tr><td><code>0~3</code>, <code>0~9^3</code>, <code>^2</code></td><td>the indices <code>0..=3</code>, every third, and <code>-1</code> (no window)</td><td><code>.yy:182-203</code>, <code>MSSpwIndex.cc:641-688</code></td></tr>
+<tr><td><code>0;2;5</code></td><td>a <code>;</code> list of the above</td><td><code>.yy:247-265</code></td></tr>
+<tr><td><code>name</code></td><td>the windows whose NAME is exactly <code>name</code> (letters, digits, <code>_</code>, <code>'</code>, <code>{</code>, <code>}</code>, <code>+</code>, <code>#</code>, not starting with a digit)</td><td><code>.ll:69-72, 158-164</code>, <code>.yy:267-284</code></td></tr>
+<tr><td><code>spw*</code>, <code>"any text*"</code>, <code>/text/</code></td><td>the windows whose whole NAME the shell-style pattern matches (<code>*</code>, <code>?</code>, <code>[...]</code>, <code>{a,b}</code>); <code>/.../</code> is a pattern too, not a regex</td><td><code>.ll:61-117, 165-171</code>, <code>MSSpwIndex.cc:55-75</code></td></tr>
+<tr><td><code>1.4GHz</code></td><td>the first window whose midpoint is within its largest signed CHAN_WIDTH of 1.4 GHz</td><td><code>MSSpwIndex.cc:210-309</code></td></tr>
+<tr><td><code>1GHz~2GHz</code>, <code>1~2GHz</code></td><td>the windows whose midpoint lies in the range</td><td>same</td></tr>
+<tr><td><code>1GHz~2GHz^10MHz</code></td><td>the windows one step of the range falls within the largest signed CHAN_WIDTH of</td><td>same</td></tr>
+<tr><td><code>~1.4GHz</code></td><td>the windows whose midpoint is within their TOTAL_BANDWIDTH of 1.4 GHz</td><td>same</td></tr>
+<tr><td><code>&gt;2</code>, <code>&lt;2</code>, <code>2&lt;&gt;5</code></td><td>identifiers above 2, below 2, strictly between</td><td><code>MSSpwIndex.cc:344-371</code></td></tr>
+<tr><td><code>&gt;50GHz</code>, <code>&lt;50GHz</code>, <code>1GHz&lt;&gt;60GHz</code></td><td>REF_FREQUENCY above, below, strictly between</td><td><code>MSSpwIndex.cc:313-340</code></td></tr>
+</tbody></table>
+</div>
+<p>A window’s midpoint is the single-precision mean of its first and last
+CHAN_FREQ; all frequencies in an expression are single precision, as in
+the C++. Frequency units are <code>Hz</code>, <code>kHz</code>, <code>MHz</code>, <code>GHz</code> and <code>THz</code> in any
+case, chosen by the first letter (<code>mHz</code> is a megahertz); velocity units
+(<code>km/s</code>, <code>m/s</code>) are refused, as CASA disables them
+(<code>MSSpwGram.yy:117-134</code>).</p>
+<p>A channel list is a <code>;</code> list of:</p>
+<div><table><thead><tr><th>Form</th><th>Channels (<code>[start, stop, step]</code> in <a href="struct.SpwSelection.html#method.channel_list" title="method casa_ms::selection::spw_expr::SpwSelection::channel_list"><code>SpwSelection::channel_list</code></a>)</th><th>C++</th></tr></thead><tbody>
+<tr><td><code>5</code></td><td><code>[5, 5, 1]</code>; past the end, the last channel (logged)</td><td><code>MSSpwIndex.cc:421-463</code></td></tr>
+<tr><td><code>2~9</code>, <code>2~9^2</code></td><td><code>[2, 9, 1]</code>, <code>[2, 9, 2]</code>; each end clamped to the window (logged when the stop is past it)</td><td>same</td></tr>
+<tr><td><code>^3</code></td><td><code>[0, last, 3]</code></td><td><code>.yy:196-202</code></td></tr>
+<tr><td><code>-1</code>, <code>-1~5</code></td><td><code>-1</code> is the first (as a start) or last (as a stop) channel: <code>-1</code> alone is every channel</td><td>same</td></tr>
+<tr><td><code>1.40GHz~1.41GHz</code></td><td>the first channel centre at or above the start to the last at or below the stop, <code>-1</code> where there is none; the step in hertz over the largest signed CHAN_WIDTH</td><td><code>MSSpwIndex.cc:464-536, 593-637</code></td></tr>
+<tr><td><code>1.4GHz</code></td><td>the channels bracketing 1.4 GHz</td><td>same</td></tr>
+</tbody></table>
+</div>
+<p>A step below 1 is 1; a range whose start exceeds its stop, as written,
+is refused.</p>
+<h2 id="refusals"><a class="doc-anchor" href="#refusals">§</a>Refusals</h2>
+<p>Besides syntax errors and reversed ranges, CASA refuses an expression
+when any window term matches nothing (a name, pattern, <code>&gt;</code>/<code>&lt;</code>/<code>&lt;&gt;</code>
+bound, or index naming no row): the “no match” reports go to the
+<code>MSSelectionErrorHandler</code>, which throws once parsing ends
+(<code>MSSelection.cc:859-883</code>). A frequency that matches no window throws at
+once (<code>MSSpwIndex.cc:298-307</code>). Without any window that has an
+unflagged data description, or without any channel range, the expression
+is refused (<code>MSSpwParse.cc:307-312</code>, <code>MSSpwGram.cc:121-123</code>).</p>
+<h2 id="casa-quirks-this-port-keeps"><a class="doc-anchor" href="#casa-quirks-this-port-keeps">§</a>CASA quirks this port keeps</h2>
+<ul>
+<li>An index past the last row is looked up as a NAME: in a 10-window
+MeasurementSet whose window 4 is named <code>12</code>, <code>12</code> selects window 4,
+while <code>7</code> is always window 7 (<code>MSSpwIndex.cc:82-98</code>).</li>
+<li>A window’s FLAG_ROW, and a data description’s, remove the window from
+<a href="struct.SpwSelection.html#method.spw_ids" title="method casa_ms::selection::spw_expr::SpwSelection::spw_ids"><code>spw_ids</code></a> and its rows, but not its channels
+from <a href="struct.SpwSelection.html#method.channel_list" title="method casa_ms::selection::spw_expr::SpwSelection::channel_list"><code>channel_list</code></a>; a window without a
+data description likewise (<code>MSSpwParse.cc:106-148</code>). A window with
+two data descriptions is listed twice.</li>
+<li><a href="struct.SpwSelection.html#method.spw_ids" title="method casa_ms::selection::spw_expr::SpwSelection::spw_ids"><code>spw_ids</code></a>, its data descriptions and the
+channel list keep the expression’s order and repeats.</li>
+<li>A channel range in hertz reads the channel order from the sign of the
+first CHAN_WIDTH, not from the frequencies, and divides its step by the
+largest <em>signed</em> width; one frequency selects the channels on either
+side of it.</li>
+<li>A single window frequency compares with the largest <em>signed</em>
+CHAN_WIDTH, so it matches no window with negative widths.</li>
+<li>When a window’s first channel range in hertz finds no channel, the
+next window takes its ranges from that window’s second range on
+(<code>MSSpwParse.cc:238-250</code>); ranges after the first may keep a start of
+<code>-1</code>.</li>
+<li>In a window list, a frequency replaces the list built so far but not
+the write position, so an index after it overwrites from there and
+pads with zeros (window 0): <code>100GHz~101GHz;0</code> lists the matched windows
+and then 0 again (<code>MSSpwIndex.cc:641-688</code>).</li>
+<li><code>( ... )</code> skips the step that turns the windows into a row condition,
+so the selection keeps every MAIN row (<a href="struct.SpwSelection.html#method.rows_restricted" title="method casa_ms::selection::spw_expr::SpwSelection::rows_restricted"><code>SpwSelection::rows_restricted</code></a>
+is false) while still listing the windows and channels.</li>
+<li>Scanning follows flex: <code>"text</code> or <code>/text</code> without its closing quote
+ends the expression (<code>0"x</code> is <code>0</code>); a backslash or newline inside quotes
+is dropped; a byte from 0x80 up ends the expression (<code>0é</code> is <code>0</code>);
+<code>-</code> is no name character, so <code>LBAND-A</code> must be quoted; <code>e5</code> and <code>+2</code>
+are numbers; <code>Hz</code> and <code>MHz</code> are units, not names.</li>
+<li>Out-of-range channels are logged, as CASA logs them, in
+<a href="struct.SpwSelection.html#method.warnings" title="method casa_ms::selection::spw_expr::SpwSelection::warnings"><code>SpwSelection::warnings</code></a>.</li>
+</ul>
+<h2 id="not-ported"><a class="doc-anchor" href="#not-ported">§</a>Not ported</h2>
+<ul>
+<li>A number <code>sscanf("%f")</code> cannot read (<code>.</code>, <code>+</code>, <code>e5</code>), which CASA reads
+as an uninitialised <code>Float</code>, and an index outside a C <code>Int</code>, whose cast
+is undefined (x86 and ARM differ), are refused.</li>
+<li>A stepped frequency search that CASA never leaves (a negative step on a
+window whose least CHAN_WIDTH is negative, or a step too small to move a
+single-precision frequency) is refused rather than run forever; one
+longer than 2^27 steps is refused too.</li>
+<li>A window list mixing frequencies and indices that CASA would write past
+its end is refused.</li>
+<li>Messages follow CASA’s wording but not its character positions, and a
+syntax error may be reported where CASA reports a name it looked up
+before reaching it.</li>
+</ul>
+<h2 id="evidence"><a class="doc-anchor" href="#evidence">§</a>Evidence</h2>
+<p><code>resources/casa-compat/evidence/msselection-spw-casa-20261102.json</code> holds
+what CASA 6.7.6.14’s <code>ms.msselect</code> and <code>ms.msselectedindices</code> report for
+1552 expressions over two MeasurementSets (curated forms and seeded
+random ones), written by <code>tools/casa-compat/spw_selection_oracle.py</code>;
+<code>crates/casa-ms/tests/spw_selection_oracle.rs</code> replays every one.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.ChannelFrequencyRange.html" title="struct casa_ms::selection::spw_expr::ChannelFrequencyRange">Channel<wbr>Frequency<wbr>Range</a></dt><dd>One row of <code>MSSelection::getChanFreqList()</code>: a <a href="struct.ChannelRange.html" title="struct casa_ms::selection::spw_expr::ChannelRange"><code>ChannelRange</code></a> in
+hertz.</dd><dt><a class="struct" href="struct.ChannelRange.html" title="struct casa_ms::selection::spw_expr::ChannelRange">Channel<wbr>Range</a></dt><dd>One row of <code>MSSelection::getChanList()</code>: a window and an inclusive
+channel range with a step.</dd><dt><a class="struct" href="struct.DataDescriptionRow.html" title="struct casa_ms::selection::spw_expr::DataDescriptionRow">Data<wbr>Description<wbr>Row</a></dt><dd>One DATA_DESCRIPTION row as spectral-window selection reads it. In a
+slice of these, row <code>i</code> is data description <code>i</code>.</dd><dt><a class="struct" href="struct.SpectralWindowRow.html" title="struct casa_ms::selection::spw_expr::SpectralWindowRow">Spectral<wbr>Window<wbr>Row</a></dt><dd>One SPECTRAL_WINDOW row as spectral-window selection reads it. In a slice
+of these, row <code>i</code> is window <code>i</code>.</dd><dt><a class="struct" href="struct.SpwSelection.html" title="struct casa_ms::selection::spw_expr::SpwSelection">SpwSelection</a></dt><dd>A resolved <code>spw</code> expression: what <code>MSSelection</code> reports for it.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.resolve_spw_selector.html" title="fn casa_ms::selection::spw_expr::resolve_spw_selector">resolve_<wbr>spw_<wbr>selector</a></dt><dd>Resolve CASA spectral-window selection <code>text</code> against <code>windows</code>, the
+SPECTRAL_WINDOW rows, and <code>descriptions</code>, the DATA_DESCRIPTION rows, in
+row order. See the <a href="index.html" title="mod casa_ms::selection::spw_expr">module documentation</a> for the forms.</dd></dl></section></div></main></body></html>

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["VirtualModelKind"],"fn":["clear_virtual_model","put_virtual_model","virtual_model","virtual_model_clear_ids","virtual_model_image_path","virtual_model_index_combination"],"struct":["VirtualModelCombinations","VirtualModelEntry","VirtualModelRecord","VirtualModelRow","VirtualModelSelection"]};

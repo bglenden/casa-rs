@@ -212,30 +212,31 @@
 <a href=#212 id=212 data-nosnippet>212</a>        + pointing
 <a href=#213 id=213 data-nosnippet>213</a>        + survey_bytes
 <a href=#214 id=214 data-nosnippet>214</a>        + keys * SURVEY_ENTRY_BYTES
-<a href=#215 id=215 data-nosnippet>215</a>        + PackScratch::bound(layout);
-<a href=#216 id=216 data-nosnippet>216</a>    <span class="macro">tracing::info!</span>(
-<a href=#217 id=217 data-nosnippet>217</a>        rows_per_block = rows,
-<a href=#218 id=218 data-nosnippet>218</a>        source_bytes = source,
-<a href=#219 id=219 data-nosnippet>219</a>        pass_bytes = passes(rows),
-<a href=#220 id=220 data-nosnippet>220</a>        pointing_bytes = pointing,
-<a href=#221 id=221 data-nosnippet>221</a>        survey_bytes,
-<a href=#222 id=222 data-nosnippet>222</a>        <span class="string">"observation-batch source plan"
-<a href=#223 id=223 data-nosnippet>223</a>    </span>);
-<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">let </span>reservation = admit(
-<a href=#225 id=225 data-nosnippet>225</a>        host,
-<a href=#226 id=226 data-nosnippet>226</a>        policy,
-<a href=#227 id=227 data-nosnippet>227</a>        <span class="kw-2">&amp;</span>Demand {
-<a href=#228 id=228 data-nosnippet>228</a>            phase: <span class="string">"observation-batch source"</span>,
-<a href=#229 id=229 data-nosnippet>229</a>            memory: source <span class="kw">as </span>u64 + passes(rows),
-<a href=#230 id=230 data-nosnippet>230</a>        },
-<a href=#231 id=231 data-nosnippet>231</a>    )<span class="question-mark">?</span>;
-<a href=#232 id=232 data-nosnippet>232</a>    <span class="prelude-val">Ok</span>(Admitted {
-<a href=#233 id=233 data-nosnippet>233</a>        value: Batching {
-<a href=#234 id=234 data-nosnippet>234</a>            times_per_batch,
-<a href=#235 id=235 data-nosnippet>235</a>            rows,
-<a href=#236 id=236 data-nosnippet>236</a>            survey_bytes,
-<a href=#237 id=237 data-nosnippet>237</a>        },
-<a href=#238 id=238 data-nosnippet>238</a>        reservation,
-<a href=#239 id=239 data-nosnippet>239</a>    })
-<a href=#240 id=240 data-nosnippet>240</a>}
+<a href=#215 id=215 data-nosnippet>215</a>        + PackScratch::bound(layout)
+<a href=#216 id=216 data-nosnippet>216</a>        + selection.predicate_bytes();
+<a href=#217 id=217 data-nosnippet>217</a>    <span class="macro">tracing::info!</span>(
+<a href=#218 id=218 data-nosnippet>218</a>        rows_per_block = rows,
+<a href=#219 id=219 data-nosnippet>219</a>        source_bytes = source,
+<a href=#220 id=220 data-nosnippet>220</a>        pass_bytes = passes(rows),
+<a href=#221 id=221 data-nosnippet>221</a>        pointing_bytes = pointing,
+<a href=#222 id=222 data-nosnippet>222</a>        survey_bytes,
+<a href=#223 id=223 data-nosnippet>223</a>        <span class="string">"observation-batch source plan"
+<a href=#224 id=224 data-nosnippet>224</a>    </span>);
+<a href=#225 id=225 data-nosnippet>225</a>    <span class="kw">let </span>reservation = admit(
+<a href=#226 id=226 data-nosnippet>226</a>        host,
+<a href=#227 id=227 data-nosnippet>227</a>        policy,
+<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw-2">&amp;</span>Demand {
+<a href=#229 id=229 data-nosnippet>229</a>            phase: <span class="string">"observation-batch source"</span>,
+<a href=#230 id=230 data-nosnippet>230</a>            memory: source <span class="kw">as </span>u64 + passes(rows),
+<a href=#231 id=231 data-nosnippet>231</a>        },
+<a href=#232 id=232 data-nosnippet>232</a>    )<span class="question-mark">?</span>;
+<a href=#233 id=233 data-nosnippet>233</a>    <span class="prelude-val">Ok</span>(Admitted {
+<a href=#234 id=234 data-nosnippet>234</a>        value: Batching {
+<a href=#235 id=235 data-nosnippet>235</a>            times_per_batch,
+<a href=#236 id=236 data-nosnippet>236</a>            rows,
+<a href=#237 id=237 data-nosnippet>237</a>            survey_bytes,
+<a href=#238 id=238 data-nosnippet>238</a>        },
+<a href=#239 id=239 data-nosnippet>239</a>        reservation,
+<a href=#240 id=240 data-nosnippet>240</a>    })
+<a href=#241 id=241 data-nosnippet>241</a>}
 </code></pre></div></section></main></body></html>

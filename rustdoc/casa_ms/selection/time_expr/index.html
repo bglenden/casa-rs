@@ -1,0 +1,92 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="CASA’s MeasurementSet time selection: the `timerange` expressions of casacore’s `MSSelection`, ported from `MSTimeGram.ll`, `MSTimeGram.yy` and `MSTimeParse.cc` at casacore `aaf72eb7`, the commit CASA 6.7.6.14 builds."><title>casa_ms::selection::time_expr - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-0c87338a.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="casa_ms" data-themes="" data-resource-suffix="" data-rustdoc-version="1.99.1 (58cf8f9c3 2026-10-13)" data-channel="1.99.1" data-search-js="search-cf4fc35e.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module time_expr</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../../casa_ms/index.html">casa_ms</a><span class="version">0.27.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module time_<wbr>expr</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#forms" title="Forms">Forms</a></li><li><a href="#defaults" title="Defaults">Defaults</a></li><li><a href="#time-scale" title="Time scale">Time scale</a></li><li><a href="#not-ported" title="Not ported">Not ported</a></li><li><a href="#evidence" title="Evidence">Evidence</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In casa_<wbr>ms::<wbr>selection</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">casa_ms</a>::<wbr><a href="../index.html">selection</a></div><h1>Module <span>time_<wbr>expr</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/casa_ms/selection/time_expr.rs.html#2-565">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>CASA’s MeasurementSet time selection: the <code>timerange</code> expressions of
+casacore’s <code>MSSelection</code>, ported from <code>MSTimeGram.ll</code>, <code>MSTimeGram.yy</code> and
+<code>MSTimeParse.cc</code> at casacore <code>aaf72eb7</code>, the commit CASA 6.7.6.14 builds.</p>
+<p><a href="fn.resolve_time_selector.html" title="fn casa_ms::selection::time_expr::resolve_time_selector"><code>resolve_time_selector</code></a> turns an expression into a <a href="struct.TimeSelection.html" title="struct casa_ms::selection::time_expr::TimeSelection"><code>TimeSelection</code></a>:
+the conditions on the MAIN <code>TIME</code> column that <code>MSTimeParse</code> builds as TaQL,
+with the same double-precision constants. <a href="struct.TimeSelection.html#method.holds" title="method casa_ms::selection::time_expr::TimeSelection::holds"><code>TimeSelection::holds</code></a> then
+tests a row’s <code>TIME</code> exactly as CASA’s TaQL does. <code>MSSelection</code> ANDs the
+time conditions with the conjunction of its other expressions, which is the
+caller’s part.</p>
+<h2 id="forms"><a class="doc-anchor" href="#forms">§</a>Forms</h2>
+<p>A <code>timerange</code> is one or more comma-separated terms; a row is selected when
+any term holds (<code>MSTimeParse::addCondition</code>, MSTimeParse.cc:188-196). With
+<code>t</code>, <code>t0</code>, <code>t1</code> the term’s times in seconds and <code>e</code> the default row’s
+<code>EXPOSURE</code> (see <a href="#defaults">Defaults</a>):</p>
+<div><table><thead><tr><th>Term</th><th>Example</th><th>Condition on <code>TIME</code></th><th>C++</th></tr></thead><tbody>
+<tr><td><code>T</code></td><td><code>2017/03/01/09:00:00.5</code></td><td><code>abs(TIME - t) &lt;= e/2</code></td><td>MSTimeParse.cc:200-213</td></tr>
+<tr><td><code>&gt;T</code></td><td><code>&gt;09:59:00</code></td><td><code>TIME &gt;= t</code> (inclusive)</td><td>MSTimeParse.cc:217-228</td></tr>
+<tr><td><code>&lt;T</code></td><td><code>&lt;09:00:10</code></td><td><code>TIME &lt;= t</code> (inclusive)</td><td>MSTimeParse.cc:232-244</td></tr>
+<tr><td><code>T0~T1</code></td><td><code>09:00:00~09:01:00</code></td><td><code>TIME &gt;= t0 &amp;&amp; TIME &lt;= t1</code></td><td>MSTimeParse.cc:264-266</td></tr>
+<tr><td><code>T0+dT</code></td><td><code>09:00:00+00:00:10</code></td><td>as <code>T0~T1</code> with <code>t1 = t0 + dT</code></td><td>MSTimeGram.yy:164-185</td></tr>
+<tr><td><code>[T0~T1]</code>, <code>[T0+dT]</code></td><td><code>[09:00:00~09:01:00]</code></td><td><code>(TIME &gt; t0 || abs(TIME - t0) &lt; w) &amp;&amp; (TIME &lt; t1 || abs(TIME - t1) &lt; w)</code>, <code>w = e/2</code></td><td>MSTimeParse.cc:263, 267-270</td></tr>
+<tr><td><code>N[T0~T1]</code>, <code>N[T0+dT]</code></td><td><code>3.0[09:00:00~09:01:00]</code></td><td>as <code>[T0~T1]</code> with <code>w = N</code> seconds</td><td>MSTimeGram.yy:148-151</td></tr>
+</tbody></table>
+</div>
+<p>The edge width <code>w</code> is a C <code>Float</code> (<code>MSTimeEdgeBuffer</code>, <code>edgeWidth_l</code>), so
+it is rounded to single precision; <code>N</code> must be written with a point
+(<code>3.0[</code> or <code>3.[</code>), since the grammar takes only an <code>FNUMBER</code> there and
+<code>3[</code> is a parse error. <code>0.0[T0~T1]</code> is the open interval. A range whose
+lower bound exceeds its upper bound is refused (MSTimeParse.cc:256-258).</p>
+<p>Each time <code>T</code> is a date and a time of day, either of which may be missing:</p>
+<div><table><thead><tr><th>Text</th><th>Fields</th><th>C++</th></tr></thead><tbody>
+<tr><td><code>Y/M/D/h:m:s</code></td><td>all given</td><td>MSTimeGram.yy:215, 228-241</td></tr>
+<tr><td><code>Y/M/D/h:m:</code></td><td>seconds 0</td><td>MSTimeGram.yy:216</td></tr>
+<tr><td><code>Y/M/D/m:s</code></td><td>hour 0: one colon is <strong>minutes and seconds</strong>, so <code>09:30</code> is 00:09:30</td><td>MSTimeGram.yy:217</td></tr>
+<tr><td><code>Y/M/D/s:</code></td><td>hour and minute 0: a lone trailing colon is <strong>seconds</strong></td><td>MSTimeGram.yy:218</td></tr>
+<tr><td><code>Y/M/D/s</code></td><td>a bare number is <strong>seconds</strong>, with the hour and minute defaulted</td><td>MSTimeGram.yy:219</td></tr>
+<tr><td><code>Y/M/D</code></td><td>hour, minute, second and millisecond defaulted</td><td>MSTimeGram.yy:242-250</td></tr>
+<tr><td>any of these without <code>Y/M/D/</code></td><td>year, month and day defaulted</td><td>MSTimeGram.yy:251-261</td></tr>
+<tr><td><code>*</code> for a number</td><td>that field defaulted (<code>*</code> seconds also default the milliseconds)</td><td>MSTimeGram.yy:131-133</td></tr>
+<tr><td>an empty field, as in <code>/03/01</code> or <code>:30</code></td><td>0</td><td>MSTimeGram.yy:208, 212</td></tr>
+<tr><td><code>M/D/</code> (two date fields)</td><td>year 0, so refused</td><td>MSTimeGram.yy:222</td></tr>
+</tbody></table>
+</div>
+<p>Seconds keep whole milliseconds, truncated (<code>splitSec</code>, MSTimeGram.yy:97-104):
+<code>1.001</code> is the double <code>1.000999...</code> and keeps 0 ms, and <code>2.501</code> keeps 500.
+Only the year, month (1 to 12) and day (1 to 31) are checked, with years
+before 1858 refused (<code>MSTimeParse::validate</code>, MSTimeParse.cc:388-411);
+other values roll over arithmetically, so <code>2017/02/29</code> is March 1 and
+<code>08:59:60.5</code> is 09:00:00.5.</p>
+<p>In <code>T0~T1</code>, every field missing from <code>T1</code> is copied from <code>T0</code> once <code>T0</code>
+has its defaults (<code>copyDefaults</code>), so <code>09:00:00~10:00:00</code> is on one day and
+<code>23:00:00~01:00:00</code> is refused. In <code>T0+dT</code>, <code>dT</code> is read as a time with
+the MJD epoch’s defaults (1858/11/17, zero time of day) and its MJD is
+added to <code>T0</code>’s in <code>MVEpoch</code> day arithmetic, so <code>+10</code> is 10 s, <code>+1:00</code> is
+one minute and <code>+48:00:00</code> two days. There are no numeric MJD forms, units
+or signs: <code>57813.375</code>, <code>10s</code>, <code>-</code> and <code>2017-03-01</code> are parse errors.
+Spaces, tabs and newlines between tokens are ignored, but only the empty
+string selects everything; a blank expression is a parse error, as in CASA.</p>
+<h2 id="defaults"><a class="doc-anchor" href="#defaults">§</a>Defaults</h2>
+<p>Each term reads its defaults from one MAIN row
+(<code>MSTimeParse::getDefaults</code>, MSTimeParse.cc:114-184): the row’s <code>TIME</code>,
+split into year, month and day by <code>MVTime</code> and into hour, minute and second
+by casacore’s <code>Time</code>, with the milliseconds <code>(Int)((t0 - t1) * 1E3)</code>
+truncated, and the row’s <code>EXPOSURE</code> (<code>e</code>). On <code>MSSelection</code>’s path the
+first term reads the first logical row (<a href="fn.msselection_first_logical_row.html" title="fn casa_ms::selection::time_expr::msselection_first_logical_row"><code>msselection_first_logical_row</code></a>)
+and every later term reads row 0: <code>getDefaults</code> searches only on its first
+call and otherwise keeps <code>firstLogicalRow = 0</code> (MSTimeParse.cc:116-120).
+<a href="struct.TimeSelectorDefaults.html" title="struct casa_ms::selection::time_expr::TimeSelectorDefaults"><code>TimeSelectorDefaults</code></a> carries both rows.</p>
+<h2 id="time-scale"><a class="doc-anchor" href="#time-scale">§</a>Time scale</h2>
+<p>The expression’s times are compared with <code>TIME</code> in whatever scale <code>TIME</code>
+holds. <code>MSTimeParse::toTAIInSec</code> (MSTimeParse.cc:339-344) despite its name
+converts nothing (its <code>MEpoch::Convert</code> to TAI is commented out), so a UTC
+<code>TIME</code> column is selected by UTC times, with no leap-second offset.</p>
+<h2 id="not-ported"><a class="doc-anchor" href="#not-ported">§</a>Not ported</h2>
+<p>The grammar keeps the bracket state in process globals that a failed parse
+inside brackets leaves set, so CASA’s next unbracketed range in the same
+process is edge-inclusive; each parse here starts afresh. A seconds value
+or a year beyond C <code>Int</code> arithmetic, and a default row whose <code>TIME</code> is not
+a finite day number, are undefined behaviour in the C++ and are refused.</p>
+<h2 id="evidence"><a class="doc-anchor" href="#evidence">§</a>Evidence</h2>
+<p><code>resources/casa-compat/evidence/msselection-time-casa-20261102.json</code> holds
+the rows CASA 6.7.6.14’s <code>ms.msselect</code> keeps for 1528 expressions (curated
+forms, seeded random ones, first-logical-row and later-term defaults, and
+defaults rebuilt from assorted sub-second row times), written by
+<code>tools/casa-compat/time_selection_oracle.py</code>; the tests replay every one.</p>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.TimeDefaults.html" title="struct casa_ms::selection::time_expr::TimeDefaults">Time<wbr>Defaults</a></dt><dd>The <code>TIME</code> and <code>EXPOSURE</code> of the MAIN row a time expression takes its
+defaults from.</dd><dt><a class="struct" href="struct.TimeListEntry.html" title="struct casa_ms::selection::time_expr::TimeListEntry">Time<wbr>List<wbr>Entry</a></dt><dd>One column of <code>MSSelection::getTimeList()</code>: the interval a term records
+(<code>MSTimeParse::accumulateTimeList</code>, MSTimeParse.cc:428-439).</dd><dt><a class="struct" href="struct.TimeSelection.html" title="struct casa_ms::selection::time_expr::TimeSelection">Time<wbr>Selection</a></dt><dd>A resolved <code>timerange</code>: the OR of its terms, or every row when the
+expression was empty.</dd><dt><a class="struct" href="struct.TimeSelector.html" title="struct casa_ms::selection::time_expr::TimeSelector">Time<wbr>Selector</a></dt><dd>A parsed <code>timerange</code> expression whose defaults are not yet applied.</dd><dt><a class="struct" href="struct.TimeSelectorDefaults.html" title="struct casa_ms::selection::time_expr::TimeSelectorDefaults">Time<wbr>Selector<wbr>Defaults</a></dt><dd>The rows a whole time expression takes its defaults from.</dd><dt><a class="struct" href="struct.TimeTerm.html" title="struct casa_ms::selection::time_expr::TimeTerm">Time<wbr>Term</a></dt><dd>One resolved comma-separated term.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.LogicalRowFilter.html" title="enum casa_ms::selection::time_expr::LogicalRowFilter">Logical<wbr>RowFilter</a></dt><dd>The predicate <code>MSSelection</code> uses to find the first logical row.</dd><dt><a class="enum" href="enum.TimeCondition.html" title="enum casa_ms::selection::time_expr::TimeCondition">Time<wbr>Condition</a></dt><dd>One condition on a row’s <code>TIME</code>, as <code>MSTimeParse</code> builds it in TaQL.
+Every time is in seconds in the <code>TIME</code> column’s scale.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.msselection_first_logical_row.html" title="fn casa_ms::selection::time_expr::msselection_first_logical_row">msselection_<wbr>first_<wbr>logical_<wbr>row</a></dt><dd>The first logical row <code>MSSelection</code> reads time defaults from, among
+<code>row_count</code> MAIN rows.</dd><dt><a class="fn" href="fn.resolve_time_selector.html" title="fn casa_ms::selection::time_expr::resolve_time_selector">resolve_<wbr>time_<wbr>selector</a></dt><dd>Parse and resolve a <code>timerange</code> expression; see the <a href="index.html" title="mod casa_ms::selection::time_expr">module
+documentation</a> for the forms and defaults.</dd></dl></section></div></main></body></html>

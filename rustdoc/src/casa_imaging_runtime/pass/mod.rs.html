@@ -547,77 +547,81 @@
 <a href=#547 id=547 data-nosnippet>547</a>
 <a href=#548 id=548 data-nosnippet>548</a><span class="doccomment">/// Bytes a density pass over blocks of `block` on `workers` workers holds:
 <a href=#549 id=549 data-nosnippet>549</a>/// its grid of `shape` ([`DensityGridShape::bytes`]), which it returns, and
-<a href=#550 id=550 data-nosnippet>550</a>/// its row chunks' sample buffers, which it frees. The stream's native
-<a href=#551 id=551 data-nosnippet>551</a>/// blocks are the source's ([`source_block_bytes`]).
-<a href=#552 id=552 data-nosnippet>552</a></span><span class="attr">#[must_use]
-<a href=#553 id=553 data-nosnippet>553</a></span><span class="kw">pub fn </span>density_pass_bytes(
-<a href=#554 id=554 data-nosnippet>554</a>    resampler: <span class="kw-2">&amp;</span>SpectralResampler,
-<a href=#555 id=555 data-nosnippet>555</a>    shape: <span class="kw-2">&amp;</span>DensityGridShape,
-<a href=#556 id=556 data-nosnippet>556</a>    block: BlockShape,
-<a href=#557 id=557 data-nosnippet>557</a>    workers: usize,
-<a href=#558 id=558 data-nosnippet>558</a>) -&gt; u64 {
-<a href=#559 id=559 data-nosnippet>559</a>    <span class="kw">let </span>chunks = workers * DENSITY_CHUNKS_PER_WORKER;
-<a href=#560 id=560 data-nosnippet>560</a>    <span class="kw">let </span>row = resampler.density_samples_per_row(shape, block.spectrum);
-<a href=#561 id=561 data-nosnippet>561</a>    <span class="kw">let </span>placements = chunk_rows(row, block.rows, chunks, CHUNK_PLACEMENTS) * row;
-<a href=#562 id=562 data-nosnippet>562</a>    shape.bytes() + chunks <span class="kw">as </span>u64 * SampleBuffer::bytes(<span class="number">1</span>, placements)
-<a href=#563 id=563 data-nosnippet>563</a>}
-<a href=#564 id=564 data-nosnippet>564</a>
-<a href=#565 id=565 data-nosnippet>565</a><span class="doccomment">/// Accumulate the weight-density grid of `shape` over one traversal of the
-<a href=#566 id=566 data-nosnippet>566</a>/// first image domain's projection: each row is placed with
-<a href=#567 id=567 data-nosnippet>567</a>/// [`SpectralResampler::place_density`] on row chunks and the chunks are
-<a href=#568 id=568 data-nosnippet>568</a>/// added in row order. It holds [`density_pass_bytes`] while it runs.
-<a href=#569 id=569 data-nosnippet>569</a>///
-<a href=#570 id=570 data-nosnippet>570</a>/// The traversal reads flags and weights only
-<a href=#571 id=571 data-nosnippet>571</a>/// ([`SampleContent::FlagsAndWeights`]): a density placement carries the
-<a href=#572 id=572 data-nosnippet>572</a>/// sample's weight and no value.
-<a href=#573 id=573 data-nosnippet>573</a></span><span class="kw">pub fn </span>run_density_pass(
-<a href=#574 id=574 data-nosnippet>574</a>    operator: <span class="kw-2">&amp;</span>MeasurementOperator,
-<a href=#575 id=575 data-nosnippet>575</a>    resampler: <span class="kw-2">&amp;</span>SpectralResampler,
-<a href=#576 id=576 data-nosnippet>576</a>    shape: DensityGridShape,
-<a href=#577 id=577 data-nosnippet>577</a>    source: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>BoundedSource,
-<a href=#578 id=578 data-nosnippet>578</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#579 id=579 data-nosnippet>579</a>    cancel: <span class="kw-2">&amp;</span>Cancel,
-<a href=#580 id=580 data-nosnippet>580</a>) -&gt; <span class="prelude-ty">Result</span>&lt;DensityGrid, PassError&gt; {
-<a href=#581 id=581 data-nosnippet>581</a>    source
-<a href=#582 id=582 data-nosnippet>582</a>        .begin(
-<a href=#583 id=583 data-nosnippet>583</a>            PlaneRange::new(<span class="number">0</span>, operator.basis().planes()),
-<a href=#584 id=584 data-nosnippet>584</a>            <span class="bool-val">false</span>,
-<a href=#585 id=585 data-nosnippet>585</a>            SampleContent::FlagsAndWeights,
-<a href=#586 id=586 data-nosnippet>586</a>        )
-<a href=#587 id=587 data-nosnippet>587</a>        .map_err(PassError::Source)<span class="question-mark">?</span>;
-<a href=#588 id=588 data-nosnippet>588</a>    <span class="kw">let </span><span class="kw-2">mut </span>grid = DensityGrid::new(shape);
-<a href=#589 id=589 data-nosnippet>589</a>    <span class="kw">let </span>maximum = source.maximum_block();
-<a href=#590 id=590 data-nosnippet>590</a>    <span class="kw">let </span>count = team.workers() * DENSITY_CHUNKS_PER_WORKER;
-<a href=#591 id=591 data-nosnippet>591</a>    <span class="kw">let </span>row = resampler.density_samples_per_row(<span class="kw-2">&amp;</span>shape, maximum.spectrum);
-<a href=#592 id=592 data-nosnippet>592</a>    <span class="kw">let </span>rows_per_chunk = chunk_rows(row, maximum.rows, count, CHUNK_PLACEMENTS);
-<a href=#593 id=593 data-nosnippet>593</a>    <span class="kw">let </span>placements = rows_per_chunk * row;
-<a href=#594 id=594 data-nosnippet>594</a>    <span class="kw">let </span><span class="kw-2">mut </span>chunks = (<span class="number">0</span>..count)
-<a href=#595 id=595 data-nosnippet>595</a>        .map(|<span class="kw">_</span>| (<span class="number">0</span>..<span class="number">0</span>, SampleBuffer::with_capacity(<span class="number">1</span>, placements)))
-<a href=#596 id=596 data-nosnippet>596</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#597 id=597 data-nosnippet>597</a>    stream_blocks(source, cancel, <span class="bool-val">false</span>, |block| {
-<a href=#598 id=598 data-nosnippet>598</a>        <span class="kw">for </span>slice <span class="kw">in </span>slices(block.len(), count, rows_per_chunk) {
-<a href=#599 id=599 data-nosnippet>599</a>            <span class="kw">let </span><span class="kw-2">mut </span>used = <span class="number">0</span>;
-<a href=#600 id=600 data-nosnippet>600</a>            <span class="kw">for </span>((range, <span class="kw">_</span>), rows) <span class="kw">in </span>chunks.iter_mut().zip(chunk_ranges(slice, count)) {
-<a href=#601 id=601 data-nosnippet>601</a>                <span class="kw-2">*</span>range = rows;
-<a href=#602 id=602 data-nosnippet>602</a>                used += <span class="number">1</span>;
-<a href=#603 id=603 data-nosnippet>603</a>            }
-<a href=#604 id=604 data-nosnippet>604</a>            team.for_each_mut(<span class="kw-2">&amp;mut </span>chunks[..used], |<span class="kw">_</span>, (range, buffer)| {
-<a href=#605 id=605 data-nosnippet>605</a>                buffer.clear();
-<a href=#606 id=606 data-nosnippet>606</a>                <span class="kw">for </span>row <span class="kw">in </span>range.clone() {
-<a href=#607 id=607 data-nosnippet>607</a>                    resampler.place_density(operator, <span class="kw-2">&amp;</span>block.row(<span class="number">0</span>, row), <span class="kw-2">&amp;</span>shape, buffer)<span class="question-mark">?</span>;
-<a href=#608 id=608 data-nosnippet>608</a>                }
-<a href=#609 id=609 data-nosnippet>609</a>                <span class="macro">debug_assert!</span>(
-<a href=#610 id=610 data-nosnippet>610</a>                    buffer.capacity_bytes() == SampleBuffer::bytes(<span class="number">1</span>, placements),
-<a href=#611 id=611 data-nosnippet>611</a>                    <span class="string">"a density chunk places within the placements it was allocated for"
-<a href=#612 id=612 data-nosnippet>612</a>                </span>);
-<a href=#613 id=613 data-nosnippet>613</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
-<a href=#614 id=614 data-nosnippet>614</a>            })<span class="question-mark">?</span>;
-<a href=#615 id=615 data-nosnippet>615</a>            <span class="kw">for </span>(<span class="kw">_</span>, buffer) <span class="kw">in </span><span class="kw-2">&amp;</span>chunks[..used] {
-<a href=#616 id=616 data-nosnippet>616</a>                grid.accumulate(<span class="kw-2">&amp;</span>buffer.block());
-<a href=#617 id=617 data-nosnippet>617</a>            }
-<a href=#618 id=618 data-nosnippet>618</a>        }
-<a href=#619 id=619 data-nosnippet>619</a>        <span class="prelude-val">Ok</span>(())
-<a href=#620 id=620 data-nosnippet>620</a>    })<span class="question-mark">?</span>;
-<a href=#621 id=621 data-nosnippet>621</a>    <span class="prelude-val">Ok</span>(grid)
-<a href=#622 id=622 data-nosnippet>622</a>}
+<a href=#550 id=550 data-nosnippet>550</a>/// its row chunks, which it frees: each chunk's row range and sample buffer
+<a href=#551 id=551 data-nosnippet>551</a>/// and the team's result for it on each call
+<a href=#552 id=552 data-nosnippet>552</a>/// ([`WorkerTeam::for_each_mut`]). The stream's native blocks are the
+<a href=#553 id=553 data-nosnippet>553</a>/// source's ([`source_block_bytes`]).
+<a href=#554 id=554 data-nosnippet>554</a></span><span class="attr">#[must_use]
+<a href=#555 id=555 data-nosnippet>555</a></span><span class="kw">pub fn </span>density_pass_bytes(
+<a href=#556 id=556 data-nosnippet>556</a>    resampler: <span class="kw-2">&amp;</span>SpectralResampler,
+<a href=#557 id=557 data-nosnippet>557</a>    shape: <span class="kw-2">&amp;</span>DensityGridShape,
+<a href=#558 id=558 data-nosnippet>558</a>    block: BlockShape,
+<a href=#559 id=559 data-nosnippet>559</a>    workers: usize,
+<a href=#560 id=560 data-nosnippet>560</a>) -&gt; u64 {
+<a href=#561 id=561 data-nosnippet>561</a>    <span class="kw">let </span>chunks = workers * DENSITY_CHUNKS_PER_WORKER;
+<a href=#562 id=562 data-nosnippet>562</a>    <span class="kw">let </span>row = resampler.density_samples_per_row(shape, block.spectrum);
+<a href=#563 id=563 data-nosnippet>563</a>    <span class="kw">let </span>placements = chunk_rows(row, block.rows, chunks, CHUNK_PLACEMENTS) * row;
+<a href=#564 id=564 data-nosnippet>564</a>    <span class="kw">let </span>containers =
+<a href=#565 id=565 data-nosnippet>565</a>        size_of::&lt;(std::ops::Range&lt;usize&gt;, SampleBuffer)&gt;() + size_of::&lt;<span class="prelude-ty">Result</span>&lt;(), PassError&gt;&gt;();
+<a href=#566 id=566 data-nosnippet>566</a>    shape.bytes() + chunks <span class="kw">as </span>u64 * (SampleBuffer::bytes(<span class="number">1</span>, placements) + containers <span class="kw">as </span>u64)
+<a href=#567 id=567 data-nosnippet>567</a>}
+<a href=#568 id=568 data-nosnippet>568</a>
+<a href=#569 id=569 data-nosnippet>569</a><span class="doccomment">/// Accumulate the weight-density grid of `shape` over one traversal of the
+<a href=#570 id=570 data-nosnippet>570</a>/// first image domain's projection: each row is placed with
+<a href=#571 id=571 data-nosnippet>571</a>/// [`SpectralResampler::place_density`] on row chunks and the chunks are
+<a href=#572 id=572 data-nosnippet>572</a>/// added in row order. It holds [`density_pass_bytes`] while it runs.
+<a href=#573 id=573 data-nosnippet>573</a>///
+<a href=#574 id=574 data-nosnippet>574</a>/// The traversal reads flags and weights only
+<a href=#575 id=575 data-nosnippet>575</a>/// ([`SampleContent::FlagsAndWeights`]): a density placement carries the
+<a href=#576 id=576 data-nosnippet>576</a>/// sample's weight and no value.
+<a href=#577 id=577 data-nosnippet>577</a></span><span class="kw">pub fn </span>run_density_pass(
+<a href=#578 id=578 data-nosnippet>578</a>    operator: <span class="kw-2">&amp;</span>MeasurementOperator,
+<a href=#579 id=579 data-nosnippet>579</a>    resampler: <span class="kw-2">&amp;</span>SpectralResampler,
+<a href=#580 id=580 data-nosnippet>580</a>    shape: DensityGridShape,
+<a href=#581 id=581 data-nosnippet>581</a>    source: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>BoundedSource,
+<a href=#582 id=582 data-nosnippet>582</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#583 id=583 data-nosnippet>583</a>    cancel: <span class="kw-2">&amp;</span>Cancel,
+<a href=#584 id=584 data-nosnippet>584</a>) -&gt; <span class="prelude-ty">Result</span>&lt;DensityGrid, PassError&gt; {
+<a href=#585 id=585 data-nosnippet>585</a>    source
+<a href=#586 id=586 data-nosnippet>586</a>        .begin(
+<a href=#587 id=587 data-nosnippet>587</a>            PlaneRange::new(<span class="number">0</span>, operator.basis().planes()),
+<a href=#588 id=588 data-nosnippet>588</a>            <span class="bool-val">false</span>,
+<a href=#589 id=589 data-nosnippet>589</a>            SampleContent::FlagsAndWeights,
+<a href=#590 id=590 data-nosnippet>590</a>        )
+<a href=#591 id=591 data-nosnippet>591</a>        .map_err(PassError::Source)<span class="question-mark">?</span>;
+<a href=#592 id=592 data-nosnippet>592</a>    <span class="kw">let </span><span class="kw-2">mut </span>grid = DensityGrid::new(shape);
+<a href=#593 id=593 data-nosnippet>593</a>    <span class="kw">let </span>maximum = source.maximum_block();
+<a href=#594 id=594 data-nosnippet>594</a>    <span class="kw">let </span>count = team.workers() * DENSITY_CHUNKS_PER_WORKER;
+<a href=#595 id=595 data-nosnippet>595</a>    <span class="kw">let </span>row = resampler.density_samples_per_row(<span class="kw-2">&amp;</span>shape, maximum.spectrum);
+<a href=#596 id=596 data-nosnippet>596</a>    <span class="kw">let </span>rows_per_chunk = chunk_rows(row, maximum.rows, count, CHUNK_PLACEMENTS);
+<a href=#597 id=597 data-nosnippet>597</a>    <span class="kw">let </span>placements = rows_per_chunk * row;
+<a href=#598 id=598 data-nosnippet>598</a>    <span class="kw">let </span><span class="kw-2">mut </span>chunks = (<span class="number">0</span>..count)
+<a href=#599 id=599 data-nosnippet>599</a>        .map(|<span class="kw">_</span>| (<span class="number">0</span>..<span class="number">0</span>, SampleBuffer::with_capacity(<span class="number">1</span>, placements)))
+<a href=#600 id=600 data-nosnippet>600</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#601 id=601 data-nosnippet>601</a>    stream_blocks(source, cancel, <span class="bool-val">false</span>, |block| {
+<a href=#602 id=602 data-nosnippet>602</a>        <span class="kw">for </span>slice <span class="kw">in </span>slices(block.len(), count, rows_per_chunk) {
+<a href=#603 id=603 data-nosnippet>603</a>            <span class="kw">let </span><span class="kw-2">mut </span>used = <span class="number">0</span>;
+<a href=#604 id=604 data-nosnippet>604</a>            <span class="kw">for </span>((range, <span class="kw">_</span>), rows) <span class="kw">in </span>chunks.iter_mut().zip(chunk_ranges(slice, count)) {
+<a href=#605 id=605 data-nosnippet>605</a>                <span class="kw-2">*</span>range = rows;
+<a href=#606 id=606 data-nosnippet>606</a>                used += <span class="number">1</span>;
+<a href=#607 id=607 data-nosnippet>607</a>            }
+<a href=#608 id=608 data-nosnippet>608</a>            team.for_each_mut(<span class="kw-2">&amp;mut </span>chunks[..used], |<span class="kw">_</span>, (range, buffer)| {
+<a href=#609 id=609 data-nosnippet>609</a>                buffer.clear();
+<a href=#610 id=610 data-nosnippet>610</a>                <span class="kw">for </span>row <span class="kw">in </span>range.clone() {
+<a href=#611 id=611 data-nosnippet>611</a>                    resampler.place_density(operator, <span class="kw-2">&amp;</span>block.row(<span class="number">0</span>, row), <span class="kw-2">&amp;</span>shape, buffer)<span class="question-mark">?</span>;
+<a href=#612 id=612 data-nosnippet>612</a>                }
+<a href=#613 id=613 data-nosnippet>613</a>                <span class="macro">debug_assert!</span>(
+<a href=#614 id=614 data-nosnippet>614</a>                    buffer.capacity_bytes() == SampleBuffer::bytes(<span class="number">1</span>, placements),
+<a href=#615 id=615 data-nosnippet>615</a>                    <span class="string">"a density chunk places within the placements it was allocated for"
+<a href=#616 id=616 data-nosnippet>616</a>                </span>);
+<a href=#617 id=617 data-nosnippet>617</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
+<a href=#618 id=618 data-nosnippet>618</a>            })<span class="question-mark">?</span>;
+<a href=#619 id=619 data-nosnippet>619</a>            <span class="kw">for </span>(<span class="kw">_</span>, buffer) <span class="kw">in </span><span class="kw-2">&amp;</span>chunks[..used] {
+<a href=#620 id=620 data-nosnippet>620</a>                grid.accumulate(<span class="kw-2">&amp;</span>buffer.block());
+<a href=#621 id=621 data-nosnippet>621</a>            }
+<a href=#622 id=622 data-nosnippet>622</a>        }
+<a href=#623 id=623 data-nosnippet>623</a>        <span class="prelude-val">Ok</span>(())
+<a href=#624 id=624 data-nosnippet>624</a>    })<span class="question-mark">?</span>;
+<a href=#625 id=625 data-nosnippet>625</a>    <span class="prelude-val">Ok</span>(grid)
+<a href=#626 id=626 data-nosnippet>626</a>}
 </code></pre></div></section></main></body></html>

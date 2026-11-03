@@ -274,60 +274,62 @@
 <a href=#274 id=274 data-nosnippet>274</a>            | RequiredCapability::UniformWeighting
 <a href=#275 id=275 data-nosnippet>275</a>            | RequiredCapability::BriggsWeighting
 <a href=#276 id=276 data-nosnippet>276</a>            | RequiredCapability::BriggsBandwidthTaperWeighting
-<a href=#277 id=277 data-nosnippet>277</a>            | RequiredCapability::UvTaper
-<a href=#278 id=278 data-nosnippet>278</a>            | RequiredCapability::UnitResponseNormalization
-<a href=#279 id=279 data-nosnippet>279</a>            | RequiredCapability::FlatNoiseNormalization
-<a href=#280 id=280 data-nosnippet>280</a>            | RequiredCapability::FlatSkyNormalization
-<a href=#281 id=281 data-nosnippet>281</a>            | RequiredCapability::Product(
-<a href=#282 id=282 data-nosnippet>282</a>                ProductKind::Psf
-<a href=#283 id=283 data-nosnippet>283</a>                    | ProductKind::Residual
-<a href=#284 id=284 data-nosnippet>284</a>                    | ProductKind::Model
-<a href=#285 id=285 data-nosnippet>285</a>                    | ProductKind::RestoredImage
-<a href=#286 id=286 data-nosnippet>286</a>                    | ProductKind::SumWeights
-<a href=#287 id=287 data-nosnippet>287</a>                    | ProductKind::Weight
-<a href=#288 id=288 data-nosnippet>288</a>                    | ProductKind::Sensitivity
-<a href=#289 id=289 data-nosnippet>289</a>                    | ProductKind::Mask
-<a href=#290 id=290 data-nosnippet>290</a>                    | ProductKind::Beam
-<a href=#291 id=291 data-nosnippet>291</a>                    | ProductKind::PrimaryBeam
-<a href=#292 id=292 data-nosnippet>292</a>                    | ProductKind::PbCorrectedImage
-<a href=#293 id=293 data-nosnippet>293</a>                    | ProductKind::TaylorTerms
-<a href=#294 id=294 data-nosnippet>294</a>                    | ProductKind::SpectralIndex
-<a href=#295 id=295 data-nosnippet>295</a>                    | ProductKind::SpectralIndexError
-<a href=#296 id=296 data-nosnippet>296</a>            )
-<a href=#297 id=297 data-nosnippet>297</a>    )
-<a href=#298 id=298 data-nosnippet>298</a>}
-<a href=#299 id=299 data-nosnippet>299</a>
-<a href=#300 id=300 data-nosnippet>300</a><span class="attr">#[cfg(test)]
-<a href=#301 id=301 data-nosnippet>301</a></span><span class="kw">mod </span>tests {
-<a href=#302 id=302 data-nosnippet>302</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#303 id=303 data-nosnippet>303</a>
-<a href=#304 id=304 data-nosnippet>304</a>    <span class="attr">#[test]
-<a href=#305 id=305 data-nosnippet>305</a>    </span><span class="kw">fn </span>the_pass_runs_every_convolution_function_set_and_publication_beam() {
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">for </span>capability <span class="kw">in </span>[
-<a href=#307 id=307 data-nosnippet>307</a>            RequiredCapability::WProjection,
-<a href=#308 id=308 data-nosnippet>308</a>            RequiredCapability::AwProjection,
-<a href=#309 id=309 data-nosnippet>309</a>            RequiredCapability::PrimaryBeamResponse,
-<a href=#310 id=310 data-nosnippet>310</a>            RequiredCapability::Product(ProductKind::Weight),
-<a href=#311 id=311 data-nosnippet>311</a>            RequiredCapability::Product(ProductKind::Sensitivity),
-<a href=#312 id=312 data-nosnippet>312</a>            RequiredCapability::Product(ProductKind::PrimaryBeam),
-<a href=#313 id=313 data-nosnippet>313</a>            RequiredCapability::Product(ProductKind::PbCorrectedImage),
-<a href=#314 id=314 data-nosnippet>314</a>            RequiredCapability::Polarization(PolarizationCoordinate::StokesQ),
-<a href=#315 id=315 data-nosnippet>315</a>            RequiredCapability::Polarization(PolarizationCoordinate::CircularRl),
-<a href=#316 id=316 data-nosnippet>316</a>            RequiredCapability::FacetedGeometry,
-<a href=#317 id=317 data-nosnippet>317</a>            RequiredCapability::UvTaper,
-<a href=#318 id=318 data-nosnippet>318</a>        ] {
-<a href=#319 id=319 data-nosnippet>319</a>            <span class="macro">assert!</span>(supports_capability(capability), <span class="string">"{capability:?}"</span>);
-<a href=#320 id=320 data-nosnippet>320</a>        }
-<a href=#321 id=321 data-nosnippet>321</a>    }
-<a href=#322 id=322 data-nosnippet>322</a>
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="attr">#[test]
-<a href=#324 id=324 data-nosnippet>324</a>    </span><span class="kw">fn </span>full_mueller_and_the_corrected_spectral_index_wait() {
-<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">for </span>capability <span class="kw">in </span>[
-<a href=#326 id=326 data-nosnippet>326</a>            RequiredCapability::FullMuellerResponse,
-<a href=#327 id=327 data-nosnippet>327</a>            RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex),
-<a href=#328 id=328 data-nosnippet>328</a>        ] {
-<a href=#329 id=329 data-nosnippet>329</a>            <span class="macro">assert!</span>(!supports_capability(capability), <span class="string">"{capability:?}"</span>);
-<a href=#330 id=330 data-nosnippet>330</a>        }
-<a href=#331 id=331 data-nosnippet>331</a>    }
-<a href=#332 id=332 data-nosnippet>332</a>}
+<a href=#277 id=277 data-nosnippet>277</a>            | RequiredCapability::BriggsAbsoluteWeighting
+<a href=#278 id=278 data-nosnippet>278</a>            | RequiredCapability::RadialWeighting
+<a href=#279 id=279 data-nosnippet>279</a>            | RequiredCapability::UvTaper
+<a href=#280 id=280 data-nosnippet>280</a>            | RequiredCapability::UnitResponseNormalization
+<a href=#281 id=281 data-nosnippet>281</a>            | RequiredCapability::FlatNoiseNormalization
+<a href=#282 id=282 data-nosnippet>282</a>            | RequiredCapability::FlatSkyNormalization
+<a href=#283 id=283 data-nosnippet>283</a>            | RequiredCapability::Product(
+<a href=#284 id=284 data-nosnippet>284</a>                ProductKind::Psf
+<a href=#285 id=285 data-nosnippet>285</a>                    | ProductKind::Residual
+<a href=#286 id=286 data-nosnippet>286</a>                    | ProductKind::Model
+<a href=#287 id=287 data-nosnippet>287</a>                    | ProductKind::RestoredImage
+<a href=#288 id=288 data-nosnippet>288</a>                    | ProductKind::SumWeights
+<a href=#289 id=289 data-nosnippet>289</a>                    | ProductKind::Weight
+<a href=#290 id=290 data-nosnippet>290</a>                    | ProductKind::Sensitivity
+<a href=#291 id=291 data-nosnippet>291</a>                    | ProductKind::Mask
+<a href=#292 id=292 data-nosnippet>292</a>                    | ProductKind::Beam
+<a href=#293 id=293 data-nosnippet>293</a>                    | ProductKind::PrimaryBeam
+<a href=#294 id=294 data-nosnippet>294</a>                    | ProductKind::PbCorrectedImage
+<a href=#295 id=295 data-nosnippet>295</a>                    | ProductKind::TaylorTerms
+<a href=#296 id=296 data-nosnippet>296</a>                    | ProductKind::SpectralIndex
+<a href=#297 id=297 data-nosnippet>297</a>                    | ProductKind::SpectralIndexError
+<a href=#298 id=298 data-nosnippet>298</a>            )
+<a href=#299 id=299 data-nosnippet>299</a>    )
+<a href=#300 id=300 data-nosnippet>300</a>}
+<a href=#301 id=301 data-nosnippet>301</a>
+<a href=#302 id=302 data-nosnippet>302</a><span class="attr">#[cfg(test)]
+<a href=#303 id=303 data-nosnippet>303</a></span><span class="kw">mod </span>tests {
+<a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#305 id=305 data-nosnippet>305</a>
+<a href=#306 id=306 data-nosnippet>306</a>    <span class="attr">#[test]
+<a href=#307 id=307 data-nosnippet>307</a>    </span><span class="kw">fn </span>the_pass_runs_every_convolution_function_set_and_publication_beam() {
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">for </span>capability <span class="kw">in </span>[
+<a href=#309 id=309 data-nosnippet>309</a>            RequiredCapability::WProjection,
+<a href=#310 id=310 data-nosnippet>310</a>            RequiredCapability::AwProjection,
+<a href=#311 id=311 data-nosnippet>311</a>            RequiredCapability::PrimaryBeamResponse,
+<a href=#312 id=312 data-nosnippet>312</a>            RequiredCapability::Product(ProductKind::Weight),
+<a href=#313 id=313 data-nosnippet>313</a>            RequiredCapability::Product(ProductKind::Sensitivity),
+<a href=#314 id=314 data-nosnippet>314</a>            RequiredCapability::Product(ProductKind::PrimaryBeam),
+<a href=#315 id=315 data-nosnippet>315</a>            RequiredCapability::Product(ProductKind::PbCorrectedImage),
+<a href=#316 id=316 data-nosnippet>316</a>            RequiredCapability::Polarization(PolarizationCoordinate::StokesQ),
+<a href=#317 id=317 data-nosnippet>317</a>            RequiredCapability::Polarization(PolarizationCoordinate::CircularRl),
+<a href=#318 id=318 data-nosnippet>318</a>            RequiredCapability::FacetedGeometry,
+<a href=#319 id=319 data-nosnippet>319</a>            RequiredCapability::UvTaper,
+<a href=#320 id=320 data-nosnippet>320</a>        ] {
+<a href=#321 id=321 data-nosnippet>321</a>            <span class="macro">assert!</span>(supports_capability(capability), <span class="string">"{capability:?}"</span>);
+<a href=#322 id=322 data-nosnippet>322</a>        }
+<a href=#323 id=323 data-nosnippet>323</a>    }
+<a href=#324 id=324 data-nosnippet>324</a>
+<a href=#325 id=325 data-nosnippet>325</a>    <span class="attr">#[test]
+<a href=#326 id=326 data-nosnippet>326</a>    </span><span class="kw">fn </span>full_mueller_and_the_corrected_spectral_index_wait() {
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">for </span>capability <span class="kw">in </span>[
+<a href=#328 id=328 data-nosnippet>328</a>            RequiredCapability::FullMuellerResponse,
+<a href=#329 id=329 data-nosnippet>329</a>            RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex),
+<a href=#330 id=330 data-nosnippet>330</a>        ] {
+<a href=#331 id=331 data-nosnippet>331</a>            <span class="macro">assert!</span>(!supports_capability(capability), <span class="string">"{capability:?}"</span>);
+<a href=#332 id=332 data-nosnippet>332</a>        }
+<a href=#333 id=333 data-nosnippet>333</a>    }
+<a href=#334 id=334 data-nosnippet>334</a>}
 </code></pre></div></section></main></body></html>

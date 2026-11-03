@@ -262,32 +262,34 @@
 <a href=#262 id=262 data-nosnippet>262</a>                                    other.psf += placement_work(cf.psf_half_support(placement.cf));
 <a href=#263 id=263 data-nosnippet>263</a>                                    <span class="kw">if let </span><span class="prelude-val">Some</span>(support) = cf.weight_half_support(placement.cf) {
 <a href=#264 id=264 data-nosnippet>264</a>                                        other.weight += WEIGHT_SUM_WORK;
-<a href=#265 id=265 data-nosnippet>265</a>                                        <span class="kw">if </span>groups.starts(<span class="kw-2">&amp;</span>placement) {
-<a href=#266 id=266 data-nosnippet>266</a>                                            other.weight += placement_work(support);
-<a href=#267 id=267 data-nosnippet>267</a>                                        }
-<a href=#268 id=268 data-nosnippet>268</a>                                    }
-<a href=#269 id=269 data-nosnippet>269</a>                                }
-<a href=#270 id=270 data-nosnippet>270</a>                            },
-<a href=#271 id=271 data-nosnippet>271</a>                        )<span class="question-mark">?</span>;
-<a href=#272 id=272 data-nosnippet>272</a>                    }
-<a href=#273 id=273 data-nosnippet>273</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
-<a href=#274 id=274 data-nosnippet>274</a>                })<span class="question-mark">?</span>;
-<a href=#275 id=275 data-nosnippet>275</a>                <span class="kw">for </span>(<span class="kw">_</span>, work, other, <span class="kw">_</span>) <span class="kw">in </span><span class="kw-2">&amp;</span>chunks[..used] {
-<a href=#276 id=276 data-nosnippet>276</a>                    <span class="kw">for </span>(total, work) <span class="kw">in </span>total.iter_mut().zip(work) {
-<a href=#277 id=277 data-nosnippet>277</a>                        <span class="kw-2">*</span>total += work;
-<a href=#278 id=278 data-nosnippet>278</a>                    }
-<a href=#279 id=279 data-nosnippet>279</a>                    <span class="kw">let </span>domain = <span class="kw-2">&amp;mut </span>modes[index];
-<a href=#280 id=280 data-nosnippet>280</a>                    domain.data += other.data;
-<a href=#281 id=281 data-nosnippet>281</a>                    domain.psf += other.psf;
-<a href=#282 id=282 data-nosnippet>282</a>                    domain.weight += other.weight;
-<a href=#283 id=283 data-nosnippet>283</a>                }
-<a href=#284 id=284 data-nosnippet>284</a>            }
-<a href=#285 id=285 data-nosnippet>285</a>        }
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="prelude-val">Ok</span>(())
-<a href=#287 id=287 data-nosnippet>287</a>    })<span class="question-mark">?</span>;
-<a href=#288 id=288 data-nosnippet>288</a>    <span class="prelude-val">Ok</span>(MeasuredRowWork {
-<a href=#289 id=289 data-nosnippet>289</a>        rows: totals,
-<a href=#290 id=290 data-nosnippet>290</a>        modes,
-<a href=#291 id=291 data-nosnippet>291</a>    })
-<a href=#292 id=292 data-nosnippet>292</a>}
+<a href=#265 id=265 data-nosnippet>265</a>                                        <span class="kw">if </span>groups
+<a href=#266 id=266 data-nosnippet>266</a>                                            .starts(<span class="kw-2">&amp;</span>placement, (cf, domain.operator.geometry()))
+<a href=#267 id=267 data-nosnippet>267</a>                                        {
+<a href=#268 id=268 data-nosnippet>268</a>                                            other.weight += placement_work(support);
+<a href=#269 id=269 data-nosnippet>269</a>                                        }
+<a href=#270 id=270 data-nosnippet>270</a>                                    }
+<a href=#271 id=271 data-nosnippet>271</a>                                }
+<a href=#272 id=272 data-nosnippet>272</a>                            },
+<a href=#273 id=273 data-nosnippet>273</a>                        )<span class="question-mark">?</span>;
+<a href=#274 id=274 data-nosnippet>274</a>                    }
+<a href=#275 id=275 data-nosnippet>275</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, PassError&gt;(())
+<a href=#276 id=276 data-nosnippet>276</a>                })<span class="question-mark">?</span>;
+<a href=#277 id=277 data-nosnippet>277</a>                <span class="kw">for </span>(<span class="kw">_</span>, work, other, <span class="kw">_</span>) <span class="kw">in </span><span class="kw-2">&amp;</span>chunks[..used] {
+<a href=#278 id=278 data-nosnippet>278</a>                    <span class="kw">for </span>(total, work) <span class="kw">in </span>total.iter_mut().zip(work) {
+<a href=#279 id=279 data-nosnippet>279</a>                        <span class="kw-2">*</span>total += work;
+<a href=#280 id=280 data-nosnippet>280</a>                    }
+<a href=#281 id=281 data-nosnippet>281</a>                    <span class="kw">let </span>domain = <span class="kw-2">&amp;mut </span>modes[index];
+<a href=#282 id=282 data-nosnippet>282</a>                    domain.data += other.data;
+<a href=#283 id=283 data-nosnippet>283</a>                    domain.psf += other.psf;
+<a href=#284 id=284 data-nosnippet>284</a>                    domain.weight += other.weight;
+<a href=#285 id=285 data-nosnippet>285</a>                }
+<a href=#286 id=286 data-nosnippet>286</a>            }
+<a href=#287 id=287 data-nosnippet>287</a>        }
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="prelude-val">Ok</span>(())
+<a href=#289 id=289 data-nosnippet>289</a>    })<span class="question-mark">?</span>;
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="prelude-val">Ok</span>(MeasuredRowWork {
+<a href=#291 id=291 data-nosnippet>291</a>        rows: totals,
+<a href=#292 id=292 data-nosnippet>292</a>        modes,
+<a href=#293 id=293 data-nosnippet>293</a>    })
+<a href=#294 id=294 data-nosnippet>294</a>}
 </code></pre></div></section></main></body></html>
