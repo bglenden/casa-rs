@@ -210,12 +210,11 @@
    ]
   },
   "linelist": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "The rest lines of the measures data, their names joined by spaces in the table's order, with CASA's deprecation warning.",
    "evidence": [
     "signature",
-    "refusals"
+    "casa-lists"
    ]
   },
   "listcodes": {
@@ -243,12 +242,12 @@
    ]
   },
   "obslist": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's readantenna, sensitivity and itrf2locname, and simobserve, call it; casa-rs ports readantenna and simobserve in Rust, so only a script calling it directly meets the refusal.",
+   "status": "Implemented",
+   "scope": "The observatories of the measures data, by name in the table's order, as CASA lists them; CASA's readantenna, sensitivity and itrf2locname, and simobserve, call it.",
    "evidence": [
     "signature",
-    "refusals"
+    "casa-lists",
+    "casa-values"
    ]
   },
   "posangle": {
@@ -337,12 +336,11 @@
    ]
   },
   "sourcelist": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "The sources of the measures data, their names joined by spaces in the table's order, as CASA lists them.",
    "evidence": [
     "signature",
-    "refusals"
+    "casa-lists"
    ]
   },
   "spectralline": {
@@ -528,6 +526,15 @@
    "scope": "Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.",
    "links": [
     "docs/CASA (C++) bugs.md"
+   ]
+  },
+  "casa-lists": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Recorded from CASA 6.7.6-14 by measures_lists_oracle.py, with how CASA makes each list from its table. obslist and linelist equal CASA's character for character (the tables are the same in both data versions); sourcelist is checked against casa-rs's own Sources table, which its data version holds with more rows than CASA's 1139. Passes in the Python tests.",
+   "scope": "me.obslist, me.sourcelist and me.linelist.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_measures.py"
    ]
   }
  }
