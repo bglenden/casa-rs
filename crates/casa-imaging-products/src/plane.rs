@@ -142,13 +142,12 @@ fn normalize_domain_plane(
         ProductNormalization::UnitResponse => Ok(normalize_plane(values, plane.sum_weight())),
         ProductNormalization::FlatNoise
         | ProductNormalization::FlatSky
-        | ProductNormalization::PbSquare => {
-            MosaicSensitivity::new(&plane.read_sensitivity()?)?.normalize(
+        | ProductNormalization::PbSquare => MosaicSensitivity::new(&plane.read_sensitivity()?)?
+            .normalize(
                 values,
                 normalization,
                 inputs.problem().products().validity().primary_beam(),
-            )
-        }
+            ),
     }
 }
 

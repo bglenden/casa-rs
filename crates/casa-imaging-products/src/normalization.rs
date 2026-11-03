@@ -585,6 +585,59 @@ mod tests {
         }
     }
 
+    /// CASA's `pbsquare` (`SIImageStore::divideResidualByWeight`,
+    /// `divideModelByWeight`, `multiplyModelByWeight`): the residual divided
+    /// by the PB peak squared everywhere, with no cutoff, and the model
+    /// taken to and from apparent units through PB², zero where PB² is not
+    /// above |pblimit|.
+    #[test]
+    fn pbsquare_divides_the_residual_by_the_peak_and_the_model_by_pb_squared() {
+        // PB = 1, 0.5, 0.3 and 0.1: PB² = 1, 0.25, 0.09 and 0.01.
+        let response = MosaicSensitivity::new(&[4.0, 1.0, 0.36, 0.04])
+            .unwrap()
+            .with_normal_sum_weight(4.0)
+            .unwrap();
+        let pb = policy(0.2);
+        let raw = response
+            .normalize(&[8.0, 4.0, 2.0, 1.0], ProductNormalization::PbSquare, pb)
+            .unwrap();
+        assert_eq!(raw, [2.0, 1.0, 0.5, 0.25]);
+        for family in [ResidualFamily::Single, ResidualFamily::Taylor] {
+            let weighted = (0..4)
+                .map(|index| {
+                    response
+                        .normalize_weighted_residual_sample(
+                            [8.0, 4.0, 2.0, 1.0][index],
+                            index,
+                            ProductNormalization::PbSquare,
+                            family,
+                            2.0,
+                            pb,
+                        )
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
+            // ÷ sumwt 2, then ÷ PBScale² = 1.
+            assert_eq!(weighted, [4.0, 2.0, 1.0, 0.5], "{family:?}");
+        }
+        let apparent = (0..4)
+            .map(|index| {
+                response
+                    .physical_to_apparent(1.0, index, ProductNormalization::PbSquare, pb)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(apparent, [1.0, 0.25, 0.0, 0.0]);
+        let physical = (0..4)
+            .map(|index| {
+                response
+                    .apparent_to_physical(0.25, index, ProductNormalization::PbSquare, pb)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(physical, [0.25, 1.0, 0.0, 0.0]);
+    }
+
     #[test]
     fn response_support_is_separate_from_model_values_and_normalization() {
         let response = MosaicSensitivity::new(&[4.0, 1.0, 0.04, 0.0, -0.04]).unwrap();

@@ -503,7 +503,7 @@
     },
     "normtype": {
       "status": "Implemented",
-      "scope": "Passed only to mosaic/AW; pbsquare refused (issue 823); other gridders ignore it.",
+      "scope": "Passed only to mosaic/AW; other gridders ignore it. pbsquare divides the residual by the PB peak squared everywhere and takes the model to and from apparent units through PB², zero where PB² is not above |pblimit| (SIImageStore and SIImageStoreMultiTerm divideResidualByWeight, divideModelByWeight, multiplyModelByWeight; #1061).",
       "evidence": [
         "signature",
         "reader"
