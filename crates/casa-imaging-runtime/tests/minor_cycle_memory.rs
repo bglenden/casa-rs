@@ -248,17 +248,20 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
             ReconstructionBasis::ChannelLocal { channels: 1 },
             1,
             false,
+            false,
         ),
         (
             32,
             ReconstructionBasis::ChannelLocal { channels: 16 },
             1,
             false,
+            false,
         ),
         (
             32,
             ReconstructionBasis::ChannelLocal { channels: 16 },
             4,
+            false,
             false,
         ),
         (
@@ -266,11 +269,13 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
             ReconstructionBasis::ChannelLocal { channels: 16 },
             4,
             true,
+            false,
         ),
         (
             32,
             ReconstructionBasis::ChannelLocal { channels: 64 },
             4,
+            false,
             false,
         ),
         (
@@ -278,17 +283,28 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
             ReconstructionBasis::ChannelLocal { channels: 240 },
             1,
             false,
+            false,
         ),
         (
             16,
             ReconstructionBasis::ChannelLocal { channels: 240 },
             4,
             false,
+            false,
         ),
-        (64, ReconstructionBasis::Taylor { terms: 5 }, 1, false),
-        (64, ReconstructionBasis::Taylor { terms: 5 }, 1, true),
+        (
+            64,
+            ReconstructionBasis::Taylor { terms: 5 },
+            1,
+            false,
+            false,
+        ),
+        (64, ReconstructionBasis::Taylor { terms: 5 }, 1, true, false),
+        // A Taylor family under a response: its beam is the principal
+        // weight image's, read into an owned sensitivity plane.
+        (64, ReconstructionBasis::Taylor { terms: 5 }, 1, true, true),
     ];
-    for (width, basis, workers, with_beam) in cases {
+    for (width, basis, workers, with_beam, with_response) in cases {
         let (channels, planes, algorithm, fluxes) = match basis {
             ReconstructionBasis::ChannelLocal { channels } => (
                 channels,
@@ -304,7 +320,9 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
             ),
             ReconstructionBasis::Constant => unreachable!("not measured here"),
         };
-        let label = format!("{basis:?} of {width} px on {workers} workers, beam {with_beam}");
+        let label = format!(
+            "{basis:?} of {width} px on {workers} workers, beam {with_beam}, response {with_response}"
+        );
         let problem = reconstruction_problem(
             31,
             width,
@@ -330,25 +348,7 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
             casa_imaging_model::ImageDomainRole::Main,
             vec![[width as f64 / 2.0, width as f64 / 2.0]],
         )]);
-        let setup = MinorCycleSetup {
-            algorithm,
-            accounting: HogbomIterationAccounting::Strict,
-            response: None,
-            nsigma: if with_beam { 3.0 } else { 0.0 },
-            noise: casa_imaging_deconvolution::NoiseEstimate::Robust,
-            automask: true,
-            primary_beam: with_beam
-                .then(|| {
-                    casa_imaging_products::AnalyticPrimaryBeam::new(
-                        &problem,
-                        casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon,
-                        Some(&centres),
-                    )
-                    .expect("L to C band")
-                })
-                .flatten(),
-            residual_pixel_mask: with_beam,
-        };
+        let setup = automask_setup(&problem, algorithm, &centres, (with_beam, with_response));
         let mut plans =
             ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::AutoMultithresh {
                 coordinate: problem.geometry().domains()[0].direction(),
@@ -513,5 +513,41 @@ fn a_preparation_that_reads_the_beam_holds_at_most_its_admission() {
             "{label}: preparation held {excess} bytes more than it was admitted"
         );
         assert!(prepared.statistics.nsigma_threshold > 0.0, "{label}");
+    }
+}
+
+/// The automatic-mask law's setup: reading the beam, with `nsigma`, when
+/// `with_beam`, the weight image's under a flat-noise response when
+/// `with_response`, else the EVLA's analytic beam centred on `centres`.
+fn automask_setup<'a>(
+    problem: &'a casa_imaging_model::CompiledProblem,
+    algorithm: ReconstructionAlgorithm,
+    centres: &'a casa_imaging_products::PrimaryBeamCentres,
+    (with_beam, with_response): (bool, bool),
+) -> MinorCycleSetup<'a> {
+    MinorCycleSetup {
+        algorithm,
+        accounting: HogbomIterationAccounting::Strict,
+        response: with_response.then(|| {
+            casa_imaging_products::MinorCycleImageResponse::new(
+                casa_imaging_model::ProductNormalization::FlatNoise,
+                problems::validity().primary_beam(),
+            )
+            .expect("flat-noise response")
+        }),
+        nsigma: if with_beam { 3.0 } else { 0.0 },
+        noise: casa_imaging_deconvolution::NoiseEstimate::Robust,
+        automask: true,
+        primary_beam: (with_beam && !with_response)
+            .then(|| {
+                casa_imaging_products::AnalyticPrimaryBeam::new(
+                    problem,
+                    casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon,
+                    Some(centres),
+                )
+                .expect("L to C band")
+            })
+            .flatten(),
+        residual_pixel_mask: with_beam,
     }
 }

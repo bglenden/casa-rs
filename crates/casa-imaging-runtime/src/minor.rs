@@ -129,6 +129,11 @@ struct PlaneKey {
 pub struct PsfCache {
     summaries: BTreeMap<PlaneKey, PsfSummary>,
     clark: Option<LinearRefresh>,
+    /// Whether each image domain's `.pb` keeps a pixel in some plane,
+    /// found at the first boundary whose `nsigma` noise reads the beam:
+    /// `calcRobustRMS` falls back to every pixel only for an image the
+    /// beam leaves none of (CAS-13318). The beam does not change.
+    beams: Option<Box<[bool]>>,
 }
 
 impl PsfCache {
@@ -291,6 +296,9 @@ pub fn prepare_minor_cycle(
     let base = completion.final_model();
     let taylor = is_taylor(normal);
     let keys = plane_keys(normal, taylor);
+    if pixels::reads_beam(setup) && setup.nsigma > 0.0 && cache.beams.is_none() {
+        cache.beams = Some(pixels::domain_beams(normal, base, setup, taylor, &keys)?);
+    }
     let (masks, auto_masks) = if mask_plans.automatic() {
         // An automatic mask smooths by its channel block's common beam and
         // thresholds by the image's sidelobe level, so every plane's PSF is
@@ -304,6 +312,7 @@ pub fn prepare_minor_cycle(
             taylor,
             summaries: &shared.summaries,
             first: mask_plans.completed_major_cycles() == 0,
+            beams: shared.beams.as_deref(),
         };
         let read = |key: MaskPlaneKey| automask_plane(&reading, absolute(normal, taylor, key));
         let psf = |key: MaskPlaneKey| {
@@ -358,7 +367,11 @@ pub fn prepare_minor_cycle(
             setup.automask,
         );
         if setup.nsigma > 0.0 {
-            let measured = pixels.noise(setup, mask_plans.completed_major_cycles());
+            let domain_beam = shared
+                .beams
+                .as_deref()
+                .is_none_or(|beams| beams[key.domain]);
+            let measured = pixels.noise(setup, mask_plans.completed_major_cycles(), domain_beam);
             statistics.noise = match setup.noise {
                 NoiseEstimate::Fast => robust_noise(&plane.residual[0], measured),
                 NoiseEstimate::Robust => {
@@ -697,6 +710,8 @@ struct Reading<'a> {
     taylor: bool,
     summaries: &'a BTreeMap<PlaneKey, PsfSummary>,
     first: bool,
+    /// [`PsfCache`]'s beams, when the cycle reads them.
+    beams: Option<&'a [bool]>,
 }
 
 /// The plane `key` as its automatic mask reads it: the residual the minor
@@ -713,6 +728,7 @@ fn automask_plane(
         taylor,
         summaries,
         first,
+        beams,
     } = *reading;
     if !holds_data(normal, taylor, key) {
         return Ok(None);
@@ -746,8 +762,13 @@ fn automask_plane(
     } else {
         None
     };
+    let domain_beam = beams.is_none_or(|beams| beams[key.domain]);
     Ok(Some(pixels::automask_plane(
-        setup, first, residual, valid, beam,
+        setup,
+        (first, domain_beam),
+        residual,
+        valid,
+        beam,
     )))
 }
 

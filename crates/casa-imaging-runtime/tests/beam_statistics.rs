@@ -470,3 +470,66 @@ fn an_automatic_mosaic_mask_reads_inside_its_primary_beam() {
         row.robust_rms
     );
 }
+
+/// CAS-13318 is decided over the whole image: `calcRobustRMS` falls back
+/// to every pixel only when no plane of the cube keeps a beam pixel. A
+/// channel the beam leaves empty, its beam narrower at 1.15 GHz than at
+/// 1.05 GHz, measures nothing, so the cube's `nsigma` threshold is the
+/// other channel's; measured whole, its wide ramp would set it.
+#[test]
+fn a_cube_channel_outside_its_beam_measures_no_noise() {
+    let problem = reconstruction_problem(
+        31,
+        WIDTH,
+        2,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Hogbom,
+        ReconstructionControls::new(100, 0.1, 0.0),
+    );
+    let centres = edge_centres(&problem);
+    let beam = AnalyticPrimaryBeam::new(
+        &problem,
+        AnalyticPrimaryBeamModel::CasaEvlaCommon,
+        Some(&centres),
+    )
+    .expect("L band")
+    .expect("an analytic beam");
+    let inside = support(&beam);
+    let outside = beam
+        .support(&ImageDomainRole::Main, 1)
+        .expect("channel 1's support");
+    assert!(
+        outside.iter().all(|kept| !kept),
+        "channel 1's beam misses the plane"
+    );
+    let first = residual(&inside, 0.001, 0.5);
+    let second = residual(&vec![true; inside.len()], 0.01, 0.0);
+    let scene = Scene::new(&problem);
+    let lifecycle = model_lifecycle(&problem);
+    let mut cycle = MajorCycle::initial(
+        &problem,
+        empty_final_model(&lifecycle),
+        scene.resident_storage(),
+    )
+    .expect("major cycle");
+    let (model, mut pass) = cycle.parts();
+    let mut images = scene.pass_images(model, true);
+    images.sum_weights = vec![1.0; 2];
+    images.published_sum_weights = vec![1.0; 2];
+    images.residual = first.iter().chain(&second).copied().collect();
+    let psf = scene.unit_psf();
+    images.psf = Some(psf.iter().chain(&psf).map(|value| *value as f32).collect());
+    pass.append(images).expect("images");
+    let completion = cycle.finish(SAMPLES, BLOCKS).expect("complete");
+    let mut setup = setup(Some(beam));
+    setup.nsigma = 3.0;
+    let threshold = prepare(&completion, &full_plane(&problem), &setup)
+        .statistics
+        .nsigma_threshold;
+    let (_, rms) = classical(&first, &inside);
+    assert!(
+        close(threshold, 3.0 * rms),
+        "{threshold}, expected {}",
+        3.0 * rms
+    );
+}
