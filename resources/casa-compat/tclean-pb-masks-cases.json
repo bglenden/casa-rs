@@ -79,11 +79,11 @@
     "specmode": "mfs",
     "gridder": "standard",
     "deconvolver": "hogbom",
-    "niter": 1000,
+    "niter": 200,
     "usemask": "pb",
     "pbmask": 0.5
    },
-   "note": "usemask='pb' on a standard-gridder VLA image: the clean mask is the analytic .pb above pbmask (makePBMask)"
+   "note": "usemask='pb' on a standard-gridder VLA image: the clean mask is the analytic .pb above pbmask (makePBMask); 200 iterations, since at 1000 the noise-free residual is cleaned to about 1e-4 of its peak, where CASA's Float images and casa-rs's f64 differ by about 1% NRMS"
   },
   "alma_mosaic_usemask_pb": {
    "vis": "alma",
@@ -125,11 +125,11 @@
     "specmode": "mfs",
     "gridder": "standard",
     "deconvolver": "hogbom",
-    "niter": 1000,
+    "niter": 200,
     "mask": "box[[206pix,156pix],[355pix,305pix]]",
     "pbmask": 0.5
    },
-   "note": "a named box under pbmask, crossing the .pb's 0.5 circle: the box kept where the .pb exceeds pbmask (makePBMask(combinemask=True))"
+   "note": "a named box under pbmask, crossing the .pb's 0.5 circle: the box kept where the .pb exceeds pbmask (makePBMask(combinemask=True)); 200 iterations, since at 1000 the noise-free residual is cleaned to about 1e-4 of its peak, where CASA's Float images and casa-rs's f64 differ by about 1% NRMS"
   },
   "point_automask_pbmask": {
    "vis": "point",
@@ -140,12 +140,12 @@
     "specmode": "mfs",
     "gridder": "standard",
     "deconvolver": "hogbom",
-    "niter": 1000,
+    "niter": 200,
     "usemask": "auto-multithresh",
     "pbmask": 0.2,
     "pblimit": 0.1
    },
-   "note": "auto-multithresh under pbmask 0.2 and pblimit 0.1: the automatic mask's statistics, pruning and support above pbmask, and the mask cut to it (autoMaskWithinPB)"
+   "note": "auto-multithresh under pbmask 0.2 and pblimit 0.1: the automatic mask's statistics, pruning and support above pbmask, and the mask cut to it (autoMaskWithinPB); 200 iterations, since at 1000 the noise-free residual is cleaned to about 1e-4 of its peak, where CASA's Float images and casa-rs's f64 differ by about 1% NRMS"
   },
   "alma_mosaic_automask_pbmask": {
    "vis": "alma",
