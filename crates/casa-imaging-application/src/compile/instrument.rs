@@ -116,7 +116,9 @@ fn analytic_primary_beam_model_for_telescopes(
 /// The mosaic's is the one `SynthesisImagerVi2::createMosFTMachine` gives
 /// `HetArrayConvFunc`: for ALMA and ACA, an Airy aperture per class of
 /// dish; for the EVLA, CASA's common EVLA beam for every antenna, whatever
-/// its dish (`PBMathInterface::COMMONPB`). One response holds for every
+/// its dish (`PBMathInterface::COMMONPB`); for a telescope CASA has no
+/// default voltage pattern for (`NGVLA1`), the Airy disk of each dish
+/// diameter (`PBMathInterface::AIRY`). One response holds for every
 /// store's telescopes and dishes.
 pub(super) fn scientific_instrument_model(
     gridder: &Gridder,
@@ -143,6 +145,17 @@ pub(super) fn scientific_instrument_model(
             return Ok(Some(
                 InstrumentModel::CasaEvlaCommonInterferometricResponseV1,
             ));
+        }
+        // CASA's mosaic over MeasurementSets of several telescopes takes
+        // each one's common beam instead (`multiTel`), which casa-rs does
+        // not form.
+        Gridder::Mosaic { .. }
+            if telescopes.len() == 1 && all(AntennaResponseClass::casa_airy_telescope) =>
+        {
+            (
+                InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1,
+                |diameter| AntennaResponseClass::casa_airy(diameter).is_some(),
+            )
         }
         Gridder::Awproject(_) | Gridder::Mosaic { .. } => {
             return Err(PrepareError::UnsupportedInstrument {
@@ -279,6 +292,91 @@ mod tests {
         assert_eq!(
             law.missing(),
             MissingPointingPolicy::FieldCentreWithoutPointingTable
+        );
+    }
+
+    fn catalogue(telescope: &str, dishes_m: &[f64]) -> Catalogue {
+        use casa_observation::{AntennaEntry, ObservationEntry};
+        use casa_types::measures::position::MPosition;
+        use casa_types::quanta::Quantity;
+        Catalogue {
+            observations: vec![ObservationEntry {
+                telescope: telescope.to_string(),
+                ..ObservationEntry::default()
+            }],
+            antennas: dishes_m
+                .iter()
+                .enumerate()
+                .map(|(index, diameter)| AntennaEntry {
+                    name: format!("A{index}"),
+                    station: format!("S{index}"),
+                    position: MPosition::new_itrf(index as f64, 0.0, 0.0),
+                    mount: "ALT-AZ".to_string(),
+                    dish_diameter: Quantity::new(*diameter, "m").expect("metres"),
+                    flagged: None,
+                })
+                .collect(),
+            ..Catalogue::default()
+        }
+    }
+
+    /// CASA 6.7.6's tclean of refim_sim_hetarray_ngvla.ms (TELESCOPE_NAME
+    /// `NGVLA1`) logs "vpmanager does not have a beam for antenna : NGVLA1
+    /// ... form Airy disk beams" and "Overriding PB with Airy of
+    /// diam,blockage=18 m,1.125 m" and "=6 m,0.375 m": the mosaic of a
+    /// telescope without a default voltage pattern forms an Airy disk of
+    /// each dish; so it does for `BIMA` and `NRAO140FT`, whose names
+    /// `VPManager` has no default under (CASA's run of that MeasurementSet
+    /// renamed to each logs the same two Airy disks). A name with a default
+    /// pattern stays refused, as do a dish without a diameter and
+    /// MeasurementSets of two telescopes, whose mosaic CASA gives each
+    /// telescope's common beam (`multiTel`).
+    #[test]
+    fn a_mosaic_without_a_default_beam_forms_an_airy_disk_of_each_dish() {
+        let mosaic = Gridder::Mosaic {
+            usepointing: false,
+            normtype: ProductNormalization::FlatNoise,
+            conjbeams: false,
+            mosweight: false,
+        };
+        let model = |catalogues: &[&Catalogue]| scientific_instrument_model(&mosaic, catalogues);
+        let ngvla = catalogue("NGVLA1", &[18.0, 18.0, 6.0]);
+        for airy in [
+            &ngvla,
+            &catalogue("BIMA", &[6.1]),
+            &catalogue("NRAO140FT", &[43.0]),
+        ] {
+            assert_eq!(
+                model(&[airy]).expect("an Airy model"),
+                Some(InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1)
+            );
+        }
+        for known in ["NGVLA", "VLA", "OVRO", "SMA", "HATCREEK", "UNKNOWN", "OSF"] {
+            assert!(
+                matches!(
+                    model(&[&catalogue(known, &[18.0])]),
+                    Err(PrepareError::UnsupportedInstrument { .. })
+                ),
+                "{known}"
+            );
+        }
+        assert!(matches!(
+            model(&[&catalogue("NGVLA1", &[18.0, 0.0])]),
+            Err(PrepareError::DishOutsideResponse { row: 1, .. })
+        ));
+        assert!(matches!(
+            model(&[&ngvla, &catalogue("NGVLA2", &[18.0])]),
+            Err(PrepareError::UnsupportedInstrument { .. })
+        ));
+        assert_eq!(
+            scientific_instrument_model(
+                &Gridder::Standard {
+                    facets: NonZeroUsize::MIN
+                },
+                &[&ngvla]
+            )
+            .expect("no model"),
+            None
         );
     }
 

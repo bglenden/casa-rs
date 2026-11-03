@@ -208,9 +208,10 @@ pub struct ImagingRequest {
     /// valid pixel (`true`), or robustly, outside the clean mask or by
     /// Chauvenet's criterion (`false`).
     pub fastnoise: bool,
-    /// Inclusive signed pixel boxes `[x0, y0, x1, y1]`, clipped to the image.
+    /// Inclusive signed pixel boxes, clipped to the image, each limited to
+    /// the channels of its CRTF region's spectral `range` when it has one.
     #[serde(deserialize_with = "mask_boxes")]
-    pub mask_box: Vec<[i64; 4]>,
+    pub mask_box: Vec<UserMaskBox>,
     /// A CASA image whose non-zero pixels may be cleaned.
     #[serde(deserialize_with = "optional")]
     pub mask_image: Option<PathBuf>,
@@ -398,6 +399,47 @@ pub enum Deconvolver {
     Multiscale,
     /// Multi-term multi-frequency synthesis.
     Mtmfs,
+}
+
+/// One box of the user mask (`mask_box`): inclusive signed pixel corners,
+/// and the spectral `range` of the CRTF region it comes from, if any.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UserMaskBox {
+    /// `[x0, y0, x1, y1]`, inclusive; clipped to the image.
+    pub corners: [i64; 4],
+    /// The channels the box masks, as its region's `range` gives them; every
+    /// channel when `None`.
+    pub range: Option<SpectralMaskRange>,
+}
+
+impl UserMaskBox {
+    /// A box over every channel.
+    #[must_use]
+    pub const fn new(corners: [i64; 4]) -> Self {
+        Self {
+            corners,
+            range: None,
+        }
+    }
+}
+
+impl PartialEq<[i64; 4]> for UserMaskBox {
+    fn eq(&self, corners: &[i64; 4]) -> bool {
+        self.range.is_none() && self.corners == *corners
+    }
+}
+
+/// A CRTF region's spectral `range` (casacore's `AnnotationBase`
+/// frequency limits): its two ends as written, in either order. Compile
+/// turns them into the image's channels as casacore's `AnnRegion` and
+/// `LCBox` do.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SpectralMaskRange {
+    /// Frequencies in hertz, in the image's spectral frame (CRTF's default
+    /// `frame`).
+    Frequency([f64; 2]),
+    /// Channel pixel coordinates (`pix`).
+    Pixel([f64; 2]),
 }
 
 /// Mask mode (`usemask`).
@@ -1098,8 +1140,9 @@ fn list<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<f64>, D::Error
     }
 }
 
-/// Boxes `x0,y0,x1,y1` separated by `;`.
-fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<[i64; 4]>, D::Error> {
+/// Boxes `x0,y0,x1,y1` separated by `;`, each limited to a spectral range
+/// by an optional `@<low>~<high>`, both ends in `Hz` or both in `pix`.
+fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<UserMaskBox>, D::Error> {
     let value = Value::deserialize(deserializer)?;
     let text = value
         .as_str()
@@ -1108,13 +1151,44 @@ fn mask_boxes<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<[i64; 4]
         return Ok(Vec::new());
     }
     text.split(';')
-        .map(|corners| {
-            comma_list::<i64>(corners)?
+        .map(|item| {
+            let (corners, range) = match item.split_once('@') {
+                Some((corners, range)) => (corners, Some(spectral_mask_range(range)?)),
+                None => (item, None),
+            };
+            let corners = comma_list::<i64>(corners)?
                 .try_into()
-                .map_err(|_| format!("a mask box has four corners, not {corners:?}"))
+                .map_err(|_| format!("a mask box has four corners, not {corners:?}"))?;
+            Ok(UserMaskBox { corners, range })
         })
         .collect::<Result<_, String>>()
         .map_err(D::Error::custom)
+}
+
+/// A mask box's `<low>~<high>` range: two finite values, both in `Hz` or
+/// both in `pix`.
+fn spectral_mask_range(text: &str) -> Result<SpectralMaskRange, String> {
+    let (low, high) = text
+        .split_once('~')
+        .ok_or_else(|| format!("a mask box range is <low>~<high>, not {text:?}"))?;
+    let end = |end: &str, unit: &str| {
+        end.trim()
+            .strip_suffix(unit)
+            .and_then(|number| number.trim().parse::<f64>().ok())
+            .filter(|number| number.is_finite())
+    };
+    match (
+        end(low, "Hz"),
+        end(high, "Hz"),
+        end(low, "pix"),
+        end(high, "pix"),
+    ) {
+        (Some(low), Some(high), _, _) => Ok(SpectralMaskRange::Frequency([low, high])),
+        (_, _, Some(low), Some(high)) => Ok(SpectralMaskRange::Pixel([low, high])),
+        _ => Err(format!(
+            "a mask box range has two finite ends, both in Hz or both in pix, not {text:?}"
+        )),
+    }
 }
 
 /// Text of a choice.

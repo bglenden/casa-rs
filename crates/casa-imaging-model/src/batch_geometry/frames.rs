@@ -386,4 +386,14 @@ impl Frames {
             })
             .collect()
     }
+
+    /// CASA's Airy class of each antenna's dish
+    /// ([`AntennaResponseClass::casa_airy`]), for a telescope without a
+    /// default voltage pattern; `None` for a dish that is not positive.
+    pub(super) fn airy_classes(&self) -> Vec<Option<AntennaResponseClass>> {
+        self.antennas
+            .iter()
+            .map(|antenna| AntennaResponseClass::casa_airy(antenna.dish_diameter_m))
+            .collect()
+    }
 }

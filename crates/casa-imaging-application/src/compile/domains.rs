@@ -29,7 +29,7 @@ use super::direction::{
 use super::outliers::read_outlier_domains;
 use casa_imaging_products::CasaImageDomainOutput;
 
-use crate::{Gridder, ImagingRequest, UseMask};
+use crate::{Gridder, ImagingRequest, SpectralMaskRange, UseMask, UserMaskBox};
 
 /// The pixels a domain's minor cycle may update.
 #[derive(Clone, Debug, PartialEq)]
@@ -93,7 +93,7 @@ impl PreparedImageDomain {
 pub(super) fn prepare_domains(
     request: &ImagingRequest,
     centre: &Centre,
-    spectral: &ImageSpectralCoordinate,
+    (spectral, channels): (&ImageSpectralCoordinate, usize),
     observation: &ObsInfo,
 ) -> Result<Vec<PreparedImageDomain>, PrepareError> {
     let polarizations = &request.stokes;
@@ -116,7 +116,7 @@ pub(super) fn prepare_domains(
             spectral,
             observation,
         ),
-        mask: request_mask(request),
+        mask: request_mask(request, spectral, channels)?,
         facets,
     }];
     if let Some(path) = request.outlierfile.as_deref() {
@@ -181,10 +181,15 @@ fn warn_inefficient_size(image_size: [usize; 2]) {
     }
 }
 
-/// The main domain's mask: CASA auto-multithresh with tclean's controls,
-/// the user mask image or boxes, or every pixel.
-fn request_mask(request: &ImagingRequest) -> DomainMask {
-    match (request.usemask, &request.mask_image) {
+/// The main domain's mask, on an image of `channels` channels on
+/// `spectral`: CASA auto-multithresh with tclean's controls, the user mask
+/// image or boxes ([`user_boxes`]), or every pixel.
+fn request_mask(
+    request: &ImagingRequest,
+    spectral: &ImageSpectralCoordinate,
+    channels: usize,
+) -> Result<DomainMask, PrepareError> {
+    Ok(match (request.usemask, &request.mask_image) {
         (UseMask::AutoMultithresh, _) => DomainMask::AutoMultithresh(AutoMultithreshControls {
             sidelobe_factor: request.sidelobethreshold,
             noise_factor: request.noisethreshold,
@@ -203,8 +208,81 @@ fn request_mask(request: &ImagingRequest) -> DomainMask {
         (UseMask::User, None) if request.mask_box.is_empty() && !request.explicit_empty_mask => {
             DomainMask::FullPlane
         }
-        (UseMask::User, None) => DomainMask::Boxes(request.mask_box.clone()),
+        (UseMask::User, None) => {
+            DomainMask::Boxes(user_boxes(&request.mask_box, spectral, channels)?)
+        }
+    })
+}
+
+/// The user mask's boxes on an image of `channels` channels on `spectral`:
+/// a box limited to a spectral range masks the channels casacore's
+/// `AnnRegion` extension gives it ([`range_channels`]). A box whose range
+/// misses every channel is left out, as CASA leaves its region out. A box
+/// over part of a cube's channels is refused until masks hold a plane per
+/// channel.
+fn user_boxes(
+    boxes: &[UserMaskBox],
+    spectral: &ImageSpectralCoordinate,
+    channels: usize,
+) -> Result<Vec<[i64; 4]>, PrepareError> {
+    let mut kept = Vec::with_capacity(boxes.len());
+    for user in boxes {
+        let Some(range) = user.range else {
+            kept.push(user.corners);
+            continue;
+        };
+        match range_channels(range, spectral, channels)? {
+            None => tracing::warn!(
+                "the mask region of box {:?} lies outside the image's channels, so it is \
+                 left out, as CASA leaves it out",
+                user.corners
+            ),
+            Some((0, last)) if last + 1 == channels => kept.push(user.corners),
+            Some((first, last)) => {
+                return Err(PrepareError::MaskChannelRange {
+                    first,
+                    last,
+                    channels,
+                });
+            }
+        }
     }
+    Ok(kept)
+}
+
+/// The channels `first..=last` a spectral range masks on an image of
+/// `channels` channels on `spectral`, or `None` when it masks none.
+/// casacore's `AnnRegion::_extend` takes each end's pixel on the image's
+/// spectral axis and orders them; `WCBox` hands them to `LCBox`, which
+/// takes `Int(p + 0.5)` of each (truncating toward zero), clamps the low
+/// end to 0 and the high end to the last channel, and refuses a box whose
+/// ends cross, which leaves the region out.
+///
+/// # Errors
+///
+/// [`PrepareError::MaskRange`] when an end is not a finite pixel.
+fn range_channels(
+    range: SpectralMaskRange,
+    spectral: &ImageSpectralCoordinate,
+    channels: usize,
+) -> Result<Option<(usize, usize)>, PrepareError> {
+    let ends = match range {
+        SpectralMaskRange::Frequency(hz) => hz
+            .map(|frequency| (frequency - spectral.reference_frequency_hz) / spectral.increment_hz),
+        SpectralMaskRange::Pixel(pixels) => pixels,
+    };
+    if !ends.iter().all(|end| end.is_finite()) {
+        return Err(PrepareError::MaskRange { range });
+    }
+    let [low, high] = if ends[1] <= ends[0] {
+        [ends[1], ends[0]]
+    } else {
+        ends
+    };
+    let last = i64::try_from(channels).unwrap_or(i64::MAX) - 1;
+    let first = ((low + 0.5) as i64).max(0);
+    let end = ((high + 0.5) as i64).min(last);
+    Ok((first <= end).then_some((first as usize, end as usize)))
 }
 
 /// tclean's noise estimate (`fastnoise`).
@@ -490,22 +568,131 @@ mod tests {
             );
         }
     }
+    /// A spectral axis of `channels` channels from 999.98875… MHz in steps
+    /// of 49.9994… MHz: the LSRK cube axis CASA 6.7.6.14's tclean lays on
+    /// casatestdata's `refim_point.ms` (test_mask_2), as its `.mask` reads.
+    fn refim_point_axis() -> ImageSpectralCoordinate {
+        ImageSpectralCoordinate {
+            frequency_reference: FrequencyRef::LSRK,
+            reference_frequency_hz: 999_988_750.387_257_2,
+            increment_hz: 1_049_988_187.906_619_9 - 999_988_750.387_257_2,
+            rest_frequency_hz: 0.0,
+            additional_rest_frequencies_hz: Vec::new(),
+            undefined_frame: false,
+        }
+    }
+
+    /// The main domain's mask of `request` on a one-channel image.
+    fn mask_of(request: &ImagingRequest) -> DomainMask {
+        request_mask(request, &refim_point_axis(), 1).unwrap()
+    }
+
+    /// The channels CASA 6.7.6.14 masks for `circle[[50pix,50pix],10pix],
+    /// range=[...]` on `refim_point.ms`'s 20-channel cube, by `rg.fromtext`
+    /// and tclean's `.mask` (2026-11-03): each end's pixel rounded by
+    /// `Int(p + 0.5)`, clamped to the cube, the region left out when the
+    /// ends cross.
+    #[test]
+    fn a_spectral_range_masks_the_channels_casa_masks() {
+        let axis = refim_point_axis();
+        let hz = |low: f64, high: f64| SpectralMaskRange::Frequency([low * 1e9, high * 1e9]);
+        for (range, expected) in [
+            (hz(1.1, 1.5), Some((2, 10))),
+            (hz(1.5, 1.1), Some((2, 10))),
+            (hz(1.12, 1.47), Some((2, 9))),
+            (hz(1.124, 1.4749), Some((2, 9))),
+            (hz(1.1251, 1.4751), Some((3, 10))),
+            (hz(1.13, 1.48), Some((3, 10))),
+            (hz(1.125, 1.475), Some((3, 10))),
+            (hz(1.07, 1.08), Some((1, 2))),
+            (hz(1.074, 1.076), Some((1, 2))),
+            (hz(1.101, 1.119), Some((2, 2))),
+            (hz(0.9, 0.95), Some((0, 0))),
+            (hz(0.97, 0.98), Some((0, 0))),
+            (hz(0.5, 1.12), Some((0, 2))),
+            (hz(1.9, 3.0), Some((18, 19))),
+            (hz(1.96, 1.99), Some((19, 19))),
+            (hz(2.0, 2.1), None),
+            (hz(2.1, 2.3), None),
+            (hz(0.5, 0.9), None),
+            (SpectralMaskRange::Pixel([1.4, 3.6]), Some((1, 4))),
+        ] {
+            assert_eq!(
+                range_channels(range, &axis, 20).unwrap(),
+                expected,
+                "{range:?}"
+            );
+        }
+    }
+
+    /// A ranged box over every channel, or a one-channel image's only
+    /// channel, is a plain box; one whose range misses the image is left
+    /// out; one over part of a cube is refused until masks hold a plane per
+    /// channel. CASA's MFS image of `refim_point.ms` is one channel at about
+    /// 1.5 GHz, 1 GHz wide: `range=[1.1GHz,1.2GHz]` and `[0.1GHz,0.2GHz]`
+    /// mask it, `[3GHz,3.2GHz]` does not (stop code 7).
+    #[test]
+    fn ranged_boxes_resolve_on_the_image_channels() {
+        let plain = UserMaskBox::new([1, 2, 3, 4]);
+        let ranged = |low: f64, high: f64| UserMaskBox {
+            corners: [5, 6, 7, 8],
+            range: Some(SpectralMaskRange::Frequency([low * 1e9, high * 1e9])),
+        };
+        let mfs = ImageSpectralCoordinate {
+            reference_frequency_hz: 1.5e9,
+            increment_hz: 1.0e9,
+            ..refim_point_axis()
+        };
+        for (low, high, kept) in [
+            (1.1, 1.2, true),
+            (0.1, 0.2, true),
+            (1.4, 1.6, true),
+            (3.0, 3.2, false),
+        ] {
+            let boxes = user_boxes(&[plain, ranged(low, high)], &mfs, 1).unwrap();
+            let expected: &[[i64; 4]] = if kept {
+                &[[1, 2, 3, 4], [5, 6, 7, 8]]
+            } else {
+                &[[1, 2, 3, 4]]
+            };
+            assert_eq!(boxes, expected, "{low}~{high} GHz");
+        }
+        let cube = refim_point_axis();
+        assert_eq!(
+            user_boxes(&[ranged(0.9, 2.1)], &cube, 20).unwrap(),
+            [[5, 6, 7, 8]]
+        );
+        assert!(
+            user_boxes(&[ranged(2.1, 2.3)], &cube, 20)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(matches!(
+            user_boxes(&[ranged(1.1, 1.5)], &cube, 20),
+            Err(PrepareError::MaskChannelRange {
+                first: 2,
+                last: 10,
+                channels: 20
+            })
+        ));
+    }
+
     #[test]
     fn an_empty_region_file_is_zero_support_but_an_absent_mask_is_full_plane() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("empty.crtf");
         std::fs::write(&path, "#CRTF\n# no regions\n").unwrap();
         let explicit = crate::request::tests::request(serde_json::json!({"mask": path}));
-        assert!(matches!(request_mask(&explicit), DomainMask::Boxes(boxes) if boxes.is_empty()));
+        assert!(matches!(mask_of(&explicit), DomainMask::Boxes(boxes) if boxes.is_empty()));
         let default = crate::request::tests::request(serde_json::json!({}));
-        assert_eq!(request_mask(&default), DomainMask::FullPlane);
+        assert_eq!(mask_of(&default), DomainMask::FullPlane);
         let empty_argument = crate::request::tests::request(serde_json::json!({"mask": []}));
-        assert_eq!(request_mask(&empty_argument), DomainMask::FullPlane);
+        assert_eq!(mask_of(&empty_argument), DomainMask::FullPlane);
         let automatic = crate::request::tests::request(
             serde_json::json!({"usemask": "auto-multithresh", "mask": path}),
         );
         assert!(matches!(
-            request_mask(&automatic),
+            mask_of(&automatic),
             DomainMask::AutoMultithresh(_)
         ));
         // A new explicit empty region must not silently reuse an old mask:
@@ -516,9 +703,7 @@ mod tests {
         std::fs::write(directory.path().join("image.model"), "old model").unwrap();
         std::fs::write(directory.path().join("image.mask"), "old mask").unwrap();
         continuation.check_tclean_output_prefixes().unwrap();
-        assert!(
-            matches!(request_mask(&continuation), DomainMask::Boxes(boxes) if boxes.is_empty())
-        );
+        assert!(matches!(mask_of(&continuation), DomainMask::Boxes(boxes) if boxes.is_empty()));
         continuation.niter = 5;
         assert!(continuation.check_tclean_output_prefixes().is_err());
     }

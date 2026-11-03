@@ -22,6 +22,7 @@ CASA behaviours casa-rs does not follow:
 [continuum `briggsabs` at robust 0 and noise 0](#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite),
 [`nsigma` with `fastnoise=False` and no mask](#tclean-cleans-nothing-with-nsigma-fastnoisefalse-and-no-mask),
 [single-precision Taylor weights](#multitermftnew-forms-taylor-imaging-weights-in-single-precision),
+[a mosaic's single-precision weight image](#a-mosaics-weight-image-is-transformed-in-single-precision),
 [facets of an image size that does not divide](#facets-of-an-image-size-that-does-not-divide),
 [an unflagged non-finite sample](#an-unflagged-non-finite-sample-turns-the-image-to-nan),
 [`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
@@ -1237,6 +1238,37 @@ support) only the first pass's screen size differs: every product agrees to
 it first, the first pass grids the 7 m rows with the 7 m support alone, and
 the products differ by up to 5.4e-4; each MeasurementSet imaged alone
 agrees to 7e-7.
+
+## A mosaic's weight image is transformed in single precision
+
+- Date noted: 2026-11-03
+- Status: casa-rs diverges (#980); its weight image is transformed in
+  double precision, so a `.pb` pixel within single-precision rounding of
+  `pblimit` can fall on the other side of CASA's mask
+- Affected code: `synthesis/TransformMachines2/MosaicFT.cc`
+  (`finalizeToSky`: `convertArray(griddedWeight, griddedWeight2)`, then
+  `ft_p.c2cFFT(*weightLattice)` on the `Complex` grid)
+
+`MosaicFT` accumulates the gridded weights in `DComplex` but converts them
+to `Complex` before their inverse transform, so the weight image, and the
+`.pb` (`sqrt(weight / max)`) and pixel mask `SIImageStore::makePBFromWeight`
+form from it, carry single-precision rounding: about 1e-8 of the peak,
+which is a few 1e-6 of the weight where the beam meets a `pblimit` of
+0.05. Pixels the image's symmetry makes equal show it: on
+`refim_sim_hetarray_alma.ms` (`test_het_antenna_mosaic_cube_alma.3`,
+channel 2), four mirror pixels have CASA beams 0.0500000405, 0.0500001221,
+0.0499998446 and 0.0499997467, whose mean, 0.04999993, is casa-rs's
+0.0499999261–0.0499999285 at all four. CASA keeps the first two and masks
+the others; casa-rs masks all four. At double grid precision casa-rs
+grids and transforms the weights in double precision, rounding each pixel
+to single only as it publishes it, and does not add CASA's rounding.
+
+Every other pixel agrees: the cube mosaics of that MeasurementSet's cross
+baselines (`.3`) and of all its antennas (`.4`) differ from CASA in 2 and 1
+`.pb` mask pixels of channel 2, each within 1.3e-7 of `pblimit`, and in no
+pixel of their other channels or of the 12 m, 7 m and two-field cubes
+(`.1`, `.2`, `.5`); their products agree to 4e-5 normalized RMS. Such
+pixels cannot measure parity.
 
 ## `sm.predict` phases a moved `observemany` pointing on its field
 
@@ -3069,3 +3101,53 @@ window 0). `( ... )` skips `endOfCeremony`, so the expression keeps every MAIN
 row. All are in the evidence file; `casa-ms` reproduces them, and `tclean`
 refuses the parenthesized form and a window kept without channels, whose
 imaging in CASA is not established.
+
+## A CRTF spectral range rounds each end to a channel, toward zero
+
+- Date noted: 2026-11-03
+- Status: CASA quirk casa-rs follows for parity (#980)
+- Affected code: casatools `imageanalysis/Annotations/AnnRegion.cc`
+  (`_extend`), casacore `images/Regions/WCBox.cc` (`doToLCRegion`),
+  `lattices/LRegions/LCBox.cc`
+
+A region's `range=[f1, f2]` masks the channels from `Int(p1 + 0.5)` to
+`Int(p2 + 0.5)`, where `p1 ≤ p2` are the ends' pixels on the image's spectral
+axis. `Int` truncates toward zero, then the low end is clamped to 0 and the
+high end to the last channel. A region whose ends cross is left out, and the
+other regions are kept. Because of the truncation, a range ending up to 1.5
+channels below the cube masks channel 0, while one starting half a channel
+above it masks nothing. An MFS image's one channel is its whole bandwidth
+wide. casa-rs follows this, measured with CASA 6.7.6.14 on
+`refim_point.ms`'s cube and MFS image: `rg.fromtext` and tclean's `.mask`
+for 20 ranges, in the unit test
+`compile::domains::tests::a_spectral_range_masks_the_channels_casa_masks`.
+
+## A mask string of several lines is an empty mask in `tclean`
+
+- Date noted: 2026-11-03
+- Status: CASA bug casa-rs corrects (#980)
+- Affected code: casatools `synthesis/ImagerObjects/SDMaskHandler.cc`
+  (reading `mask` text)
+
+CASA 6.7.6.14's tclean given `mask='circle[[50pix,50pix],10pix]\nbox[[10pix,10pix],[12pix,12pix]]'`
+makes an empty mask and stops at code 7 without cleaning. The same regions
+as a list, or as lines of a region file, mask both regions. casa-rs reads
+every line of the text as a region of the mask, as the list and the file
+read.
+
+## `tclean` checks a `vis` list for repeats of its first entry only
+
+- Date noted: 2026-11-03
+- Status: CASA bug casa-rs corrects (#980)
+- Affected code: casatasks `private/mslisthelper.py` (`check_mslist`), called
+  by `ImagerParameters.checkAndFixSelectionPars`
+
+CASA 6.7.6.14's tclean refuses `vis=['a.ms', 'a.ms']` with "a.ms is contained
+in the list more than once." (ValueError, before any imaging). The check
+compares each later entry with the first one only, after the list is sorted by
+time, and as text. So `['a.ms', 'b.ms', 'b.ms']` and `['a.ms', './a.ms']` pass
+it, and their samples are read twice. The message states the evident intent:
+no MeasurementSet twice. casa-rs refuses any repeat, comparing canonical paths,
+with CASA's message. Evidence: CASA's refusal of `[refim_point.ms,
+refim_point.ms]` on the oracle host, 2026-11-03, and the T1 law
+`vis_list::a_measurement_set_named_twice_is_refused`.
