@@ -1,0 +1,38 @@
+{
+  "purpose": "#980 DONE criterion: the end-to-end simulation round trip. casa-rs simobserve writes a noise-free MeasurementSet; CASA 6.7.6.14's tclean and casa-rs's tclean image it with the call CASA's simanalyze makes (simutil.imtclean, dryrun); tools/casa-compat/tclean_case_matrix.py compares them.",
+  "tool": "tools/casa-compat/tclean_simulation_roundtrip.py",
+  "oracle": {"casatasks": "6.7.6.14", "casatools": "6.7.6-14", "host": "bg-mac-mini (macOS, arm64)"},
+  "native": {"branch": "lead/sim-roundtrip", "revision": "a363cd30a4 (main 88cace1, #1076, plus the round-trip tool and the per-case CASA isolation)", "backend": "cpu", "precision": "f64"},
+  "sky_model": "casatestdata unittest/simobserve/core5ps.skymodel (1873 x 1873 px of 0.043 arcsec, one channel at 345 GHz); the cube scenarios use a derived 4-channel copy (10 MHz apart, channel k scaled by 1 + 0.1 k)",
+  "round_trip_1": {
+    "date": "2026-11-03T03:52Z",
+    "scenarios": {
+      "alma12_single": {"passed": true, "note": "the unset map covers the 80-arcsec model with a 12 m mosaic (gridder mosaic, natural); the tool now maps 1 arcsec for a single pointing"},
+      "alma12_mosaic": {"passed": true, "call": "gridder mosaic, natural, clark, niter 500, 1920 x 1920"},
+      "alma12_mosaic_briggs": {"passed": true, "call": "gridder mosaic, briggs (mosweight True, per-field density), clark, niter 500"},
+      "alma12_aca7_mosaic": {
+        "passed": false,
+        "call": "vis [12 m MS, 7 m MS], gridder mosaic, briggs, clark, niter 500",
+        "result": "counts exact (500 iterations, 2 major cycles, stop 1), maxpsfsidelobe within 6e-7; psf, pb, weight and sumwt within 1e-6 nRMS; image 4.2e-3, residual 8.6e-3, model 0.10 nRMS, cyclethreshold 2e-3 relative",
+        "verdict": "justified divergence: the clean's own rounding sensitivity (aca7_sensitivity)"
+      },
+      "alma12_single_cube": {"passed": false, "verdict": "refused by casa-rs: mosweight with a cube's per-channel density (#818, in progress); this scenario also ran as a mosaic (unset map)"},
+      "alma12_mosaic_cube": {"passed": false, "verdict": "refused by casa-rs: mosweight with a cube's per-channel density (#818, in progress)"}
+    }
+  },
+  "aca7_sensitivity": {
+    "question": "Is the 12 m + 7 m list mosaic's difference a defect or rounding? It reproduces on the 7 m MeasurementSet alone (ACA, ten 7 m dishes, 7 fields, briggs, clark).",
+    "dirty_images": "niter 0: the list, the list with natural weighting, the 12 m and the 7 m MeasurementSets agree within 1e-6 nRMS in every product (image, residual, psf, pb, weight, sumwt)",
+    "cycles": "7 m, briggs: niter 20 (one minor cycle, then the model prediction) agrees within 7e-7 with clark and with hogbom; natural weighting agrees within 9e-7 at niter 500 (3 major cycles); briggs at niter 50 agrees (model 3.4e-7), and between 50 and 100 iterations of the same first minor cycle the components diverge while the cycle's peak residual (0.0039408 / 0.0039411) and model flux (0.037867 both) still agree",
+    "perturbation": {
+      "method": "DATA of the 7 m MeasurementSet plus complex Gaussian noise of 1e-6 of its peak (seed 7); both implementations re-run on it",
+      "nrms_max_normalized": {
+        "model": {"casa_vs_perturbed_casa": 1.57e-3, "native_vs_perturbed_native": 1.59e-3, "casa_vs_native": 1.59e-3},
+        "residual": {"casa_vs_perturbed_casa": 1.79e-2, "native_vs_perturbed_native": 2.02e-2, "casa_vs_native": 2.13e-2},
+        "image": {"casa_vs_perturbed_casa": 1.94e-3, "native_vs_perturbed_native": 2.38e-3, "casa_vs_native": 2.37e-3}
+      },
+      "conclusion": "a 1e-6 change to the data moves CASA's own result by as much as casa-rs differs from it: this briggs clean of an extended model under a 0.31 sidelobe PSF is chaotic at the rounding level, and CASA's and casa-rs's results are equally valid (AGENTS.md: results that differ only through rounding)"
+    }
+  },
+  "matrix_driver_isolation": "test_iterbot_cube_restart_updatedmask run before test_modelvis_16 in one driver process changed CASA's result for test_modelvis_16 (120 iterations against 170). With each case's CASA steps in a fresh process (tclean_case_matrix.py --casa-steps), CASA gives 170 in that order (run isolation-1)."
+}
