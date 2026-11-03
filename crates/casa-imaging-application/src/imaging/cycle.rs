@@ -714,11 +714,14 @@ impl<'a> Run<'a> {
         let formed = WorkerTeams::new(choice.cores).map_err(ImagingError::Pass)?;
         let teams = inputs.teams.get_or_init(move || formed);
         // An automatic AW cell cache takes what the chosen workers leave
-        // free (#449).
-        let mut spare = demand.free.saturating_sub(demand.bytes(choice.cores)?);
+        // free (#449). They include a cube's cache at its quarter, so what
+        // the cells take comes back to the cube's sizing below (#719).
+        let unraised = demand.free.saturating_sub(demand.bytes(choice.cores)?);
+        let mut spare = unraised;
         for domain in &mut domains {
             domain.admit_kernels(admission, choice.cores.streaming_workers, &mut spare)?;
         }
+        let raised = unraised.saturating_sub(spare);
         let streaming = teams.streaming();
         let started = Instant::now();
         let (weighting, weights) = setup::weighting(
@@ -741,6 +744,7 @@ impl<'a> Run<'a> {
                     problem,
                     inputs.spill_directory,
                     (teams.compute().workers(), weight_image),
+                    raised,
                     &host,
                     &policy,
                 )

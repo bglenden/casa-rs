@@ -498,12 +498,16 @@ fn cube_cache_bytes(
 }
 
 /// The paged cube state of a channel-local run, its cache admitted as
-/// [`cube_cache_bytes`] sizes it from what the policy leaves free; the state
-/// holds the cache's reservation for as long as its storage lives.
+/// [`cube_cache_bytes`] sizes it from what the policy leaves free, plus the
+/// `raised` bytes an automatic AW cell cache took out of the spare the run
+/// planned beside this cache: the cells do not shrink the cube's quarter
+/// (#719). The state holds the cache's reservation for as long as its
+/// storage lives.
 pub(super) fn cube_state(
     problem: &CompiledProblem,
     directory: &Path,
     (workers, weight_image): (usize, bool),
+    raised: u64,
     host: &HostResources,
     policy: &ResourcePolicy,
 ) -> Result<CubeState, ImagingError> {
@@ -511,7 +515,7 @@ pub(super) fn cube_state(
         problem,
         directory,
         (workers, weight_image),
-        free_memory(host, policy),
+        free_memory(host, policy).saturating_add(raised),
     )?;
     let reservation = admit(
         host,

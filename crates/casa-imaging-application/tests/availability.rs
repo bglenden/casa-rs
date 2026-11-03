@@ -229,8 +229,8 @@ fn aw_projection_runs_on_the_cpu_pass() {
         ..ProblemFixture::standard().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1)
     };
     on_cpu(&fixture.compile()).expect("AW projection runs with its catalog and weight image");
-    // An AW cube's per-plane weights wait for a CASA comparison (#719).
-    assert_exactly_unsupported(on_cpu(&cube.compile()), [Unsupported::CubeAwProjection]);
+    // An AW cube keeps each plane's weight image as its sensitivity (#719).
+    on_cpu(&cube.compile()).expect("AW projection runs per plane of a cube");
     // Its convolution functions are laid out on one axis (#841 Phase 6b).
     for problem in [non_square, unequal_cells] {
         assert_exactly_unsupported(

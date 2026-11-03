@@ -23,8 +23,7 @@
 //! AW pointing groups carry state from epoch to epoch (a time of one
 //! partition), in the order the batches arrive: partition by partition,
 //! each in time order. [`GeometryTraversal`] holds it for one traversal.
-//! AW projection images MFS only (cube AW is refused, #719), so a
-//! traversal visits every epoch.
+//! A traversal visits every epoch of the partitions it reads.
 //!
 //! A field that follows an ephemeris ([`FieldEntry::ephemeris`]) is
 //! observed towards the body's direction from the observatory at each time,
