@@ -4,6 +4,8 @@
 
 import copy
 import importlib.util
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -61,6 +63,38 @@ class SemanticReferenceTests(unittest.TestCase):
         self.data["evidence"]["reader"]["links"].append("does-not-exist.rs")
         with self.assertRaisesRegex(ValueError, "absent at its pinned revision"):
             semantics.validate_source_links(ROOT, self.data)
+
+    def test_evidence_pins_must_outlive_their_branch(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            repo = Path(scratch)
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+                     "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", *args],
+                    text=True, capture_output=True, check=True,
+                ).stdout.strip()
+
+            git("init", "-q", "-b", "main")
+            git("commit", "-q", "--allow-empty", "-m", "on main")
+            on_main = git("rev-parse", "HEAD")
+            git("checkout", "-q", "-b", "feature")
+            git("commit", "-q", "--allow-empty", "-m", "evidence on a pull request's branch")
+            on_branch = git("rev-parse", "HEAD")
+            git("checkout", "-q", "main")
+
+            # Before its squash merge, only the pull request's branch holds the pin.
+            self.assertEqual(semantics.undurable_pins(repo, {on_main, on_branch}), [on_branch])
+            # evidence-pins keeps it: a merge of the pinned commit, as EVIDENCE-PINS.md says.
+            keeper = git("commit-tree", f"{on_main}^{{tree}}", "-p", on_main, "-p", on_branch, "-m", "keep")
+            git("update-ref", "refs/heads/evidence-pins", keeper)
+            git("branch", "-q", "-D", "feature")
+            self.assertEqual(semantics.undurable_pins(repo, {on_main, on_branch}), [])
+            git("update-ref", "-d", "refs/heads/evidence-pins")
+            self.assertEqual(semantics.undurable_pins(repo, {on_main, on_branch}), [on_branch])
+            git("branch", "-q", "-m", "main", "trunk")
+            with self.assertRaisesRegex(ValueError, "checked against main"):
+                semantics.undurable_pins(repo, {on_main})
 
     def test_valid_mask_nan_cannot_pass_the_paired_product_comparison(self):
         spec = importlib.util.spec_from_file_location("lifecycle", ROOT / "tools/casa-compat/tclean_lifecycle_probe.py")

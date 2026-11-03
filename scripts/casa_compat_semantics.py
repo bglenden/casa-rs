@@ -176,6 +176,11 @@ def load(root: Path, task: str) -> dict[str, Any]:
     return data
 
 
+FETCH_EVIDENCE_PINS = "git fetch origin evidence-pins"
+MAIN_REFS = ("refs/remotes/origin/main", "refs/heads/main")
+PIN_REFS = ("refs/remotes/origin/evidence-pins", "refs/heads/evidence-pins")
+
+
 def validate_source_links(root: Path, data: dict[str, Any]) -> None:
     versions = {entry.get("source_revision", data["audit_revision"]) for entry in data["evidence"].values()}
     if not all(re.fullmatch(r"[0-9a-f]{40}", revision) for revision in versions):
@@ -188,4 +193,42 @@ def validate_source_links(root: Path, data: dict[str, Any]) -> None:
         text=True, capture_output=True, check=True,
     )
     if any(line.endswith(" missing") for line in result.stdout.splitlines()):
-        raise ValueError("semantic evidence links a file absent at its pinned revision")
+        raise ValueError("semantic evidence links a file absent at its pinned revision "
+                         f"(a clone without the evidence-pins branch fetches it with {FETCH_EVIDENCE_PINS})")
+    undurable = undurable_pins(root, versions)
+    if undurable:
+        raise ValueError(
+            "semantic evidence pins a commit that only a pull request's branch keeps reachable, so "
+            "deleting that branch after its squash merge would lose it: pin a commit on main, or merge "
+            "the commit into the evidence-pins branch (its EVIDENCE-PINS.md says how): "
+            + ", ".join(undurable))
+
+
+def first_ref(root: Path, refs: tuple[str, ...]) -> str | None:
+    """The first of `refs` this clone has."""
+    for ref in refs:
+        if subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet", ref],
+                          capture_output=True).returncode == 0:
+            return ref
+    return None
+
+
+def undurable_pins(root: Path, revisions: set[str]) -> list[str]:
+    """The pinned commits neither main nor the evidence-pins branch contains.
+
+    CI's clone holds only commits reachable from origin's refs, and a squash merge leaves its
+    branch's commits reachable from that branch alone (#1089). A pin is durable when main
+    contains it or the `evidence-pins` branch, which only ever gains merges of pinned commits,
+    does. Checked at pull-request time, this refuses a pin to the pull request's own commit
+    until evidence-pins holds it.
+    """
+    main = first_ref(root, MAIN_REFS)
+    if main is None:
+        raise ValueError("semantic evidence pins are checked against main, and this clone has neither "
+                         + " nor ".join(MAIN_REFS))
+    keepers = [main] + [ref for ref in [first_ref(root, PIN_REFS)] if ref]
+    return sorted(
+        revision for revision in revisions
+        if not any(subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", revision, ref],
+                                  capture_output=True).returncode == 0 for ref in keepers)
+    )
