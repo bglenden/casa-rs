@@ -1302,6 +1302,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#mosweight-cube-20261103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mosweight-cube-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2491,6 +2502,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#mosweight-cube-20261103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mosweight-cube-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3140,7 +3162,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <h4 id="tclean-parameter-implementation">tclean parameter implementation<a class="headerlink" href="#tclean-parameter-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.</p>
-<p>Audit baseline: <code>c64f13cb09054b080fe8b228a5f2c02c99bfd486</code>. Status counts: Default only: 7, Implemented: 42, Not implemented: 0, Partial: 43, Unassessed: 0.</p>
+<p>Audit baseline: <code>c64f13cb09054b080fe8b228a5f2c02c99bfd486</code>. Status counts: Default only: 7, Implemented: 43, Not implemented: 0, Partial: 42, Unassessed: 0.</p>
 <p>Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.</p>
 <table>
 <thead>
@@ -3422,9 +3444,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>mosweight</code></td>
 <td><code>True</code></td>
 <td><code>True</code>; <code>mosweight</code> → <code>mosweight</code></td>
-<td>Partial</td>
-<td>With gridder exactly mosaic and density weighting, True weighs each field by its own continuum density and Briggs factors (VisImagingWeight multiField); a cube's per-channel density by field is refused (issue 818); mosaicft and ftmosaic set it False, as CASA. <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>bool</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
+<td>Implemented</td>
+<td>With gridder exactly mosaic and density weighting, True weighs each field by its own density and Briggs factors (multiField): a continuum density per field (VisImagingWeight), or with a cube's per-channel density each field's padded density cube, gridded from that field's rows alone with Briggs factors per channel and a fixed swing pad of two planes a side (BriggsCubeWeightor::fillImgWeightCol, issue 818); mosaicft and ftmosaic set it False, as CASA. Every field's f64 density cube is resident for the whole run, 8·(nx·ny+1)·F·(C+4) bytes for F field keys spanned (the selected fields with data, first to last, so a sparse selection multiplies it) and C channels, where CASA holds one field's Float cube at a time: a large cube mosaic is refused by admission (20 fields × 480 channels × 800² is about 50 GB; issue 1085). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>bool</code></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-mosweight-cube-20261103">mosweight-cube-20261103</a></td>
 </tr>
 <tr>
 <td><code>aterm</code></td>
@@ -3599,7 +3621,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'natural'</code></td>
 <td><code>'natural'</code>; <code>weighting</code> → <code>weighting</code></td>
 <td>Partial</td>
-<td>Every CASA weighting accepted: natural, uniform, superuniform (uniform over a density summed in a box of npixels, or 3), radial (weight times uv distance), briggs, briggsabs (robust^2 and 2 noise^2, CASA rmode abs) and briggsbwtaper; briggsbwtaper with MFS refused as CASA does. Superuniform and radial are never per-channel densities, as in SynthesisImagerVi2::weight. Cube Briggs per-channel density follows BriggsCubeWeightor's cell orientation (negated u and v). Per-field density (mosweight) and outlier fields under density weighting remain refused. <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>briggs</code>, <code>briggsabs</code>, <code>briggsbwtaper</code>, <code>natural</code>, <code>radial</code>, <code>superuniform</code>, <code>uniform</code></td>
+<td>Every CASA weighting accepted: natural, uniform, superuniform (uniform over a density summed in a box of npixels, or 3), radial (weight times uv distance), briggs, briggsabs (robust^2 and 2 noise^2, CASA rmode abs) and briggsbwtaper; briggsbwtaper with MFS refused as CASA does. Superuniform and radial are never per-channel densities, as in SynthesisImagerVi2::weight. Cube Briggs per-channel density follows BriggsCubeWeightor's cell orientation (negated u and v). Per-field density (mosweight) follows VisImagingWeight's and BriggsCubeWeightor's multiField. Outlier fields under density weighting remain refused. <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>briggs</code>, <code>briggsabs</code>, <code>briggsbwtaper</code>, <code>natural</code>, <code>radial</code>, <code>superuniform</code>, <code>uniform</code></td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-cloud-continuation">cloud-continuation</a></td>
 </tr>
 <tr>
@@ -3911,7 +3933,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><a id="tclean-behavior-gridders"></a></p>
 <h5 id="gridder-weighting-and-beam-combinations">Gridder, weighting and beam combinations<a class="headerlink" href="#gridder-weighting-and-beam-combinations" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — standard/W/mosaic/AW, rectangular geometry, facets, normtype, beam terms and density weighting.</p>
-<p>Rectangular standard/W/mosaic and uvtaper were implemented in #970. AW remains square/equal-cell and MFS-only; it reads tclean's aterm, psterm, wbawp, conjbeams and any positive wprojplanes (#980), and an imported CASA cache must already exist: where cfcache names a missing directory CASA fills it, casa-rs refuses (aw_cf_source=native-evla generates its own). Odd cells an older CASA wrote (test_mosaic_mtmfs's staged caches) are read about CASA's convOrigin, shape/2+1; on those cases the PSF agrees to 1e-7 but CASA's weight image is 0.8% above casa-rs's in scale, and CASA's second call into the same image leaves weight.tt1 and weight.tt2 undivided by sumwt; both are open (#980). Mosaic per-field continuum density weighting (mosweight) is implemented; per-channel cube density by field is refused (#818); W/AW facets and additional gridders/weightings remain incomplete. Native CF generation is verified separately from CASA cache oracles. The native write_pb default is True. Homogeneous ALMA-labelled 7m arrays select ACA; legacy VLA PB now covers all named bands and NVSS frequency gaps. Fresh ordinary-default W/Hogbom20 CPU64/CPU32 runs pass all seven products, with PB NRMS zero. EVLA/VLA mosaics grid with CASA's common EVLA primary beam (HetArrayConvFunc COMMONPB, PBMath1DEVLA) at the first buffer's LSRK frequencies and MosaicFT's sector edges; conjbeams on one-plane mosaics grids with CASA's widened, resampled conjugate cell (#980). Moving/nonconstant FIELD directions, mixed dish classes, unsupported telescopes and remaining EVLA bands are unfinished. Explicit GPU W/AW remains refused. CASA Float channel-frequency narrowing is now matched in shared Taylor factors. All five fresh mosaic/native-AW MT-MFS rows pass the owner-approved scoped weak weight.tt1 rule and retained original recorded checks; 3 override only raw weight.tt1 relative-error failures. Exact guards and 1e-6 matrix-scale limits remain. Full metadata is separate. Existing #690 odd-sumwt scaling remains distinct. Legacy VLA cube PB takes CASA's channel-zero aperture scaled per channel: both T1.5 VLA cube rows give .pb NRMS 0.0 at 9768bb1, 3016f1b and 2628d8b (pre-candidate 0.0136); independent review pending. Cube Briggs density cells now use CASA's negated u and v (2628d8b): all 3,056,967 point-cube-briggs (row, channel) weights match CASA's to 1.35e-7, where 7 exact Float ties previously read a neighbouring cell.</p>
+<p>Rectangular standard/W/mosaic and uvtaper were implemented in #970. AW remains square/equal-cell and MFS-only; it reads tclean's aterm, psterm, wbawp, conjbeams and any positive wprojplanes (#980), and an imported CASA cache must already exist: where cfcache names a missing directory CASA fills it, casa-rs refuses (aw_cf_source=native-evla generates its own). Odd cells an older CASA wrote (test_mosaic_mtmfs's staged caches) are read about CASA's convOrigin, shape/2+1; on those cases the PSF agrees to 1e-7 but CASA's weight image is 0.8% above casa-rs's in scale, and CASA's second call into the same image leaves weight.tt1 and weight.tt2 undivided by sumwt; both are open (#980). Mosaic per-field density weighting (mosweight) is implemented, continuum and a cube's per-channel density (BriggsCubeWeightor multiField, #818); W/AW facets and additional gridders/weightings remain incomplete. Native CF generation is verified separately from CASA cache oracles. The native write_pb default is True. Homogeneous ALMA-labelled 7m arrays select ACA; legacy VLA PB now covers all named bands and NVSS frequency gaps. Fresh ordinary-default W/Hogbom20 CPU64/CPU32 runs pass all seven products, with PB NRMS zero. EVLA/VLA mosaics grid with CASA's common EVLA primary beam (HetArrayConvFunc COMMONPB, PBMath1DEVLA) at the first buffer's LSRK frequencies and MosaicFT's sector edges; conjbeams on one-plane mosaics grids with CASA's widened, resampled conjugate cell (#980). Moving/nonconstant FIELD directions, mixed dish classes, unsupported telescopes and remaining EVLA bands are unfinished. Explicit GPU W/AW remains refused. CASA Float channel-frequency narrowing is now matched in shared Taylor factors. All five fresh mosaic/native-AW MT-MFS rows pass the owner-approved scoped weak weight.tt1 rule and retained original recorded checks; 3 override only raw weight.tt1 relative-error failures. Exact guards and 1e-6 matrix-scale limits remain. Full metadata is separate. Existing #690 odd-sumwt scaling remains distinct. Legacy VLA cube PB takes CASA's channel-zero aperture scaled per channel: both T1.5 VLA cube rows give .pb NRMS 0.0 at 9768bb1, 3016f1b and 2628d8b (pre-candidate 0.0136); independent review pending. Cube Briggs density cells now use CASA's negated u and v (2628d8b): all 3,056,967 point-cube-briggs (row, channel) weights match CASA's to 1.35e-7, where 7 exact Float ties previously read a neighbouring cell.</p>
 <p>Evidence: <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-additions">additions</a>, <a href="#tclean-evidence-representative">representative</a>, <a href="#tclean-evidence-default-products">default-products</a>, <a href="#tclean-evidence-compensated-current">compensated-current</a>, <a href="#tclean-evidence-taylor-pb-mfs">taylor-pb-mfs</a>, <a href="#tclean-evidence-approved-comparisons-restart">approved-comparisons-restart</a>, <a href="#tclean-evidence-cloud-continuation">cloud-continuation</a>.</p>
 <p><a id="tclean-behavior-deconvolution"></a></p>
 <h5 id="deconvolution-masks-and-stopping">Deconvolution, masks and stopping<a class="headerlink" href="#deconvolution-masks-and-stopping" title="Permanent link">&para;</a></h5>
@@ -4377,6 +4399,20 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>1cb0aad1b4b4844bd3349035f67e464253118789</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
 <li>Command: <code>tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-casa-test-cases.json --backend cpu --precision f64 --case &lt;each of the 13 vis-list cases&gt;</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-vis-list-20261102.json</code>.</li>
+</ul>
+<p><a id="tclean-evidence-mosweight-cube-20261103"></a></p>
+<h5 id="mosweight-cube-20261103">mosweight-cube-20261103<a class="headerlink" href="#mosweight-cube-20261103" title="Permanent link">&para;</a></h5>
+<p><strong>CASA tclean test-case matrix, ad hoc mosaic cubes, per-sample weight attribution, T0/T1 laws — measured: test_mosaic_cube briggsbwtaper 1-2 pass (5.6e-4/6.4e-4 NRMS); off-centre fields differ by CASA's two-frame cube density, attributed per sample.</strong> tclean mosweight=True on a mosaic cube's per-channel density (BriggsCubeWeightor multiField). CASA's skipped test_mosaic_cube.test_mosaic_briggsbwtaper 1 and 2 pass every product (worst NRMS 6.4e-4); the other 17 test_mosaic_cube cases are unchanged (11 pass, the 6 AW cube cases refused by #719's gate); 14 non-mosaic cube density cases pass to 5.2e-6. One ALMA mosaic field imaged at its own centre agrees with CASA to 1e-7 with sumwt exact, uniform and Briggs; at its neighbour's centre it differs (uniform PSF 2.6e-2), and an evidence-only build that grids the density at GridFT's rotation and looks it up at the MeasurementSet uvw, as CASA does, matches all 130,032 of CASA's (row, channel) weights to 4.2e-10 (docs/CASA (C++) bugs.md). Three fields together at the test's centre: uniform PSF 9.3e-3, Briggs 5.6e-4. An EVLA mosaic cube differs even for one field at its own centre, with or without mosweight (PSF 3.6e-3), unattributed (#789). Native: T0 per-field cube density law, T1 sumwt additivity over fields, and the density pass's counting law with every field's cube.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/4d85b91e9596d36846727ca4abf64df6e9a53f94/resources/casa-compat/evidence/tclean-mosweight-cube-20261103.json">resources/casa-compat/evidence/tclean-mosweight-cube-20261103.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/4d85b91e9596d36846727ca4abf64df6e9a53f94/resources/casa-compat/tclean-mosweight-cube-cases.json">resources/casa-compat/tclean-mosweight-cube-cases.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/4d85b91e9596d36846727ca4abf64df6e9a53f94/crates/casa-imaging-operator/tests/density_fields.rs">crates/casa-imaging-operator/tests/density_fields.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/4d85b91e9596d36846727ca4abf64df6e9a53f94/crates/casars-imager/tests/t1/mosaic.rs">crates/casars-imager/tests/t1/mosaic.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/4d85b91e9596d36846727ca4abf64df6e9a53f94/crates/casa-imaging-runtime/tests/pass_memory.rs">crates/casa-imaging-runtime/tests/pass_memory.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/4d85b91e9596d36846727ca4abf64df6e9a53f94/tools/casa-compat/tclean_case_matrix.py">tools/casa-compat/tclean_case_matrix.py</a></li>
+<li>Revision: <code>ab3c883f3e4682a35b2aec0cc65bc364c3642220</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with resources/casa-compat/tclean-mosweight-cube-cases.json (19 cases), and with tclean-casa-test-cases.json --case-prefix test_mosaic_cube. --include-skipped and 16 cube density cases</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-mosweight-cube-20261103.json</code>.</li>
 </ul>
 
 
