@@ -3070,6 +3070,39 @@ row. All are in the evidence file; `casa-ms` reproduces them, and `tclean`
 refuses the parenthesized form and a window kept without channels, whose
 imaging in CASA is not established.
 
+## A CRTF spectral range rounds each end to a channel, toward zero
+
+- Date noted: 2026-11-03
+- Status: CASA quirk casa-rs follows for parity (#980)
+- Affected code: casatools `imageanalysis/Annotations/AnnRegion.cc`
+  (`_extend`), casacore `images/Regions/WCBox.cc` (`doToLCRegion`),
+  `lattices/LRegions/LCBox.cc`
+
+A region's `range=[f1, f2]` masks the channels from `Int(p1 + 0.5)` to
+`Int(p2 + 0.5)`, where `p1 ≤ p2` are the ends' pixels on the image's spectral
+axis. `Int` truncates toward zero, then the low end is clamped to 0 and the
+high end to the last channel. A region whose ends cross is left out, and the
+other regions are kept. Because of the truncation, a range ending up to 1.5
+channels below the cube masks channel 0, while one starting half a channel
+above it masks nothing. An MFS image's one channel is its whole bandwidth
+wide. casa-rs follows this, measured with CASA 6.7.6.14 on
+`refim_point.ms`'s cube and MFS image: `rg.fromtext` and tclean's `.mask`
+for 20 ranges, in the unit test
+`compile::domains::tests::a_spectral_range_masks_the_channels_casa_masks`.
+
+## A mask string of several lines is an empty mask in `tclean`
+
+- Date noted: 2026-11-03
+- Status: CASA bug casa-rs corrects (#980)
+- Affected code: casatools `synthesis/ImagerObjects/SDMaskHandler.cc`
+  (reading `mask` text)
+
+CASA 6.7.6.14's tclean given `mask='circle[[50pix,50pix],10pix]\nbox[[10pix,10pix],[12pix,12pix]]'`
+makes an empty mask and stops at code 7 without cleaning. The same regions
+as a list, or as lines of a region file, mask both regions. casa-rs reads
+every line of the text as a region of the mask, as the list and the file
+read.
+
 ## `tclean` checks a `vis` list for repeats of its first entry only
 
 - Date noted: 2026-11-03

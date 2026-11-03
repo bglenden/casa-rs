@@ -336,11 +336,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "mosweight",
             "#818",
         ),
-        (
-            json!({ "mask": "circle[[50pix,50pix],10pix],range=[1.1GHz,1.5GHz]" }),
-            "mask",
-            "#980",
-        ),
         (json!({ "mask": ["one.mask", "two.mask"] }), "mask", "#980"),
         (json!({ "gridder": "awprojectft" }), "gridder", "#980"),
         // An mfs image's REST axis grids the data's frequencies as they are.
@@ -425,12 +420,12 @@ fn values_casa_rs_cannot_honour_are_refused() {
 #[test]
 fn signed_integer_pixel_boxes_preserve_bounds_and_normalize_reversed_endpoints() {
     let crtf = request(json!({"mask": "box[[3pix,4pix],[-2pix,-1pix]]"}));
-    assert_eq!(format!("{:?}", crtf.mask_box), "[[-2, -1, 3, 4]]");
+    assert_eq!(crtf.mask_box, [[-2, -1, 3, 4]]);
     let legacy = request(json!({"mask": "-2,-1,3,4"}));
-    assert_eq!(format!("{:?}", legacy.mask_box), "[[-2, -1, 3, 4]]");
+    assert_eq!(legacy.mask_box, [[-2, -1, 3, 4]]);
     // Integer-valued decimal CRTF syntax already worked and stays supported.
     let decimal = request(json!({"mask": "box[[-2.0pix,-1.0pix],[3.0pix,4.0pix]]"}));
-    assert_eq!(format!("{:?}", decimal.mask_box), "[[-2, -1, 3, 4]]");
+    assert_eq!(decimal.mask_box, [[-2, -1, 3, 4]]);
     for mask in [
         "box[[-2.5pix,0pix],[3pix,4pix]]",
         "box[[1deg,2deg],[3deg,4deg]]",
@@ -863,4 +858,66 @@ fn a_crtf_circle_masks_the_pixels_casa_masks() {
     assert_eq!(rows.iter().map(|corners| corners[2]).max(), Some(60));
     assert_eq!(rows.first().map(|corners| corners[1]), Some(70));
     assert_eq!(rows.last().map(|corners| corners[1]), Some(90));
+}
+
+/// A CRTF region's spectral `range` (casacore's frequency limits) limits
+/// that region's boxes: in hertz from any SI prefix, or in channel pixels.
+/// It binds to the region it follows, a later `range` replaces an earlier
+/// one, as casacore keeps the last, and the forms casa-rs has no law for
+/// (velocities, mixed or missing units, other keywords) are refused.
+#[test]
+fn a_crtf_range_limits_its_own_region() {
+    use crate::{SpectralMaskRange, UserMaskBox};
+    let ranged = |corners, low: f64, high: f64| UserMaskBox {
+        corners,
+        range: Some(SpectralMaskRange::Frequency([low, high])),
+    };
+    let listed = request(json!({"mask": [
+        "box[[1pix,2pix],[3pix,4pix]], range=[1.1GHz, 1500MHz]",
+        "box[[5pix,5pix],[6pix,6pix]]",
+    ]}));
+    assert_eq!(
+        listed.mask_box,
+        [
+            ranged([1, 2, 3, 4], 1.1e9, 1.5e9),
+            UserMaskBox::new([5, 5, 6, 6])
+        ]
+    );
+    let last = request(json!({
+        "mask": "box[[1pix,2pix],[3pix,4pix]],range=[1.2GHz,1.3GHz], range=[1.7GHz,1600000kHz]"
+    }));
+    assert_eq!(last.mask_box, [ranged([1, 2, 3, 4], 1.7e9, 1.6e9)]);
+    let pixels = request(json!({"mask": "box[[1pix,2pix],[3pix,4pix]],range=[1.4pix,3.6pix]"}));
+    assert_eq!(
+        pixels.mask_box,
+        [UserMaskBox {
+            corners: [1, 2, 3, 4],
+            range: Some(SpectralMaskRange::Pixel([1.4, 3.6])),
+        }]
+    );
+    // test_mask_2's region: the 317 pixels of the circle, every row ranged.
+    let circle = request(json!({"mask": "circle[[50pix,50pix],10pix],range=[1.1GHz,1.5GHz]"}));
+    let pixels: i64 = circle
+        .mask_box
+        .iter()
+        .map(|user| {
+            assert_eq!(
+                user.range,
+                Some(SpectralMaskRange::Frequency([1.1e9, 1.5e9]))
+            );
+            user.corners[2] - user.corners[0] + 1
+        })
+        .sum();
+    assert_eq!(pixels, 317);
+    for mask in [
+        "box[[1pix,2pix],[3pix,4pix]],range=[-20000km/s,20000km/s]",
+        "box[[1pix,2pix],[3pix,4pix]],range=[1,3pix]",
+        "box[[1pix,2pix],[3pix,4pix]],range=[1GHz,3pix]",
+        "box[[1pix,2pix],[3pix,4pix]],range=[1.1GHz]",
+        "box[[1pix,2pix],[3pix,4pix]],corr=[I]",
+    ] {
+        let error = refusal(json!({ "mask": mask }));
+        assert_eq!(error.parameter, "mask", "{mask}");
+        assert!(error.message.contains("#980"), "{mask}: {}", error.message);
+    }
 }
