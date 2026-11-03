@@ -109,7 +109,8 @@ impl StartModel {
         }
         check_regrid(&coordinates, &shape, &template).map_err(|error| {
             refuse(format!(
-                "{error}; the non-regridded axis shapes and spectral coordinates must match"
+                "{error}; the non-regridded axis shapes and spectral coordinates must match \
+                 (CASA's spectral regrid of a start model is not ported yet, #1067)"
             ))
         })?;
         if ours != theirs {

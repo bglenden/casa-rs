@@ -476,8 +476,6 @@ class Refusals:
 
     def iteration(self):
         """`Tclean::iteration`."""
-        if self.values.get("savemodel") == "virtual":
-            self.add("savemodel='virtual'", NOT_YET, 823)
         self.integer("cycleniter")
 
     def masking(self, modes):

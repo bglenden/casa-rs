@@ -794,8 +794,10 @@ fn a_cube_without_nchan_counts_the_channels_from_its_start() {
     assert!(close(&selected, &native[2..=4]), "{selected:?}");
     let paired = planes("derived-width", json!({ "width": 2 }));
     let pairs = native
-        .chunks_exact(2)
-        .map(|pair| (pair[0] + pair[1]) / 2.0)
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|[low, high]| (low + high) / 2.0)
         .collect::<Vec<_>>();
     assert!(close(&paired, &pairs), "{paired:?}");
     let started = planes("derived-start", json!({ "start": 5 }));
