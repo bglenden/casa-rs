@@ -3423,6 +3423,9 @@ one-plane model of an MFS image keeps its plane at any frequency, as CASA's
 regrid leaves a degenerate axis. Beyond the model's channels CASA's
 interpolation takes the end channel's value and only masks it; the model
 image has no mask, so those planes start from the end channel's model.
-casa-rs follows that. Evidence: `casa-images` `regrid::spectral` laws, the
+casa-rs follows that, and also CASA's restoration of such a plane where no
+sample reaches it: `SIImageStore::restore` restores every plane, and
+`makeImageBeamSet` gives a blank PSF the largest beam, so the restored image
+there is the model convolved with that beam. Evidence: `casa-images` `regrid::spectral` laws, the
 start-model axis laws, and CASA's `test_modelvis_7` and
 `test_startmodel_regrid_cube`.
