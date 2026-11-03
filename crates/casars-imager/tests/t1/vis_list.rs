@@ -6,7 +6,8 @@
 //! weighting density included, whichever order the list names them in; a
 //! cube on the first one's channels reads the second where it reaches the
 //! cube; the final model is written into each one's `MODEL_DATA`; and a
-//! mosaic keeps each one's windows and `mosweight` densities apart.
+//! mosaic keeps each one's windows and `mosweight` densities apart. A list
+//! naming one MeasurementSet twice is refused, as CASA refuses it.
 
 use std::path::Path;
 
@@ -204,6 +205,29 @@ fn the_model_is_written_into_each_measurement_set() {
     eprintln!("T1 vis list MODEL_DATA: largest difference {largest:.3e} of {scale:.3e}");
     assert!(scale > 0.5, "the model predicts the point source: {scale}");
     assert!(largest < 1.0e-5 * scale, "{largest} of {scale}");
+}
+
+/// A MeasurementSet named twice is refused with CASA's message
+/// (`check_mslist`). So is a repeat after another entry, which CASA's check
+/// lets through (it compares each later entry with the first only), and a
+/// repeat under another spelling of its path.
+#[test]
+fn a_measurement_set_named_twice_is_refused() {
+    let split = Split::new();
+    let [low, high] = split.halves();
+    let parent = low.parent().expect("the MeasurementSet's directory");
+    let spelled = parent
+        .join(".")
+        .join(low.file_name().expect("the MeasurementSet's name"));
+    for stores in [vec![low, low], vec![low, high, high], vec![low, &spelled]] {
+        let Err(refusal) = split.whole.try_image_stores(&stores, "twice", json!({})) else {
+            panic!("{stores:?} was accepted");
+        };
+        assert!(
+            refusal.contains("is contained in the list more than once."),
+            "{refusal}"
+        );
+    }
 }
 
 /// A cube on the first MeasurementSet's channels (its default axis) reads
