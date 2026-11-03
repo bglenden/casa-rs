@@ -165,11 +165,15 @@ fn common_enclosing_iterative(
             .max_by(|(_, lhs), (_, rhs)| lhs.area().total_cmp(&rhs.area()))
             .ok_or(EllipticalGaussianError::EmptySet)?;
 
+        // CASA skips every beam equal to the largest (`*iBeam != maxBeam`),
+        // not only the largest itself: a duplicate (Stokes planes share a
+        // beam) can fail the enclosure test by rounding, and enclosing a
+        // beam with itself gives no ellipse.
         let problem = gaussians
             .iter()
             .copied()
             .enumerate()
-            .filter(|(index, _)| *index != max_index)
+            .filter(|(index, gaussian)| *index != max_index && *gaussian != max_gaussian)
             .map(|(_, gaussian)| gaussian)
             .find(|gaussian| !encloses(max_gaussian, *gaussian));
         let Some(problem) = problem else {
@@ -400,6 +404,28 @@ mod tests {
         );
     }
 
+    /// A beam equal to the largest is passed over, as CASA passes it over:
+    /// two Stokes planes' equal 0.09 by 0.05 arcsec beams (radians) failed
+    /// the enclosure test by rounding, and enclosing the largest with its
+    /// own copy gave no ellipse.
+    #[test]
+    fn a_copy_of_the_largest_beam_is_passed_over() {
+        let largest = EllipticalGaussian::new(
+            4.471_597_567_379_012e-7,
+            2.275_313_022_046_005_3e-7,
+            -0.006_651_467_446_095_271,
+        );
+        let smaller = EllipticalGaussian::new(
+            4.459_097_676_174_015e-7,
+            2.269_180_481_074_049_3e-7,
+            -0.006_636_139_185_516_454,
+        );
+        assert_eq!(
+            common_enclosing_gaussian(&[largest, largest, smaller, smaller]),
+            Ok(largest)
+        );
+    }
+
     /// A scaled ellipse that is nearly, not exactly, a circle keeps its
     /// axes: an absolute tolerance of 1e-12 took sub-arcsecond beams in
     /// radians (a few 1e-7) within 1e-5 of circular for a circle of the
@@ -536,7 +562,10 @@ mod tests {
             "{radians:?} in radians, {arcseconds:?} in arcseconds"
         );
         for beam in set(1.0) {
-            assert!(encloses(radians, beam), "{radians:?} encloses {beam:?}");
+            assert!(
+                beam == radians || encloses(radians, beam),
+                "{radians:?} encloses {beam:?}"
+            );
         }
     }
 
