@@ -3363,7 +3363,11 @@ don't use flagged points": a sample takes the flags of the two channels it
 lies between, but its value fits all four, flagged ones included, so a
 flagged channel stored as NaN makes an unflagged sample NaN and the image
 NaN with it. casa-rs fits a flagged channel's stored value as CASA does and
-counts a non-finite one as zero. Weights are interpolated the same way;
+counts a non-finite one as zero. The model half follows CASA too: a residual
+sample is `Σ f·(V − M)` over its four channels, and the model `M` is zero at
+a flagged one, since `interpolateFrequencyFromgrid` writes the prediction
+through `swapyz(flipgrid, copyOfFlag, flipdata)`, which skips every entry
+`vb.flagCube()` flags. Weights are interpolated the same way;
 `VisImagingWeight` has already given a flagged channel zero weight, which
 casa-rs follows. Evidence: the operator laws in
 `casa-imaging-operator/tests/cubic.rs` and the cubic cases of
