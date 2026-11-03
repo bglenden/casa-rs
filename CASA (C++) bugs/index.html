@@ -1775,6 +1775,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#ten-itrf-observatories-tabulated-positions-disagree-with-themselves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ten ITRF observatories' tabulated positions disagree with themselves
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#direction_splitter-cannot-split-a-direction-without-an-epoch" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4439,6 +4450,84 @@ datum's offsets as <code>(x-dx, y-dy, z-dz)</code> everywhere but in its second 
 is then slightly wrong for a datum whose x and z offsets differ. casa-rs
 subtracts <code>dz</code> (<code>readantenna::geodesy::xyz_to_geodetic_old</code>); its longitude
 and, for WGS 84, its latitude are CASA's.</p>
+<h2 id="ten-itrf-observatories-tabulated-positions-disagree-with-themselves">Ten ITRF observatories' tabulated positions disagree with themselves<a class="headerlink" href="#ten-itrf-observatories-tabulated-positions-disagree-with-themselves" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-03</li>
+<li>Status: measures data defect; casa-rs reads the table as casacore does
+  (#1106)</li>
+<li>Affected data: the <code>geodetic/Observatories</code> table of the measures data
+  (casarundata 2026.02.19 and 2026.10.27); casacore
+  <code>measures/Measures/MeasTable.cc</code> (<code>doInitObservatories</code>)</li>
+</ul>
+<p>Each row of <code>Observatories</code> gives a position twice: <code>Long</code>, <code>Lat</code> and
+<code>Height</code>, and <code>X</code>, <code>Y</code> and <code>Z</code>. casacore builds every observatory from the
+first three alone, for an <code>ITRF</code> row as a spherical vector whose length is
+<code>Height</code>, and never reads <code>X</code>, <code>Y</code>, <code>Z</code>. For 10 of the 20 <code>ITRF</code> rows the two
+descriptions are different places:</p>
+<table>
+<thead>
+<tr>
+<th>Observatory</th>
+<th style="text-align: right;">distance between them</th>
+<th>what is wrong</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OVRO_MMA</td>
+<td style="text-align: right;">6,370,350 m</td>
+<td><code>Height</code> is a geodetic height: casacore places it 1.2 km from the Earth's centre</td>
+</tr>
+<tr>
+<td>LOFAR</td>
+<td style="text-align: right;">6,364,570 m</td>
+<td>the same: 49 m from the centre</td>
+</tr>
+<tr>
+<td>SAO SMA</td>
+<td style="text-align: right;">4,983,940 m</td>
+<td><code>Y</code> has the wrong sign; <code>Long</code>, <code>Lat</code>, <code>Height</code> are SMA's</td>
+</tr>
+<tr>
+<td>NRO</td>
+<td style="text-align: right;">19,983 m</td>
+<td>unknown</td>
+</tr>
+<tr>
+<td>SMA</td>
+<td style="text-align: right;">13,844 m</td>
+<td><code>Lat</code> appears to be geodetic beside a geocentric radius</td>
+</tr>
+<tr>
+<td>e-MERLIN, MERLIN2</td>
+<td style="text-align: right;">6,366 m</td>
+<td>unknown</td>
+</tr>
+<tr>
+<td>SUNRISE</td>
+<td style="text-align: right;">743 m</td>
+<td>a placeholder: <code>X</code>, <code>Y</code>, <code>Z</code> are zero</td>
+</tr>
+<tr>
+<td>EVLA</td>
+<td style="text-align: right;">34.5 m</td>
+<td>rounded <code>Long</code>, <code>Lat</code> and <code>Height</code></td>
+</tr>
+<tr>
+<td>ATF</td>
+<td style="text-align: right;">24.2 m</td>
+<td>unknown</td>
+</tr>
+</tbody>
+</table>
+<p>CASA 6.7.6.14's <code>me.observatory</code> returns the <code>Long</code>, <code>Lat</code>, <code>Height</code>
+position for each, so its simulations, <code>itrf2locname</code> and frame conversions
+use it. casa-rs reads the table as casacore does
+(<code>ObservatoryEntry::position</code> in <code>casa-measures-data</code>), so the two place
+every observatory alike, including the three that casacore puts inside the
+Earth. Choosing the other column per row would need knowing which one was
+meant, and would make casa-rs and CASA disagree about the same data; the
+correction belongs in the table.</p>
 <h2 id="direction_splitter-cannot-split-a-direction-without-an-epoch"><code>direction_splitter</code> cannot split a direction without an epoch<a class="headerlink" href="#direction_splitter-cannot-split-a-direction-without-an-epoch" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-26</li>
