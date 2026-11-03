@@ -107,12 +107,7 @@ pub(crate) fn produce_plane_member(
             .collect()),
         ProductRole::RestoredImage(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        ) => {
-            if !valid {
-                return Ok(invalid_residual());
-            }
-            restored_plane(request)
-        }
+        ) => restored_plane(request, valid),
         ProductRole::PrimaryBeam(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         ) => primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane),
@@ -122,7 +117,7 @@ pub(crate) fn produce_plane_member(
             if !valid {
                 return Ok(invalid_residual());
             }
-            let restored = restored_plane(request)?;
+            let restored = restored_plane(request, true)?;
             let primary_beam =
                 primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane)?;
             correct_primary_beam(
@@ -199,7 +194,16 @@ pub(crate) fn apparent_model(
         .collect()
 }
 
-fn restored_plane(request: &PlaneMemberRequest<'_, '_, '_>) -> Result<Vec<f32>, ProductsError> {
+/// The restored plane: the model convolved with the restoring beam plus
+/// the residual rescaled to it. A plane without valid weights has no
+/// residual, and its restored image is the model convolved with its
+/// restoring beam where it has one, as `SIImageStore::restore` restores
+/// every plane whatever its weights: a start model regridded onto a
+/// channel no sample reaches is restored there. Without a beam it is zero.
+fn restored_plane(
+    request: &PlaneMemberRequest<'_, '_, '_>,
+    valid: bool,
+) -> Result<Vec<f32>, ProductsError> {
     let PlaneMemberRequest {
         member,
         inputs,
@@ -216,8 +220,12 @@ fn restored_plane(request: &PlaneMemberRequest<'_, '_, '_>) -> Result<Vec<f32>, 
             "restoration requires a fitted beam for every valid plane".to_string(),
         )
     };
-    let beam = restoring_beam.ok_or_else(unfitted)?;
-    let fitted_beam = fitted_beam.ok_or_else(unfitted)?;
+    let cells = plane.shape()[0] * plane.shape()[1];
+    let beam = match (restoring_beam, valid) {
+        (Some(beam), _) => beam,
+        (None, false) => return Ok(vec![0.0; cells]),
+        (None, true) => return Err(unfitted()),
+    };
     let model = apparent_model(
         model_real_plane(
             inputs.final_model(),
@@ -232,15 +240,19 @@ fn restored_plane(request: &PlaneMemberRequest<'_, '_, '_>) -> Result<Vec<f32>, 
         primary_beam_model,
     )?;
     let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain());
-    let residual = normalize_domain_plane(
-        &residual_real_plane(plane)?,
-        required_normalization(member),
-        plane,
-        inputs,
-    )?;
-    let residual =
+    let residual = if valid {
+        let fitted_beam = fitted_beam.ok_or_else(unfitted)?;
+        let residual = normalize_domain_plane(
+            &residual_real_plane(plane)?,
+            required_normalization(member),
+            plane,
+            inputs,
+        )?;
         rescale_residual_to_beam(&residual, plane.shape(), cell_size, fitted_beam, beam)?
-            .into_values();
+            .into_values()
+    } else {
+        vec![0.0; cells]
+    };
     Ok(restore_model_plane(
         &model,
         residual,
