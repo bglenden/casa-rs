@@ -529,6 +529,18 @@ pub struct MosaicScreens {
 }
 
 impl MosaicScreens {
+    /// The support each dish pair finds on its weight plane, per pair (in
+    /// key order) and window: what CASA logs as "convolution function
+    /// support", before every pair of a window takes the widest
+    /// ([`MosaicPb::half_support`]).
+    #[must_use]
+    pub fn found_supports(&self) -> Vec<usize> {
+        self.screened
+            .iter()
+            .map(|(_, support, _)| *support)
+            .collect()
+    }
+
     /// Bytes the screens hold: every pair's lattices and the supports.
     #[must_use]
     pub fn bytes(&self) -> u64 {

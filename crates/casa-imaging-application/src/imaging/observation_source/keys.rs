@@ -22,7 +22,7 @@ struct KeyBase {
 
 /// The keys of a run's stores: the aperture classes of them all, and where
 /// each store's window and field keys start.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct StoreKeys {
     /// Every store's aperture classes in dish order: a row's antenna types
     /// index them. CASA's `HetArrayConvFunc::findAntennaSizes` adds the
@@ -44,6 +44,13 @@ impl StoreKeys {
                 .map(|catalogue| (catalogue.windows.len(), catalogue.fields.len())),
             dish_classes,
         )
+    }
+
+    /// The keys of a run of one store, whose windows and fields are keyed
+    /// by their own numbers, with no aperture classes: a standard gridder's
+    /// operator, which keys no dish.
+    pub(crate) fn single() -> Self {
+        Self::counted([(0, 0)], Vec::new())
     }
 
     /// The keys of stores of so many `(windows, fields)`.
@@ -69,8 +76,13 @@ impl StoreKeys {
         }
     }
 
+    /// Where store `store`'s keys start. Every store a route reads was
+    /// counted when its keys were made, so an unknown store is a defect.
     fn base(&self, store: usize) -> KeyBase {
-        self.bases.get(store).copied().unwrap_or_default()
+        *self
+            .bases
+            .get(store)
+            .expect("a store the route's keys count")
     }
 
     /// The key of store `store`'s spectral window `spectral_window`.
@@ -89,8 +101,7 @@ mod tests {
     use super::*;
 
     /// Each store's keys follow the windows and fields of the stores
-    /// before it; the first store's are its own numbers, and so are the
-    /// keys of a store the run does not know.
+    /// before it; the first store's are its own numbers.
     #[test]
     fn keys_run_over_every_store_in_order() {
         let keys = StoreKeys::counted(
@@ -107,12 +118,20 @@ mod tests {
         assert_eq!(keys.field(1, 4), 7);
         assert_eq!(keys.window(2, 3), 6);
         assert_eq!(keys.field(2, 0), 8);
-        assert_eq!(keys.window(5, 3), 3);
+        let one = StoreKeys::single();
+        assert_eq!((one.window(0, 3), one.field(0, 4)), (3, 4));
         let mut classes = vec![
             AntennaResponseClass::CasaAca7m,
             AntennaResponseClass::CasaAlma12m,
         ];
         classes.sort_unstable();
         assert_eq!(keys.dish_classes, classes);
+    }
+
+    /// A store the keys did not count is a defect, not the first store.
+    #[test]
+    #[should_panic(expected = "a store the route's keys count")]
+    fn an_unknown_store_has_no_keys() {
+        let _ = StoreKeys::counted([(2, 3)], Vec::new()).window(1, 0);
     }
 }

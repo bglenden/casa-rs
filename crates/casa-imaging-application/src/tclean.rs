@@ -1090,7 +1090,7 @@ fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
     {
         let mut rest = line;
         while !rest.is_empty() {
-            if rest.contains("range") {
+            if rest.contains("range=") || rest.contains("range =") {
                 return Err(TcleanRefusal::not_yet(
                     "mask",
                     format!("the region {text:?} limited to a spectral range"),
