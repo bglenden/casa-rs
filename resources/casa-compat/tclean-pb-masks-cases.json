@@ -52,6 +52,22 @@
     "pbcor": true
    },
    "note": "pbsquare with pbcor: the restored image divided by the PB"
+  },
+  "alma_mosaic_pbsquare_negative_pblimit": {
+   "vis": "alma",
+   "imagename": "img",
+   "params": {
+    "imsize": 640,
+    "cell": "0.06arcsec",
+    "phasecenter": "J2000 12:01:52.430856 -18.51.49.94369",
+    "specmode": "mfs",
+    "gridder": "mosaic",
+    "deconvolver": "hogbom",
+    "niter": 200,
+    "normtype": "pbsquare",
+    "pblimit": -0.2
+   },
+   "note": "pbsquare under a negative pblimit: CASA drops the residual's and the image's pixel masks, so the pbsquare residual past the PB, which no cutoff zeroes, is compared too"
   }
  }
 }
