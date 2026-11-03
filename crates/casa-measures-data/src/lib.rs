@@ -1392,7 +1392,10 @@ mod tests {
         let catalog = runtime.observatories().expect("observatories");
         assert!(catalog.entries().len() > 40);
         assert!(catalog.get("ALMA").is_some());
-        assert!(catalog.get(" alma ").is_some());
+        // casacore keeps spaces: a trailing one still agrees with ALMA over
+        // ALMA's length, a leading one does not.
+        assert!(catalog.get("alma ").is_some());
+        assert!(catalog.get(" alma").is_none());
         let catalog = runtime.sources().expect("sources");
         assert!(catalog.entries().len() > 100);
         let source_0002 = catalog.get("0002-478").expect("catalog source");
@@ -1402,9 +1405,12 @@ mod tests {
         let catalog = runtime.spectral_lines().expect("lines");
         assert!(catalog.entries().len() >= 18);
         let hi = catalog.get("HI").expect("HI line");
-        assert!(catalog.get(" hi ").is_some());
+        assert!(catalog.get("hi ").is_some());
+        assert!(catalog.get(" hi").is_none());
         assert_eq!(hi.frequency_type, "REST");
-        assert!((hi.frequency_hz() - 1.420_405_752e9).abs() < 5.0e3);
+        // casacore's QC::HI, which the table also holds (CASA 6.7.6.14's
+        // me.spectralline('HI')).
+        assert_eq!(hi.frequency_hz(), 1_420_405_751.786);
         let tai_minus_utc = runtime.tai_minus_utc_seconds(51_544.5).expect("TAI-UTC");
         assert!((tai_minus_utc - 32.0).abs() < 1e-6);
         let utc = runtime

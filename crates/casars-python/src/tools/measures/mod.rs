@@ -501,11 +501,13 @@ impl PyMeasures {
         })
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (name = None), text_signature = "($self, name='HI')")]
-    fn spectralline(&self, name: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("spectralline")
+    /// The rest frequency of a spectral line the measures data names.
+    #[pyo3(signature = (name = "HI"), text_signature = "($self, name='HI')")]
+    fn spectralline(&self, py: Python<'_>, name: &str) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, lines| {
+            let measures = state.measures().map_err(no_measures)?;
+            Ok(define::spectralline(name, &*measures, lines))
+        })
     }
 
     /// Not yet implemented in casa-rs.

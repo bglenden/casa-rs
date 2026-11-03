@@ -4,6 +4,7 @@
 use std::mem::size_of;
 
 use casa_types::measures::ObservatoryPosition;
+use casa_types::quanta::unique_prefix_position;
 
 /// A single observatory row from casacore `geodetic/Observatories`.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,12 +92,12 @@ impl ObservatoryCatalog {
         &self.entries
     }
 
-    /// Look up an observatory by case-insensitive name.
+    /// The observatory `name` finds, as casacore's `MeasTable` finds it: the
+    /// entry of that name ignoring case, else the one entry the name agrees
+    /// with over the shorter of their lengths ([`unique_prefix_position`]).
     pub fn get(&self, name: &str) -> Option<&ObservatoryEntry> {
-        let name = name.trim();
-        self.entries
-            .iter()
-            .find(|entry| entry.name.trim().eq_ignore_ascii_case(name))
+        unique_prefix_position(name, &self.entries, |entry| entry.name.as_str())
+            .map(|at| &self.entries[at])
     }
 
     pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {

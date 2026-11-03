@@ -1350,7 +1350,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [componentlist](#componentlist) | `casars.tools` | 61 | yes | 15 | 0 | 46 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
-| [measures](#measures) | `casars.tools` | 48 | yes | 23 | 0 | 25 | 0 | 0 | 0 |
+| [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
 | [quanta](#quanta) | `casars.tools` | 57 | yes | 25 | 0 | 32 | 0 | 0 | 0 |
@@ -1567,7 +1567,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 23, Partial: 0, Not implemented: 25, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 24, Partial: 0, Not implemented: 24, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1598,7 +1598,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `linelist` |  | Implemented | The rest lines of the measures data, their names joined by spaces in the table's order, with CASA's deprecation warning. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists) |
 | `listcodes` | `ms` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `measure` | `v, rf, off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `observatory` | `name='ALMA'` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [casa-observatories](#measures-evidence-casa-observatories) |
+| `observatory` | `name='ALMA'` | Implemented | The measures data's observatories and sources, found by name as casacore's MeasTable finds them (ignoring case, or by a unique prefix), and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [casa-observatories](#measures-evidence-casa-observatories), [casa-names](#measures-evidence-casa-names) |
 | `obslist` |  | Implemented | The observatories of the measures data, by name in the table's order, as CASA lists them; CASA's readantenna, sensitivity and itrf2locname, and simobserve, call it. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists), [casa-values](#measures-evidence-casa-values) |
 | `posangle` | `m1, m2` | Implemented | Angular separation and position angle, as casacore computes them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `position` | `rf='WGS84', v0=[], v1=[], v2=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
@@ -1609,9 +1609,9 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `shift` | `v={}, offset=[], pa=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `show` | `v, refcode=True` | Implemented | Shows measures as CASA shows them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `showframe` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
-| `source` | `name=[]` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `source` | `name=[]` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [casa-names](#measures-evidence-casa-names) |
 | `sourcelist` |  | Implemented | The sources of the measures data, their names joined by spaces in the table's order, as CASA lists them. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists) |
-| `spectralline` | `name='HI'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `spectralline` | `name='HI'` | Implemented | The rest frequency of a line in the measures data's Lines table, found by name as casacore finds it, REST frame; HI is casacore's QC::HI constant, as in CASA. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [casa-names](#measures-evidence-casa-names) |
 | `todoppler` | `rf, v0, rfq=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `tofrequency` | `rf, v0, rfq` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `toradialvelocity` | `rf, v0` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
@@ -1728,6 +1728,13 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 ##### casa-observatories
 
 **CASA-recorded values — measured.** Recorded from CASA 6.7.6-14 by observatories_oracle.py with each observatory's table row: me.observatory for all 59 observatories equals CASA's to 1e-14 relative, ITRF entries included, which casacore reads from Long, Lat and Height and not X, Y, Z (#1106). Passes in the Python tests. me.observatory for every name me.obslist gives.
+
+- [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py)
+
+<a id="measures-evidence-casa-names"></a>
+##### casa-names
+
+**CASA-recorded values — measured.** Recorded from CASA 6.7.6-14 by measures_names_oracle.py: me.observatory for 471 names and me.spectralline for 125 (every prefix of every entry's name, upper and lower case, and names longer than an entry or with spaces around them), and me.source for 10. casa-rs finds what CASA finds for each, by casacore's MUString::minimaxNC rule (#1110). Passes in the Python tests. How me.observatory, me.spectralline and me.source find an entry by name.
 
 - [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py)
 

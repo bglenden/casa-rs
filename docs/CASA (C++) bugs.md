@@ -2139,6 +2139,22 @@ Earth. Choosing the other column per row would need knowing which one was
 meant, and would make casa-rs and CASA disagree about the same data; the
 correction belongs in the table.
 
+## `me.source` skips only leading spaces
+
+- Date noted: 2026-11-03
+- Status: casa-rs is more lenient (#1110)
+- Affected code: casatools `measures::source`; casa-types
+  `measures/direction.rs` (`parse_named_direction`)
+
+casa-rs and casacore find a source by name with casacore's
+`MUString::minimaxNC`, which keeps spaces. CASA 6.7.6.14's `me.source`
+also finds `'  0002-478'`, with leading spaces, but not `'\t0002-478'`, with
+a tab. casa-rs's direction-name parser trims every kind of surrounding white
+space, a tab too, before it looks a name up; it reads planets and
+`ZENITH` the same way. Only a leading tab finds a source in casa-rs and
+not in CASA. `me.observatory` and `me.spectralline` keep their spaces, as
+CASA's do: `' ALMA'` finds nothing in either.
+
 ## `direction_splitter` cannot split a direction without an epoch
 
 - Date noted: 2026-10-26
