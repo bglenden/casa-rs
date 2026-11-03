@@ -1352,7 +1352,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 554</li>
+<li>Concepts: 562</li>
 <li>Surfaces: 27 (27 task, 0 session)</li>
 <li>Surface bindings: 791</li>
 </ul>
@@ -1395,7 +1395,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-tclean">Tclean</a><br><code>tclean</code></td>
 <td>task</td>
-<td style="text-align: right;">37</td>
+<td style="text-align: right;">38</td>
 <td><code>imager</code></td>
 <td style="text-align: right;">114</td>
 <td>Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.</td>
@@ -2707,7 +2707,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="tclean-tclean">Tclean (<code>tclean</code>)<a class="headerlink" href="#tclean-tclean" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>37</code></li>
+<li>Contract version: <code>38</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does.</li>
@@ -2742,67 +2742,67 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>field</code></td>
-<td><code>ms.selection.field@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.field@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>CASA field selector.</td>
+<td>CASA field selector, one per MeasurementSet or one for all</td>
 </tr>
 <tr>
 <td><code>spw</code></td>
-<td><code>ms.selection.spw@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.spw@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>Comma-separated SPECTRAL_WINDOW_ID integers</td>
+<td>Comma-separated SPECTRAL_WINDOW_ID integers, one per MeasurementSet or one for all</td>
 </tr>
 <tr>
 <td><code>timerange</code></td>
-<td><code>ms.selection.timerange@r2</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.timerange@r3</code></td>
+<td><code>array&lt;string&gt;</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>CASA time selection, exact text</td>
+<td>CASA time selection, exact text, one per MeasurementSet or one for all</td>
 </tr>
 <tr>
 <td><code>uvrange</code></td>
-<td><code>ms.selection.uvrange@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.uvrange@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine.</td>
+<td>UV range selector, one per MeasurementSet or one for all<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine.</td>
 </tr>
 <tr>
 <td><code>antenna</code></td>
-<td><code>ms.selection.antenna@r2</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.antenna@r3</code></td>
+<td><code>array&lt;string&gt;</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>CASA antenna (baseline) selection, exact text</td>
+<td>CASA antenna (baseline) selection, exact text, one per MeasurementSet or one for all</td>
 </tr>
 <tr>
 <td><code>scan</code></td>
-<td><code>ms.selection.scan@r2</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.scan@r3</code></td>
+<td><code>array&lt;string&gt;</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>Syntax-preserving numeric scan selection</td>
+<td>Syntax-preserving numeric scan selection, one per MeasurementSet or one for all</td>
 </tr>
 <tr>
 <td><code>observation</code></td>
-<td><code>ms.selection.observation@r2</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.observation@r3</code></td>
+<td><code>array&lt;string&gt;</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>Syntax-preserving numeric observation selection</td>
+<td>Syntax-preserving numeric observation selection, one per MeasurementSet or one for all</td>
 </tr>
 <tr>
 <td><code>intent</code></td>
-<td><code>ms.selection.intent@r1</code></td>
-<td><code>string</code></td>
+<td><code>ms.selection.intent@r2</code></td>
+<td><code>array&lt;string&gt;</code></td>
 <td><code>""</code>; optional</td>
 <td>Context</td>
-<td>Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine.</td>
+<td>Intent selector, one per MeasurementSet or one for all<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine.</td>
 </tr>
 <tr>
 <td><code>datacolumn</code></td>

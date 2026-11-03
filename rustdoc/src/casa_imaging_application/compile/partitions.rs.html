@@ -174,158 +174,165 @@
 <a href=#174 id=174 data-nosnippet>174</a>    })
 <a href=#175 id=175 data-nosnippet>175</a>}
 <a href=#176 id=176 data-nosnippet>176</a>
-<a href=#177 id=177 data-nosnippet>177</a><span class="doccomment">/// `problem`'s selection resolved to `observation`'s partitions, in
-<a href=#178 id=178 data-nosnippet>178</a>/// partition order: the partitions compile chose, the channels of their
-<a href=#179 id=179 data-nosnippet>179</a>/// windows, their correlations, the data group holding the visibility
-<a href=#180 id=180 data-nosnippet>180</a>/// column, and the per-sample predicates.
-<a href=#181 id=181 data-nosnippet>181</a>///
-<a href=#182 id=182 data-nosnippet>182</a>/// # Errors
-<a href=#183 id=183 data-nosnippet>183</a>///
-<a href=#184 id=184 data-nosnippet>184</a>/// [`PartitionSelectionError::Unsupported`] for several MeasurementSets,
-<a href=#185 id=185 data-nosnippet>185</a>/// `FLOAT_DATA` and partitions whose column belongs to different data
-<a href=#186 id=186 data-nosnippet>186</a>/// groups; [`PartitionSelectionError::Inconsistent`] for a window the
-<a href=#187 id=187 data-nosnippet>187</a>/// selection names no channel of, a correlation a partition does not hold,
-<a href=#188 id=188 data-nosnippet>188</a>/// and a window without a positive reference frequency under a UV-distance
-<a href=#189 id=189 data-nosnippet>189</a>/// interval in wavelengths.
-<a href=#190 id=190 data-nosnippet>190</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>resolve_partitions(
-<a href=#191 id=191 data-nosnippet>191</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#192 id=192 data-nosnippet>192</a>    observation: <span class="kw-2">&amp;</span><span class="kw">dyn </span>Observation,
-<a href=#193 id=193 data-nosnippet>193</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PartitionSelection, PartitionSelectionError&gt; {
-<a href=#194 id=194 data-nosnippet>194</a>    <span class="kw">let </span>[source] = problem.observation_transaction().read_set().sources() <span class="kw">else </span>{
-<a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PartitionSelectionError::Unsupported(
-<a href=#196 id=196 data-nosnippet>196</a>            <span class="string">"more than one MeasurementSet"</span>,
-<a href=#197 id=197 data-nosnippet>197</a>        ));
-<a href=#198 id=198 data-nosnippet>198</a>    };
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">let </span>selection = source.selection();
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">let </span>visibility = source.selected_columns().visibility();
-<a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">if </span>visibility == VisibilityColumn::FloatData {
-<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PartitionSelectionError::Unsupported(<span class="string">"FLOAT_DATA"</span>));
-<a href=#203 id=203 data-nosnippet>203</a>    }
-<a href=#204 id=204 data-nosnippet>204</a>    <span class="kw">let </span>group = data_group(visibility);
-<a href=#205 id=205 data-nosnippet>205</a>    <span class="kw">let </span>catalogue = observation.catalogue();
-<a href=#206 id=206 data-nosnippet>206</a>    <span class="kw">let </span>rows = selection.rows_filter();
-<a href=#207 id=207 data-nosnippet>207</a>    <span class="kw">let </span><span class="kw-2">mut </span>partitions = Vec::with_capacity(selection.partitions().len());
-<a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">for </span>selected <span class="kw">in </span>selection.partitions() {
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">let </span>entry = catalogue.partition(selected.partition());
-<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">if </span>entry.data_group(group).is_none() {
-<a href=#211 id=211 data-nosnippet>211</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PartitionSelectionError::Unsupported(
-<a href=#212 id=212 data-nosnippet>212</a>                <span class="string">"a selected partition without the imaged data group"</span>,
-<a href=#213 id=213 data-nosnippet>213</a>            ));
-<a href=#214 id=214 data-nosnippet>214</a>        }
-<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw">let </span>window = selected.spectral_window_id();
-<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">let </span>channels = selection
-<a href=#217 id=217 data-nosnippet>217</a>            .spectral_windows()
-<a href=#218 id=218 data-nosnippet>218</a>            .iter()
-<a href=#219 id=219 data-nosnippet>219</a>            .find(|selected| selected.spectral_window_id() == window)
-<a href=#220 id=220 data-nosnippet>220</a>            .map(|selected| selected.channel_indices().to_vec())
-<a href=#221 id=221 data-nosnippet>221</a>            .filter(|channels| !channels.is_empty())
-<a href=#222 id=222 data-nosnippet>222</a>            .ok_or_else(|| {
-<a href=#223 id=223 data-nosnippet>223</a>                PartitionSelectionError::Inconsistent(<span class="macro">format!</span>(
-<a href=#224 id=224 data-nosnippet>224</a>                    <span class="string">"spectral window {window} has no selected channel"
-<a href=#225 id=225 data-nosnippet>225</a>                </span>))
-<a href=#226 id=226 data-nosnippet>226</a>            })<span class="question-mark">?</span>;
-<a href=#227 id=227 data-nosnippet>227</a>        <span class="kw">let </span>correlations: Vec&lt;Correlation&gt; = selected
-<a href=#228 id=228 data-nosnippet>228</a>            .products()
-<a href=#229 id=229 data-nosnippet>229</a>            .iter()
-<a href=#230 id=230 data-nosnippet>230</a>            .map(|product| product.correlation_type())
-<a href=#231 id=231 data-nosnippet>231</a>            .collect();
-<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(missing) = correlations
-<a href=#233 id=233 data-nosnippet>233</a>            .iter()
-<a href=#234 id=234 data-nosnippet>234</a>            .find(|product| entry.correlation_index(<span class="kw-2">**</span>product).is_none())
-<a href=#235 id=235 data-nosnippet>235</a>        {
-<a href=#236 id=236 data-nosnippet>236</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PartitionSelectionError::Inconsistent(<span class="macro">format!</span>(
-<a href=#237 id=237 data-nosnippet>237</a>                <span class="string">"spectral window {window} lacks {missing:?}"
-<a href=#238 id=238 data-nosnippet>238</a>            </span>)));
-<a href=#239 id=239 data-nosnippet>239</a>        }
-<a href=#240 id=240 data-nosnippet>240</a>        partitions.push(SelectedPartition {
-<a href=#241 id=241 data-nosnippet>241</a>            id: selected.partition(),
-<a href=#242 id=242 data-nosnippet>242</a>            spectral_window: window,
-<a href=#243 id=243 data-nosnippet>243</a>            channels,
-<a href=#244 id=244 data-nosnippet>244</a>            correlations,
-<a href=#245 id=245 data-nosnippet>245</a>            wavelength_m: wavelength(catalogue, entry, rows)<span class="question-mark">?</span>,
-<a href=#246 id=246 data-nosnippet>246</a>        });
-<a href=#247 id=247 data-nosnippet>247</a>    }
-<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">if </span>partitions.is_empty() {
-<a href=#249 id=249 data-nosnippet>249</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PartitionSelectionError::Unsupported(
-<a href=#250 id=250 data-nosnippet>250</a>            <span class="string">"a selection no partition holds"</span>,
-<a href=#251 id=251 data-nosnippet>251</a>        ));
-<a href=#252 id=252 data-nosnippet>252</a>    }
-<a href=#253 id=253 data-nosnippet>253</a>    <span class="prelude-val">Ok</span>(PartitionSelection {
-<a href=#254 id=254 data-nosnippet>254</a>        data_group: group.to_string(),
-<a href=#255 id=255 data-nosnippet>255</a>        partitions,
-<a href=#256 id=256 data-nosnippet>256</a>        fields: field_selection(catalogue, rows.fields()),
-<a href=#257 id=257 data-nosnippet>257</a>        scans: rows.scans().clone(),
-<a href=#258 id=258 data-nosnippet>258</a>        baselines: rows.baselines().clone(),
-<a href=#259 id=259 data-nosnippet>259</a>        times: rows.times().clone(),
-<a href=#260 id=260 data-nosnippet>260</a>        uv: rows.uv_distances().clone(),
-<a href=#261 id=261 data-nosnippet>261</a>    })
-<a href=#262 id=262 data-nosnippet>262</a>}
-<a href=#263 id=263 data-nosnippet>263</a>
-<a href=#264 id=264 data-nosnippet>264</a><span class="doccomment">/// The fields of `catalogue` that `fields` selects, as the boundary names
-<a href=#265 id=265 data-nosnippet>265</a>/// them.
-<a href=#266 id=266 data-nosnippet>266</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>field_selection(catalogue: <span class="kw-2">&amp;</span>Catalogue, fields: <span class="kw-2">&amp;</span>IdSelection) -&gt; FieldSelection {
-<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">match </span>fields {
-<a href=#268 id=268 data-nosnippet>268</a>        IdSelection::All =&gt; FieldSelection::All,
-<a href=#269 id=269 data-nosnippet>269</a>        IdSelection::Only(ids) =&gt; FieldSelection::Only(ids.iter().copied().map(FieldId).collect()),
-<a href=#270 id=270 data-nosnippet>270</a>        selection @ IdSelection::Ranges(<span class="kw">_</span>) =&gt; FieldSelection::Only(
-<a href=#271 id=271 data-nosnippet>271</a>            (<span class="number">0</span>..catalogue.fields.len())
-<a href=#272 id=272 data-nosnippet>272</a>                .filter_map(|index| u32::try_from(index).ok())
-<a href=#273 id=273 data-nosnippet>273</a>                .filter(|<span class="kw-2">&amp;</span>id| selection.holds(i64::from(id)))
-<a href=#274 id=274 data-nosnippet>274</a>                .map(FieldId)
-<a href=#275 id=275 data-nosnippet>275</a>                .collect(),
-<a href=#276 id=276 data-nosnippet>276</a>        ),
-<a href=#277 id=277 data-nosnippet>277</a>    }
-<a href=#278 id=278 data-nosnippet>278</a>}
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a><span class="doccomment">/// `entry`'s window's reference wavelength, when `rows` tests a UV distance
-<a href=#281 id=281 data-nosnippet>281</a>/// in wavelengths.
-<a href=#282 id=282 data-nosnippet>282</a></span><span class="kw">fn </span>wavelength(
-<a href=#283 id=283 data-nosnippet>283</a>    catalogue: <span class="kw-2">&amp;</span>Catalogue,
-<a href=#284 id=284 data-nosnippet>284</a>    entry: <span class="kw-2">&amp;</span>PartitionEntry,
-<a href=#285 id=285 data-nosnippet>285</a>    rows: <span class="kw-2">&amp;</span>RowSelection,
-<a href=#286 id=286 data-nosnippet>286</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;f64&gt;, PartitionSelectionError&gt; {
-<a href=#287 id=287 data-nosnippet>287</a>    <span class="kw">if </span>!rows.uv_distances().needs_wavelengths() {
-<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#289 id=289 data-nosnippet>289</a>    }
-<a href=#290 id=290 data-nosnippet>290</a>    <span class="kw">let </span>window = entry.window.<span class="number">0</span>;
-<a href=#291 id=291 data-nosnippet>291</a>    catalogue
-<a href=#292 id=292 data-nosnippet>292</a>        .windows
-<a href=#293 id=293 data-nosnippet>293</a>        .get(window <span class="kw">as </span>usize)
-<a href=#294 id=294 data-nosnippet>294</a>        .and_then(|window| window.reference_frequency.as_ref())
-<a href=#295 id=295 data-nosnippet>295</a>        .map(casa_types::measures::frequency::MFrequency::hz)
-<a href=#296 id=296 data-nosnippet>296</a>        .filter(|hz| hz.is_finite() &amp;&amp; <span class="kw-2">*</span>hz &gt; <span class="number">0.0</span>)
-<a href=#297 id=297 data-nosnippet>297</a>        .map(|hz| <span class="prelude-val">Some</span>(SPEED_OF_LIGHT_M_S / hz))
-<a href=#298 id=298 data-nosnippet>298</a>        .ok_or_else(|| {
-<a href=#299 id=299 data-nosnippet>299</a>            PartitionSelectionError::Inconsistent(<span class="macro">format!</span>(
-<a href=#300 id=300 data-nosnippet>300</a>                <span class="string">"spectral window {window} has no positive reference frequency"
-<a href=#301 id=301 data-nosnippet>301</a>            </span>))
-<a href=#302 id=302 data-nosnippet>302</a>        })
-<a href=#303 id=303 data-nosnippet>303</a>}
-<a href=#304 id=304 data-nosnippet>304</a>
-<a href=#305 id=305 data-nosnippet>305</a><span class="doccomment">/// The weights the partitions `ids` of `store` hold beside `visibility`:
-<a href=#306 id=306 data-nosnippet>306</a>/// `WEIGHT_SPECTRUM` when any of them reads per-channel weights, else
-<a href=#307 id=307 data-nosnippet>307</a>/// `WEIGHT`. The MSv2 adapter decides each partition's by CASA's rule, at
-<a href=#308 id=308 data-nosnippet>308</a>/// the first of its rows; an MSv4's weights are per channel. The passes
-<a href=#309 id=309 data-nosnippet>309</a>/// read each partition's own weights; this names them in the problem's
-<a href=#310 id=310 data-nosnippet>310</a>/// manifest.
-<a href=#311 id=311 data-nosnippet>311</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>stored_weights(
-<a href=#312 id=312 data-nosnippet>312</a>    store: <span class="kw-2">&amp;</span>OpenedStore,
-<a href=#313 id=313 data-nosnippet>313</a>    ids: <span class="kw">impl </span>IntoIterator&lt;Item = PartitionId&gt;,
-<a href=#314 id=314 data-nosnippet>314</a>    visibility: VisibilityColumn,
-<a href=#315 id=315 data-nosnippet>315</a>) -&gt; WeightColumn {
-<a href=#316 id=316 data-nosnippet>316</a>    <span class="kw">let </span>group = data_group(visibility);
-<a href=#317 id=317 data-nosnippet>317</a>    <span class="kw">let </span>catalogue = store.catalogue();
-<a href=#318 id=318 data-nosnippet>318</a>    <span class="kw">let </span>spectral = store.msv2().is_none()
-<a href=#319 id=319 data-nosnippet>319</a>        || ids.into_iter().any(|id| {
-<a href=#320 id=320 data-nosnippet>320</a>            catalogue
-<a href=#321 id=321 data-nosnippet>321</a>                .partition(id)
-<a href=#322 id=322 data-nosnippet>322</a>                .data_group(group)
-<a href=#323 id=323 data-nosnippet>323</a>                .is_some_and(|(<span class="kw">_</span>, entry)| entry.weights == <span class="string">"WEIGHT_SPECTRUM"</span>)
-<a href=#324 id=324 data-nosnippet>324</a>        });
-<a href=#325 id=325 data-nosnippet>325</a>    <span class="kw">if </span>spectral {
-<a href=#326 id=326 data-nosnippet>326</a>        WeightColumn::WeightSpectrum
-<a href=#327 id=327 data-nosnippet>327</a>    } <span class="kw">else </span>{
-<a href=#328 id=328 data-nosnippet>328</a>        WeightColumn::Weight
-<a href=#329 id=329 data-nosnippet>329</a>    }
-<a href=#330 id=330 data-nosnippet>330</a>}
+<a href=#177 id=177 data-nosnippet>177</a><span class="doccomment">/// The selection of `problem`'s source `source` (its MeasurementSet's place
+<a href=#178 id=178 data-nosnippet>178</a>/// in the snapshot) resolved to that source's `observation`'s partitions,
+<a href=#179 id=179 data-nosnippet>179</a>/// in partition order: the partitions compile chose, the channels of their
+<a href=#180 id=180 data-nosnippet>180</a>/// windows, their correlations, the data group holding the visibility
+<a href=#181 id=181 data-nosnippet>181</a>/// column, and the per-sample predicates.
+<a href=#182 id=182 data-nosnippet>182</a>///
+<a href=#183 id=183 data-nosnippet>183</a>/// # Errors
+<a href=#184 id=184 data-nosnippet>184</a>///
+<a href=#185 id=185 data-nosnippet>185</a>/// [`PartitionSelectionError::Unsupported`] for `FLOAT_DATA` and
+<a href=#186 id=186 data-nosnippet>186</a>/// partitions whose column belongs to different data groups;
+<a href=#187 id=187 data-nosnippet>187</a>/// [`PartitionSelectionError::Inconsistent`] for a source the snapshot does
+<a href=#188 id=188 data-nosnippet>188</a>/// not hold, a window the selection names no channel of, a correlation a
+<a href=#189 id=189 data-nosnippet>189</a>/// partition does not hold, and a window without a positive reference
+<a href=#190 id=190 data-nosnippet>190</a>/// frequency under a UV-distance interval in wavelengths.
+<a href=#191 id=191 data-nosnippet>191</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>resolve_partitions(
+<a href=#192 id=192 data-nosnippet>192</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#193 id=193 data-nosnippet>193</a>    source: usize,
+<a href=#194 id=194 data-nosnippet>194</a>    observation: <span class="kw-2">&amp;</span><span class="kw">dyn </span>Observation,
+<a href=#195 id=195 data-nosnippet>195</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PartitionSelection, PartitionSelectionError&gt; {
+<a href=#196 id=196 data-nosnippet>196</a>    <span class="kw">let </span>source = problem
+<a href=#197 id=197 data-nosnippet>197</a>        .observation_transaction()
+<a href=#198 id=198 data-nosnippet>198</a>        .read_set()
+<a href=#199 id=199 data-nosnippet>199</a>        .sources()
+<a href=#200 id=200 data-nosnippet>200</a>        .get(source)
+<a href=#201 id=201 data-nosnippet>201</a>        .ok_or_else(|| {
+<a href=#202 id=202 data-nosnippet>202</a>            PartitionSelectionError::Inconsistent(<span class="macro">format!</span>(
+<a href=#203 id=203 data-nosnippet>203</a>                <span class="string">"the observation has no MeasurementSet {source}"
+<a href=#204 id=204 data-nosnippet>204</a>            </span>))
+<a href=#205 id=205 data-nosnippet>205</a>        })<span class="question-mark">?</span>;
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="kw">let </span>selection = source.selection();
+<a href=#207 id=207 data-nosnippet>207</a>    <span class="kw">let </span>visibility = source.selected_columns().visibility();
+<a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">if </span>visibility == VisibilityColumn::FloatData {
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PartitionSelectionError::Unsupported(<span class="string">"FLOAT_DATA"</span>));
+<a href=#210 id=210 data-nosnippet>210</a>    }
+<a href=#211 id=211 data-nosnippet>211</a>    <span class="kw">let </span>group = data_group(visibility);
+<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">let </span>catalogue = observation.catalogue();
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">let </span>rows = selection.rows_filter();
+<a href=#214 id=214 data-nosnippet>214</a>    <span class="kw">let </span><span class="kw-2">mut </span>partitions = Vec::with_capacity(selection.partitions().len());
+<a href=#215 id=215 data-nosnippet>215</a>    <span class="kw">for </span>selected <span class="kw">in </span>selection.partitions() {
+<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">let </span>entry = catalogue.partition(selected.partition());
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">if </span>entry.data_group(group).is_none() {
+<a href=#218 id=218 data-nosnippet>218</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PartitionSelectionError::Unsupported(
+<a href=#219 id=219 data-nosnippet>219</a>                <span class="string">"a selected partition without the imaged data group"</span>,
+<a href=#220 id=220 data-nosnippet>220</a>            ));
+<a href=#221 id=221 data-nosnippet>221</a>        }
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">let </span>window = selected.spectral_window_id();
+<a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">let </span>channels = selection
+<a href=#224 id=224 data-nosnippet>224</a>            .spectral_windows()
+<a href=#225 id=225 data-nosnippet>225</a>            .iter()
+<a href=#226 id=226 data-nosnippet>226</a>            .find(|selected| selected.spectral_window_id() == window)
+<a href=#227 id=227 data-nosnippet>227</a>            .map(|selected| selected.channel_indices().to_vec())
+<a href=#228 id=228 data-nosnippet>228</a>            .filter(|channels| !channels.is_empty())
+<a href=#229 id=229 data-nosnippet>229</a>            .ok_or_else(|| {
+<a href=#230 id=230 data-nosnippet>230</a>                PartitionSelectionError::Inconsistent(<span class="macro">format!</span>(
+<a href=#231 id=231 data-nosnippet>231</a>                    <span class="string">"spectral window {window} has no selected channel"
+<a href=#232 id=232 data-nosnippet>232</a>                </span>))
+<a href=#233 id=233 data-nosnippet>233</a>            })<span class="question-mark">?</span>;
+<a href=#234 id=234 data-nosnippet>234</a>        <span class="kw">let </span>correlations: Vec&lt;Correlation&gt; = selected
+<a href=#235 id=235 data-nosnippet>235</a>            .products()
+<a href=#236 id=236 data-nosnippet>236</a>            .iter()
+<a href=#237 id=237 data-nosnippet>237</a>            .map(|product| product.correlation_type())
+<a href=#238 id=238 data-nosnippet>238</a>            .collect();
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(missing) = correlations
+<a href=#240 id=240 data-nosnippet>240</a>            .iter()
+<a href=#241 id=241 data-nosnippet>241</a>            .find(|product| entry.correlation_index(<span class="kw-2">**</span>product).is_none())
+<a href=#242 id=242 data-nosnippet>242</a>        {
+<a href=#243 id=243 data-nosnippet>243</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PartitionSelectionError::Inconsistent(<span class="macro">format!</span>(
+<a href=#244 id=244 data-nosnippet>244</a>                <span class="string">"spectral window {window} lacks {missing:?}"
+<a href=#245 id=245 data-nosnippet>245</a>            </span>)));
+<a href=#246 id=246 data-nosnippet>246</a>        }
+<a href=#247 id=247 data-nosnippet>247</a>        partitions.push(SelectedPartition {
+<a href=#248 id=248 data-nosnippet>248</a>            id: selected.partition(),
+<a href=#249 id=249 data-nosnippet>249</a>            spectral_window: window,
+<a href=#250 id=250 data-nosnippet>250</a>            channels,
+<a href=#251 id=251 data-nosnippet>251</a>            correlations,
+<a href=#252 id=252 data-nosnippet>252</a>            wavelength_m: wavelength(catalogue, entry, rows)<span class="question-mark">?</span>,
+<a href=#253 id=253 data-nosnippet>253</a>        });
+<a href=#254 id=254 data-nosnippet>254</a>    }
+<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">if </span>partitions.is_empty() {
+<a href=#256 id=256 data-nosnippet>256</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(PartitionSelectionError::Unsupported(
+<a href=#257 id=257 data-nosnippet>257</a>            <span class="string">"a selection no partition holds"</span>,
+<a href=#258 id=258 data-nosnippet>258</a>        ));
+<a href=#259 id=259 data-nosnippet>259</a>    }
+<a href=#260 id=260 data-nosnippet>260</a>    <span class="prelude-val">Ok</span>(PartitionSelection {
+<a href=#261 id=261 data-nosnippet>261</a>        data_group: group.to_string(),
+<a href=#262 id=262 data-nosnippet>262</a>        partitions,
+<a href=#263 id=263 data-nosnippet>263</a>        fields: field_selection(catalogue, rows.fields()),
+<a href=#264 id=264 data-nosnippet>264</a>        scans: rows.scans().clone(),
+<a href=#265 id=265 data-nosnippet>265</a>        baselines: rows.baselines().clone(),
+<a href=#266 id=266 data-nosnippet>266</a>        times: rows.times().clone(),
+<a href=#267 id=267 data-nosnippet>267</a>        uv: rows.uv_distances().clone(),
+<a href=#268 id=268 data-nosnippet>268</a>    })
+<a href=#269 id=269 data-nosnippet>269</a>}
+<a href=#270 id=270 data-nosnippet>270</a>
+<a href=#271 id=271 data-nosnippet>271</a><span class="doccomment">/// The fields of `catalogue` that `fields` selects, as the boundary names
+<a href=#272 id=272 data-nosnippet>272</a>/// them.
+<a href=#273 id=273 data-nosnippet>273</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>field_selection(catalogue: <span class="kw-2">&amp;</span>Catalogue, fields: <span class="kw-2">&amp;</span>IdSelection) -&gt; FieldSelection {
+<a href=#274 id=274 data-nosnippet>274</a>    <span class="kw">match </span>fields {
+<a href=#275 id=275 data-nosnippet>275</a>        IdSelection::All =&gt; FieldSelection::All,
+<a href=#276 id=276 data-nosnippet>276</a>        IdSelection::Only(ids) =&gt; FieldSelection::Only(ids.iter().copied().map(FieldId).collect()),
+<a href=#277 id=277 data-nosnippet>277</a>        selection @ IdSelection::Ranges(<span class="kw">_</span>) =&gt; FieldSelection::Only(
+<a href=#278 id=278 data-nosnippet>278</a>            (<span class="number">0</span>..catalogue.fields.len())
+<a href=#279 id=279 data-nosnippet>279</a>                .filter_map(|index| u32::try_from(index).ok())
+<a href=#280 id=280 data-nosnippet>280</a>                .filter(|<span class="kw-2">&amp;</span>id| selection.holds(i64::from(id)))
+<a href=#281 id=281 data-nosnippet>281</a>                .map(FieldId)
+<a href=#282 id=282 data-nosnippet>282</a>                .collect(),
+<a href=#283 id=283 data-nosnippet>283</a>        ),
+<a href=#284 id=284 data-nosnippet>284</a>    }
+<a href=#285 id=285 data-nosnippet>285</a>}
+<a href=#286 id=286 data-nosnippet>286</a>
+<a href=#287 id=287 data-nosnippet>287</a><span class="doccomment">/// `entry`'s window's reference wavelength, when `rows` tests a UV distance
+<a href=#288 id=288 data-nosnippet>288</a>/// in wavelengths.
+<a href=#289 id=289 data-nosnippet>289</a></span><span class="kw">fn </span>wavelength(
+<a href=#290 id=290 data-nosnippet>290</a>    catalogue: <span class="kw-2">&amp;</span>Catalogue,
+<a href=#291 id=291 data-nosnippet>291</a>    entry: <span class="kw-2">&amp;</span>PartitionEntry,
+<a href=#292 id=292 data-nosnippet>292</a>    rows: <span class="kw-2">&amp;</span>RowSelection,
+<a href=#293 id=293 data-nosnippet>293</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;f64&gt;, PartitionSelectionError&gt; {
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">if </span>!rows.uv_distances().needs_wavelengths() {
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#296 id=296 data-nosnippet>296</a>    }
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">let </span>window = entry.window.<span class="number">0</span>;
+<a href=#298 id=298 data-nosnippet>298</a>    catalogue
+<a href=#299 id=299 data-nosnippet>299</a>        .windows
+<a href=#300 id=300 data-nosnippet>300</a>        .get(window <span class="kw">as </span>usize)
+<a href=#301 id=301 data-nosnippet>301</a>        .and_then(|window| window.reference_frequency.as_ref())
+<a href=#302 id=302 data-nosnippet>302</a>        .map(casa_types::measures::frequency::MFrequency::hz)
+<a href=#303 id=303 data-nosnippet>303</a>        .filter(|hz| hz.is_finite() &amp;&amp; <span class="kw-2">*</span>hz &gt; <span class="number">0.0</span>)
+<a href=#304 id=304 data-nosnippet>304</a>        .map(|hz| <span class="prelude-val">Some</span>(SPEED_OF_LIGHT_M_S / hz))
+<a href=#305 id=305 data-nosnippet>305</a>        .ok_or_else(|| {
+<a href=#306 id=306 data-nosnippet>306</a>            PartitionSelectionError::Inconsistent(<span class="macro">format!</span>(
+<a href=#307 id=307 data-nosnippet>307</a>                <span class="string">"spectral window {window} has no positive reference frequency"
+<a href=#308 id=308 data-nosnippet>308</a>            </span>))
+<a href=#309 id=309 data-nosnippet>309</a>        })
+<a href=#310 id=310 data-nosnippet>310</a>}
+<a href=#311 id=311 data-nosnippet>311</a>
+<a href=#312 id=312 data-nosnippet>312</a><span class="doccomment">/// The weights the partitions `ids` of `store` hold beside `visibility`:
+<a href=#313 id=313 data-nosnippet>313</a>/// `WEIGHT_SPECTRUM` when any of them reads per-channel weights, else
+<a href=#314 id=314 data-nosnippet>314</a>/// `WEIGHT`. The MSv2 adapter decides each partition's by CASA's rule, at
+<a href=#315 id=315 data-nosnippet>315</a>/// the first of its rows; an MSv4's weights are per channel. The passes
+<a href=#316 id=316 data-nosnippet>316</a>/// read each partition's own weights; this names them in the problem's
+<a href=#317 id=317 data-nosnippet>317</a>/// manifest.
+<a href=#318 id=318 data-nosnippet>318</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>stored_weights(
+<a href=#319 id=319 data-nosnippet>319</a>    store: <span class="kw-2">&amp;</span>OpenedStore,
+<a href=#320 id=320 data-nosnippet>320</a>    ids: <span class="kw">impl </span>IntoIterator&lt;Item = PartitionId&gt;,
+<a href=#321 id=321 data-nosnippet>321</a>    visibility: VisibilityColumn,
+<a href=#322 id=322 data-nosnippet>322</a>) -&gt; WeightColumn {
+<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">let </span>group = data_group(visibility);
+<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">let </span>catalogue = store.catalogue();
+<a href=#325 id=325 data-nosnippet>325</a>    <span class="kw">let </span>spectral = store.msv2().is_none()
+<a href=#326 id=326 data-nosnippet>326</a>        || ids.into_iter().any(|id| {
+<a href=#327 id=327 data-nosnippet>327</a>            catalogue
+<a href=#328 id=328 data-nosnippet>328</a>                .partition(id)
+<a href=#329 id=329 data-nosnippet>329</a>                .data_group(group)
+<a href=#330 id=330 data-nosnippet>330</a>                .is_some_and(|(<span class="kw">_</span>, entry)| entry.weights == <span class="string">"WEIGHT_SPECTRUM"</span>)
+<a href=#331 id=331 data-nosnippet>331</a>        });
+<a href=#332 id=332 data-nosnippet>332</a>    <span class="kw">if </span>spectral {
+<a href=#333 id=333 data-nosnippet>333</a>        WeightColumn::WeightSpectrum
+<a href=#334 id=334 data-nosnippet>334</a>    } <span class="kw">else </span>{
+<a href=#335 id=335 data-nosnippet>335</a>        WeightColumn::Weight
+<a href=#336 id=336 data-nosnippet>336</a>    }
+<a href=#337 id=337 data-nosnippet>337</a>}
 </code></pre></div></section></main></body></html>

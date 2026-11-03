@@ -1291,6 +1291,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#vis-list-20261102" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vis-list-20261102
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2469,6 +2480,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#vis-list-20261102" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vis-list-20261102
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3107,7 +3129,11 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Called with its defaults in an empty directory, CASA raises <code>AssertionError</code>: all elements of the vis vector parameter must be a path that exists (at least one element of "['']" does not exist)</li>
 <li>CASA's signature: yes</li>
 <li>CASA parameters casa-rs lacks: none</li>
-<li>Accepted only at CASA's default until #980: <code>projection</code>, <code>psfphasecenter</code>, <code>vptable</code>, <code>computepastep</code>, <code>rotatepastep</code>, <code>interactive</code>, <code>pbmask</code></li>
+<li>Accepted only at CASA's default until #980: <code>vptable</code>, <code>interactive</code></li>
+<li>Accepted only at CASA's default until #1061: <code>pbmask</code></li>
+<li>Accepted only at CASA's default until #1062: <code>psfphasecenter</code></li>
+<li>Accepted only at CASA's default until #1064: <code>projection</code></li>
+<li>Accepted only at CASA's default until #1070: <code>computepastep</code>, <code>rotatepastep</code></li>
 <li>casa-rs parameters CASA lacks: <code>ddid</code>, <code>channel_start</code>, <code>channel_count</code>, <code>hogbom_iteration_mode</code>, <code>write_pb</code>, <code>fitspw</code>, <code>fitorder</code>, <code>save_continuum_residual</code>, <code>backend</code>, <code>gridprecision</code>, <code>aw_cf_source</code>, <code>cf_resident_mb</code>, <code>native_cf_cache</code>, <code>evla_surface</code>, <code>native_cf_policy</code>, <code>native_cf_working_size</code>, <code>native_cf_oversampling</code>, <code>native_cf_cache_bytes</code>, <code>native_cf_maximum_cells</code>, <code>stage_timing</code>, <code>metal_stage_timing</code>, <code>science_trace</code></li>
 <li>Shared parameters: 92, in CASA's order: yes</li>
 <li>Defaults that differ: none</li>
@@ -3133,8 +3159,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>vis</code> → <code>vis</code></td>
 <td>Partial</td>
-<td>One MeasurementSet; lists with more than one MS are refused (#54/#980). <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: list[<code>path</code> (measurement_set)], length 0..many; scalar allowed; Unsupported form: a list of more than one MeasurementSet (#980); Constraints: <code>[{"kind": "length", "max": 1, "min": 0}]</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
+<td>Contract 38: a list of MeasurementSets images as one, as CASA's tclean images its vis list. Each is opened and surveyed with its own selectors (one per MeasurementSet, or one or a list of one for all; another length is refused with CASA's message), ordered stably by its earliest MAIN TIME and visited as CASA visits its ms0, ms1, ... keys, as text (input_parameters.checkAndFixSelectionPars, mslisthelper.sort_mslist, imager_base.selectData); one selecting no sample is left out unless it is the first (SynthesisImagerVi2::selectData). The image's coordinates (obs date, telescope, phase centre, rest frequency, a cube's axis) come from CASA's msobj (buildCoordinateSystem): the first MeasurementSet, or for a cube or cubedata whose start is a frequency or velocity the last one whose selected band holds it (CAS-12877); a continuum band, and so the MFS and MT-MFS reference frequency, spans every one. A cube reads each other MeasurementSet's window where it reaches the cube, and one that does not reach it is read so its MODEL_DATA holds the zero prediction, as CASA writes it. Weighting density spans every MeasurementSet; datacolumn falls back to DATA per MeasurementSet; savemodel writes each one's MODEL_DATA (or virtual model). CASA's addwtspec, which adds WEIGHT_SPECTRUM to a listed MeasurementSet lacking it as a Vi/VB2 workaround, is not done: casa-rs reads each MeasurementSet's own weights, which that column copies, and never modifies its inputs. A row's spectral window and field are keyed among every MeasurementSet's, as if they were concatenated, so the mosaic keeps each one's beams (CASA's msId_spw, SimplePBConvFunc::convIndex) and a mosweight density each one's fields (VisImagingWeight's msId_field) apart; its dishes are every MeasurementSet's aperture classes (HetArrayConvFunc::findAntennaSizes). Refused with several MeasurementSets (#980): the awproject gridder (its catalog keys cells on the first MeasurementSet's frequencies), a moving phase centre, specmode cubesource, fitspw and a cube's per-channel density weighting. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: list[<code>path</code> (measurement_set)], length 0..many; scalar allowed</td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-vis-list-20261102">vis-list-20261102</a></td>
 </tr>
 <tr>
 <td><code>selectdata</code></td>
@@ -3149,7 +3175,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>field</code> → <code>field</code></td>
 <td>Partial</td>
-<td>IDs and inclusive ranges, exact FIELD names and simple * patterns, including mixed lists, resolve natively from metadata once per survey. Name matching trims stored names and skips flagged FIELD entries; each missing name is an error, including in a mixed list. FIELD CODE/numeric-name fallback, quoted/regex/comparison/extended-glob expressions and full numeric-ID validation remain unfinished. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
+<td>IDs and inclusive ranges, exact FIELD names and simple * patterns, including mixed lists, resolve natively from metadata once per survey. Name matching trims stored names and skips flagged FIELD entries; each missing name is an error, including in a mixed list. FIELD CODE/numeric-name fallback, quoted/regex/comparison/extended-glob expressions and full numeric-ID validation remain unfinished. Contract 38: one selector per MeasurementSet of the vis list, or one (or a list of one) for every MeasurementSet; a list of another length is refused with CASA's message. A command-line text is one selector; a list is written as one or by repeating the flag. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: list[<code>string</code>], length 1..many; scalar allowed</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-field-selection">field-selection</a></td>
 </tr>
 <tr>
@@ -3157,7 +3183,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>spw</code> → <code>spw</code></td>
 <td>Partial</td>
-<td>The text reaches casa-ms's port of CASA 6.7.6.14's spectral-window grammar (casacore aaf72eb7 MSSpwGram/MSSpwParse/MSSpwIndex: IDs, ranges, steps, ; lists, exact names, patterns, quoted and /.../ patterns, frequency and stepped frequency ranges with units, ~f, &gt;, &lt; and &lt;&gt;, : channel lists with ranges, steps, -1 and frequency ranges, ( ) ), resolved on a MeasurementSet over SPECTRAL_WINDOW and DATA_DESCRIPTION: the MAIN rows of the data descriptions CASA keeps, and per window the union of its getChanList ranges, with CASA's clamps logged; 1,552 cases match CASA's ms.msselect and msselectedindices exactly (resources/casa-compat/evidence/msselection-spw-casa-20261102.json). Every refusal CASA makes is refused; velocity units are refused as CASA disables them. Refused although CASA accepts them, as their imaging is not established: a parenthesized expression (every MAIN row, some windows' channels), a window whose rows are kept but none of whose channel ranges found a channel, and overlapping channel ranges of one window. The parameter catalog's selector normalization (ms.selection.spw revision 1) makes blank text and none unset and collapses whitespace, also inside quotes, so those CASA refusals and names are not exact (#980). Selected-channel derived cube extents are refused in limited nchan/start/width cases (#980). <a href="#tclean-behavior-selection">selection</a> <a href="#tclean-behavior-spectral">spectral</a><br>Catalog domain: <code>string</code></td>
+<td>The text reaches casa-ms's port of CASA 6.7.6.14's spectral-window grammar (casacore aaf72eb7 MSSpwGram/MSSpwParse/MSSpwIndex: IDs, ranges, steps, ; lists, exact names, patterns, quoted and /.../ patterns, frequency and stepped frequency ranges with units, ~f, &gt;, &lt; and &lt;&gt;, : channel lists with ranges, steps, -1 and frequency ranges, ( ) ), resolved on a MeasurementSet over SPECTRAL_WINDOW and DATA_DESCRIPTION: the MAIN rows of the data descriptions CASA keeps, and per window the union of its getChanList ranges, with CASA's clamps logged; 1,552 cases match CASA's ms.msselect and msselectedindices exactly (resources/casa-compat/evidence/msselection-spw-casa-20261102.json). Every refusal CASA makes is refused; velocity units are refused as CASA disables them. Refused although CASA accepts them, as their imaging is not established: a parenthesized expression (every MAIN row, some windows' channels), a window whose rows are kept but none of whose channel ranges found a channel, and overlapping channel ranges of one window. The parameter catalog's selector normalization (ms.selection.spw revisions 1 and 2) makes blank text and none unset and collapses whitespace, also inside quotes, so those CASA refusals and names are not exact (#980). Selected-channel derived cube extents are refused in limited nchan/start/width cases (#980). Contract 38: one selector per MeasurementSet of the vis list, or one (or a list of one) for every MeasurementSet; a list of another length is refused with CASA's message. A command-line text is one selector; a list is written as one or by repeating the flag. <a href="#tclean-behavior-selection">selection</a> <a href="#tclean-behavior-spectral">spectral</a><br>Catalog domain: list[<code>string</code>], length 1..many; scalar allowed</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -3165,7 +3191,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>timerange</code> → <code>timerange</code></td>
 <td>Implemented</td>
-<td>Contract 34 on a MeasurementSet: the exact text reaches casa-ms's port of CASA 6.7.6.14's time grammar (casacore aaf72eb7 MSTimeGram/MSTimeParse; 1,528 cases match CASA's ms.msselect), with CASA's defaults: the first MAIN row the other selections select for the first term (tclean always sets field and spw), row 0 for later terms. Each time is tested as TaQL tests TIME. An MSv4 processing set's timerange is refused (#980): CASA's defaults come from MAIN rows. CASA's row oracle (before and after a mid-observation time) reads CASA's rows exactly. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
+<td>Contract 34 on a MeasurementSet: the exact text reaches casa-ms's port of CASA 6.7.6.14's time grammar (casacore aaf72eb7 MSTimeGram/MSTimeParse; 1,528 cases match CASA's ms.msselect), with CASA's defaults: the first MAIN row the other selections select for the first term (tclean always sets field and spw), row 0 for later terms. Each time is tested as TaQL tests TIME. An MSv4 processing set's timerange is refused (#980): CASA's defaults come from MAIN rows. CASA's row oracle (before and after a mid-observation time) reads CASA's rows exactly. Contract 38: one selector per MeasurementSet of the vis list, or one (or a list of one) for every MeasurementSet; a list of another length is refused with CASA's message. A command-line text is one selector; a list is written as one or by repeating the flag. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: list[<code>string</code>], length 1..many; scalar allowed</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -3173,7 +3199,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>uvrange</code> → <code>uvrange</code></td>
 <td>Implemented</td>
-<td>Copied as CASA selector text to request. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
+<td>Copied as CASA selector text to request. Contract 38: one selector per MeasurementSet of the vis list, or one (or a list of one) for every MeasurementSet; a list of another length is refused with CASA's message. A command-line text is one selector; a list is written as one or by repeating the flag. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: list[<code>string</code>], length 1..many; scalar allowed</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -3181,7 +3207,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>antenna</code> → <code>antenna</code></td>
 <td>Implemented</td>
-<td>Contract 34: the exact text reaches casa-ms's port of CASA 6.7.6.14's antenna grammar (casacore aaf72eb7 MSAntennaGram/MSAntennaParse: IDs, names, stations, patterns, regular expressions, &amp;/&amp;&amp;/&amp;&amp;&amp; baseline forms, ! negation, ; terms, @station and baseline-length forms), resolved over the catalogue's antennas into a baseline table that compile, survey and run test per sample. Blank text and none are refused. CASA's row oracle on mssel_test_small.ms (antenna 0, DA41, DA41&amp;DA56, and with field and scan) reads CASA's MAIN rows exactly. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
+<td>Contract 34: the exact text reaches casa-ms's port of CASA 6.7.6.14's antenna grammar (casacore aaf72eb7 MSAntennaGram/MSAntennaParse: IDs, names, stations, patterns, regular expressions, &amp;/&amp;&amp;/&amp;&amp;&amp; baseline forms, ! negation, ; terms, @station and baseline-length forms), resolved over the catalogue's antennas into a baseline table that compile, survey and run test per sample. Blank text and none are refused. CASA's row oracle on mssel_test_small.ms (antenna 0, DA41, DA41&amp;DA56, and with field and scan) reads CASA's MAIN rows exactly. Contract 38: one selector per MeasurementSet of the vis list, or one (or a list of one) for every MeasurementSet; a list of another length is refused with CASA's message. A command-line text is one selector; a list is written as one or by repeating the flag. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: list[<code>string</code>], length 1..many; scalar allowed</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -3189,7 +3215,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>scan</code> → <code>scan</code></td>
 <td>Partial</td>
-<td>Contract 33 (owner decision 2026-11-02): nonnegative scan numbers, comma lists and strictly ascending inclusive a~b ranges select MAIN rows with either selectdata value; the exact text reaches the native parser, so only an exactly empty string is unset and blanks, none, signs, empty terms and equal or reversed ranges are refused, as CASA's tclean refuses them, while padded IDs are accepted. Contract 28-32 profiles migrate an exact stored "none" to empty with a warning. Richer CASA grammar (scan comparisons such as &gt;1) remains unfinished (#980). <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: <code>string</code>; Unsupported form: selector grammar beyond nonnegative numeric IDs, comma-separated lists and strictly ascending inclusive a~b ranges (#980)</td>
+<td>Contract 33 (owner decision 2026-11-02): nonnegative scan numbers, comma lists and strictly ascending inclusive a~b ranges select MAIN rows with either selectdata value; the exact text reaches the native parser, so only an exactly empty string is unset and blanks, none, signs, empty terms and equal or reversed ranges are refused, as CASA's tclean refuses them, while padded IDs are accepted. Contract 28-32 profiles migrate an exact stored "none" to empty with a warning. Richer CASA grammar (scan comparisons such as &gt;1) remains unfinished (#980). Contract 38: one selector per MeasurementSet of the vis list, or one (or a list of one) for every MeasurementSet; a list of another length is refused with CASA's message. A command-line text is one selector; a list is written as one or by repeating the flag. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: list[<code>string</code>], length 1..many; scalar allowed; Unsupported form: selector grammar beyond nonnegative numeric IDs, comma-separated lists and strictly ascending inclusive a~b ranges (#980)</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-field-selection">field-selection</a>, <a href="#tclean-evidence-scan-observation-activation">scan-observation-activation</a></td>
 </tr>
 <tr>
@@ -3197,7 +3223,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>observation</code> → <code>observation</code></td>
 <td>Partial</td>
-<td>Contract 33 (owner decision 2026-11-02): nonnegative OBSERVATION_IDs, comma lists and strictly ascending inclusive a~b ranges select MAIN rows with either selectdata value; the exact text reaches the native parser, so only an exactly empty string is unset and blanks, none, signs, empty terms and equal or reversed ranges are refused, as CASA's tclean refuses them, while padded IDs are accepted. Contract 28-32 profiles migrate an exact stored "none" to empty with a warning. Richer CASA grammar (scan comparisons such as &gt;1) remains unfinished (#980). <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: <code>string</code>; Unsupported form: selector grammar beyond nonnegative numeric IDs, comma-separated lists and strictly ascending inclusive a~b ranges (#980)</td>
+<td>Contract 33 (owner decision 2026-11-02): nonnegative OBSERVATION_IDs, comma lists and strictly ascending inclusive a~b ranges select MAIN rows with either selectdata value; the exact text reaches the native parser, so only an exactly empty string is unset and blanks, none, signs, empty terms and equal or reversed ranges are refused, as CASA's tclean refuses them, while padded IDs are accepted. Contract 28-32 profiles migrate an exact stored "none" to empty with a warning. Richer CASA grammar (scan comparisons such as &gt;1) remains unfinished (#980). Contract 38: one selector per MeasurementSet of the vis list, or one (or a list of one) for every MeasurementSet; a list of another length is refused with CASA's message. A command-line text is one selector; a list is written as one or by repeating the flag. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: list[<code>string</code>], length 1..many; scalar allowed; Unsupported form: selector grammar beyond nonnegative numeric IDs, comma-separated lists and strictly ascending inclusive a~b ranges (#980)</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-field-selection">field-selection</a>, <a href="#tclean-evidence-scan-observation-activation">scan-observation-activation</a></td>
 </tr>
 <tr>
@@ -3205,7 +3231,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>intent</code> → <code>intent</code></td>
 <td>Implemented</td>
-<td>Copied as CASA selector text to request. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: <code>string</code></td>
+<td>Copied as CASA selector text to request. Contract 38: one selector per MeasurementSet of the vis list, or one (or a list of one) for every MeasurementSet; a list of another length is refused with CASA's message. A command-line text is one selector; a list is written as one or by repeating the flag. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: list[<code>string</code>], length 1..many; scalar allowed</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -3261,7 +3287,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'SIN'</code></td>
 <td><code>'SIN'</code>; <code>projection</code> → <code>projection</code></td>
 <td>Default only</td>
-<td>Read and ignored; non-default is catalog-refused (issue 980). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>string</code>; Non-default refused when always (#980)</td>
+<td>Read and ignored; non-default is catalog-refused (issue 980). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>string</code>; Non-default refused when always (#1064)</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -3373,7 +3399,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>psfphasecenter</code> → <code>psfphasecenter</code></td>
 <td>Default only</td>
-<td>Read and ignored; non-default catalog-refused for mosaic/mosaicft/ftmosaic (issue 980). <br>Catalog domain: <code>string</code>; Non-default refused when (gridder='mosaic' or gridder='mosaicft' or gridder='ftmosaic') (#980)</td>
+<td>Read and ignored; non-default catalog-refused for mosaic/mosaicft/ftmosaic (issue 980). <br>Catalog domain: <code>string</code>; Non-default refused when (gridder='mosaic' or gridder='mosaicft' or gridder='ftmosaic') (#1062)</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -3453,7 +3479,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>360.0</code></td>
 <td><code>360.0</code>; <code>computepastep</code> → <code>computepastep</code></td>
 <td>Default only</td>
-<td>Read and ignored; non-default values catalog-refused for applicable AW families (issue 980). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>float</code>; Non-default refused when (gridder='awproject' or gridder='awphpg' or gridder='awprojectft' or gridder='awp2') (#980)</td>
+<td>Read and ignored; non-default values catalog-refused for applicable AW families (issue 980). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>float</code>; Non-default refused when (gridder='awproject' or gridder='awphpg' or gridder='awprojectft' or gridder='awp2') (#1070)</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -3461,7 +3487,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>360.0</code></td>
 <td><code>360.0</code>; <code>rotatepastep</code> → <code>rotatepastep</code></td>
 <td>Default only</td>
-<td>Read and ignored; non-default values catalog-refused for applicable AW families (issue 980). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>float</code>; Non-default refused when (gridder='awproject' or gridder='awprojectft') (#980)</td>
+<td>Read and ignored; non-default values catalog-refused for applicable AW families (issue 980). <a href="#tclean-behavior-gridders">gridders</a><br>Catalog domain: <code>float</code>; Non-default refused when (gridder='awproject' or gridder='awprojectft') (#1070)</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -3717,7 +3743,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>0.0</code></td>
 <td><code>0.0</code>; <code>pbmask</code> → <code>pbmask</code></td>
 <td>Default only</td>
-<td>Read and ignored; non-default catalog-refused (issue 980): a primary-beam limit of user and automatic masks, and usemask='pb' (issue 823), needs the primary beam at every mask boundary. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>float</code>; Non-default refused when always (#980)</td>
+<td>Read and ignored; non-default catalog-refused (issue 980): a primary-beam limit of user and automatic masks, and usemask='pb' (issue 823), needs the primary beam at every mask boundary. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>float</code>; Non-default refused when always (#1061)</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -3870,8 +3896,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><a id="tclean-behavior-selection"></a></p>
 <h5 id="selection-and-multi-ms-inputs">Selection and multi-MS inputs<a class="headerlink" href="#selection-and-multi-ms-inputs" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — vis, field, spw, timerange, uvrange, antenna, scan, observation, intent, datacolumn and selectdata (#54).</p>
-<p>IDs/ranges, names/simple patterns, mixed field lists, SPW/channel text, intent and UV limits are routed natively. Sixteen field cases compare exact physical MAIN row order or refusal with CASA, including flagged and padded FIELD metadata. Since the main imaging cutover was integrated (3016f1b), FIELD selection resolves over the observation catalogue's FIELD rows on MSv2 and MSv4 alike; on the production traversal the field cases of the CASA row oracle (IDs, names, glob, mixed, range) and both refusals read exactly CASA's physical MAIN rows. Production T1 compares ID/name selections with selectdata=False on the single native route. Scan and observation selection is active from tclean contract 33 (owner decision 2026-11-02): on that path scan 1, scan 3 and observation 0 read exactly CASA's rows, and T1 images each numeric selection as its equivalent FIELD selection with either selectdata value and refuses CASA's refused forms without writing images. Through the public Python task, 13 science cases and 23 CASA grammar cases pass against CASA on CPU64, CPU32 and Metal32 (108/108). CODE/numeric-name fallback, advanced field forms, richer scan/observation grammar, and multi-MS remain unfinished/refused; antenna and timerange are active from contract 34 (timerange on MeasurementSets only). Image-science comparisons for selected real datasets, flags, channel membership and data-column fallback remain separate required evidence.</p>
-<p>Evidence: <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-representative">representative</a>, <a href="#tclean-evidence-field-selection">field-selection</a>, <a href="#tclean-evidence-cloud-continuation">cloud-continuation</a>, <a href="#tclean-evidence-scan-observation-activation">scan-observation-activation</a>.</p>
+<p>IDs/ranges, names/simple patterns, mixed field lists, SPW/channel text, intent and UV limits are routed natively. Sixteen field cases compare exact physical MAIN row order or refusal with CASA, including flagged and padded FIELD metadata. Since the main imaging cutover was integrated (3016f1b), FIELD selection resolves over the observation catalogue's FIELD rows on MSv2 and MSv4 alike; on the production traversal the field cases of the CASA row oracle (IDs, names, glob, mixed, range) and both refusals read exactly CASA's physical MAIN rows. Production T1 compares ID/name selections with selectdata=False on the single native route. Scan and observation selection is active from tclean contract 33 (owner decision 2026-11-02): on that path scan 1, scan 3 and observation 0 read exactly CASA's rows, and T1 images each numeric selection as its equivalent FIELD selection with either selectdata value and refuses CASA's refused forms without writing images. Through the public Python task, 13 science cases and 23 CASA grammar cases pass against CASA on CPU64, CPU32 and Metal32 (108/108). CODE/numeric-name fallback, advanced field forms, richer scan/observation grammar, remain unfinished; a vis list images as one observation from contract 38, as CASA's tclean does (awproject with several MeasurementSets is refused, #980); antenna and timerange are active from contract 34 (timerange on MeasurementSets only). Image-science comparisons for selected real datasets, flags, channel membership and data-column fallback remain separate required evidence.</p>
+<p>Evidence: <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-representative">representative</a>, <a href="#tclean-evidence-field-selection">field-selection</a>, <a href="#tclean-evidence-cloud-continuation">cloud-continuation</a>, <a href="#tclean-evidence-scan-observation-activation">scan-observation-activation</a>, <a href="#tclean-evidence-vis-list-20261102">vis-list-20261102</a>.</p>
 <p><a id="tclean-behavior-restart"></a></p>
 <h5 id="restart-product-persistence-and-recalculation">Restart, product persistence and recalculation<a class="headerlink" href="#restart-product-persistence-and-recalculation" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — imagename, restart, startmodel, calcres, calcpsf, restoration; main and outlier fields (#944).</p>
@@ -4337,6 +4363,20 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>e5eb51d73aa761bd98f9f8e4d4c785807523cde6</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
 <li>Command: <code>CASA Python -I tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-casa-test-cases.json --data-root &lt;casatestdata&gt; --case-prefix test_modelvis ...; then CASA Python -I tools/casa-compat/tclean_virtual_model_verify.py &lt;output&gt;; cargo test -p casa-ms --features slow-tests --test virtual_model_casa</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-virtual-model-20261102.json; receipts, verify reports and logs archived at /Volumes/home/casa-rs/tclean/20261102/virtual-model-823</code>.</li>
+</ul>
+<p><a id="tclean-evidence-vis-list-20261102"></a></p>
+<h5 id="vis-list-20261102">vis-list-20261102<a class="headerlink" href="#vis-list-20261102" title="Permanent link">&para;</a></h5>
+<p><strong>CASA tclean test-case matrix, MODEL_DATA comparison, T1 imaging laws — passed.</strong> tclean contract 38. All 13 of CASA's own vis-list test cases pass through the public Python casars.tasks.tclean (CPU f64, Apple M2): test_onefield twoMS, twoMS_Briggs, twoMS_weightSpectrum, twoMS_weightSpectrum2, mtmfs_2spws_2MSs; test_cube twoMS_startfreq 1-2 and twoMS_startvel 1-2 (both list orders); test_modelvis 28 and 29; and test_het_mosaic_mfs_alma_listofms CAS14255fix and CAS14350fix (ALMA 12 m and ACA 7 m MeasurementSets, mosaic, Briggs, mosweight). Exact iterdone/nmajordone/stopcode, maxpsfsidelobe and cyclethreshold within 1e-6; every product within 1.3e-6 NRMS, the two ALMA+ACA mosaics within 1.4e-5 (CASA's first pass builds the first MeasurementSet's beams before it meets the 7 m dishes, recorded in docs/CASA (C++) bugs.md); both MeasurementSets' MODEL_DATA match CASA's (NRMS at most 2.1e-7; the cube's second MeasurementSet holds CASA's zero prediction). Probes in the receipt: a mixed 12 m and 7 m MeasurementSet agrees to 6.3e-7 once every dish pair grids with the widest support, as CASA's MosaicFT does. T1 vis_list: a band split over two MeasurementSets images bit for bit as the whole band (Briggs MFS, either order, a cube, MODEL_DATA in each); a mosaic over two one-window MeasurementSets as the two-window one; a uniform mosweight density over two copies of a track as the track.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/d65a7ceb54aec310b7cf3a2c6e2f5cc5bc483a0d/resources/casa-compat/evidence/tclean-vis-list-20261102.json">resources/casa-compat/evidence/tclean-vis-list-20261102.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/d65a7ceb54aec310b7cf3a2c6e2f5cc5bc483a0d/crates/casa-imaging-application/src/compile/stores.rs">crates/casa-imaging-application/src/compile/stores.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/d65a7ceb54aec310b7cf3a2c6e2f5cc5bc483a0d/crates/casa-imaging-application/src/imaging/observation_source/keys.rs">crates/casa-imaging-application/src/imaging/observation_source/keys.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/d65a7ceb54aec310b7cf3a2c6e2f5cc5bc483a0d/crates/casa-imaging-operator/src/mosaic/mod.rs">crates/casa-imaging-operator/src/mosaic/mod.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/d65a7ceb54aec310b7cf3a2c6e2f5cc5bc483a0d/crates/casars-imager/tests/t1/vis_list.rs">crates/casars-imager/tests/t1/vis_list.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/d65a7ceb54aec310b7cf3a2c6e2f5cc5bc483a0d/tools/casa-compat/tclean_case_matrix.py">tools/casa-compat/tclean_case_matrix.py</a></li>
+<li>Revision: <code>1cb0aad1b4b4844bd3349035f67e464253118789</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-casa-test-cases.json --backend cpu --precision f64 --case &lt;each of the 13 vis-list cases&gt;</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-vis-list-20261102.json</code>.</li>
 </ul>
 
 
