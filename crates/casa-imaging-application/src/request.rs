@@ -45,7 +45,7 @@ pub struct ImagingRequest {
     /// The MeasurementSets of tclean's `vis`, in the order it names them,
     /// each with the selection tclean applies to it: its own selectors, or
     /// the one each selector gives every MeasurementSet. Compile images them
-    /// in CASA's order ([`crate::compile`]): by the earliest `TIME` of each.
+    /// in CASA's order (compile's `stores::survey_stores`): by the earliest `TIME` of each.
     pub vis: Vec<MeasurementSetSelection>,
     /// Prefix of every image product; a relative name is resolved against
     /// the working directory, as CASA's is.

@@ -7,7 +7,7 @@
 //! iterator reads every selected sample of each in turn, the weighting
 //! density is gridded over all of them, and the products are one image's.
 //! The image's coordinates come from one of them, CASA's `msobj`
-//! ([`reference`]), except a continuum image's band, which spans every
+//! ([`reference()`]), except a continuum image's band, which spans every
 //! MeasurementSet's ([`continuum_band`]).
 
 use std::sync::Arc;
