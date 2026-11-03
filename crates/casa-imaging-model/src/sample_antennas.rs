@@ -34,14 +34,20 @@ pub enum AntennaResponseClass {
     /// `PBMath::EVLA` (`PBMathInterface::COMMONPB`).
     CasaEvla,
     /// A dish of a telescope CASA's voltage-pattern manager has no beam
-    /// for ([`Self::casa_airy_telescope`]), `dish_diameter_um` micrometres
-    /// across: the Airy disk of the dish itself that
-    /// `HetArrayConvFunc::findAntennaSizes` forms for
-    /// `PBMathInterface::AIRY`, one per dish diameter (CASA keys them by
-    /// the diameter's text).
+    /// for ([`Self::casa_airy_telescope`]): the Airy disk of the dish itself
+    /// that `HetArrayConvFunc::findAntennaSizes` forms for
+    /// `PBMathInterface::AIRY`, one per dish diameter.
+    ///
+    /// The class is the exact diameter. CASA keys a dish by its diameter's
+    /// text, `String::toString(Double)` to six significant digits, and
+    /// gives the class the diameter of the first antenna with that text, so
+    /// casa-rs may split dishes CASA merges (diameters that differ beyond
+    /// the sixth digit, whose beams then differ by less than a part in
+    /// 10⁵), but never merges dishes CASA splits.
     CasaAiry {
-        /// The ANTENNA table's `DISH_DIAMETER`, in micrometres.
-        dish_diameter_um: u32,
+        /// The bits of the ANTENNA table's `DISH_DIAMETER` in metres, a
+        /// positive finite `f64`, whose bit order is its numeric order.
+        dish_diameter_m_bits: u64,
     },
 }
 
@@ -72,6 +78,21 @@ impl AntennaResponseClass {
     /// beam the mosaic applies instead, is not. Nor are `UNKNOWN` and
     /// `OSF`, which have default records but no common beam the mosaic
     /// can form.
+    ///
+    /// `BIMA` and `NRAO140FT` are Airy telescopes too, although
+    /// `PBMath::enumerateCommonPB` knows them (as `HATCREEK` and
+    /// `NRAO140FT`): `VPManager` has no default under either name, so
+    /// `getVPRecord` resets its `PBMath::UNKNOWN` for the empty record
+    /// (SynthesisImager.cc, `rec.empty()`). CASA 6.7.6's tclean of
+    /// refim_sim_hetarray_ngvla.ms renamed to either logs "vpmanager does
+    /// not have a beam for antenna" and "Overriding PB with Airy of
+    /// diam,blockage=18 m,1.125 m"; renamed to `HATCREEK`, neither.
+    ///
+    /// The name is matched as given. casa-rs's compiler gives it trimmed
+    /// of surrounding blanks, as every telescope name it reads; CASA
+    /// matches the stored name as it is, so a padded `NGVLA ` is an Airy
+    /// telescope to CASA and the common ngVLA beam's name, refused, to
+    /// casa-rs.
     #[must_use]
     pub fn casa_airy_telescope(telescope: &str) -> bool {
         !CASA_DEFAULT_VOLTAGE_PATTERNS.contains(&telescope)
@@ -79,15 +100,12 @@ impl AntennaResponseClass {
 
     /// CASA's class of a dish `diameter_m` across of a telescope without a
     /// default voltage pattern ([`Self::casa_airy_telescope`]); `None` for a
-    /// diameter that is not positive and finite, or does not fit
-    /// [`Self::CasaAiry`]'s micrometres (`findAntennaSizes` gives no dish
-    /// to one that is not positive).
+    /// diameter that is not positive and finite (`findAntennaSizes` gives
+    /// no dish to one that is not positive).
     #[must_use]
     pub fn casa_airy(diameter_m: f64) -> Option<Self> {
-        let micrometres = (diameter_m * 1.0e6).round();
-        let fits = (1.0..=f64::from(u32::MAX)).contains(&micrometres);
-        (diameter_m.is_finite() && fits).then_some(Self::CasaAiry {
-            dish_diameter_um: micrometres as u32,
+        (diameter_m.is_finite() && diameter_m > 0.0).then_some(Self::CasaAiry {
+            dish_diameter_m_bits: diameter_m.to_bits(),
         })
     }
 
@@ -96,7 +114,9 @@ impl AntennaResponseClass {
     #[must_use]
     pub fn airy_dish_diameter_m(self) -> Option<f64> {
         match self {
-            Self::CasaAiry { dish_diameter_um } => Some(f64::from(dish_diameter_um) * 1.0e-6),
+            Self::CasaAiry {
+                dish_diameter_m_bits,
+            } => Some(f64::from_bits(dish_diameter_m_bits)),
             Self::CasaAlma12m | Self::CasaAca7m | Self::CasaEvla => None,
         }
     }
@@ -137,7 +157,9 @@ impl AntennaResponseClass {
 /// pattern (CASA 6.7.6): `PBMath::nameCommonPB` of every common beam from
 /// `ATCA_L1` to `NGVLA` (`NRAO140FT`'s name is `UNKNOWN`), and the
 /// observatories whose antenna responses the Observatories table names
-/// (`ALMA`, `ACA` and `OSF`).
+/// (`ALMA`, `ACA` and `OSF` in casarundata 2026.10.27). CASA's
+/// `vpmanager.getvp` returns an empty record for every other name,
+/// `NGVLA1`, `BIMA` and `NRAO140FT` among them.
 const CASA_DEFAULT_VOLTAGE_PATTERNS: [&str; 42] = [
     "ATCA_L1",
     "ATCA_L2",
@@ -211,8 +233,13 @@ mod tests {
         assert_eq!(
             eighteen,
             AntennaResponseClass::CasaAiry {
-                dish_diameter_um: 18_000_000
+                dish_diameter_m_bits: 18.0_f64.to_bits()
             }
+        );
+        // Diameters CASA's six-digit text merges stay apart.
+        assert_ne!(
+            AntennaResponseClass::casa_airy(18.000_000_1),
+            Some(eighteen)
         );
         assert_eq!(eighteen.airy_dish_diameter_m(), Some(18.0));
         assert_eq!(six.airy_dish_diameter_m(), Some(6.0));
@@ -227,8 +254,14 @@ mod tests {
             AntennaResponseClass::family_envelope(&[Some(six), None, Some(eighteen), Some(six)]),
             Some(eighteen)
         );
-        assert!(AntennaResponseClass::casa_airy_telescope("NGVLA1"));
-        assert!(!AntennaResponseClass::casa_airy_telescope("NGVLA"));
-        assert!(!AntennaResponseClass::casa_airy_telescope("ALMA"));
+        for airy in ["NGVLA1", "BIMA", "NRAO140FT"] {
+            assert!(AntennaResponseClass::casa_airy_telescope(airy), "{airy}");
+        }
+        for common in ["NGVLA", "HATCREEK", "ALMA", "UNKNOWN", "OSF"] {
+            assert!(
+                !AntennaResponseClass::casa_airy_telescope(common),
+                "{common}"
+            );
+        }
     }
 }

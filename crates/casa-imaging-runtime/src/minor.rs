@@ -570,14 +570,18 @@ fn plane_keys(normal: &FinalNormalState, taylor: bool) -> Vec<PlaneKey> {
     keys
 }
 
-/// The pixels a plane's `nsigma` noise is measured on: its valid pixels
+/// The pixels a plane's `nsigma` noise is measured on. CASA measures it
 /// where the published primary beam exceeds tclean's `pbmask`, which is 0
 /// (`SIImageStore::calcRobustRMS` masks the residual with `pb >
-/// pbmasklevel`). Under a response the beam is the weight image's
-/// (`SIImageStore::makePBFromWeight`), zero outside `pblimit`, where the
-/// normalized residual is zero too: a mosaic whose beam covers less than
-/// half its image would otherwise measure a median deviation of zero. A
-/// plane without a response keeps its valid pixels.
+/// pbmasklevel`), and every beam it publishes is zero where it is not above
+/// `|pblimit|` (`makePBFromWeight`, `makePBImage`). Under a response the
+/// beam is the weight image's, and the plane's valid pixels where its
+/// Float value exceeds the cutoff are CASA's; outside them the normalized
+/// residual is zero, so a mosaic whose beam covers less than half its
+/// image would otherwise measure a median deviation of zero. A plane
+/// without a response, whose analytic beam the minor cycle does not hold,
+/// keeps every valid pixel, where CASA keeps those inside `pblimit`
+/// (#1078).
 fn noise_pixels<'p>(plane: &'p PlaneData<'_>) -> Result<Cow<'p, Support>, MinorCycleRunError> {
     let Some(binding) = &plane.response else {
         return Ok(Cow::Borrowed(&plane.valid));

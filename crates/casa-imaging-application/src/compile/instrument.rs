@@ -325,9 +325,12 @@ mod tests {
     /// ... form Airy disk beams" and "Overriding PB with Airy of
     /// diam,blockage=18 m,1.125 m" and "=6 m,0.375 m": the mosaic of a
     /// telescope without a default voltage pattern forms an Airy disk of
-    /// each dish. A name with a default pattern stays refused, as do a dish
-    /// without a diameter and MeasurementSets of two telescopes, whose
-    /// mosaic CASA gives each telescope's common beam (`multiTel`).
+    /// each dish; so it does for `BIMA` and `NRAO140FT`, whose names
+    /// `VPManager` has no default under (CASA's run of that MeasurementSet
+    /// renamed to each logs the same two Airy disks). A name with a default
+    /// pattern stays refused, as do a dish without a diameter and
+    /// MeasurementSets of two telescopes, whose mosaic CASA gives each
+    /// telescope's common beam (`multiTel`).
     #[test]
     fn a_mosaic_without_a_default_beam_forms_an_airy_disk_of_each_dish() {
         let mosaic = Gridder::Mosaic {
@@ -338,11 +341,17 @@ mod tests {
         };
         let model = |catalogues: &[&Catalogue]| scientific_instrument_model(&mosaic, catalogues);
         let ngvla = catalogue("NGVLA1", &[18.0, 18.0, 6.0]);
-        assert_eq!(
-            model(&[&ngvla]).expect("an Airy model"),
-            Some(InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1)
-        );
-        for known in ["NGVLA", "VLA", "OVRO", "SMA", "UNKNOWN", "OSF"] {
+        for airy in [
+            &ngvla,
+            &catalogue("BIMA", &[6.1]),
+            &catalogue("NRAO140FT", &[43.0]),
+        ] {
+            assert_eq!(
+                model(&[airy]).expect("an Airy model"),
+                Some(InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1)
+            );
+        }
+        for known in ["NGVLA", "VLA", "OVRO", "SMA", "HATCREEK", "UNKNOWN", "OSF"] {
             assert!(
                 matches!(
                     model(&[&catalogue(known, &[18.0])]),

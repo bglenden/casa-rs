@@ -423,12 +423,9 @@ fn kernel_set(
                     AntennaResponseClass::CasaAlma12m => AiryDish::casa_alma(12.0, geometry).into(),
                     AntennaResponseClass::CasaAca7m => AiryDish::casa_alma(7.0, geometry).into(),
                     AntennaResponseClass::CasaEvla => PrimaryBeam::Evla,
-                    AntennaResponseClass::CasaAiry { .. } => AiryDish::casa_airy(
-                        class
-                            .airy_dish_diameter_m()
-                            .expect("an Airy class has its dish"),
-                    )
-                    .into(),
+                    AntennaResponseClass::CasaAiry {
+                        dish_diameter_m_bits,
+                    } => AiryDish::casa_airy(f64::from_bits(*dish_diameter_m_bits)).into(),
                 })
                 .collect::<Vec<_>>();
             let frequency_hz = reference_frequency_hz(problem)?;

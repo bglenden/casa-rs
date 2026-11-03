@@ -430,15 +430,11 @@ fn a_mosaic_cube_normalises_each_channel_by_its_own_weight_image() {
     }
 }
 
-/// `SIImageStore::calcRobustRMS` measures a plane's `nsigma` noise where its
-/// primary beam exceeds tclean's `pbmask` of 0, and a mosaic's beam
-/// (`makePBFromWeight`) is zero outside `pblimit`. A beam over a 4×4 block
-/// of an 8×8 plane holds the residuals 0.01 to 0.16 Jy, whose median is
-/// 0.085 and median absolute deviation 0.04: three sigma is
-/// 3 · 1.4826 · 0.04 Jy. Over the whole plane, three quarters of it zero
-/// outside the beam, the deviation would be zero and so the threshold.
-#[test]
-fn a_mosaic_measures_its_noise_inside_its_primary_beam() {
+/// The nsigma threshold `prepare_minor_cycle` measures, under `noise`, on
+/// an 8×8 mosaic plane whose beam covers a 4×4 block holding the residuals
+/// 0.01 to 0.16 Jy; the residual outside it is 0.5 Jy before
+/// normalization.
+fn mosaic_nsigma_threshold(noise: casa_imaging_deconvolution::NoiseEstimate) -> f64 {
     let problem = problem(
         8,
         ReconstructionBasis::Constant,
@@ -462,7 +458,8 @@ fn a_mosaic_measures_its_noise_inside_its_primary_beam() {
                     next += 0.01;
                     next
                 } else {
-                    // Outside the beam the normalized residual is zero.
+                    // `normalize_weighted_residual_sample` zeroes the
+                    // residual where the beam is not above the cutoff.
                     0.5
                 }
             })
@@ -474,17 +471,46 @@ fn a_mosaic_measures_its_noise_inside_its_primary_beam() {
             .expect("response");
     let mut setup = setup(&problem, Some(response));
     setup.nsigma = 3.0;
+    setup.noise = noise;
     let team = WorkerTeam::new(1).expect("team");
-    let prepared = prepare_minor_cycle(
+    prepare_minor_cycle(
         &completion,
         &full_plane(&problem),
         &setup,
         &mut PsfCache::default(),
         &team,
     )
-    .expect("prepare");
+    .expect("prepare")
+    .statistics
+    .nsigma_threshold
+}
+
+/// `SIImageStore::calcRobustRMS` measures a plane's `nsigma` noise where its
+/// primary beam exceeds tclean's `pbmask` of 0, and a mosaic's beam
+/// (`makePBFromWeight`) is zero outside `pblimit`. The beam's residuals,
+/// 0.01 to 0.16 Jy, have the median 0.085 and the median absolute
+/// deviation 0.04: three sigma is 3 · 1.4826 · 0.04 Jy. Over the whole
+/// plane, three quarters of it zero outside the beam, the deviation would
+/// be zero and so the threshold.
+#[test]
+fn a_mosaic_measures_its_noise_inside_its_primary_beam() {
+    let threshold = mosaic_nsigma_threshold(casa_imaging_deconvolution::NoiseEstimate::Fast);
     let expected = 3.0 * 1.4826 * 0.04;
-    let threshold = prepared.statistics.nsigma_threshold;
+    assert!(
+        (threshold - expected).abs() < 1e-6,
+        "{threshold}, expected {expected}"
+    );
+}
+
+/// The same plane under `fastnoise=False`: `calcRobustImageStatistics`
+/// takes the same primary-beam pixels, and Chauvenet's criterion at 16
+/// samples (a z-score between 2 and 2.5, about 0.1 Jy either side of the
+/// mean) keeps all of 0.01 to 0.16 Jy, so the threshold is the fast one;
+/// over the whole plane the zeros would again leave no deviation.
+#[test]
+fn a_mosaic_measures_its_robust_noise_inside_its_primary_beam() {
+    let threshold = mosaic_nsigma_threshold(casa_imaging_deconvolution::NoiseEstimate::Robust);
+    let expected = 3.0 * 1.4826 * 0.04;
     assert!(
         (threshold - expected).abs() < 1e-6,
         "{threshold}, expected {expected}"
