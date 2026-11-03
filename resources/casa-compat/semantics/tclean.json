@@ -189,7 +189,8 @@
       "evidence": [
         "signature",
         "reader",
-        "mtmfs-nterms1-polarized-20261103"
+        "mtmfs-nterms1-polarized-20261103",
+        "mtmfs-polarized-review-20261103"
       ],
       "behaviors": [
         "returns"
@@ -518,7 +519,8 @@
       "evidence": [
         "signature",
         "reader",
-        "mtmfs-nterms1-polarized-20261103"
+        "mtmfs-nterms1-polarized-20261103",
+        "mtmfs-polarized-review-20261103"
       ],
       "behaviors": [
         "deconvolution"
@@ -596,7 +598,8 @@
       "scope": "As SynthesisParamsDeconv::fromRecord: empty -> each plane's fitted beam; common -> one enclosing beam; one, two or three quantities -> a circular beam, an ellipse at angle 0 or an ellipse at an angle, which restores every plane and is the image's one beam, the residual rescaled from the fitted beam as rescaleResolution does (left as it is, with a warning, when the fitted beam does not deconvolve); any other count or a zero axis -> fitted beams; non-angular, negative or inverted axes refused as CASA refuses them.",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "mtmfs-polarized-review-20261103"
       ],
       "behaviors": [
         "deconvolution"
@@ -1813,6 +1816,23 @@
         "crates/casa-imaging-runtime/src/minor.rs",
         "crates/casa-imaging-operator/src/operator.rs",
         "crates/casars-imager/tests/t1/mtmfs.rs"
+      ]
+    },
+    "mtmfs-polarized-review-20261103": {
+      "kind": "CASA tclean test-case matrix, casa-rs's own polarized MT-MFS cases, T1 imaging laws",
+      "state": "passed",
+      "source_revision": "2c0aa26bca18b4b8301e0eee2540ba9273bf8770",
+      "revision": "f051e3b71b2d8e890a33ea4607cea5ca1c01b683",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with tclean-casa-test-cases.json (#1065's 14 cases, --include-skipped) and tclean-mtmfs-polarized-cases.json",
+      "receipt": "resources/casa-compat/evidence/tclean-mtmfs-polarized-review-20261103.json",
+      "scope": "tclean deconvolver='mtmfs' of polarized Taylor families after #1104's review (#1065). #1065's 14 cases pass as before (13 of 14, worst NRMS 5.3e-6; test_stokes_mtmfs_IQUV.1+2 refused by usemask='pb', #1061). Of casa-rs's own cases, refim_point_linRL's polarized point in IQUV, and in IQUV with restoringbeam='common' (one beam recorded, as CASA records it), passes every product; in IV every product but a tt1 model that is rounding in both. The refim_mawproject mosaic in IQUV failed (zero Q and U PSF moments), so Stokes planes other than I alone are refused beyond the standard gridder (issue 1112). The T1 law a_polarized_taylor_family_is_imaged_on_its_own_stokes_plane puts a circularly polarized point's V on V's plane of each term.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-mtmfs-polarized-review-20261103.json",
+        "resources/casa-compat/tclean-mtmfs-polarized-cases.json",
+        "crates/casars-imager/tests/t1/mtmfs.rs",
+        "crates/casa-imaging-products/src/generation.rs",
+        "crates/casa-imaging-application/src/availability.rs"
       ]
     }
   }
