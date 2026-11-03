@@ -1322,12 +1322,12 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [componentlist](#componentlist) | `casars.tools` | 61 | yes | 15 | 0 | 46 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
-| [measures](#measures) | `casars.tools` | 48 | yes | 20 | 0 | 28 | 0 | 0 | 0 |
+| [measures](#measures) | `casars.tools` | 48 | yes | 23 | 0 | 25 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
 | [quanta](#quanta) | `casars.tools` | 57 | yes | 25 | 0 | 32 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 18 | 11 | 0 | 3 | 1 | 0 |
-| [simutil](#simutil) | `casars.simutil` | 57 | yes | 19 | 0 | 38 | 0 | 0 | 0 |
+| [simutil](#simutil) | `casars.simutil` | 57 | yes | 31 | 2 | 24 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
 
 ### componentlist
@@ -1539,7 +1539,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 20, Partial: 0, Not implemented: 28, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 23, Partial: 0, Not implemented: 25, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1567,11 +1567,11 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `gettype` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `getvalue` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `ismeasure` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `linelist` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `linelist` |  | Implemented | The rest lines of the measures data, their names joined by spaces in the table's order, with CASA's deprecation warning. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists) |
 | `listcodes` | `ms` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `measure` | `v, rf, off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `observatory` | `name='ALMA'` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `obslist` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's readantenna, sensitivity and itrf2locname, and simobserve, call it; casa-rs ports readantenna and simobserve in Rust, so only a script calling it directly meets the refusal. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `obslist` |  | Implemented | The observatories of the measures data, by name in the table's order, as CASA lists them; CASA's readantenna, sensitivity and itrf2locname, and simobserve, call it. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists), [casa-values](#measures-evidence-casa-values) |
 | `posangle` | `m1, m2` | Implemented | Angular separation and position angle, as casacore computes them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `position` | `rf='WGS84', v0=[], v1=[], v2=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `radialvelocity` | `rf='LSRK', v0=[], off={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
@@ -1582,7 +1582,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `show` | `v, refcode=True` | Implemented | Shows measures as CASA shows them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `showframe` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `source` | `name=[]` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `sourcelist` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `sourcelist` |  | Implemented | The sources of the measures data, their names joined by spaces in the table's order, as CASA lists them. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists) |
 | `spectralline` | `name='HI'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `todoppler` | `rf, v0, rfq=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `tofrequency` | `rf, v0, rfq` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
@@ -1688,6 +1688,13 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 **Deviation record — recorded.** Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.
 
 - [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="measures-evidence-casa-lists"></a>
+##### casa-lists
+
+**CASA-recorded values — measured.** Recorded from CASA 6.7.6-14 by measures_lists_oracle.py, with how CASA makes each list from its table. obslist and linelist equal CASA's character for character (the tables are the same in both data versions); sourcelist is checked against casa-rs's own Sources table, which its data version holds with more rows than CASA's 1139. Passes in the Python tests. me.obslist, me.sourcelist and me.linelist.
+
+- [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py)
 
 ### quanta
 
@@ -2603,7 +2610,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 19, Partial: 0, Not implemented: 38, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 31, Partial: 2, Not implemented: 24, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -2613,9 +2620,9 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `bandname` | `freq` | Implemented | CASA's band names. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `baselineLengths` | `configfile` | Implemented | Baseline lengths of a configuration file, as CASA computes them. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `calc_pointings2` | `spacing, size, maptype='hex', direction=None, relmargin=0.5, beam=0.0` | Implemented | Hexagonal, square and ALMA tilings of a map about a direction or the object's own, CASA's pointing text exactly; kept as `pointings`. CASA's ALMA tiling without a beam raises; casa-rs uses simobserve's beam (decision below). | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
-| `cellsize` | `image` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `cellsize` | `image` | Implemented | The image's cell as two quantities in radians, positive; a rotated image raises CASA's message. | [signature](#simutil-evidence-signature), [simanalyze-casa-fixture](#simutil-evidence-simanalyze-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `closereport` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
-| `convimage` | `modelflat, outflat, complist=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `convimage` | `modelflat, outflat, complist=''` | Partial (#1053) | Regrids the flat model onto the flat image and convolves it with the image's beam, writing CASA's .regrid and .regrid.conv; a complist is refused (#1053). | [signature](#simutil-evidence-signature), [simanalyze-casa-fixture](#simutil-evidence-simanalyze-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `dir_m2s` | `dir` | Implemented | Writes a direction measure as simutil's text. | [signature](#simutil-evidence-signature), [binding-tests](#simutil-evidence-binding-tests) |
 | `dir_s2m` | `direction=None` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `direction_splitter` | `direction=None` | Implemented | Splits a direction into epoch and two quantities; a list of one is split at its rounded mean, as CASA does. A direction without an epoch, which CASA cannot split, is refused (decision below). | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
@@ -2623,7 +2630,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `ephemeris` | `date, usehourangle=True, direction=None, telescope=None, ms=None, cofa=None` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `flatimage` | `image, complist='', verbose=False` | Implemented | Collapses a model to CASA's flat image, adding a component list as CASA does. | [signature](#simutil-evidence-signature), [skymodel-casa-fixture](#simutil-evidence-skymodel-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `getBaseTriangularTiling` | `width, height, angle, spacing, pb` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
-| `getdatum` | `datumcode, verbose=False` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `getdatum` | `datumcode, verbose=False` | Implemented | CASA's datum table: (dx, dy, dz, er, rf), whole offsets as ints; an unknown datum raises CASA's message. | [signature](#simutil-evidence-signature), [geodesy-casa](#simutil-evidence-geodesy-casa), [binding-tests](#simutil-evidence-binding-tests) |
 | `getShiftTriangularTiling` | `width, height, angle, spacing, pb` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `getTrianglePoints` | `width, height, angle, spacing` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `getTriangularTiling` | `longlength, latlength, angle, spacing, pb` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
@@ -2632,13 +2639,13 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `is4d` | `image` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `isdirection` | `s, halt=True` | Implemented | CASA's direction test, with its message when `halt`. | [signature](#simutil-evidence-signature), [binding-tests](#simutil-evidence-binding-tests) |
 | `isEven` | `num` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
-| `ismstp` | `s, halt=False` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `ismstp` | `s, halt=False` | Implemented | Whether a MeasurementSet is total power: its first antenna's name holds TP, it has one antenna, or every UVW value is zero (CASA tests any; decision ismstp-any-zero-uvw). With halt, CASA's messages. | [signature](#simutil-evidence-signature), [simanalyze-casa-fixture](#simutil-evidence-simanalyze-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `isquantity` | `s, halt=True` | Implemented | CASA's quantity test, with its message when `halt`. | [signature](#simutil-evidence-signature), [binding-tests](#simutil-evidence-binding-tests) |
 | `isreport` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `itrf2loc` | `x, y, z, cx, cy, cz` | Implemented | ITRF to local east, north and up about a centre, as NumPy arrays. | [signature](#simutil-evidence-signature), [binding-tests](#simutil-evidence-binding-tests) |
-| `itrf2locname` | `x, y, z, obsname` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
-| `locxyz2itrf` | `lat, longitude, alt, locx=0.0, locy=0.0, locz=0.0` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
-| `long2xyz` | `lon, lat, elevation, datum` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `itrf2locname` | `x, y, z, obsname` | Implemented | itrf2loc about a known observatory's WGS84 position, as CASA finds it with me.observatory and long2xyz. | [signature](#simutil-evidence-signature), [geodesy-casa](#simutil-evidence-geodesy-casa), [binding-tests](#simutil-evidence-binding-tests) |
+| `locxyz2itrf` | `lat, longitude, alt, locx=0.0, locy=0.0, locz=0.0` | Implemented | Local east, north and up offsets about a WGS84 point to Earth-centred (x, y, z). | [signature](#simutil-evidence-signature), [geodesy-casa](#simutil-evidence-geodesy-casa), [binding-tests](#simutil-evidence-binding-tests) |
+| `long2xyz` | `lon, lat, elevation, datum` | Implemented | Geodetic longitude, latitude and elevation on a datum to Earth-centred (x, y, z). | [signature](#simutil-evidence-signature), [geodesy-casa](#simutil-evidence-geodesy-casa), [binding-tests](#simutil-evidence-binding-tests) |
 | `median_direction` | `directions=None` | Implemented | CASA's median of directions, as text at its precision. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `modifymodel` | `inimage, outimage, inbright, indirection, incell, incenter, inwidth, innchan, flatimage=False` | Implemented | Rewrites a sky model's brightness, direction, cell, centre and width as CASA does and returns CASA's tuple; the axis, Stokes and two-cell defects listed below are decisions. | [signature](#simutil-evidence-signature), [skymodel-casa-fixture](#simutil-evidence-skymodel-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `msg` | `s, origin=None, priority=None` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
@@ -2655,15 +2662,15 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `setcfg` | `mysm, telescope, x, y, z, diam, padnames, posobs, mounttype=None` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `sfBeam1d` | `beam='', cell='', convsupport=-1, sampling=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `spectral` | `image` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
-| `statim` | `image, plot=True, incell=None, disprange=None, bar=True, showstats=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
-| `tconpc` | `sf, orlim, er, esq, rf` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
-| `tmgeod` | `n, e, eps, cm, fe, sf, so, r, v0, v2, v4, v6, fn, er, esq` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
-| `utm2long` | `east, north, zone, datum, nors` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
-| `utm2xyz` | `easting, northing, elevation, zone, datum, nors` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `statim` | `image, plot=True, incell=None, disprange=None, bar=True, showstats=True` | Partial (#1025) | CASA's (min, max, rms, unit), the values 0-d float64 arrays as CASA returns them. plot=True, CASA's default, draws no figure yet and says so (#1025). A Jy/beam image without a beam is not scaled by the pixel area as CASA scales it (recorded deviation). | [signature](#simutil-evidence-signature), [simanalyze-casa-fixture](#simutil-evidence-simanalyze-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `tconpc` | `sf, orlim, er, esq, rf` | Implemented | The transverse Mercator zone constants (eps, r, so, v0, v2, v4, v6). | [signature](#simutil-evidence-signature), [geodesy-casa](#simutil-evidence-geodesy-casa), [binding-tests](#simutil-evidence-binding-tests) |
+| `tmgeod` | `n, e, eps, cm, fe, sf, so, r, v0, v2, v4, v6, fn, er, esq` | Implemented | Grid coordinates to (lat, lon, conv, kp), the longitude west-positive. | [signature](#simutil-evidence-signature), [geodesy-casa](#simutil-evidence-geodesy-casa), [binding-tests](#simutil-evidence-binding-tests) |
+| `utm2long` | `east, north, zone, datum, nors` | Implemented | UTM easting and northing to (lon, lat) on a datum; verbose's position message is not logged. | [signature](#simutil-evidence-signature), [geodesy-casa](#simutil-evidence-geodesy-casa), [binding-tests](#simutil-evidence-binding-tests) |
+| `utm2xyz` | `easting, northing, elevation, zone, datum, nors` | Implemented | UTM easting, northing and elevation to Earth-centred (x, y, z). | [signature](#simutil-evidence-signature), [geodesy-casa](#simutil-evidence-geodesy-casa), [binding-tests](#simutil-evidence-binding-tests) |
 | `wrapang` | `ang, target, period=360.0` | Implemented | CASA's angle wrapping. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture) |
 | `write_pointings` | `filename, pointings, time=1.0` | Implemented | Writes CASA's pointing file text. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
-| `xyz2long` | `x, y, z, datum` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
-| `xyz2long_old` | `x, y, z, datum` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `xyz2long` | `x, y, z, datum` | Implemented | Earth-centred x, y, z to (lon, lat, height) on a datum; CASA subtracts the x offset from y, casa-rs the y offset (decision xyz2long-y-offset). | [signature](#simutil-evidence-signature), [geodesy-casa](#simutil-evidence-geodesy-casa), [binding-tests](#simutil-evidence-binding-tests) |
+| `xyz2long_old` | `x, y, z, datum` | Implemented | The older iteration, (lon, lat); CASA subtracts the x offset from z, casa-rs the z offset (decision xyz2long-old-z-offset). | [signature](#simutil-evidence-signature), [geodesy-casa](#simutil-evidence-geodesy-casa), [binding-tests](#simutil-evidence-binding-tests) |
 
 #### simutil interacting modes and tool behavior
 
@@ -2779,6 +2786,26 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 - Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
 - Evidence: [bugs-record](#simutil-evidence-bugs-record).
 
+##### xyz2long-y-offset: Previously agreed
+
+- Inputs: xyz2long on a datum whose x and y offsets differ, such as NAD27.
+- CASA: Computes the longitude as atan2(y-dx, x-dx), subtracting the x offset from y; long2xyz then xyz2long on NAD27 at ALMA moves the longitude by 2.2 arcseconds.
+- casa-rs: Subtracts dy, so xyz2long inverts long2xyz.
+- Rationale: The rest of the function subtracts (dx, dy, dz); recorded in docs/CASA (C++) bugs.md as "simutil.xyz2long subtracts the x offset from y".
+- User impact: Longitudes on datums other than WGS 84 and NAD83 are correct; WGS 84's agree with CASA's.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [geodesy-casa](#simutil-evidence-geodesy-casa).
+
+##### xyz2long-old-z-offset: Previously agreed
+
+- Inputs: xyz2long_old on a datum whose x and z offsets differ.
+- CASA: Its second term is (z-dx)**2/er**2, subtracting the x offset from z.
+- casa-rs: Subtracts dz.
+- Rationale: The rest of the function subtracts (dx, dy, dz); recorded in docs/CASA (C++) bugs.md as "simutil.xyz2long_old subtracts the x offset from z".
+- User impact: Latitudes on such datums are slightly different from CASA's; longitudes and WGS 84's results agree.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [geodesy-casa](#simutil-evidence-geodesy-casa).
+
 #### simutil evidence
 
 Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
@@ -2847,3 +2874,22 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 **Deviation record — recorded.** Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.
 
 - [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="simutil-evidence-simanalyze-casa-fixture"></a>
+##### simanalyze-casa-fixture
+
+**CASA fixture comparison — passed.** casa-simulation simanalyze_analysis_casa: 6 tests pass at the revision, comparing every case's statim, cellsize, convimage and flatimage with the outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in: statistics and pixels to 1e-6, cells to 1e-15, CASA's refusals by message. The Python tests compare a sample through the binding. The simanalyze helpers the binding exposes.
+
+- [crates/casa-simulation/tests/simanalyze_analysis_casa.rs](https://github.com/bglenden/casa-rs/blob/d5c88b52b718e4b3834447724d66371f269a0083/crates/casa-simulation/tests/simanalyze_analysis_casa.rs)
+- [crates/casa-simulation/tests/data/simanalyze_analysis_casa.json.gz](https://github.com/bglenden/casa-rs/blob/d5c88b52b718e4b3834447724d66371f269a0083/crates/casa-simulation/tests/data/simanalyze_analysis_casa.json.gz)
+- [tools/simulation/simanalyze_analysis_oracle.py](https://github.com/bglenden/casa-rs/blob/d5c88b52b718e4b3834447724d66371f269a0083/tools/simulation/simanalyze_analysis_oracle.py)
+- Revision: `d5c88b52b718e4b3834447724d66371f269a0083`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixture`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/simanalyze-fixtures-20261103.json`.
+
+<a id="simutil-evidence-geodesy-casa"></a>
+##### geodesy-casa
+
+**CASA-recorded values — measured.** Recorded from CASA 6.7.6-14 by simutil_geodesy_oracle.py: getdatum of all 24 datums and an unknown one, tconpc and tmgeod of three ellipsoids and five UTM points, the UTM and geodetic conversions on four datums, locxyz2itrf about three points and itrf2locname about five observatories. The Python tests agree to 1e-12 (positions to 1e-6 m), and where CASA slips on a datum's offsets casa-rs inverts long2xyz instead. The geodesy helpers.
+
+- [crates/casars-python/python/tests/test_simutil.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_simutil.py)
