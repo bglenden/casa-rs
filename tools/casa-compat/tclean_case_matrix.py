@@ -135,8 +135,7 @@ def run_casa_steps(steps_values, folder, environment, log):
     }))
     result = subprocess.run(
         [sys.executable, "-I", str(Path(__file__).resolve()), "--casa-steps", str(request)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         check=False,
     )
