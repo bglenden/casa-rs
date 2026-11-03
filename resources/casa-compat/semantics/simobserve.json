@@ -10,7 +10,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "outputs"
@@ -22,7 +22,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920",
+    "parity-20261103",
     "skymodel-fixture"
    ],
    "behaviors": [
@@ -35,7 +35,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920",
+    "parity-20261103",
     "skymodel-fixture"
    ],
    "behaviors": [
@@ -48,7 +48,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920",
+    "parity-20261103",
     "skymodel-fixture"
    ],
    "behaviors": [
@@ -61,7 +61,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920",
+    "parity-20261103",
     "skymodel-fixture"
    ],
    "behaviors": [
@@ -74,7 +74,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920",
+    "parity-20261103",
     "skymodel-fixture"
    ],
    "behaviors": [
@@ -87,7 +87,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920",
+    "parity-20261103",
     "skymodel-fixture"
    ],
    "behaviors": [
@@ -100,7 +100,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920",
+    "parity-20261103",
     "skymodel-fixture"
    ],
    "behaviors": [
@@ -113,7 +113,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920",
+    "parity-20261103",
     "skymodel-fixture"
    ],
    "behaviors": [
@@ -126,7 +126,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920",
+    "parity-20261103",
     "skymodel-fixture"
    ],
    "behaviors": [
@@ -139,7 +139,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "pointings"
@@ -151,7 +151,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "pointings"
@@ -163,7 +163,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "schedule"
@@ -175,7 +175,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "pointings"
@@ -187,7 +187,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "pointings"
@@ -199,7 +199,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "pointings"
@@ -211,7 +211,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "pointings"
@@ -223,7 +223,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "schedule"
@@ -235,7 +235,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "schedule"
@@ -247,7 +247,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "observation"
@@ -259,7 +259,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "schedule"
@@ -271,7 +271,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "schedule"
@@ -283,7 +283,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "schedule"
@@ -295,7 +295,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "antennas"
@@ -307,7 +307,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "antennas"
@@ -319,7 +319,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "antennas"
@@ -331,7 +331,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "observation"
@@ -343,7 +343,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "noise"
@@ -355,7 +355,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "noise"
@@ -367,7 +367,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "noise"
@@ -379,7 +379,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "noise"
@@ -391,7 +391,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "noise"
@@ -403,7 +403,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "noise"
@@ -415,7 +415,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "noise"
@@ -427,7 +427,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "noise"
@@ -439,7 +439,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "outputs"
@@ -451,7 +451,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "outputs"
@@ -463,7 +463,7 @@
    "evidence": [
     "signature",
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ],
    "behaviors": [
     "outputs"
@@ -479,7 +479,7 @@
    "gap": "Compared in 6 of #920's 11 cases and by the skymodel fixture; the indirection and incell overrides and comp_nchan > 1 are not exercised against CASA's task.",
    "evidence": [
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ]
   },
   {
@@ -490,7 +490,7 @@
    "gap": "Configuration names need CASA's data directory: casa-rs does not ship alma/simmos (an open owner question on #1053).",
    "evidence": [
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ]
   },
   {
@@ -501,7 +501,7 @@
    "gap": "maptype='square' is compared only through the single-dish case.",
    "evidence": [
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ]
   },
   {
@@ -512,7 +512,7 @@
    "gap": "The calibrator cases are compared with CASA's sm re-predict, since CASA's task leaves the calibrator unpredicted (decision). hourangle other than 'transit' and refdate is compared only at 2012/06/21.",
    "evidence": [
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ]
   },
   {
@@ -523,7 +523,7 @@
    "gap": "outframe other than LSRK is not compared.",
    "evidence": [
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ]
   },
   {
@@ -534,7 +534,7 @@
    "gap": "Noise is compared statistically (variances and KS tests), since draws differ; each environment parameter is exercised once; seed is casa-rs's own stream.",
    "evidence": [
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ]
   },
   {
@@ -545,7 +545,7 @@
    "gap": "graphics writes no .skymodel.png, .observe.png or .quick.psf yet and warns (#1025).",
    "evidence": [
     "task-tests",
-    "parity-920"
+    "parity-20261103"
    ]
   }
  ],
@@ -681,7 +681,7 @@
   },
   "parity-920": {
    "kind": "CASA-paired task runs (PR-reported)",
-   "state": "measured",
+   "state": "superseded",
    "result": "All 11 cases agree: DATA NRMS 6.2e-8 to 2.0e-7 for the interferometer cases, 1.05e-6 for leakage, calibrators against CASA's sm re-predict at 5.2e-9 and 5.5e-9; noise KS p 0.11 to 0.92. CASA 6.7.6-14's task_simobserve.py, casa-rs at 29f0b87a6e. Not re-run at a current revision; CASA's own test_task_simobserve cases are not compared.",
    "scope": "11 cases: VLA and ALMA image models, a component-only model with tsys-atm, leakage with both noise modes, calibrators, single dish and a pointing file.",
    "links": [
@@ -689,7 +689,8 @@
     "https://github.com/bglenden/casa-rs/pull/922",
     "tools/simulation/simobserve_parity.py",
     "tools/simulation/compare_sm_ms.py"
-   ]
+   ],
+   "superseded_by": "parity-20261103"
   },
   "skymodel-fixture": {
    "kind": "CASA fixture comparison",
@@ -713,6 +714,20 @@
    "links": [
     "docs/CASA (C++) bugs.md"
    ]
+  },
+  "parity-20261103": {
+   "kind": "CASA-paired task runs",
+   "state": "passed",
+   "result": "All 11 cases agree: interferometer DATA NRMS 6.2e-8 to 2.9e-7 and leakage 1.05e-6 (limit 1e-3); calibrators against CASA's sm re-predict 5.3e-9 and 5.5e-9; single dish 8.7e-9; noise variances within 1 percent of unity on both sides (KS p 0.11 to 0.92); the coarse-cell case refused with CASA's message. CASA's own test_task_simobserve cases are not compared.",
+   "scope": "#920's 11 cases: VLA and ALMA image models, a component-only model with tsys-atm, leakage with both noise modes, calibrators, single dish, a pointing file and a refused coarse cell.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata /Volumes/home/casatestdata --atmosphere-model TARGET/release/examples/at_tool_quantities (bg-mac-mini, CPU)",
+   "receipt": "resources/casa-compat/evidence/simobserve-parity-20261103.json"
   }
  }
 }
