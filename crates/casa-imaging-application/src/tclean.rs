@@ -575,13 +575,20 @@ impl<'a> Tclean<'a> {
             }
             return Ok(());
         }
+        let convention = velocity_convention(veltype)?;
+        // An optical-velocity grid is equal in optical velocity, not in
+        // frequency, and CASA tabulates its axis (#1096).
+        if convention == "OPTICAL" && (is_velocity(start) || is_velocity(width)) {
+            return Err(TcleanRefusal::not_yet(
+                "veltype",
+                "'optical' with a velocity start or width, whose channels CASA tabulates",
+                1096,
+            ));
+        }
         self.set("start", start);
         self.set("width", width);
         self.set("outframe", frame);
-        self.set("veltype", velocity_convention(veltype)?);
-        if interpolation == "cubic" {
-            return Err(TcleanRefusal::not_yet("interpolation", "'cubic'", 1066));
-        }
+        self.set("veltype", convention);
         self.set("interpolation", interpolation);
         Ok(())
     }
@@ -980,6 +987,13 @@ fn output_frame(text: &str) -> Result<String, TcleanRefusal> {
 
 /// A cube's velocity convention, in casacore's spelling: `z` is optical and
 /// `relativistic` (or `true`) is `beta`, as in `MDoppler`.
+/// Whether a cube's `start` or `width` text is a velocity, which makes
+/// CASA's axis a velocity grid (`SynthesisParamsImage::findSpecMode`).
+fn is_velocity(text: &str) -> bool {
+    let velocity = Unit::new("m/s").expect("built-in velocity unit");
+    Quantity::from_str(text.trim()).is_ok_and(|quantity| quantity.unit().conformant(&velocity))
+}
+
 fn velocity_convention(text: &str) -> Result<&'static str, TcleanRefusal> {
     match text.to_ascii_lowercase().as_str() {
         "radio" => Ok("RADIO"),

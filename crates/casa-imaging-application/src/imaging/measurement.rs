@@ -563,9 +563,10 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
             casa_imaging_operator::SpectralKernel::Nearest
         }
         SpectralKernel::Linear => casa_imaging_operator::SpectralKernel::Linear,
-        SpectralKernel::Cubic | SpectralKernel::ChannelIntegration { .. } => {
+        SpectralKernel::Cubic => casa_imaging_operator::SpectralKernel::Cubic,
+        SpectralKernel::ChannelIntegration { .. } => {
             return Err(ImagingError::Unsupported {
-                reason: "cube interpolation is nearest or linear",
+                reason: "cube interpolation is nearest, linear or cubic",
             });
         }
     };

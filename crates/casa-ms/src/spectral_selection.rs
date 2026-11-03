@@ -296,15 +296,6 @@ pub struct CubeRowSpectralContributions {
 
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 
-fn ensure_supported_interpolation(interpolation: CubeInterpolation) -> MsResult<()> {
-    match interpolation {
-        CubeInterpolation::Nearest | CubeInterpolation::Linear => Ok(()),
-        CubeInterpolation::Cubic => Err(MsError::VersionError(
-            "cube interpolation 'cubic' is not implemented; use 'nearest' or 'linear'".to_string(),
-        )),
-    }
-}
-
 fn channel_edges_from_centers(all_source_frequencies_hz: &[f64]) -> MsResult<Vec<f64>> {
     if all_source_frequencies_hz.is_empty() {
         return Err(MsError::VersionError(
@@ -1040,7 +1031,6 @@ impl CubeSpectralSetup {
             }
             interpolation => interpolation,
         };
-        ensure_supported_interpolation(interpolation)?;
         if source_channel_widths_hz.len() != source_frequencies_hz.len() {
             return Err(MsError::VersionError(format!(
                 "row cube interpolation requires matching frequency/width arrays, got {} and {}",
@@ -2838,12 +2828,6 @@ mod tests {
             effective_output_frequency_ref(FrequencyRef::TOPO, &axis_config).unwrap(),
             FrequencyRef::TOPO
         );
-    }
-
-    #[test]
-    fn cubic_interpolation_is_rejected_until_implemented() {
-        let error = ensure_supported_interpolation(CubeInterpolation::Cubic).unwrap_err();
-        assert!(error.to_string().contains("not implemented"));
     }
 
     #[test]

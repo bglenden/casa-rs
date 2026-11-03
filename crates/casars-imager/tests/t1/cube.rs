@@ -732,6 +732,35 @@ fn a_cubedata_range_with_a_stride_is_read_whole() {
     );
 }
 
+/// `interpolation='cubic'` (#1066) grids each output sample from the cubic
+/// through the four native channels about it and predicts the model at
+/// native channels by the cubic through four output points
+/// (`FTMachine::interpolateFrequencyTogrid`, `interpolateFrequencyFromgrid`):
+/// the cleaned cube follows the injected spectrum as the linear one does,
+/// its residual formed at native channels through the four-point sources.
+#[test]
+fn a_cubic_cube_follows_the_injected_spectrum() {
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
+    let cubic = image(
+        &observation,
+        "cube-cubic",
+        json!({ "weighting": "natural", "interpolation": "cubic" }),
+    );
+    assert_follows_the_spectrum(&observation, &cubic, "cubic");
+    let residual = cubic.get(".residual").values();
+    let image = cubic.get(".image").values();
+    let peak = image
+        .iter()
+        .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+    let worst = residual
+        .iter()
+        .fold(0.0_f32, |worst, value| worst.max(value.abs()));
+    assert!(
+        worst < 0.05 * peak,
+        "the cubic residual {worst} is not cleaned below the peak {peak}"
+    );
+}
+
 /// tclean's `nchan=-1` takes CASA's count (`MSTransformRegridder::
 /// regridChanBounds` with `nchan < 0`, #1066): from the first selected
 /// channel when `start` is unset, as many channels of the output width as

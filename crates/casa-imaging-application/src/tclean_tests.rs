@@ -319,11 +319,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
         (json!({ "usemask": "pb" }), "usemask", "#1061"),
         (
-            json!({ "specmode": "cube", "interpolation": "cubic" }),
-            "interpolation",
-            "#1066",
-        ),
-        (
             json!({ "specmode": "cube", "outframe": "GALACTO" }),
             "outframe",
             "#980",
@@ -332,6 +327,11 @@ fn values_casa_rs_cannot_honour_are_refused() {
             json!({ "specmode": "cube", "veltype": "ratio" }),
             "veltype",
             "#980",
+        ),
+        (
+            json!({ "specmode": "cube", "veltype": "optical", "width": "20000km/s" }),
+            "veltype",
+            "#1096",
         ),
         // A source-frame cube's per-channel density, mosaic or not.
         (

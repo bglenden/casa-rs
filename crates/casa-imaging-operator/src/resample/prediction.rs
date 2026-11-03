@@ -7,13 +7,14 @@
 
 use num_complex::Complex32;
 
-use super::{NativeRow, Sampling, SpectralAxis, SpectralResampler, is_autocorrelation};
+use super::stencil::Stencil;
+use super::{NativeRow, Order, Sampling, SpectralAxis, SpectralResampler, is_autocorrelation};
 use super::{RowPlacing, locate_sample};
 use crate::backend::{GridBackend, PreparedModelGrids, Work};
 use crate::convolution::ConvolutionFunctionSet;
 use crate::error::OperatorError;
 use crate::geometry::CellLocation;
-use crate::native::{NO_CELL, NativeTarget, NativeTerm, interpolate_terms};
+use crate::native::{NO_CELL, NativeTarget, NativeTerm, STENCIL, interpolate_terms};
 use crate::operator::MeasurementOperator;
 use crate::sample::{CfKey, Placement, SampleBlock};
 
@@ -247,19 +248,22 @@ impl Gathered {
     }
 }
 
-/// The output channels CASA degrids for one row under linear mapping
+/// The output channels CASA degrids for one row under interpolation
 /// (`FTMachine::getInterpolateArrays`, after `GridFT::get` returns early
 /// when no native maps): each native's `chanMap` is its channel, −2 in the
-/// linear halo or −1; −1 is replaced by the maximum, and the channels from
+/// interpolation's halo or −1; −1 is replaced by the maximum, and the channels from
 /// the minimum to the maximum are degridded, from channel 0 when the
 /// minimum is the halo's −2 or equals the maximum. When every native lies
 /// in the halo the maximum is −2 and CASA's unsigned loop flags nothing, so
 /// every channel is degridded. `None` when nothing maps.
-fn degridded_channels(axis: SpectralAxis, native: &[f64]) -> Option<std::ops::RangeInclusive<u32>> {
+fn degridded_channels(
+    (axis, order): (SpectralAxis, Order),
+    native: &[f64],
+) -> Option<std::ops::RangeInclusive<u32>> {
     let native_width_hz = native[1] - native[0];
     let map = |frequency_hz: f64| match axis.nearest_channel(frequency_hz) {
         Some(channel) => i64::from(channel),
-        None if axis.in_linear_halo(frequency_hz, native_width_hz) => -2,
+        None if axis.in_halo(frequency_hz, native_width_hz, order) => -2,
         None => -1,
     };
     let maximum = native.iter().map(|frequency_hz| map(*frequency_hz)).max()?;
@@ -306,7 +310,7 @@ impl SpectralResampler {
     pub fn prediction_samples_per_row(&self, channels: usize) -> usize {
         match self.sampling {
             Sampling::Direct | Sampling::Nearest(_) => channels,
-            Sampling::Linear(axis) => channels.max(axis.channels as usize),
+            Sampling::Interpolated(axis, _) => channels.max(axis.channels as usize),
         }
     }
 
@@ -347,7 +351,7 @@ impl SpectralResampler {
             .into_iter()
             .fold((0, channels), |(samples, slots), resampler| {
                 let linear = match resampler.sampling {
-                    Sampling::Linear(axis) => axis.channels as usize,
+                    Sampling::Interpolated(axis, _) => axis.channels as usize,
                     Sampling::Direct | Sampling::Nearest(_) => 0,
                 };
                 (
@@ -400,14 +404,17 @@ impl SpectralResampler {
         self.finish_prediction(operator, row, placed, scratch, out)
     }
 
-    /// Whether `row`'s prediction interpolates degridded output channels to
-    /// its native channels (see [`Self::predict_row`]).
-    fn linear_prediction(&self, row: &NativeRow<'_>) -> Option<SpectralAxis> {
+    /// The axis and order by which `row`'s prediction interpolates
+    /// degridded output channels to its native channels, when it does (see
+    /// [`Self::predict_row`]).
+    fn interpolated_prediction(&self, row: &NativeRow<'_>) -> Option<(SpectralAxis, Order)> {
         match self.sampling {
-            Sampling::Linear(axis) if axis.channels > 1 && row.frequencies_hz.len() > 1 => {
-                Some(axis)
+            Sampling::Interpolated(axis, order)
+                if axis.channels > 1 && row.frequencies_hz.len() > 1 =>
+            {
+                Some((axis, order))
             }
-            Sampling::Direct | Sampling::Nearest(_) | Sampling::Linear(_) => None,
+            Sampling::Direct | Sampling::Nearest(_) | Sampling::Interpolated(..) => None,
         }
     }
 
@@ -510,12 +517,12 @@ impl SpectralResampler {
                 }),
             }
         };
-        match self.linear_prediction(row) {
+        match self.interpolated_prediction(row) {
             None => {
                 for (channel, frequency_hz) in native.iter().enumerate() {
                     let plane = match self.sampling {
                         Sampling::Direct => Some(0),
-                        Sampling::Nearest(axis) | Sampling::Linear(axis) => {
+                        Sampling::Nearest(axis) | Sampling::Interpolated(axis, _) => {
                             axis.nearest_channel(*frequency_hz)
                         }
                     };
@@ -524,8 +531,8 @@ impl SpectralResampler {
                     }
                 }
             }
-            Some(axis) => {
-                if let Some(channels) = degridded_channels(axis, native) {
+            Some(interpolation @ (axis, _)) => {
+                if let Some(channels) = degridded_channels(interpolation, native) {
                     for channel in channels {
                         place(channel, axis.centre_hz(channel), channel as usize);
                     }
@@ -563,7 +570,7 @@ impl SpectralResampler {
         let mut locate = |channel: usize| {
             let plane = match self.sampling {
                 Sampling::Direct => Some(0),
-                Sampling::Nearest(axis) | Sampling::Linear(axis) => {
+                Sampling::Nearest(axis) | Sampling::Interpolated(axis, _) => {
                     axis.nearest_channel(native[channel])
                 }
             }
@@ -654,35 +661,39 @@ impl SpectralResampler {
         let sources = &sources[placed.start..placed.end];
         // A row without a flag packs no flag bits.
         let flagged = row.flags.contains(&true);
-        let mut term = |channel: usize, low: u32, high: u32, fraction: f32| {
-            terms.push(NativeTerm {
+        let mut term = |channel: usize, points: &[(u32, f64)]| {
+            let mut term = NativeTerm {
                 cell: first_cell + channel as u32,
-                low,
-                high,
-                fraction,
+                points: [NO_CELL; STENCIL],
+                factors: [0.0; STENCIL],
                 flags: if flagged {
                     flag_bits(row, npol, channel)
                 } else {
                     0
                 },
-            });
+            };
+            for (slot, (point, factor)) in points.iter().enumerate() {
+                term.points[slot] = *point;
+                term.factors[slot] = *factor as f32;
+            }
+            terms.push(term);
         };
-        let Some(axis) = self.linear_prediction(row) else {
+        let Some((axis, order)) = self.interpolated_prediction(row) else {
             // Each native channel reads its source's placement, in slot
             // order; a channel no source covers reads nothing.
             let mut channel = 0;
             for source in sources {
                 debug_assert!(source.slot as usize >= channel, "sources run in slot order");
                 for unplaced in channel..source.slot as usize {
-                    term(unplaced, NO_CELL, NO_CELL, 0.0);
+                    term(unplaced, &[]);
                 }
                 for placed in source.slots() {
-                    term(placed, source.placement, source.placement, 0.0);
+                    term(placed, &[(source.placement, 1.0)]);
                 }
                 channel = source.slots().end;
             }
             for unplaced in channel..native.len() {
-                term(unplaced, NO_CELL, NO_CELL, 0.0);
+                term(unplaced, &[]);
             }
             return;
         };
@@ -696,10 +707,10 @@ impl SpectralResampler {
         // `FTMachine::interpolateFrequencyFromgrid`: the output-channel
         // predictions on CASA's image-frequency grid, refined to
         // `floor(width ratio)` repeated points per channel when output
-        // channels are wider than native ones, interpolated linearly to every
-        // native channel that maps to the axis or lies in its linear halo
-        // (`chanMap` 0… or −2; −1 stays zero); the end pair extrapolates
-        // (casacore `InterpolateArray1D` linear).
+        // channels are wider than native ones, interpolated to every native
+        // channel that maps to the axis or lies in its halo (`chanMap` 0… or
+        // −2; −1 stays zero); the end points extrapolate (casacore
+        // `InterpolateArray1D`, linear or cubic).
         index_slots(axis.channels as usize);
         let width = (axis.increment_hz / (native[1] - native[0])).abs();
         let per_channel = if width > 1.0 {
@@ -718,16 +729,39 @@ impl SpectralResampler {
         let native_width_hz = native[1] - native[0];
         for (channel, frequency_hz) in native.iter().enumerate() {
             if axis.nearest_channel(*frequency_hz).is_none()
-                && !axis.in_linear_halo(*frequency_hz, native_width_hz)
+                && !axis.in_halo(*frequency_hz, native_width_hz, order)
             {
-                term(channel, NO_CELL, NO_CELL, 0.0);
+                term(channel, &[]);
                 continue;
             }
             let position = (frequency_hz - fine_start) / fine_increment;
-            let left = (position.floor().max(0.0) as usize).min(points - 2);
-            let fraction = ((frequency_hz - point(left)) / (point(left + 1) - point(left))) as f32;
-            let (low, high) = (left / per_channel, (left + 1) / per_channel);
-            term(channel, slots[low], slots[high], fraction);
+            let slot = |point: usize| slots[point / per_channel];
+            match order {
+                Order::Linear => {
+                    let left = (position.floor().max(0.0) as usize).min(points - 2);
+                    let fraction = (frequency_hz - point(left)) / (point(left + 1) - point(left));
+                    // casacore's `y1 + frac·(y2 − y1)`, as two factors.
+                    term(
+                        channel,
+                        &[(slot(left), 1.0 - fraction), (slot(left + 1), fraction)],
+                    );
+                }
+                Order::Cubic => {
+                    // `binarySearchBrackets`: the point at the frequency,
+                    // else the first beyond it.
+                    let bracket = if position <= 0.0 {
+                        0
+                    } else {
+                        (position.ceil() as usize).min(points)
+                    };
+                    let stencil = Stencil::cubic(points, bracket, *frequency_hz, point);
+                    let mut factors = [(NO_CELL, 0.0); STENCIL];
+                    for (entry, (index, factor)) in factors.iter_mut().zip(stencil.terms()) {
+                        *entry = (slot(index), factor);
+                    }
+                    term(channel, &factors[..stencil.len]);
+                }
+            }
         }
     }
 
