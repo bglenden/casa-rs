@@ -471,6 +471,11 @@ impl GeometryPlan {
                 let envelope = AntennaResponseClass::family_envelope(&classes);
                 Responses::Heterogeneous { classes, envelope }
             }
+            Some(InstrumentModel::CasaAiryHeterogeneousInterferometricResponseV1) => {
+                let classes = frames.airy_classes();
+                let envelope = AntennaResponseClass::family_envelope(&classes);
+                Responses::Heterogeneous { classes, envelope }
+            }
         };
         let spectral = problem.geometry().spectral();
         Ok(Self {
