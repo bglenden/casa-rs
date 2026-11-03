@@ -203,7 +203,8 @@ impl TaylorFamily {
         let mut model = (0..state.coefficient_term_count())
             .map(|term| model_term(inputs, term, state.shape()))
             .collect::<Result<Vec<_>, _>>()?;
-        // CASA restores and publishes the flat-noise model in apparent units
+        // CASA restores and publishes the flat-noise and pbsquare model in
+        // apparent units, through the PB (flat noise) or PB² (pbsquare)
         // (`SynthesisNormalizer::multiplyModelByWeight`).
         if let Some(response) = directional {
             for plane in &mut model {
@@ -711,6 +712,8 @@ mod tests {
         for (normalization, expected) in [
             (ProductNormalization::FlatNoise, [4.0, 4.0, 4.0, 0.0]),
             (ProductNormalization::FlatSky, [4.0, 8.0, 16.0, 0.0]),
+            // Every pixel ÷ PBScale² = 16 / 8 = 2, with no cutoff.
+            (ProductNormalization::PbSquare, [4.0, 2.0, 1.0, 0.5]),
         ] {
             let normalized = raw
                 .iter()

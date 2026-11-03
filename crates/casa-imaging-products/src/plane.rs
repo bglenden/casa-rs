@@ -151,12 +151,12 @@ fn normalize_domain_plane(
     }
 }
 
-/// The model in the units CASA restores and publishes: under flat-noise
-/// with a direction-dependent sensitivity the apparent model, the physical
-/// model the lifecycle holds times the unit-peak beam and zero outside its
-/// support (`SynthesisNormalizer::multiplyModelByWeight` after every major
-/// cycle); the physical model otherwise (flat-sky, or a scalar
-/// sensitivity).
+/// The model in the units CASA restores and publishes: under flat noise or
+/// pbsquare with a direction-dependent sensitivity the apparent model, the
+/// physical model the lifecycle holds through the unit-peak PB (flat
+/// noise) or PB² (pbsquare) and zero outside its support
+/// (`SynthesisNormalizer::multiplyModelByWeight` after every major cycle);
+/// the physical model otherwise (flat-sky, or a scalar sensitivity).
 pub(crate) fn apparent_model(
     model: Vec<f32>,
     plane: &FinalNormalPlaneReader<'_>,

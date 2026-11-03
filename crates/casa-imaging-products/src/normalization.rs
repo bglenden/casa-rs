@@ -124,9 +124,10 @@ impl MinorCycleImageResponse {
 /// One plane's direction-dependent sensitivity, borrowed from the normal
 /// state.
 ///
-/// It derives CASA's unit-peak PB, the flat-noise and flat-sky residuals,
-/// PB support and the apparent and physical model. It owns no CLEAN mask
-/// and leaves the normal state unchanged.
+/// It derives CASA's unit-peak PB, the flat-noise, flat-sky and pbsquare
+/// residuals, PB support and the apparent and physical model, through the
+/// PB (flat noise) or PB² (pbsquare). It owns no CLEAN mask and leaves the
+/// normal state unchanged.
 #[derive(Debug, Clone, Copy)]
 pub struct MosaicSensitivity<'a> {
     values: &'a [f64],
@@ -592,22 +593,31 @@ mod tests {
     /// above |pblimit|.
     #[test]
     fn pbsquare_divides_the_residual_by_the_peak_and_the_model_by_pb_squared() {
-        // PB = 1, 0.5, 0.3 and 0.1: PB² = 1, 0.25, 0.09 and 0.01.
-        let response = MosaicSensitivity::new(&[4.0, 1.0, 0.36, 0.04])
+        // The weight is the sensitivity over a sum of weights of 1, so
+        // PBScale = √(4 / 1) = 2 and PBScale² = 4: PB² = |weight| / 4 = 1,
+        // 0.25, 0.09, 0.01 and, for the negative weight, 0.01 again.
+        let sensitivity = [4.0, 1.0, 0.36, 0.04, -0.04];
+        let response = MosaicSensitivity::new(&sensitivity)
             .unwrap()
-            .with_normal_sum_weight(4.0)
+            .with_normal_sum_weight(1.0)
             .unwrap();
         let pb = policy(0.2);
+        let residual = [8.0, 4.0, 2.0, 1.0, 1.0];
         let raw = response
-            .normalize(&[8.0, 4.0, 2.0, 1.0], ProductNormalization::PbSquare, pb)
+            .normalize(
+                &residual.map(|value| value as f32),
+                ProductNormalization::PbSquare,
+                pb,
+            )
             .unwrap();
-        assert_eq!(raw, [2.0, 1.0, 0.5, 0.25]);
+        // ÷ the peak 4, everywhere.
+        assert_eq!(raw, [2.0, 1.0, 0.5, 0.25, 0.25]);
         for family in [ResidualFamily::Single, ResidualFamily::Taylor] {
-            let weighted = (0..4)
+            let weighted = (0..sensitivity.len())
                 .map(|index| {
                     response
                         .normalize_weighted_residual_sample(
-                            [8.0, 4.0, 2.0, 1.0][index],
+                            residual[index],
                             index,
                             ProductNormalization::PbSquare,
                             family,
@@ -617,25 +627,40 @@ mod tests {
                         .unwrap()
                 })
                 .collect::<Vec<_>>();
-            // ÷ sumwt 2, then ÷ PBScale² = 1.
-            assert_eq!(weighted, [4.0, 2.0, 1.0, 0.5], "{family:?}");
+            // ÷ sumwt 2, then ÷ PBScale² = 4, everywhere.
+            assert_eq!(weighted, [1.0, 0.5, 0.25, 0.125, 0.125], "{family:?}");
         }
-        let apparent = (0..4)
-            .map(|index| {
-                response
-                    .physical_to_apparent(1.0, index, ProductNormalization::PbSquare, pb)
+        let convert = |cutoff: f32, to_apparent: bool| {
+            (0..sensitivity.len())
+                .map(|index| {
+                    if to_apparent {
+                        response.physical_to_apparent(
+                            1.0,
+                            index,
+                            ProductNormalization::PbSquare,
+                            policy(cutoff),
+                        )
+                    } else {
+                        response.apparent_to_physical(
+                            0.25,
+                            index,
+                            ProductNormalization::PbSquare,
+                            policy(cutoff),
+                        )
+                    }
                     .unwrap()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(apparent, [1.0, 0.25, 0.0, 0.0]);
-        let physical = (0..4)
-            .map(|index| {
-                response
-                    .apparent_to_physical(0.25, index, ProductNormalization::PbSquare, pb)
-                    .unwrap()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(physical, [0.25, 1.0, 0.0, 0.0]);
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(convert(0.2, true), [1.0, 0.25, 0.0, 0.0, 0.0]);
+        assert_eq!(convert(0.2, false), [0.25, 1.0, 0.0, 0.0, 0.0]);
+        // Below a cutoff of 0.005 the negative weight converts as its
+        // absolute value does (CASA's `abs(wt)`).
+        let square = f64::from(0.04_f32 / 4.0);
+        let apparent = convert(0.005, true);
+        assert_eq!(apparent[3..], [square, square]);
+        let physical = convert(0.005, false);
+        assert_eq!(physical[3..], [0.25 / square, 0.25 / square]);
     }
 
     #[test]
