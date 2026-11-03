@@ -84,7 +84,7 @@
     "nsigma": 5.0,
     "pblimit": -0.2
    },
-   "note": "#1079 with a negative pblimit: the residual carries no mask, so the automatic mask reads every pixel, except at the first boundary, where it takes calcRobustRMS's statistics inside the beam"
+   "note": "#1079 with a negative pblimit: the residual carries no mask, so the automatic mask reads every pixel, except at the first boundary, where it takes calcRobustRMS's statistics inside the beam; the baseline passes it too, so it guards the path rather than demonstrating the change"
   },
   "alma_mosaic_automask": {
    "vis": "alma",
@@ -96,10 +96,11 @@
     "specmode": "mfs",
     "gridder": "mosaic",
     "deconvolver": "hogbom",
-    "niter": 1000,
-    "usemask": "auto-multithresh"
+    "niter": 300,
+    "usemask": "auto-multithresh",
+    "sidelobethreshold": 0.1
    },
-   "note": "#1079: a three-field mosaic whose beam covers less than half its 48-arcsec image; the automatic mask's statistics inside the beam, where the normalized residual is not zero"
+   "note": "#1079: a three-field mosaic whose beam covers less than half its 48-arcsec image; the automatic mask's median and noise inside the beam, where the normalized residual is not zero. The data are noise-free, so a sidelobethreshold of 0.1 lets the noise threshold set the mask"
   },
   "alma_mosaic_automask_nsigma": {
    "vis": "alma",
@@ -111,11 +112,12 @@
     "specmode": "mfs",
     "gridder": "mosaic",
     "deconvolver": "hogbom",
-    "niter": 1000,
+    "niter": 300,
     "usemask": "auto-multithresh",
-    "nsigma": 3.0
+    "nsigma": 30.0,
+    "sidelobethreshold": 0.1
    },
-   "note": "#1079: the same mosaic with nsigma, whose threshold takes the automatic mask's median and noise"
+   "note": "#1079: the same mosaic with an nsigma of 30, whose threshold takes the automatic mask's median and noise"
   }
  }
 }
