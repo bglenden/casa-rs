@@ -531,6 +531,15 @@ fn spread_sample<T: GridScalar, const COMPENSATED: bool>(
     let table = cf.mueller().table(w_positive, false);
     let plane = layout.planes().local(placement.plane);
     let block_cells = layout.block_cells();
+    // A sectioned set weighs a clipped support by the taps it keeps.
+    let kept = match &clip {
+        Some((_, cells)) if cf.grid_edge() == GridEdge::Sectioned => Some(*cells),
+        _ => None,
+    };
+    let kernel_sum = |mueller: u8| match kept {
+        Some(cells) => kernel::clipped_norm(taps, location, cells, mueller, w_positive),
+        None => kernel::norm(taps, location, mueller, w_positive),
+    };
     for (gpol, row) in table.iter().enumerate() {
         // One value per Mueller plane this grid polarization takes.
         let mut planes = [(0_u8, Complex64::default()); 4];
@@ -563,12 +572,8 @@ fn spread_sample<T: GridScalar, const COMPENSATED: bool>(
             };
             let norm = match rule {
                 KernelNormalisation::UnitSum => 1.0,
-                KernelNormalisation::RealSum => {
-                    kernel::norm(taps, location, mueller, w_positive).re
-                }
-                KernelNormalisation::KernelSum => {
-                    kernel::norm(taps, location, mueller, w_positive).norm()
-                }
+                KernelNormalisation::RealSum => kernel_sum(mueller).re,
+                KernelNormalisation::KernelSum => kernel_sum(mueller).norm(),
             };
             for (power, term) in powers.iter().zip(terms.clone()) {
                 sumwt[layout.block_index(plane, gpol, term)] += f64::from(weight) * power * norm;

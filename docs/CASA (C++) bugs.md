@@ -13,7 +13,8 @@ CASA behaviours casa-rs follows for parity:
 [the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit),
 [the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans),
 [a moved pointing phased on its field](#smpredict-phases-a-moved-observemany-pointing-on-its-field),
-[`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing).
+[`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
+[W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
@@ -3106,3 +3107,30 @@ coordinates, with a `FIELD_ORDER` axis added for several fields. casa-rs
 forms the density once and grids with it in the same process, so it writes
 no such file; CASA 6.7.6.14 writes `tst2.gridwt` in
 `test_onefield_pcwdT_and_pcwdF`'s second call, whose other products agree.
+
+## W projection grids a support the grid's edge cuts, and never its last row and column
+
+- Date noted: 2026-11-03
+- Status: CASA behaviour casa-rs follows for parity, but for a write before
+  the grid it corrects (#980, `casa-imaging-operator` `GridEdge::Sectioned`)
+- Affected code: casatools `synthesis/TransformMachines2/WProjectFT.cc`
+  (`put`), `FTMachine.cc` (`findGridSector`), `synthesis/fortran/wprojgrid.f`
+  (`sectgwgridd`, `sectgwgrids`, `onmywgrid`, `sectdwgrid`, `owp`)
+
+`WProjectFT::put` grids through the sectioned `sectgwgridd`: each sector
+`findGridSector` cuts grids the taps of a sample that fall on it and adds
+`weight · Σ Re(cwt)` over those taps to `sumwt`, wherever the sample's anchor
+lies. A support that overruns the grid is therefore gridded in part and
+weighed by the part, where the unsectioned `gwgrid` and the degridder
+(`sectdwgrid` through `owp`) drop it. The sectors start at the 0-based
+`x0 = 0` and are compared with 1-based positions, so they cover every column
+and row but the grid's last, and a tap one column below the first lands at
+`grid(0, y)`, outside the array: in memory it is the last column of the row
+before. casa-rs grids the taps on the sectors and weighs them, as CASA does,
+never grids the last column and row, and drops a tap that would land before
+the grid instead of writing it elsewhere. Dropping the whole sample, as
+casa-rs did, left `test_cube_wproj_onefield`'s 1.5 and 1.8 GHz planes
+(`refim_oneshiftpoint.mosaic.ms`, four planes, whose supports overrun the
+grid at those frequencies) short of CASA's `sumwt` by 3.06 and 14.57 and
+their PSFs 3.6% and 5.3% apart in normalized RMS; they now agree with CASA
+6.7.6.14 to 8e-7.

@@ -559,7 +559,7 @@ fn locate_sample(
     let location = geometry.locate(u, v, placing.oversampling);
     let gridded = match cf.grid_edge() {
         GridEdge::Whole => geometry.fits(location, placing.half_support),
-        GridEdge::Clipped => geometry.reaches(location, placing.half_support),
+        GridEdge::Clipped | GridEdge::Sectioned => geometry.reaches(location, placing.half_support),
     };
     if !gridded {
         return None;

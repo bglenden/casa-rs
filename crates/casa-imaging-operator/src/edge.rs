@@ -5,6 +5,10 @@
 //!
 //! A set that drops a sample whose support overruns the grid
 //! ([`GridEdge::Whole`]) grids every placement the resampler keeps wholly.
+//! W projection's sectioned edge ([`GridEdge::Sectioned`]) clips the data
+//! and the PSF to the same sectors as the mosaic's, and every sample with a
+//! tap on them weighs, by the kernel sum of those taps
+//! ([`clipped_kernel_sum`](crate::clipped_kernel_sum)).
 //! The mosaic's clipped edge ([`GridEdge::Clipped`]) follows `MosaicFT::put`:
 //! - the data and the PSF go through `sectgmosd2` over the sectors
 //!   `FTMachine::findGridSector` cuts, which cover every row and column of
@@ -75,7 +79,7 @@ impl Reach {
                     Some(cells) if cells == support => Self::Whole,
                     Some(cells) => Self::Clipped {
                         cells,
-                        weighs: inside(location, extent),
+                        weighs: cf.grid_edge() == GridEdge::Sectioned || inside(location, extent),
                     },
                 }
             }
@@ -96,6 +100,22 @@ impl Reach {
             }
         }
     }
+}
+
+/// `Σ (conjugate ? conj(t) : t)` over the taps of Mueller plane `mueller`
+/// at `location`'s fine offset that land on `cells`: what a clipped
+/// placement of a [`GridEdge::Sectioned`] set adds to `sumwt` per unit
+/// weight (its real part, `wprojgrid.f` `sectgwgridd`'s `norm`), where a
+/// whole one adds the kernel sum over its support.
+#[must_use]
+pub fn clipped_kernel_sum(
+    taps: &crate::TapLayout<'_>,
+    location: CellLocation,
+    cells: CellBox,
+    mueller: u8,
+    conjugate: bool,
+) -> num_complex::Complex64 {
+    crate::cpu::kernel::clipped_norm(taps, location, cells, mueller, conjugate)
 }
 
 /// The cells of a support of `half` taps each side of `location`.

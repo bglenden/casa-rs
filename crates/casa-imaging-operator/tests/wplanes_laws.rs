@@ -2,7 +2,7 @@
 //! T0 laws of the W-projection kernel set: CASA's plane index, the
 //! zero-|w| plane against the standard spheroidal taps, w-sign conjugation
 //! pairing, the exact adjoint without a norm division, the `W · Re N`
-//! `sumwt` rule and the support crop.
+//! `sumwt` rule, the sectioned grid edge and the support crop.
 
 mod common;
 
@@ -63,14 +63,23 @@ fn operator_with(
     MeasurementOperator::new(geometry(), Basis::Constant, polarization, cf, precision)
 }
 
-/// Whether `placement`'s support fits the grid.
+/// Whether `placement`'s support lies on the sectors `WProjectFT`'s
+/// gridder covers, every column and row of the grid but its last
+/// ([`GridEdge::Sectioned`](casa_imaging_operator::GridEdge::Sectioned)):
+/// its prediction keeps the whole grid, so a support reaching the last
+/// column or row is not gridded as it is predicted, in CASA as here.
 fn fits(operator: &MeasurementOperator, placement: &Placement) -> bool {
     let mut hold = CellHold::new();
     let taps = operator.cf().taps(placement.cf, &mut hold);
     let location = operator
         .geometry()
         .locate(placement.u, placement.v, taps.oversampling());
-    operator.geometry().fits(location, taps.half_support())
+    let [hx, hy] = taps.half_support().map(i64::from);
+    let [nx, ny] = operator.geometry().grid_shape().map(|n| n as i64);
+    location.x - hx >= 0
+        && location.x + hx < nx - 1
+        && location.y - hy >= 0
+        && location.y + hy < ny - 1
 }
 
 /// Placements keyed by `cf` from random baselines with `w` in `±max_w`.
@@ -464,6 +473,98 @@ fn sumwt_accumulates_the_weight_times_the_real_kernel_sum() {
     assert!(
         (sumwt - weights.iter().sum::<f64>()).abs() > 1.0e-6,
         "complex planes make Re N differ from one"
+    );
+}
+
+/// `WProjectFT::put` grids through the sectioned `sectgwgridd` (#980): a
+/// sample whose support overruns the grid is gridded where its taps fall on
+/// the sectors, which reach every column of the grid but its last, and
+/// adds `W · Σ Re(cwt)` over those taps alone to `sumwt`, however far its
+/// anchor lies. Dropping such a sample, as the unsectioned `gwgrid` does,
+/// left the cube planes of `test_cube_wproj_onefield`'s higher windows a
+/// little short of CASA's `sumwt` and their PSFs 3.6% and 5.3% apart in
+/// normalized RMS.
+#[test]
+fn a_support_overrunning_the_grid_weighs_the_taps_the_sectors_keep() {
+    let operator = operator_with(Box::new(w_planes(16)), GridPrecision::F64);
+    let cf = operator.cf();
+    let geometry = operator.geometry();
+    let [nx, _] = geometry.grid_shape();
+    let [sx, _] = geometry.scale();
+    let w = 0.5 * 0.25 / WIDE_INCREMENT_RAD;
+    let key = cf.key(&context(), 1.0e9, w);
+    let mut hold = CellHold::new();
+    let taps = cf.taps(key, &mut hold);
+    let [hx, _] = taps.half_support();
+    // Walk u outwards a tenth of a cell at a time to the first anchor whose
+    // support overruns the grid's last column by two cells.
+    let step = 0.1 / sx;
+    let mut u = 0.0;
+    let location = loop {
+        let location = geometry.locate(u, 0.0, taps.oversampling());
+        if location.x + i64::from(hx) > nx as i64 {
+            break location;
+        }
+        u += step;
+    };
+    assert!(!geometry.fits(location, taps.half_support()));
+    let placed = vec![Placement {
+        u,
+        v: 0.0,
+        w,
+        prediction_w_positive: true,
+        phase: 0.0,
+        plane: 0,
+        spectral: 0.0,
+        cf: key,
+        gradient: [0.0; 2],
+    }];
+    let weights = [1.25, 0.75];
+    let values = [Complex64::new(1.0, 0.0); 2];
+    let block = buffer(&placed, &values, &weights, 2);
+    let (image, sumwt) = dirty(&operator, &block);
+    // The kept taps, summed from the cell's own table: the columns from
+    // the support's first to the grid's last but one.
+    let TapLayout::Dense {
+        data,
+        support,
+        oversampling,
+        mueller_planes,
+        ..
+    } = taps
+    else {
+        panic!("W planes are dense");
+    };
+    let [width, height] = support.map(usize::from);
+    let tile = (usize::from(location.oy) * (usize::from(oversampling) + 1)
+        + usize::from(location.ox))
+        * usize::from(mueller_planes);
+    let first_x = location.x - i64::from(hx);
+    let kept = data[tile * width * height..][..width * height]
+        .chunks_exact(width)
+        .flat_map(|row| {
+            row.iter()
+                .enumerate()
+                .filter(|(ix, _)| first_x + (*ix as i64) < nx as i64 - 1)
+                .map(|(_, tap)| f64::from(tap.re))
+        })
+        .sum::<f64>();
+    let whole = data[tile * width * height..][..width * height]
+        .iter()
+        .map(|tap| f64::from(tap.re))
+        .sum::<f64>();
+    let expected = 2.0 * kept;
+    assert!(
+        (sumwt - expected).abs() <= 1.0e-9 * expected.abs(),
+        "sumwt {sumwt}, the kept taps' W · Re N {expected}"
+    );
+    assert!(
+        (kept - whole).abs() > 1.0e-6 * whole.abs(),
+        "the support is clipped: kept {kept}, whole {whole}"
+    );
+    assert!(
+        image.iter().any(|value| *value != 0.0),
+        "the kept taps are gridded"
     );
 }
 
