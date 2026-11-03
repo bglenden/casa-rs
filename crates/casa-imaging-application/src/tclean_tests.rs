@@ -291,6 +291,24 @@ fn casa_values_become_the_request_casa_rs_runs() {
     }
 }
 
+/// tclean masks every channel and Stokes plane of its own
+/// (`SDMaskHandler::autoMaskByMultiThreshold`), and so does casa-rs: an
+/// automatic mask of a cube or of several Stokes planes is read when
+/// cleaning, no longer refused (#980).
+#[test]
+fn an_automatic_mask_of_a_cube_or_stokes_planes_is_read() {
+    for overrides in [
+        json!({ "usemask": "auto-multithresh", "stokes": "IQUV", "niter": 10 }),
+        json!({ "usemask": "auto-multithresh", "specmode": "cube", "nchan": 4, "niter": 10 }),
+        json!({ "usemask": "auto-multithresh", "specmode": "cube", "nchan": 4,
+                "stokes": "IQUV", "niter": 10 }),
+    ] {
+        let read = request(overrides.clone());
+        assert_eq!(read.usemask, crate::UseMask::AutoMultithresh, "{overrides}");
+        assert_eq!(read.niter, 10, "{overrides}");
+    }
+}
+
 /// A value casa-rs cannot honour is refused at its parameter, naming the
 /// issue that tracks it.
 #[test]
@@ -300,16 +318,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "deconvolver": "mem" }), "deconvolver", "#1060"),
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
         (json!({ "usemask": "pb" }), "usemask", "#1061"),
-        (
-            json!({ "usemask": "auto-multithresh", "stokes": "IQUV", "niter": 10 }),
-            "usemask",
-            "#980",
-        ),
-        (
-            json!({ "usemask": "auto-multithresh", "specmode": "cube", "nchan": 4, "niter": 10 }),
-            "usemask",
-            "#980",
-        ),
         (
             json!({ "specmode": "cube", "interpolation": "cubic" }),
             "interpolation",

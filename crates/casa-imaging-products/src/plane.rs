@@ -252,17 +252,22 @@ fn restored_plane(request: &PlaneMemberRequest<'_, '_, '_>) -> Result<Vec<f32>, 
     ))
 }
 
-/// The CLEAN mask's support on one domain: 1 where the minor cycle could
-/// clean, else 0; everywhere 1 without a mask.
+/// The CLEAN mask's support on one plane of one domain, channel `channel`
+/// and polarization `polarization`: 1 where the minor cycle could clean,
+/// else 0; everywhere 1 without a mask.
 pub(crate) fn reconstruction_support_plane(
     inputs: &ContinuumProductInputs<'_>,
     role: &ImageDomainRole,
+    (channel, polarization): (usize, usize),
     cells: usize,
 ) -> Vec<f32> {
-    let mask = reconstruction_mask_for_domain(inputs, role);
+    let plane = reconstruction_mask_for_domain(inputs, role).map(|mask| {
+        mask.plane(channel, polarization)
+            .expect("the run's reconstruction mask covers every plane of its domain")
+    });
     (0..cells)
         .map(|index| {
-            if mask.is_none_or(|mask| mask.support()[index]) {
+            if plane.is_none_or(|plane| plane[index]) {
                 1.0
             } else {
                 0.0

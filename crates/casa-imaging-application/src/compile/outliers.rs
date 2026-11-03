@@ -280,7 +280,10 @@ fn circle_mask(text: &str, image_size: [usize; 2]) -> Result<DomainMask, Outlier
             support.push(dx * dx + dy * dy <= radius_squared);
         }
     }
-    Ok(DomainMask::PixelSupport(support.into_boxed_slice()))
+    Ok(DomainMask::PixelSupport {
+        planes: casa_imaging_deconvolution::MaskPlanes::SHARED,
+        support: support.into(),
+    })
 }
 
 fn parse_pixels(text: &str) -> Result<f64, OutlierProblem> {
@@ -340,7 +343,7 @@ mod tests {
         assert_eq!(domains[0].image_size, [80, 80]);
         assert_eq!(domains[0].cell_arcsec, [8.0, 8.0]);
         assert_eq!(domains[0].output, directory.path().join("outlier"));
-        let DomainMask::PixelSupport(support) = &domains[0].mask else {
+        let DomainMask::PixelSupport { support, .. } = &domains[0].mask else {
             panic!("expected pixel support");
         };
         assert!(support[40 * 80 + 40]);
@@ -359,7 +362,7 @@ mod tests {
         let domains = read_outlier_domains(&path, [100; 2], [4.0; 2]).expect("compile outlier");
         assert_eq!(domains[0].image_size, [60, 40]);
         assert_eq!(domains[0].cell_arcsec, [8.0, 6.0]);
-        let DomainMask::PixelSupport(support) = &domains[0].mask else {
+        let DomainMask::PixelSupport { support, .. } = &domains[0].mask else {
             panic!("expected pixel support");
         };
         assert_eq!(support.len(), 60 * 40);
