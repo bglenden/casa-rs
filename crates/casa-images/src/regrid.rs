@@ -29,9 +29,9 @@
 //!
 //! The direction axes are regridded in the same frame, and a spectral axis
 //! that differs is regridded along frequency in the same frame
-//! ([`spectral`]: casacore's `regrid1D`, linear whatever the method, as
-//! `SIImageStore::regridToModelImage` asks for a start model). For every
-//! other coordinate:
+//! (the `spectral` module: casacore's `regrid1D`, linear whatever the
+//! method, as `SIImageStore::regridToModelImage` asks for a start model).
+//! For every other coordinate:
 //! - where all its axes have one pixel in both images, casacore does not
 //!   regrid it and the output keeps the input's coordinate (CASA 6.7.6 keeps
 //!   the input's channel and Stokes for a template at another frequency or
