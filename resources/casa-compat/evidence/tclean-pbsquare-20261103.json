@@ -16,7 +16,7 @@
  "driver": "tools/casa-compat/tclean_case_matrix.py, each case's CASA calls in a CASA process of their own",
  "limits": "exact image-product inventory and masks; NRMS <= 1e-3, .sumwt within 5e-5; WCS, units, beams; exact iterdone/nmajordone/stopcode; maxpsfsidelobe and cyclethreshold 1e-4 relative plus 1e-8 absolute",
  "outcome": {
-  "summary": "Every pbsquare case passes on the branch (worst product NRMS 5.1e-5) and is refused at the baseline; the four flat-noise mosaic cases beside test_widefield_mosaicft_mtmfs_pbsquare.1 pass unchanged."
+  "summary": "Every pbsquare case passes on the branch (worst product NRMS 5.1e-5) and is refused at the baseline; the four flat-noise mosaic cases beside test_widefield_mosaicft_mtmfs_pbsquare.1 pass unchanged. The negative-pblimit case added after review passes too (residual NRMS 5.1e-5 over the whole image)."
  },
  "archive": {
   "nas": "/Volumes/home/casa-rs/tclean/20261103/tclean-pbsquare-cf872db.tar",
@@ -1264,6 +1264,129 @@
       }
      }
     }
+   }
+  },
+  "branch_negative_pblimit": {
+   "native_revision": "188ce5e57b243b43b84e7f3769bc8dacfd6fc55e",
+   "binary_sha256": "5f08e9f5842df6bfab772ed8d304baf20f0a1697e0c31798e85db20d55490730",
+   "case_file": "resources/casa-compat/tclean-pb-masks-cases.json",
+   "case_file_sha256": "a99a2f72bec18559bd8ac0f5b93d825ea577bb0c09044021e3116f4ab58d2a29",
+   "backend": "cpu",
+   "precision": "f64",
+   "host": "macOS-27.0.1-arm64-arm-64bit",
+   "summary": {
+    "passed": 1,
+    "total": 1
+   },
+   "cases": {
+    "alma_mosaic_pbsquare_negative_pblimit": {
+     "passed": true,
+     "steps": [
+      {
+       "counts": {
+        "iterdone": {
+         "native": 200,
+         "casa": 200
+        },
+        "nmajordone": {
+         "native": 5,
+         "casa": 5
+        },
+        "stopcode": {
+         "native": 1,
+         "casa": 1
+        }
+       },
+       "summarymajor": {
+        "native": [
+         0,
+         61,
+         129,
+         195,
+         200
+        ],
+        "casa": [
+         0,
+         61,
+         129,
+         195,
+         200
+        ]
+       },
+       "scalars": {
+        "maxpsfsidelobe": {
+         "native": 0.17281141877174377,
+         "casa": 0.1728113889694214,
+         "passed": true
+        },
+        "cyclethreshold": {
+         "native": 0.0009648936684243381,
+         "casa": 0.0009649050189182162,
+         "passed": true
+        }
+       },
+       "elapsed_seconds": {
+        "native": 3.32,
+        "casa": 5.35
+       }
+      }
+     ],
+     "images": {
+      "img": {
+       "inventory_passed": true,
+       "products": {
+        "img.image": {
+         "nrms": 4.914584839018793e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.mask": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.model": {
+         "nrms": 4.0216861196187304e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.pb": {
+         "nrms": 7.750700882438515e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.psf": {
+         "nrms": 6.387311598223456e-08,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.residual": {
+         "nrms": 5.1231615534041155e-05,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.sumwt": {
+         "nrms": 0.0,
+         "mask_mismatch": 0,
+         "passed": true
+        },
+        "img.weight": {
+         "nrms": 2.4497814773128443e-07,
+         "mask_mismatch": 0,
+         "passed": true
+        }
+       }
+      }
+     }
+    }
+   },
+   "note": "After the review of 6d26afb: alma_mosaic_pbsquare_negative_pblimit, pbsquare under pblimit=-0.2, where CASA drops the residual's and the image's pixel masks, so the pbsquare residual past the PB is compared too. Release casars-imager and the casars Python package of 188ce5e, built in a private target on the Mac. The baseline refuses normtype='pbsquare' at the catalog, as it does the other cases.",
+   "archive": {
+    "nas": "/Volumes/home/casa-rs/tclean/20261103/tclean-pbsquare-negative-pblimit-188ce5e.tar",
+    "sha256": "5c54d8dce7a9a70dff4145ebeca5690f93daa38634cdf6b13b6ef00253c20588",
+    "bytes": 44990976,
+    "members": 202,
+    "contents": "the run directory without the staged input MeasurementSet, its log and revision, and the branch binary"
    }
   }
  }
