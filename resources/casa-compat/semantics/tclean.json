@@ -198,7 +198,8 @@
       "scope": "SIN (default), NCP (written as SIN with [0, cot dec0], as CASA writes it), TAN, ARC, STG, ZEA, CAR, SFL, MER and AIT: the image's direction coordinate records the projection and every placement on the image (mosaic and A-projection pointings, analytic primary beams, mask images, facet centres) converts through it; the gridded pixels do not depend on it, as in CASA. A name casacore does not know is refused as CASA refuses it; casacore's other projections are refused (issue 1101).",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "projections-20261103"
       ],
       "behaviors": [
         "gridders"
@@ -1814,6 +1815,23 @@
         "crates/casa-imaging-runtime/tests/minor_cycle_memory.rs",
         "crates/casa-imaging-products/tests/analytic_primary_beam.rs",
         "tools/casa-compat/tclean_case_matrix.py"
+      ]
+    },
+    "projections-20261103": {
+      "kind": "CASA tclean test-case matrix, casa-rs's own projection cases, CASA world coordinates, T1 laws",
+      "state": "passed",
+      "source_revision": "8587bae2dc419fd9bb56d90007d7daa2ae217d3b",
+      "revision": "6dab1256ccbb9f982ac55a25b0821452f4dbc524",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with tclean-casa-test-cases.json (test_onefield_projections.1-4) and tclean-projection-cases.json; tools/casa-compat/probe_tclean_projections.py",
+      "receipt": "resources/casa-compat/evidence/tclean-projections-20261103.json",
+      "scope": "tclean projection (#1064). test_onefield_projections.1-4 (SIN, NCP, TAN, ARC) and casa-rs's own cases (refim_twochan cleaned in each of SIN, NCP, TAN, ARC, STG, ZEA, CAR, SFL, MER and AIT; refim_mawproject's mosaic in NCP, TAN and CAR) pass every product, the direction coordinate's projection and parameters included, worst NRMS 7.1e-6. CASA's world coordinates of each projection's image, north and south of the equator, agree with casa-rs's direction coordinate to 1e-12 rad (each_projection_places_pixels_as_casa_does).",
+      "links": [
+        "resources/casa-compat/evidence/tclean-projections-20261103.json",
+        "resources/casa-compat/tclean-projection-cases.json",
+        "crates/casa-imaging-application/tests/data/projections-casa-6.7.6.14.json",
+        "crates/casa-imaging-model/src/sky_projection.rs",
+        "crates/casars-imager/tests/t1/projection.rs"
       ]
     }
   }
