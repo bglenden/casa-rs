@@ -64,18 +64,23 @@ def main() -> int:
         (package / "tools.py").write_text(STAND_IN, encoding="utf-8")
         (package / "data.py").write_text(DATA, encoding="utf-8")
         test = TESTS / f"test_tools_{args.tool}.py"
-        command = [sys.executable, "-m", "pytest", "-q", "-rA", "-p", "no:cacheprovider", str(test)]
-        result = subprocess.run(
-            command, cwd=TESTS, capture_output=True, text=True,
-            env={"PYTHONPATH": f"{scratch}:{TESTS}", "PATH": "/usr/bin:/bin", "HOME": str(Path.home())},
-        )
-    outcomes = {}
-    for line in result.stdout.splitlines():
-        match = OUTCOME.match(line)
-        if match:
-            outcomes[match.group(2).split("::", 1)[-1]] = match.group(1).lower()
+        env = {"PYTHONPATH": f"{scratch}:{TESTS}", "PATH": "/usr/bin:/bin", "HOME": str(Path.home())}
+        pytest = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider"]
+        collected = subprocess.run([*pytest, "-q", "--collect-only", str(test)], cwd=TESTS,
+                                   capture_output=True, text=True, env=env)
+        nodes = [line for line in collected.stdout.splitlines() if "::" in line]
+        # One process a test: a call that crashes CASA ends only its own test.
+        outcomes = {}
+        for node in nodes:
+            result = subprocess.run([*pytest, "-q", "-rA", node], cwd=TESTS, capture_output=True, text=True, env=env)
+            found = [m.group(1).lower() for m in map(OUTCOME.match, result.stdout.splitlines()) if m]
+            name = node.split("::", 1)[-1]
+            if found:
+                outcomes[name] = found[0]
+            else:
+                outcomes[name] = f"crashed (exit {result.returncode})"
     if not outcomes:
-        print(result.stdout[-3000:], result.stderr[-3000:], file=sys.stderr)
+        print(collected.stdout[-3000:], collected.stderr[-3000:], file=sys.stderr)
         return 1
     counts: dict[str, int] = {}
     for outcome in outcomes.values():
