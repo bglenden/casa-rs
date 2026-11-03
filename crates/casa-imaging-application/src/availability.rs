@@ -42,11 +42,6 @@ pub enum Unsupported {
     /// Facets grid with the standard kernel set. CASA refuses AW and mosaic
     /// facets; W-projection facets wait for a per-facet W set.
     FacetedKernelSet,
-    /// AW projection images a continuum or MT-MFS image. A cube would keep
-    /// each channel's weight image as its plane's sensitivity, as a mosaic
-    /// cube does, but its per-plane weights have no CASA comparison yet
-    /// (#719).
-    CubeAwProjection,
     /// AW projection grids a square image of square cells: its native
     /// convolution functions and their cache are laid out on one axis.
     NonSquareAwProjection,
@@ -84,10 +79,6 @@ impl fmt::Display for Unsupported {
             Self::FacetedKernelSet => {
                 formatter.write_str("facets grid with the standard gridder only (#1063)")
             }
-            Self::CubeAwProjection => formatter.write_str(
-                "AW projection images specmode mfs; a cube waits for its per-plane weight check \
-                 (#719)",
-            ),
             Self::NonSquareAwProjection => formatter.write_str(
                 "AW projection images a square imsize of square cells; the standard, W and \
                  mosaic gridders image any other",
@@ -220,15 +211,6 @@ pub fn check(
         if !crate::imaging::standard_kernel_set(problem) {
             unsupported.push(Unsupported::FacetedKernelSet);
         }
-    }
-    if matches!(
-        problem.reconstruction().basis(),
-        ReconstructionBasis::ChannelLocal { .. }
-    ) && problem
-        .required_capabilities()
-        .contains(&RequiredCapability::AwProjection)
-    {
-        unsupported.push(Unsupported::CubeAwProjection);
     }
     if problem
         .required_capabilities()

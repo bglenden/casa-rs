@@ -312,7 +312,6 @@ pub(crate) fn domain_operator(
         correlations,
         problem.reconstruction().polarization().coordinates(),
     )?;
-    // An AW cube is refused by the gate (`Unsupported::CubeAwProjection`).
     let basis = basis(problem)?;
     let resampler = resampler(problem, basis)?;
     let (cf, kernels) = kernel_set(
