@@ -141,9 +141,13 @@ fn an_mfs_start_model_has_one_plane_at_any_frequency() {
     let samples =
         main_samples(&path, template(&[StokesType::I], 1, 1.2e9)).expect("another frequency");
     assert_eq!(samples[SIDE + 2], 5.0, "the plane is seeded as it is");
+    // A cube start model is regridded along frequency onto the MFS plane
+    // (#1067, `regridToModelImage`): at 1.0015 GHz, halfway between its
+    // second and third channels.
     let cube = start_model(dir.path(), &[StokesType::I], 4, 1.0e9);
-    seeding_bytes(&cube, template(&[StokesType::I], 1, 1.0e9))
-        .expect_err("four planes are not an MFS start model");
+    let samples = main_samples(&cube, template(&[StokesType::I], 1, 1.0015e9))
+        .expect("the cube interpolated at the plane's frequency");
+    assert_eq!(samples[SIDE + 2], 5.0 + 1500.0);
 }
 
 #[test]
@@ -158,7 +162,18 @@ fn a_cube_start_model_has_the_cubes_spectral_axis() {
             "channel {channel}"
         );
     }
-    seeding_bytes(&cube, template(&[StokesType::I], 4, 1.1e9)).expect_err("another spectral axis");
+    // Another spectral axis is regridded along frequency (#1067): half a
+    // channel above, each channel takes the line between two of the
+    // model's, and the last, beyond the model, its last channel's value.
+    let shifted = main_samples(&cube, template(&[StokesType::I], 4, 1.0005e9))
+        .expect("another spectral axis");
+    for (channel, expected) in [505.0, 1505.0, 2505.0, 3005.0].into_iter().enumerate() {
+        assert_eq!(
+            shifted[channel * SIDE * SIDE + SIDE + 2],
+            expected,
+            "channel {channel}"
+        );
+    }
     let plane = start_model(dir.path(), &[StokesType::I], 1, 1.0e9);
     seeding_bytes(&plane, template(&[StokesType::I], 4, 1.0e9))
         .expect_err("one plane is not a cube's start model");
