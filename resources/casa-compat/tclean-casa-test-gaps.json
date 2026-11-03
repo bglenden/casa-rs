@@ -3,20 +3,20 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "f68c54415fd56455a169ef749e892138738d2156",
+  "casa_rs_revision": "4f822579e65d3c177006c3c4039e8918563c7a06",
   "parameter_surfaces_sha256": "ccb7861fc6fdf72bcf868ebe75929970281308a10c6a82b017cbfffefc6c24fb",
   "parameter_catalog_sha256": "2feb237df1620d8b3ef76fd219fd27a252ca8e54621238aa91f0ce93b5acf5b9",
-  "tclean_rs_sha256": "d9e57a53b1fe1dd27c0e77fad333f76d55728cf79132794aa9c0784787855aaf",
+  "tclean_rs_sha256": "43808e39accc2c26bb9d025f90fdb34213d7509c4f9c0ae80dc36df23f81bf0e",
   "tclean_contract_version": 38
  },
  "totals": {
   "resolved_cases": 354,
   "cases_where_casa_expects_an_error": 4,
   "cases_counted": 350,
-  "cases_with_no_refusal": 239,
-  "cases_with_a_gap": 111,
+  "cases_with_no_refusal": 241,
+  "cases_with_a_gap": 109,
   "cases_with_only_refusals_casa_shares": 0,
-  "single_call_cases_with_no_refusal": 196
+  "single_call_cases_with_no_refusal": 198
  },
  "gaps": [
   {
@@ -118,25 +118,11 @@
    ]
   },
   {
-   "reason": "mask: a region other than integer pixel boxes",
-   "source": "tclean.rs not_yet",
-   "issue": 980,
-   "cases": 5,
-   "sole_blocker": 2,
-   "examples": [
-    "test_onefield.test_onefield_asp.2",
-    "test_onefield.test_onefield_asp.3",
-    "test_onefield.test_onefield_asp.4",
-    "test_mask.test_mask_1.2",
-    "test_mask.test_mask_2.2"
-   ]
-  },
-  {
    "reason": "deconvolver='asp'",
    "source": "tclean.rs not_yet",
    "issue": 223,
    "cases": 4,
-   "sole_blocker": 1,
+   "sole_blocker": 4,
    "examples": [
     "test_onefield.test_onefield_asp.1",
     "test_onefield.test_onefield_asp.2",
@@ -440,12 +426,6 @@
      "source": "tclean.rs not_yet",
      "issue": 223,
      "call": 2
-    },
-    {
-     "reason": "mask: a region other than integer pixel boxes",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
     }
    ]
   },
@@ -457,12 +437,6 @@
      "source": "tclean.rs not_yet",
      "issue": 223,
      "call": 3
-    },
-    {
-     "reason": "mask: a region other than integer pixel boxes",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 3
     }
    ]
   },
@@ -473,12 +447,6 @@
      "reason": "deconvolver='asp'",
      "source": "tclean.rs not_yet",
      "issue": 223,
-     "call": 4
-    },
-    {
-     "reason": "mask: a region other than integer pixel boxes",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
      "call": 4
     }
    ]
@@ -1489,26 +1457,12 @@
    "refusals": []
   },
   "test_mask.test_mask_1.2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "mask: a region other than integer pixel boxes",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_mask.test_mask_2.2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "mask: a region other than integer pixel boxes",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_mask.test_mask_autobox_multithresh.1": {
    "runs_without_refusal": true,
