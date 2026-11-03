@@ -3,11 +3,11 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "f7f1fe8b3c3bd716282891065347e6c52eb7583a",
-  "parameter_surfaces_sha256": "c9aea577b482e1dbeb5da1700e1e165dc3dba6a05e9e93afd13f6c82ee01422c",
+  "casa_rs_revision": "deac0b59412f9a50dfcf08e95adc28caf0764d1b",
+  "parameter_surfaces_sha256": "f45728b8db6464d72fb0a90b2bacc843e705ea36e3690bea9b6077bbebc77ed6",
   "parameter_catalog_sha256": "2feb237df1620d8b3ef76fd219fd27a252ca8e54621238aa91f0ce93b5acf5b9",
   "tclean_rs_sha256": "22e898a28868886979b64adccec55f418f02b694ccdd28624611bb1f70362a82",
-  "tclean_contract_version": 39
+  "tclean_contract_version": 40
  },
  "totals": {
   "resolved_cases": 354,

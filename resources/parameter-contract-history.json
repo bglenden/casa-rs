@@ -4730,8 +4730,8 @@
     },
     {
       "id": "tclean",
-      "contract_version": 39,
-      "fingerprint": "6cad368650207a8acabb1177cdb3a7f083ee57865dee4f5e4714d07327b5919b"
+      "contract_version": 40,
+      "fingerprint": "49bbb73d398dafff2d592d6b18aec656732426b6cb0de68598b702d85bfc36ac"
     },
     {
       "id": "uvcontsub",
