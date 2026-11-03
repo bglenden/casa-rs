@@ -140,22 +140,23 @@ fn normalize_domain_plane(
 ) -> Result<Vec<f32>, ProductsError> {
     match normalization {
         ProductNormalization::UnitResponse => Ok(normalize_plane(values, plane.sum_weight())),
-        ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
-            MosaicSensitivity::new(&plane.read_sensitivity()?)?.normalize(
+        ProductNormalization::FlatNoise
+        | ProductNormalization::FlatSky
+        | ProductNormalization::PbSquare => MosaicSensitivity::new(&plane.read_sensitivity()?)?
+            .normalize(
                 values,
                 normalization,
                 inputs.problem().products().validity().primary_beam(),
-            )
-        }
+            ),
     }
 }
 
-/// The model in the units CASA restores and publishes: under flat-noise
-/// with a direction-dependent sensitivity the apparent model, the physical
-/// model the lifecycle holds times the unit-peak beam and zero outside its
-/// support (`SynthesisNormalizer::multiplyModelByWeight` after every major
-/// cycle); the physical model otherwise (flat-sky, or a scalar
-/// sensitivity).
+/// The model in the units CASA restores and publishes: under flat noise or
+/// pbsquare with a direction-dependent sensitivity the apparent model, the
+/// physical model the lifecycle holds through the unit-peak PB (flat
+/// noise) or PB² (pbsquare) and zero outside its support
+/// (`SynthesisNormalizer::multiplyModelByWeight` after every major cycle);
+/// the physical model otherwise (flat-sky, or a scalar sensitivity).
 pub(crate) fn apparent_model(
     model: Vec<f32>,
     plane: &FinalNormalPlaneReader<'_>,
@@ -166,7 +167,9 @@ pub(crate) fn apparent_model(
     if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
         || !matches!(
             normalization,
-            ProductNormalization::FlatNoise | ProductNormalization::FlatSky
+            ProductNormalization::FlatNoise
+                | ProductNormalization::FlatSky
+                | ProductNormalization::PbSquare
         )
     {
         return Ok(model);
