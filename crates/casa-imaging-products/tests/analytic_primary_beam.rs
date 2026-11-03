@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The analytic primary beam the minor cycle reads (#1078) is the one the
-//! products publish: `AnalyticPrimaryBeam` gives `.pb`'s values where it
-//! keeps them and `.pb`'s mask as its support, refuses the frequencies
-//! planning refuses, and is no beam of a mosaic's, whose `.pb` is the
-//! weight image's.
+//! The wiring of the analytic primary beam the minor cycle reads (#1078):
+//! `AnalyticPrimaryBeam` is the beam the products publish, giving `.pb`'s
+//! values where it keeps them and `.pb`'s mask as its support; it refuses
+//! the frequencies planning refuses, and is no beam of a mosaic's, whose
+//! `.pb` is the weight image's. Both sides form the beam the same way, so
+//! these tests check the wiring, not CASA: the beam's values are held to
+//! CASA's in `analytic_beam`'s unit tests and by the T1.5 rows.
 
 mod common;
 use common::continuum::{
@@ -23,8 +25,10 @@ use casa_imaging_products::{
     ContinuumProductInputs, PlannedContinuumGeneration, ProductsError, produce_continuum_members,
 };
 
+/// The minor cycle and the products are wired to one beam: the support
+/// is `.pb`'s mask and the values `.pb`'s where it keeps them.
 #[test]
-fn the_minor_cycle_reads_the_published_analytic_beam() {
+fn the_minor_cycle_and_the_products_share_one_analytic_beam() {
     let problem = continuum_problem_with_reconstruction(
         109,
         &[

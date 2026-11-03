@@ -190,11 +190,13 @@ impl MinorLayout {
     }
 
     /// Heap bytes the PSF cache keeps once every plane's PSF is measured: a
-    /// summary per plane in its B-tree, charged twice for the tree's nodes.
-    /// It outlives each minor cycle; the run holds it with the masks.
+    /// summary per plane in its B-tree, charged twice for the tree's nodes,
+    /// and whether each image domain's beam keeps a pixel. It outlives
+    /// each minor cycle; the run holds it with the masks.
     #[must_use]
     pub fn psf_cache_bytes(&self) -> u64 {
-        self.planes as u64 * 2 * size_of::<(PlaneKey, PsfSummary)>() as u64
+        (self.planes * 2 * size_of::<(PlaneKey, PsfSummary)>()
+            + self.domains.len() * size_of::<bool>()) as u64
     }
 
     /// Heap bytes preparation records for each of its planes beside the
