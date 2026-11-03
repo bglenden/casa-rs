@@ -367,5 +367,5 @@ def test_framenow_sets_an_epoch() -> None:
 @pytest.mark.parametrize("method", sorted(NOT_YET_IMPLEMENTED))
 def test_unimplemented_methods_raise_not_implemented(method: str) -> None:
     required = [entry for entry in CASA["methods"][method] if entry["default"] is None]
-    with pytest.raises(NotImplementedError, match=f"measures.{method} is not yet implemented in casa-rs"):
+    with pytest.raises(NotImplementedError, match=rf"^measures\.{method} is not yet implemented in casa-rs \(#1053\)$"):
         getattr(measures(), method)(*[{} for _ in required])

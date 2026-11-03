@@ -22,6 +22,10 @@ use:
 - `itrf2loc`, `baselineLengths` and `approxBeam`;
 - the sky-model helpers `modifymodel` and `flatimage`.
 
+CASA's other public methods exist with CASA's signatures and raise
+`NotImplementedError` naming issue #1053, which records which ones casa-rs
+will implement.
+
 `casars.simutil` is the class's public import: CASA's `private` path would
 mislabel a supported entry point.
 """

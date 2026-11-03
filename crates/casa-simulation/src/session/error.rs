@@ -13,8 +13,8 @@ pub enum CasaOutcome {
     /// CASA raises `RuntimeError` with the message.
     Raises,
     /// CASA does this, and casa-rs does not yet: a binding raises
-    /// `NotImplementedError` with the message, which names the simulation
-    /// phase that implements it.
+    /// `NotImplementedError` with the message, which names the issue that
+    /// records it.
     NotYetImplemented,
 }
 
@@ -47,7 +47,7 @@ impl SimulatorError {
     }
 
     /// Something CASA does that casa-rs does not yet; `message` names the
-    /// simulation phase that implements it.
+    /// issue that records it, as `(#N)` (`tests/refusals_name_an_issue.rs`).
     pub fn not_yet_implemented(message: impl Into<String>) -> Self {
         Self::new(message, CasaOutcome::NotYetImplemented)
     }

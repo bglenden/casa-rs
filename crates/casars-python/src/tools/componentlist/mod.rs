@@ -8,7 +8,7 @@
 //! `rename`, `close`, `done`, `length`, `torecord`, `getspectrum`,
 //! `getrefdir`), with the accessors `getcomponent`, `getfluxvalue`,
 //! `getfluxunit`, `getlabel`, `shapetype` and `spectrumtype`; the rest raise
-//! `NotImplementedError`.
+//! `NotImplementedError` naming #1053.
 //!
 //! CASA's outcomes are kept ([`ops`] for the table, `add` for
 //! `addcomponent`): what CASA raises is a `RuntimeError` with CASA's
@@ -36,7 +36,7 @@ use pyo3::prelude::*;
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, DoubleList, Variant};
-use crate::tools::{LogLine, emit, not_yet_implemented};
+use crate::tools::{LogLine, emit, not_yet_implemented_in};
 use add::AddComponent;
 use ops::State;
 
@@ -89,9 +89,10 @@ impl Drop for PyComponentList {
     }
 }
 
-/// A method a later phase implements.
+/// A method casa-rs does not implement yet, refused naming #1053, which
+/// classifies them.
 fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented("componentlist", method)
+    not_yet_implemented_in("componentlist", method, 1053)
 }
 
 #[pymethods]

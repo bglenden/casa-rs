@@ -233,7 +233,7 @@ def test_casa_exceptions_raise_runtime_error(call: Any, message: str) -> None:
 @pytest.mark.parametrize("method", sorted(NOT_YET_IMPLEMENTED))
 def test_unimplemented_methods_raise_not_implemented(method: str) -> None:
     required = [entry for entry in CASA["methods"][method] if entry["default"] is None]
-    with pytest.raises(NotImplementedError, match=f"quanta.{method} is not yet implemented in casa-rs"):
+    with pytest.raises(NotImplementedError, match=rf"^quanta\.{method} is not yet implemented in casa-rs \(#1053\)$"):
         getattr(quanta(), method)(*["x" for _ in required])
 
 

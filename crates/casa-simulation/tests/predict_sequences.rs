@@ -212,7 +212,7 @@ fn predict_refuses_as_casa_does() {
     // What CASA does and casa-rs does not yet.
     let (outcome, message) = refusal(sm.predict(&spec(&[&model, &model])));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("Phase 2"), "{message}");
+    assert!(message.contains("#1053"), "{message}");
     // A component list that is not a readable table is CASA's False.
     let (outcome, message) = refusal(sm.predict(&PredictSpec {
         component_lists: vec![directory.path().join("model.cl")],
@@ -277,7 +277,7 @@ fn a_beam_on_a_moved_pointing_is_refused() {
         let (outcome, message) = refusal(sm.predict(&predict));
         assert_eq!(outcome, CasaOutcome::NotYetImplemented, "{what}");
         assert!(
-            message.contains("pointed away") && message.contains("#884"),
+            message.contains("pointed away") && message.contains("#1053"),
             "{what}: {message}"
         );
         sm.set_vp(&no_beam).expect("setvp");
@@ -590,7 +590,7 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
     let (outcome, message) = refusal(vla.predict(&spec(&[&model])));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
     assert!(
-        message.contains("SMA") && message.contains("#841"),
+        message.contains("SMA") && message.contains("#1053"),
         "{message}"
     );
     vla.set_vp(&VoltagePatternSpec {
@@ -611,7 +611,7 @@ fn setvp_setoptions_and_the_session_refuse_what_casa_rs_lacks() {
         ..PredictionOptions::default()
     }));
     assert_eq!(outcome, CasaOutcome::NotYetImplemented);
-    assert!(message.contains("#841"), "{message}");
+    assert!(message.contains("#1053"), "{message}");
     // SDGrid's Gaussian kernels.
     for grid_function in ["GAUSS", "GJINC"] {
         let (outcome, message) = refusal(vla.set_options(&PredictionOptions {
