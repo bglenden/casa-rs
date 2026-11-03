@@ -141,7 +141,7 @@ fn contradictory_parameters_are_refused_before_any_data_is_read() {
             "nterms, deconvolver",
         ),
         (
-            json!({ "deconvolver": "mtmfs", "nterms": 2, "specmode": "cube" }),
+            json!({ "deconvolver": "mtmfs", "nterms": 2, "specmode": "cubesource" }),
             "deconvolver, specmode",
         ),
         (json!({ "savemodel": "modelcolumn" }), "savemodel, niter"),

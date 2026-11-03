@@ -614,14 +614,25 @@ impl<'a> SolvedFamily<'a> {
             None => vec![vec![0.0; cells]; terms],
         };
 
-        let pb0 = principal_primary_beam(
-            inputs,
-            domain_role,
-            shape,
+        // An empty family's weights are zero: a beam formed from them has
+        // no support, as its other products have no values. An analytic beam
+        // is the telescope's, whatever the plane.
+        let weight_beam = matches!(
             primary_beam_model,
-            directional,
-            &family.weight[0],
-        )?;
+            None | Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
+        );
+        let pb0 = if weight_beam && empty_family(state, polarization) {
+            vec![0.0; cells]
+        } else {
+            principal_primary_beam(
+                inputs,
+                domain_role,
+                shape,
+                primary_beam_model,
+                directional,
+                &family.weight[0],
+            )?
+        };
         let (primary_beam_validity, pb_corrected) =
             primary_beam_corrected(inputs.problem().products().validity(), &pb0, &restored)?;
         let mut primary_beam = vec![vec![0.0; cells]; terms];

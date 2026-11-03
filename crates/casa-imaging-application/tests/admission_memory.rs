@@ -536,11 +536,9 @@ fn continuum_runs_stay_within_their_admission() {
         ),
         ("mtmfs", json!({ "deconvolver": "mtmfs", "nterms": 2 })),
         (
-            "mtmfs one term",
+            "mtmfs 1 term",
             json!({ "deconvolver": "mtmfs", "nterms": 1 }),
         ),
-        // A Taylor family per Stokes plane, in the minor cycle and the
-        // products.
         (
             "mtmfs IQUV",
             json!({ "deconvolver": "mtmfs", "nterms": 2, "stokes": "IQUV" }),
@@ -1318,10 +1316,9 @@ fn mtmfs_controls() -> Value {
     })
 }
 
-/// #738: MT-MFS at 1024² and 2048² on one worker, at 1024² on four, and of
-/// full Stokes at 1024² on one,
-/// whose per-worker charges (chunks, transform planes, minor-cycle loads)
-/// grow with the workers, is admitted close to what it holds. Before the
+/// #738: MT-MFS at 1024² and 2048² on one worker, at 1024² on four, whose
+/// per-worker charges (chunks, transform planes, minor-cycle loads) grow
+/// with the workers, and of full Stokes, is admitted close to what it holds. Before the
 /// charges followed their owners' footprints the 2048² run reserved 2.25 GB
 /// for a peak of 1.57 GB: the minor cycle charged the plane loads and the
 /// Taylor solver's transients as if they all coexisted, and the first pass
@@ -1347,17 +1344,11 @@ fn mtmfs_is_admitted_close_to_what_it_holds() {
     ] {
         let stokes = controls["stokes"].as_str().unwrap_or("I");
         let label = format!("mtmfs {stokes} {imsize} px {workers} workers");
+        let image = root.path().join(label.replace(' ', "-"));
         let measured = check(
             &mut breaches,
             &label,
-            &request(
-                &measurement_set,
-                &root
-                    .path()
-                    .join(format!("mtmfs-{stokes}-{imsize}-{workers}")),
-                imsize,
-                controls,
-            ),
+            &request(&measurement_set, &image, imsize, controls),
             workers,
             AMPLE,
         );

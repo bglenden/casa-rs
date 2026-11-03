@@ -185,7 +185,7 @@
     },
     "stokes": {
       "status": "Partial",
-      "scope": "Native Stokes/correlation coordinates; full-Stokes and basis-dependent combinations require their own acceptance, not an I-plane inference.",
+      "scope": "Native Stokes/correlation coordinates; full-Stokes and basis-dependent combinations require their own acceptance, not an I-plane inference. With mtmfs every Stokes plane is a Taylor family of its own, cleaned and restored with its own beam, and the spectral index is written only for Stokes I alone (issue 1065).",
       "evidence": [
         "signature",
         "reader"
@@ -513,7 +513,7 @@
     },
     "deconvolver": {
       "status": "Partial",
-      "scope": "hogbom/clark/multiscale/mtmfs pass; asp refused with issue 223; other CASA algorithms refused with issue 823.",
+      "scope": "hogbom/clark/multiscale/mtmfs pass; asp refused with issue 223; other CASA algorithms refused with issue 823. mtmfs with specmode cube or cubedata is refused, as CASA's tclean warns and images nothing.",
       "evidence": [
         "signature",
         "reader"
@@ -535,7 +535,7 @@
     },
     "nterms": {
       "status": "Partial",
-      "scope": "Used only by mtmfs; other deconvolvers force one. mtmfs nterms=1 refused (issue 980); request enforces >1 exactly for mtmfs.",
+      "scope": "Used only by mtmfs; other deconvolvers force one. mtmfs takes nterms >= 1: one term images a Taylor family of one (.tt0 products, no spectral index), as CASA does (issue 1065); request refuses more than one term without mtmfs.",
       "evidence": [
         "signature",
         "reader"

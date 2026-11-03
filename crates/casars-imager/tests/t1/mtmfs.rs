@@ -312,12 +312,18 @@ fn full_stokes_taylor_families_image_each_stokes_plane_on_its_own() {
         .expect("image info")
         .beam_set;
     assert_eq!(beams.n_stokes(), 4);
+    // Q and U fit the unnormalized PSF CASA's conversion gives them, Stokes
+    // I's, where I and V fit theirs over the sum of weights: the same beam
+    // to rounding.
     let i_beam = i_only.get(".image.tt0").restoring_beam();
+    let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * b.abs().max(1e-12);
     for stokes in 0..4 {
-        assert_eq!(
-            *beams.beam(0, stokes),
-            i_beam,
-            "Stokes plane {stokes}'s beam"
+        let beam = beams.beam(0, stokes);
+        assert!(
+            close(beam.major, i_beam.major)
+                && close(beam.minor, i_beam.minor)
+                && close(beam.position_angle, i_beam.position_angle),
+            "Stokes plane {stokes}'s beam {beam:?}, Stokes I's {i_beam:?}"
         );
     }
 }
