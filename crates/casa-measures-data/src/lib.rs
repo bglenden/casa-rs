@@ -1411,6 +1411,7 @@ mod tests {
         // casacore's QC::HI, which the table also holds (CASA 6.7.6.14's
         // me.spectralline('HI')).
         assert_eq!(hi.frequency_hz(), 1_420_405_751.786);
+        assert_eq!(hi.frequency_ghz * 1.0e9, hi.frequency_hz());
         let tai_minus_utc = runtime.tai_minus_utc_seconds(51_544.5).expect("TAI-UTC");
         assert!((tai_minus_utc - 32.0).abs() < 1e-6);
         let utc = runtime

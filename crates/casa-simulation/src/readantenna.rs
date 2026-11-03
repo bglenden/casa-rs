@@ -52,9 +52,10 @@
 //! 2. A known observatory: the measures provider's observatory table
 //!    (CASA's `me.observatory`), converted to WGS 84. The name matches as
 //!    casacore's `MeasTable::Observatory` matches it: a case-insensitive
-//!    exact match, else the one table name that is a prefix of the
-//!    telescope name (CASA's `aca.tp.cfg` says `observatory=ALMASD`, which
-//!    is ALMA). Two such names (`GB` and `GBT` for `GBTX`) match none.
+//!    exact match, else the one table name that agrees with the telescope
+//!    name over the shorter of their lengths (CASA's `aca.tp.cfg` says
+//!    `observatory=ALMASD`, which is ALMA). Two such names (`GB` and `GBT`
+//!    for `GBTX`) match none.
 //! 3. Otherwise a `LOC` file is an error, and for absolute coordinates the
 //!    observatory is the mean antenna position, converted to WGS 84 with
 //!    [`geodesy::xyz_to_geodetic`].

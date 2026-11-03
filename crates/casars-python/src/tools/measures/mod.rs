@@ -24,8 +24,6 @@
 //! - codes casa-types does not convert (`B1950_VLA`, `BMEAN`, `BTRUE`, the
 //!   planets, `COMET`, `Undefined`) define and show but do not convert, and
 //!   `R_` (razing) codes are not read;
-//! - observatory names match exactly (case-insensitively), where casacore
-//!   also accepts a unique prefix;
 //! - measure offsets and multi-valued measures are not yet implemented.
 
 mod define;

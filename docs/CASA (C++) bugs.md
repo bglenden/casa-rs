@@ -2139,21 +2139,23 @@ Earth. Choosing the other column per row would need knowing which one was
 meant, and would make casa-rs and CASA disagree about the same data; the
 correction belongs in the table.
 
-## `me.source` skips only leading spaces
+## `MDirection::from_source_name` trims a source name
 
 - Date noted: 2026-11-03
 - Status: casa-rs is more lenient (#1110)
-- Affected code: casatools `measures::source`; casa-types
+- Affected code: casacore `MeasTable::Source`; casa-types
   `measures/direction.rs` (`parse_named_direction`)
 
-casa-rs and casacore find a source by name with casacore's
-`MUString::minimaxNC`, which keeps spaces. CASA 6.7.6.14's `me.source`
-also finds `'  0002-478'`, with leading spaces, but not `'\t0002-478'`, with
-a tab. casa-rs's direction-name parser trims every kind of surrounding white
-space, a tab too, before it looks a name up; it reads planets and
-`ZENITH` the same way. Only a leading tab finds a source in casa-rs and
-not in CASA. `me.observatory` and `me.spectralline` keep their spaces, as
-CASA's do: `' ALMA'` finds nothing in either.
+casacore finds a source by name with `MUString::minimaxNC`, which keeps
+spaces, and so does casa-rs's measures data. CASA 6.7.6.14's `me.source`
+reads its argument as a direction string first, splitting it at spaces:
+it finds `'  0002-478'`, with leading spaces, but not `'\t0002-478'`, with a
+tab. casa-rs's `me.source` splits the same way and agrees on both.
+casa-rs's Rust `MDirection::from_source_name`, which TaQL's measures
+functions and the derived MeasurementSet columns use, trims every kind of
+surrounding white space, a tab too, before it looks a name up, as it does
+for planets and `ZENITH`; there a name with leading white space finds a
+source that casacore's `MeasTable::Source` would not.
 
 ## `direction_splitter` cannot split a direction without an epoch
 
