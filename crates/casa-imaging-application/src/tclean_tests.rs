@@ -162,16 +162,11 @@ fn parameters_a_mode_does_not_read_are_ignored() {
 /// What the catalog takes only at tclean's default, wherever CASA reads it.
 #[test]
 fn the_catalog_refuses_what_casa_reads_in_every_mode() {
-    for (overrides, issue) in [
-        // CASA reads psfphasecenter for every gridder named for a mosaic.
-        (
-            json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" }),
-            "#1062",
-        ),
-    ] {
-        let error = resolved(overrides.clone()).expect_err("refused at the catalog");
-        assert!(error.to_string().contains(issue), "{overrides}: {error}");
-    }
+    // CASA reads psfphasecenter for every gridder named for a mosaic.
+    let overrides =
+        json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" });
+    let error = resolved(overrides.clone()).expect_err("refused at the catalog");
+    assert!(error.to_string().contains("#1062"), "{overrides}: {error}");
 }
 
 #[test]
