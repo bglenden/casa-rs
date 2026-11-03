@@ -501,8 +501,9 @@ impl<'a> SolvedFamily<'a> {
             .published_sum_weight(0, polarization)
             .expect("the zeroth published sum of weights");
         // Every Stokes plane of a Taylor term has the first correlation's
-        // sum of weights (`MultiTermFTNew`), so a family with none has no
-        // data at all.
+        // sum of weights (`MultiTermFTNew`). With none, CASA writes every
+        // plane as zeros, whatever the other correlations hold; casa-rs
+        // refuses (#1109, `docs/CASA (C++) bugs.md`).
         for sum_weight in [principal_sum_weight, residual_sum_weight] {
             if !(sum_weight.is_finite() && sum_weight > 0.0) {
                 return Err(ProductsError::PrincipalSumWeight { sum_weight });

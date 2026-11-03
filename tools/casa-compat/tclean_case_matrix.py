@@ -47,6 +47,7 @@ import contextlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -214,8 +215,11 @@ def compare_step(casa, native, case):
         }
     if casa["result"] is None:
         # CASA's task declined to image (it warns and returns None, as for
-        # mtmfs with a cube): casa-rs must refuse it too.
-        return {"passed": "refused" in native, "casa_declined": True}
+        # mtmfs with a cube): casa-rs must refuse it too, as a refusal CASA
+        # shares. One naming an issue is work casa-rs has not done yet.
+        message = native.get("refused", {}).get("message", "")
+        shared = "refused" in native and not re.search(r"#\d+", message)
+        return {"passed": shared, "casa_declined": True}
     if "result" not in native:
         return {"passed": False}
     expected, actual = casa["result"], native["result"]

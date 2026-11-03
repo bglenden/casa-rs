@@ -3,6 +3,7 @@
 //! Standard gridder, natural weighting, MT-MFS with two Taylor terms and
 //! with one.
 
+use casa_ms::{SyntheticPolarizationBasis, SyntheticPolarizationSetup};
 use serde_json::json;
 
 use super::fixture::{
@@ -233,6 +234,25 @@ fn stokes_plane(values: &ndarray::ArrayD<f32>, stokes: usize) -> ndarray::ArrayD
     values.index_axis(ndarray::Axis(2), stokes).to_owned()
 }
 
+fn abs_peak(values: &ndarray::ArrayD<f32>) -> f32 {
+    values
+        .iter()
+        .fold(0.0_f32, |peak, value| peak.max(value.abs()))
+}
+
+/// The normalized RMS difference of plane `actual` from plane `expected`.
+fn plane_nrms(actual: &ndarray::ArrayD<f32>, expected: &ndarray::ArrayD<f32>) -> f64 {
+    let (error, power) =
+        actual
+            .iter()
+            .zip(expected)
+            .fold((0.0_f64, 0.0_f64), |(error, power), (a, b)| {
+                let (a, b) = (f64::from(*a), f64::from(*b));
+                (error + (a - b).powi(2), power + b * b)
+            });
+    (error / power).sqrt()
+}
+
 /// CASA's `mtmfs` cleans and restores each Stokes plane as a Taylor family
 /// of its own (`SDAlgorithmMSMFS` loops over polarization planes;
 /// `test_stokes_mtmfs_Q`, `test_stokes_weighting`). Of parallel-hand data,
@@ -312,8 +332,25 @@ fn full_stokes_taylor_families_image_each_stokes_plane_on_its_own() {
             }
         }
     }
-    // Stokes V's family is cleaned too, to the same threshold.
-    assert!(full_run.actual_minor_iterations >= i_run.actual_minor_iterations);
+    // Stokes V's family holds the two hands' noise alone, below the
+    // threshold: it is formed (its residual is not zero) and cleans nothing.
+    assert_eq!(
+        full_run.actual_minor_iterations,
+        i_run.actual_minor_iterations
+    );
+    for suffix in [".model.tt0", ".model.tt1"] {
+        assert!(
+            stokes_plane(&full.get(suffix).values(), 3)
+                .iter()
+                .all(|value| *value == 0.0),
+            "{suffix} Stokes V"
+        );
+    }
+    let v_peak = abs_peak(&stokes_plane(&full.get(".residual.tt0").values(), 3));
+    assert!(
+        v_peak > 0.0 && v_peak < 0.005,
+        "Stokes V residual peak {v_peak}"
+    );
     let beams = &full
         .get(".image.tt0")
         .image
@@ -334,4 +371,82 @@ fn full_stokes_taylor_families_image_each_stokes_plane_on_its_own() {
             "Stokes plane {stokes}'s beam {beam:?}, Stokes I's {i_beam:?}"
         );
     }
+}
+
+/// A polarized Taylor family is imaged on its own Stokes plane. Linear
+/// feeds observe the point 40 % circularly polarized, so Stokes V holds
+/// 0.4 of Stokes I's flux and spectrum. `stokes='IV'` recovers it on V's
+/// plane (index 1) of every term and images Stokes I as an I-only run
+/// does; `stokes='IQUV'` images the same V family on index 3, with Q and U
+/// at the noise. A family written to another polarization's plane fails
+/// both. With `restoringbeam='common'` the image records one beam for all
+/// its planes, as `SDAlgorithmMSMFS::restore` sets one restoring beam.
+#[test]
+fn a_polarized_taylor_family_is_imaged_on_its_own_stokes_plane() {
+    const V_FRACTION: f32 = 0.4;
+    let observation = Observation::synthesise_polarized(
+        Setup::vla_q_band(CHANNELS),
+        SyntheticPolarizationSetup {
+            basis: SyntheticPolarizationBasis::Linear,
+            correlation_count: 4,
+            source_stokes_fractional_quv: [0.0, 0.0, f64::from(V_FRACTION)],
+        },
+        &[("point", POINT)],
+    );
+    let controls = |stokes: &str, beam: &str| {
+        json!({
+            "weighting": "natural",
+            "deconvolver": "mtmfs",
+            "nterms": 2,
+            "niter": 1000,
+            "threshold": THRESHOLD,
+            "stokes": stokes,
+            "restoringbeam": beam,
+        })
+    };
+    let (i_run, i_only) = observation.image("i", controls("I", ""));
+    let (iv_run, iv) = observation.image("iv", controls("IV", ""));
+    let (_, full) = observation.image("iquv", controls("IQUV", "common"));
+    assert!(iv_run.actual_minor_iterations > i_run.actual_minor_iterations);
+    let [x, y] = component_pixel(POINT);
+    for suffix in [".image.tt0", ".image.tt1", ".residual.tt0", ".model.tt0"] {
+        let i = stokes_plane(&i_only.get(suffix).values(), 0);
+        let error = plane_nrms(&stokes_plane(&iv.get(suffix).values(), 0), &i);
+        assert!(error < 1e-6, "{suffix} Stokes I NRMS {error:e}");
+    }
+    for (suffix, tolerance) in [(".image.tt0", 0.01), (".image.tt1", 0.03)] {
+        let i = i_only.get(suffix).values()[&[x, y, 0, 0][..]];
+        let v = iv.get(suffix).values()[&[x, y, 1, 0][..]];
+        assert!(
+            (v / i - V_FRACTION).abs() <= tolerance * V_FRACTION,
+            "{suffix}: V {v}, I {i}"
+        );
+    }
+    let values = full.get(".image.tt0").values();
+    let v_peak = abs_peak(&stokes_plane(&values, 3));
+    for stokes in [1, 2] {
+        let peak = abs_peak(&stokes_plane(&values, stokes));
+        assert!(
+            peak < 0.01 * v_peak,
+            "Stokes plane {stokes}: {peak}, V {v_peak}"
+        );
+    }
+    for suffix in [".model.tt0", ".model.tt1", ".residual.tt0", ".residual.tt1"] {
+        let error = plane_nrms(
+            &stokes_plane(&full.get(suffix).values(), 3),
+            &stokes_plane(&iv.get(suffix).values(), 1),
+        );
+        assert!(error < 1e-6, "{suffix} Stokes V NRMS {error:e}");
+    }
+    let beams = |products: &Products| {
+        products
+            .get(".image.tt0")
+            .image
+            .image_info()
+            .expect("image info")
+            .beam_set
+    };
+    assert_eq!(beams(&iv).n_stokes(), 2);
+    assert!(beams(&iv).single_beam().is_none());
+    assert!(beams(&full).single_beam().is_some());
 }

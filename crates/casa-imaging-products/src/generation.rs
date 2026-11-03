@@ -435,9 +435,16 @@ fn produce_taylor_members(
     };
     let restoring_beams = match inputs.problem().products().restoring_beam() {
         RestoringBeamPolicy::None => Box::new([]),
-        RestoringBeamPolicy::PerPlane
-        | RestoringBeamPolicy::Common
-        | RestoringBeamPolicy::Fixed(_) => products.restoring_beams(),
+        RestoringBeamPolicy::PerPlane => products.restoring_beams(),
+        // One beam restores every Stokes plane, and the image records it
+        // alone, as `SDAlgorithmMSMFS::restore` sets one restoring beam.
+        RestoringBeamPolicy::Common | RestoringBeamPolicy::Fixed(_) => products
+            .restoring_beams()
+            .iter()
+            .copied()
+            .find(Option::is_some)
+            .into_iter()
+            .collect(),
     };
     for member in &planned.members {
         let mut payload = products.payload(member.role)?;

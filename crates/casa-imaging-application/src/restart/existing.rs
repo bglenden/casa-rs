@@ -229,8 +229,9 @@ impl ExistingProducts {
     }
 
     /// The residual planes of `channels`, `[channel][term][pol]` x-major,
-    /// read and times `principal(channel, pol)`, which a Taylor family
-    /// takes at `(0, 0)` for every term; zero without a residual read.
+    /// read and times `principal(channel, pol)`, which each polarization's
+    /// Taylor family takes at its principal moment, `(0, pol)`, for every
+    /// term; zero without a residual read.
     fn residual(
         &self,
         channels: Range<usize>,
@@ -245,7 +246,7 @@ impl ExistingProducts {
         }
         let scale = |channel: usize, pol: usize| match self.family {
             Family::Single => principal(channel, pol),
-            Family::Taylor { .. } => principal(0, 0),
+            Family::Taylor { .. } => principal(0, pol),
         };
         for (term, name) in self.family.names("residual").iter().enumerate() {
             let read = self.read(name, channels.clone())?;
