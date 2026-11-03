@@ -9,6 +9,8 @@ CASA behaviours casa-rs follows for parity:
 [MatrixCleaner's stop iteration](#matrixcleaner-counts-the-iteration-that-stops-it),
 [exact peak comparisons](#peak-searches-let-rounding-choose-between-equal-pixels),
 [multi-term weight normalization](#the-multi-term-weight-normalization-override-is-never-called),
+[a Taylor term's sum of weights per Stokes plane](#a-taylor-term-gives-every-stokes-plane-the-first-correlations-sum-of-weights),
+[a Taylor run's `'common'` beam](#restoringbeamcommon-restores-every-taylor-stokes-plane-with-the-first-planes-beam),
 [the Airy beam's blockage term](#the-airy-beams-blockage-term-uses-the-inverse-length-ratio),
 [the EVLA's 11052 MHz fit](#the-evlas-beam-table-has-no-11052-mhz-fit),
 [the simulator's and tclean's two mosaic machines](#the-simulators-mosaic-machine-is-not-tcleans),
@@ -16,6 +18,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[a Taylor run with no weight on its first correlation](#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero),
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
@@ -433,6 +436,63 @@ term's raw `getWeightImage` moment, so `.weight.tt1` and `.weight.tt2` stay
 the raw Σ W·s^N while `.weight.tt0` is normalized. CASA 6.7.6.14 on
 `refim_alma_mosaic` (mosaic, `nterms=2`) agrees: `weight.ttN / sumwt.ttN` is
 0.6913 for N = 0, 1 and 2. casa-rs publishes the same.
+
+## A Taylor term gives every Stokes plane the first correlation's sum of weights
+
+- Date noted: 2026-11-03
+- Status: deliberate CASA shortcut; casa-rs follows it for parity (#1065)
+- Affected code: `synthesis/TransformMachines2/MultiTermFTNew.cc`
+  (`finalizeToSkyNew`, `finalizeToWeightImage`),
+  `synthesis/TransformMachines/StokesImageUtil.cc` (`ToStokesSumWt`)
+
+A single-term gridder (`FTMachine::finalizeToSkyNew`) forms each Stokes
+plane's `.sumwt` with `ToStokesSumWt`'s coordinate form, from the
+correlations the plane is made of: `min(RR, LL)` for I and V, `min(RL, LR)`
+for Q and U. `MultiTermFTNew` calls the two-argument form instead, which
+"picks the value from the first correlation plane, and fills it into all
+stokes planes", as its comment says, valid when every correlation has the
+same weights. So a Taylor term's `.sumwt.ttN` holds the first gridded
+correlation's sum on every Stokes plane: of parallel-hand data imaged as
+`IQUV`, Q and U have Stokes I's sum where a single term's have zero, and
+the residual of every plane is normalized by that sum. CASA 6.7.6.14's
+`test_stokes_weighting` (call 8, `mtmfs` of `refim_twochan.ms`) writes
+`[143360.94] × 4` in every `.sumwt.ttN`. casa-rs forms a Taylor term's sums
+the same way.
+
+## With no weight on the first correlation, every Taylor plane is zero
+
+- Date noted: 2026-11-03
+- Status: CASA loses data; casa-rs refuses the run until #1109
+- Affected code: `synthesis/ImagerObjects/SIImageStore.cc`
+  (`divideImageByWeightVal`)
+
+Because every Stokes plane takes the first gridded correlation's sum, a
+Taylor run whose first correlation has no weight at all (RR fully flagged
+with LL present, say) has a zero `.sumwt.ttN` on every plane.
+`divideImageByWeightVal` sets a plane whose sum is at most 1e-7 to zero, so
+CASA writes every plane of every term as zeros and the other hand's data is
+lost. casa-rs refuses such a run when it forms the Taylor products, naming
+#1109, rather than write images that read as an empty sky.
+
+## `restoringbeam='common'` restores every Taylor Stokes plane with the first plane's beam
+
+- Date noted: 2026-11-03
+- Status: CASA behaviour; casa-rs's result is the same (#1065)
+- Affected code: `synthesis/ImagerObjects/SDAlgorithmBase.cc` (`restore`),
+  `SDAlgorithmMSMFS.cc` (`restore`), `SIImageStore.cc` (`restore`),
+  `synthesis/TransformMachines/StokesImageUtil.cc` (`ToStokesPSF`)
+
+`SDAlgorithmBase::restore` passes its restoring beam by non-const
+reference to `SIImageStore::restore` on each Stokes plane's sub-store, and
+the first plane's call sets it to that plane's beam (casacore's `SubImage`
+holds one beam of the set). Planes 1 to P−1 are then restored with plane
+0's beam, and `SDAlgorithmMSMFS::restore` records that one beam
+(`setRestoringBeam`), so the image has a single beam. casa-rs restores
+every plane with the beam that encloses all the planes' fitted beams, as it
+does any image's planes under `'common'`, and records that one beam. The
+two agree because `ToStokesPSF` gives every Stokes plane the first
+correlation's PSF, so every plane fits the same beam. A beam the request
+gives is recorded once in the same way.
 
 ## The analytic PB ignores a failed `toPixel`
 

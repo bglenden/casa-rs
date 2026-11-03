@@ -306,6 +306,8 @@ class Refusals:
         if deconvolver not in ("hogbom", "clark", "multiscale", "mtmfs"):
             issue = 223 if deconvolver == "asp" else 1060
             self.add(f"deconvolver={deconvolver!r}", NOT_YET, issue)
+        if deconvolver == "mtmfs" and specmode in ("cube", "cubedata"):
+            self.add("deconvolver='mtmfs' with specmode='cube' or 'cubedata'", PARITY)
         weighting = self.text("weighting")
         if weighting not in ("natural", "uniform", "briggs", "briggsbwtaper"):
             self.add(f"weighting={weighting!r}", NOT_YET, 980)
@@ -472,10 +474,8 @@ class Refusals:
                 CF_NOTE,
             )
 
-    def deconvolution(self, modes):
+    def deconvolution(self):
         """`Tclean::deconvolution`."""
-        if modes["deconvolver"] == "mtmfs" and self.integer("nterms") == 1:
-            self.add("nterms=1 with deconvolver='mtmfs'", NOT_YET, 1065)
         beam = self.texts("restoringbeam")
         if beam not in ([], ["common"]):
             self.add("restoringbeam: a beam given by its axes", NOT_YET, 980)
@@ -504,7 +504,7 @@ class Refusals:
         self.geometry()
         self.spectral(modes)
         self.gridding(modes)
-        self.deconvolution(modes)
+        self.deconvolution()
         self.iteration()
         self.masking(modes)
         self.gate(modes)
@@ -512,12 +512,14 @@ class Refusals:
     def gate(self, modes):
         """`availability::check`, for what the parameters alone decide."""
         taylor = modes["deconvolver"] == "mtmfs"
-        if taylor and str(self.values.get("stokes", "I")).strip() != "I":
-            self.add("a Taylor basis (mtmfs) of polarizations other than Stokes I", GATE)
         facets = self.values.get("facets")
         faceted = isinstance(facets, int) and facets > 1
         if faceted and modes["gridder"] in ("standard", "wproject") and (taylor or modes["cube"]):
             self.add("facets beyond single-term MFS", GATE)
+        stokes = self.values.get("stokes", "I")
+        if taylor and stokes != "I" and modes["gridder"] != "standard":
+            self.add("mtmfs of Stokes planes other than I alone beyond the standard gridder",
+                     GATE, 1112)
         if modes["gridder"] == "awproject":
             if modes["cube"]:
                 self.add("AW projection of a cube (#719)", GATE, 719)

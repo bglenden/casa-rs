@@ -3,20 +3,20 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "78d9f59695abea4ef7185a2ab8c18aa7c90e749a",
+  "casa_rs_revision": "5de92adaf53eb500f3c8b11b48b6e69f77e58a02",
   "parameter_surfaces_sha256": "75971d01b533264891d340a3f21f3f125e901c85093d52fe1129814972b3c506",
   "parameter_catalog_sha256": "2feb237df1620d8b3ef76fd219fd27a252ca8e54621238aa91f0ce93b5acf5b9",
-  "tclean_rs_sha256": "63bdb44c278d164fd4e49f31189cbb6f2c43538c3cfc200a32e0d7da23837339",
+  "tclean_rs_sha256": "0eee1d49035aca9f8901150391aab56b9089bc1e9dd68e5f605e979b6b83ebd6",
   "tclean_contract_version": 38
  },
  "totals": {
   "resolved_cases": 354,
   "cases_where_casa_expects_an_error": 4,
   "cases_counted": 350,
-  "cases_with_no_refusal": 244,
-  "cases_with_a_gap": 106,
-  "cases_with_only_refusals_casa_shares": 0,
-  "single_call_cases_with_no_refusal": 201
+  "cases_with_no_refusal": 248,
+  "cases_with_a_gap": 100,
+  "cases_with_only_refusals_casa_shares": 2,
+  "single_call_cases_with_no_refusal": 205
  },
  "gaps": [
   {
@@ -144,19 +144,6 @@
    ]
   },
   {
-   "reason": "nterms=1 with deconvolver='mtmfs'",
-   "source": "tclean.rs not_yet",
-   "issue": 1065,
-   "cases": 4,
-   "sole_blocker": 4,
-   "examples": [
-    "test_onefield.test_onefield_mtmfs_nterms1.1",
-    "test_onefield.test_onefield_mtmfs_smallscalebias.1",
-    "test_cube.test_cube_mtmfs_nterms1.1",
-    "test_cube.test_cubedata_mtmfs_nterms1.1"
-   ]
-  },
-  {
    "reason": "startmodel given as a list",
    "source": "catalog: value domain",
    "issue": null,
@@ -167,18 +154,6 @@
     "test_modelvis.test_modelvis_5.1+2",
     "test_modelvis.test_modelvis_6.1+2",
     "test_startmodel.test_startmodel_mtmfs_restart.1+2+3+4"
-   ]
-  },
-  {
-   "reason": "a Taylor basis (mtmfs) of polarizations other than Stokes I",
-   "source": "availability.rs gate",
-   "issue": null,
-   "cases": 3,
-   "sole_blocker": 2,
-   "examples": [
-    "test_stokes.test_stokes_mtmfs_Q.1",
-    "test_stokes.test_stokes_mtmfs_IQUV.1+2",
-    "test_stokes.test_stokes_weighting.8"
    ]
   },
   {
@@ -340,7 +315,19 @@
    ]
   }
  ],
- "refusals_casa_shares": [],
+ "refusals_casa_shares": [
+  {
+   "reason": "deconvolver='mtmfs' with specmode='cube' or 'cubedata'",
+   "source": "tclean.rs refusal CASA shares",
+   "issue": null,
+   "cases": 2,
+   "sole_blocker": 0,
+   "examples": [
+    "test_cube.test_cube_mtmfs_nterms1.1",
+    "test_cube.test_cubedata_mtmfs_nterms1.1"
+   ]
+  }
+ ],
  "cases_where_casa_expects_an_error": {
   "test_errors_failures.test_bad_freqframe_define_image.1": {
    "expect_error": "RuntimeError",
@@ -589,26 +576,12 @@
    "refusals": []
   },
   "test_onefield.test_onefield_mtmfs_nterms1.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "nterms=1 with deconvolver='mtmfs'",
-     "source": "tclean.rs not_yet",
-     "issue": 1065,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_mtmfs_smallscalebias.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "nterms=1 with deconvolver='mtmfs'",
-     "source": "tclean.rs not_yet",
-     "issue": 1065,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_gridders.1+2": {
    "runs_without_refusal": true,
@@ -897,15 +870,8 @@
    "refusals": []
   },
   "test_stokes.test_stokes_mtmfs_Q.1": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "a Taylor basis (mtmfs) of polarizations other than Stokes I",
-     "source": "availability.rs gate",
-     "issue": null,
-     "call": 1
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_stokes.test_stokes_mtmfs_IQUV.1+2": {
    "runs_without_refusal": false,
@@ -923,12 +889,6 @@
      "call": 1
     },
     {
-     "reason": "a Taylor basis (mtmfs) of polarizations other than Stokes I",
-     "source": "availability.rs gate",
-     "issue": null,
-     "call": 1
-    },
-    {
      "reason": "pbmask: only the default 0.0 is implemented",
      "source": "surface: unimplemented (default only)",
      "issue": 1061,
@@ -938,12 +898,6 @@
      "reason": "usemask='pb'",
      "source": "tclean.rs not_yet",
      "issue": 1061,
-     "call": 2
-    },
-    {
-     "reason": "a Taylor basis (mtmfs) of polarizations other than Stokes I",
-     "source": "availability.rs gate",
-     "issue": null,
      "call": 2
     }
    ]
@@ -991,15 +945,8 @@
    ]
   },
   "test_stokes.test_stokes_weighting.8": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "a Taylor basis (mtmfs) of polarizations other than Stokes I",
-     "source": "availability.rs gate",
-     "issue": null,
-     "call": 8
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_stokes.test_stokes_weighting.9": {
    "runs_without_refusal": true,
@@ -1409,9 +1356,9 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "nterms=1 with deconvolver='mtmfs'",
-     "source": "tclean.rs not_yet",
-     "issue": 1065,
+     "reason": "deconvolver='mtmfs' with specmode='cube' or 'cubedata'",
+     "source": "tclean.rs refusal CASA shares",
+     "issue": null,
      "call": 1
     }
    ]
@@ -1420,9 +1367,9 @@
    "runs_without_refusal": false,
    "refusals": [
     {
-     "reason": "nterms=1 with deconvolver='mtmfs'",
-     "source": "tclean.rs not_yet",
-     "issue": 1065,
+     "reason": "deconvolver='mtmfs' with specmode='cube' or 'cubedata'",
+     "source": "tclean.rs refusal CASA shares",
+     "issue": null,
      "call": 1
     }
    ]

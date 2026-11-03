@@ -227,7 +227,7 @@ impl NormalStatePrimitives {
                     .get(ordinal)
                     .ok_or(NormalStateError::InvalidSlab)?
                     .primitives();
-                if domain.basis != (SpectralBasisPlan::Polynomial { terms: 1 }) {
+                if domain.basis != SpectralBasisPlan::Constant {
                     return Err(NormalStateError::NormalStorage(
                         "a single plane is read only from a channel-local or constant-basis normal state"
                             .into(),

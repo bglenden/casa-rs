@@ -377,6 +377,19 @@ impl Geometry {
 }
 
 fn specification(polarization: Vec<PolarizationCoordinate>) -> ProblemSpecification {
+    // CASA forms a spectral index of a Stokes I image alone.
+    let mut products = vec![
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::RestoredImage,
+        ProductKind::SumWeights,
+        ProductKind::Sensitivity,
+        ProductKind::TaylorTerms,
+    ];
+    if polarization == [PolarizationCoordinate::StokesI] {
+        products.push(ProductKind::SpectralIndex);
+    }
     let budgets = NumericalStage::ALL
         .into_iter()
         .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
@@ -406,16 +419,7 @@ fn specification(polarization: Vec<PolarizationCoordinate>) -> ProblemSpecificat
             WeightDensityScope::GlobalSelection,
         ),
         ProductRequirements::new(
-            vec![
-                ProductKind::Psf,
-                ProductKind::Residual,
-                ProductKind::Model,
-                ProductKind::RestoredImage,
-                ProductKind::SumWeights,
-                ProductKind::Sensitivity,
-                ProductKind::TaylorTerms,
-                ProductKind::SpectralIndex,
-            ],
+            products,
             ProductNormalization::FlatNoise,
             RestoringBeamPolicy::PerPlane,
             ProductValidityPolicies::new(
