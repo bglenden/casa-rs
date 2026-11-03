@@ -71,6 +71,16 @@ NOTE = "surface note: restart (#944)"
 CF_NOTE = "surface note: cfcache"
 GATE = "availability.rs gate"
 
+# `Tclean::projection`: casacore's projection names, and those casa-rs
+# images in (`Projection::from_casa_name`), spelt exactly.
+CASACORE_PROJECTIONS = {
+    "AZP", "SZP", "TAN", "SIN", "STG", "ARC", "ZPN", "ZEA", "AIR", "CYP", "CEA", "CAR", "MER",
+    "COP", "COE", "COD", "COO", "SFL", "PAR", "MOL", "AIT", "BON", "PCO", "TSC", "CSC", "QSC",
+    "HPX",
+}
+CASA_RS_PROJECTIONS = {"SIN", "NCP", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "MER", "AIT"}
+PROJECTION_ISSUE = 1101
+
 
 def plain(value):
     """A catalog ParameterValue as Python."""
@@ -383,10 +393,16 @@ class Refusals:
             self.per_measurement_set(name)
 
     def geometry(self):
-        """`Tclean::geometry`."""
+        """`Tclean::geometry` and `Tclean::projection`."""
         if self.values.get("cell") == []:
             self.add("cell: empty", PARITY)
         self.text("phasecenter")
+        projection = self.text("projection")
+        if isinstance(projection, str):
+            if projection != "NCP" and projection not in CASACORE_PROJECTIONS:
+                self.add("projection: not a casacore projection", PARITY)
+            elif projection not in CASA_RS_PROJECTIONS:
+                self.add(f"projection={projection!r}", NOT_YET, PROJECTION_ISSUE)
 
     def spectral(self, modes):
         """`Tclean::spectral` and `refuse_derived_extent`."""

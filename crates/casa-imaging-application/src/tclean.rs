@@ -26,7 +26,12 @@ use std::{collections::BTreeSet, fmt, str::FromStr};
 use casa_types::quanta::{Quantity, Unit};
 use serde_json::{Map, Value, json};
 
+use casa_imaging_model::Projection;
+
 use crate::ImagingRequest;
+
+/// The issue that tracks the projections casa-rs does not image in yet.
+const PROJECTION_ISSUE: u32 = 1101;
 
 /// A tclean value casa-rs refuses, and the parameter that holds it.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -512,7 +517,38 @@ impl<'a> Tclean<'a> {
             },
         );
         self.set("phasecenter_field", if field { centre } else { "none" });
-        self.ignore(&["projection", "psfphasecenter", "vptable"])
+        self.projection()?;
+        self.ignore(&["psfphasecenter", "vptable"])
+    }
+
+    /// CASA's `projection` (`SynthesisParamsImage::fromRecord`): `NCP`, which
+    /// CASA writes as a slanted `SIN`, or any of casacore's projections,
+    /// spelt as `Projection::type` reads them; any other text CASA refuses.
+    /// casa-rs images in those [`Projection::from_casa_name`] names. The
+    /// catalog trims the text first, as it does every string, so `' TAN'`
+    /// is `TAN` here where CASA refuses it (`docs/CASA (C++) bugs.md`).
+    fn projection(&mut self) -> Result<(), TcleanRefusal> {
+        const CASACORE: [&str; 27] = [
+            "AZP", "SZP", "TAN", "SIN", "STG", "ARC", "ZPN", "ZEA", "AIR", "CYP", "CEA", "CAR",
+            "MER", "COP", "COE", "COD", "COO", "SFL", "PAR", "MOL", "AIT", "BON", "PCO", "TSC",
+            "CSC", "QSC", "HPX",
+        ];
+        let name = self.text("projection")?;
+        if name != "NCP" && !CASACORE.contains(&name) {
+            return Err(TcleanRefusal::new(
+                "projection",
+                format!("Invalid projection code : {name}, as CASA's tclean refuses it"),
+            ));
+        }
+        if Projection::from_casa_name(name).is_none() {
+            return Err(TcleanRefusal::not_yet(
+                "projection",
+                format!("{name:?}"),
+                PROJECTION_ISSUE,
+            ));
+        }
+        self.set("projection", name);
+        Ok(())
     }
 
     /// Refuse the cube extents CASA derives from the channels `spw` selects,

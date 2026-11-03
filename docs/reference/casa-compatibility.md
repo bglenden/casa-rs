@@ -37,7 +37,7 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 | plotms | plotms | pending | 102 | pending | | | | |
 | simobserve | simobserve | yes | 38 | 38 | 0 | 0 | 0 | 0 |
 | split | split | yes | 19 | 19 | 0 | 9 | 1 | 0 |
-| tclean | tclean | yes | 92 | 92 | 0 | 7 | 22 | 0 |
+| tclean | tclean | yes | 92 | 92 | 0 | 6 | 22 | 0 |
 
 ## Tasks
 
@@ -622,7 +622,6 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Accepted only at CASA's default until #980: `vptable`, `interactive`
 - Accepted only at CASA's default until #1061: `pbmask`
 - Accepted only at CASA's default until #1062: `psfphasecenter`
-- Accepted only at CASA's default until #1064: `projection`
 - Accepted only at CASA's default until #1070: `computepastep`, `rotatepastep`
 - casa-rs parameters CASA lacks: `ddid`, `channel_start`, `channel_count`, `hogbom_iteration_mode`, `write_pb`, `fitspw`, `fitorder`, `save_continuum_residual`, `backend`, `gridprecision`, `aw_cf_source`, `cf_resident_mb`, `native_cf_cache`, `evla_surface`, `native_cf_policy`, `native_cf_working_size`, `native_cf_oversampling`, `native_cf_cache_bytes`, `native_cf_maximum_cells`, `stage_timing`, `metal_stage_timing`, `science_trace`
 - Shared parameters: 92, in CASA's order: yes
@@ -632,7 +631,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `c64f13cb09054b080fe8b228a5f2c02c99bfd486`. Status counts: Default only: 7, Implemented: 43, Not implemented: 0, Partial: 42, Unassessed: 0.
+Audit baseline: `c64f13cb09054b080fe8b228a5f2c02c99bfd486`. Status counts: Default only: 6, Implemented: 43, Not implemented: 0, Partial: 42, Unassessed: 1.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -654,7 +653,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `cell` | `[]` | `[]`; `cell` → `cell` | Partial | Scalar/one/two quantities or numeric arcseconds; empty is refused as in CASA. Unequal axes are implemented outside AW (#970). [gridders](#tclean-behavior-gridders)<br>Catalog domain: list[`quantity`], length 0..2; scalar allowed; Constraints: `[{"kind": "positive"}]` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [additions](#tclean-evidence-additions) |
 | `phasecenter` | `''` | `''`; `phasecenter` → `phasecenter or phasecenter_field` | Implemented | Numeric text is split into phasecenter_field; other text becomes phasecenter direction; empty means unset. <br>Catalog domain: `string` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `stokes` | `'I'` | `'I'`; `stokes` → `stokes` | Partial | Native Stokes/correlation coordinates; full-Stokes and basis-dependent combinations require their own acceptance, not an I-plane inference. [returns](#tclean-behavior-returns)<br>Catalog domain: `string` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
-| `projection` | `'SIN'` | `'SIN'`; `projection` → `projection` | Default only | Read and ignored; non-default is catalog-refused (issue 980). [gridders](#tclean-behavior-gridders)<br>Catalog domain: `string`; Non-default refused when always (#1064) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
+| `projection` | `'SIN'` | `'SIN'`; `projection` → `projection` | Unassessed | SIN (default), NCP (written as SIN with [0, cot dec0], as CASA writes it), TAN, ARC, STG, ZEA, CAR and SFL: the image's direction coordinate records the projection and every placement on the image (mosaic and A-projection pointings, analytic primary beams, mask images, facet centres) converts through it; the gridded pixels do not depend on it, as in CASA. A name casacore does not know is refused as CASA refuses it; casacore's other projections are refused (issue 1101). [gridders](#tclean-behavior-gridders)<br>Catalog domain: `string` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `startmodel` | `''` | `''`; `startmodel` → `StartModel (compile/seeding)` | Partial | One string path to a real Jy/pixel model, MFS or cube, with compatible spectral axes and direction frame. Equal-count Stokes planes are copied positionally, warning when labels differ (owner decision 2026-10-31). A single Q-to-I seed is CASA-paired verified; permuted multi-plane copying has focused native tests only and unequal plane counts remain unassessed. Masked pixels become zero; linear flux-preserving reprojection. MT-MFS and outlier combinations remain refused. Singleton-list input [path] is refused by the existing Path catalog, despite CASA accepting that form; this remains an unfinished input-domain gap. Shared frozen string seeds are paired in the numbering activation wave. [restart](#tclean-behavior-restart)<br>Catalog domain: `path` (image) | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [additions](#tclean-evidence-additions), [default-products](#tclean-evidence-default-products), [numbering-activation](#tclean-evidence-numbering-activation) |
 | `specmode` | `'mfs'` | `'mfs'`; `specmode` → `specmode` | Partial | cont aliases mfs; mvc is refused (issue 823); cube, cubedata and cubesource pass into request/spectral compile. [spectral](#tclean-behavior-spectral)<br>Catalog domain: `cont`, `cube`, `cubedata`, `cubesource`, `mfs`, `mvc` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `reffreq` | `''` | `''`; `reffreq` → `reffreq` | Partial | Contract 35: read in every mode as a frequency quantity (empty or zero is the band's midpoint; no frequency unit is refused). A continuum image's header reference is reffreq at pixel 0 with the band widened by twice its offset from the band's centre (getImFreq, CAS-9518), and mtmfs expands about it. A cube reads and ignores it. reffreq with outframe other than LSRK is refused (#980): CASA converts the header reference to LSRK through the image's frame conversion. [spectral](#tclean-behavior-spectral)<br>Catalog domain: `string` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |

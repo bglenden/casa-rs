@@ -16,6 +16,7 @@ mod pointing_law;
 mod product_list;
 mod restoring_beam;
 mod sample_antennas;
+mod sky_projection;
 mod transaction;
 mod uvw_projection;
 mod visibility_transform;
@@ -43,12 +44,13 @@ pub use geometry::{
     FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
     ItrfPosition, MissingPointingPolicy, ObservationPointingLaw, PhaseCentreLaw, PointingCentreLaw,
     PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, Projection, PsfPhaseCentreLaw, RestFrequency,
-    SkyDirection, SpectralCoordinateSpec, SpectralFrameAnchor, SpectralWcs, TimeScale, UvwAxes,
-    UvwCoordinateLaw, UvwUnit, VisibilityPhaseConvention,
+    PointingInterpolation, PointingTimeSampling, PsfPhaseCentreLaw, RestFrequency, SkyDirection,
+    SpectralCoordinateSpec, SpectralFrameAnchor, SpectralWcs, TimeScale, UvwAxes, UvwCoordinateLaw,
+    UvwUnit, VisibilityPhaseConvention,
 };
 pub use image_size::optimum_image_size;
 pub use restoring_beam::{FixedRestoringBeam, InvalidRestoringBeam};
+pub use sky_projection::Projection;
 
 pub use measurement_equation::{
     DeclaredInnerProducts, MeasurementOperatorContract, ModelCoefficientSpace, ModelInnerProduct,

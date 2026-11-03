@@ -297,8 +297,6 @@ def tclean(
     ``pbmask``.
     Accepted only at CASA's default, where CASA reads them, until #1062:
     ``psfphasecenter``.
-    Accepted only at CASA's default, where CASA reads them, until #1064:
-    ``projection``.
     Accepted only at CASA's default, where CASA reads them, until #1070:
     ``computepastep``, ``rotatepastep``.
     """

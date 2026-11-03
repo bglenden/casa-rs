@@ -7,9 +7,8 @@
 use std::path::Path;
 
 use casa_coordinates::{
-    CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo,
-    Projection as CoordinateProjection, ProjectionType, SpectralCoordinate, StokesCoordinate,
-    StokesType,
+    CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo, SpectralCoordinate,
+    StokesCoordinate, StokesType,
 };
 use casa_imaging_model::{
     DirectionCoordinateSpec, DirectionFrame, PhaseCentreLaw, PolarizationCoordinate, Projection,
@@ -138,7 +137,13 @@ pub(super) fn resolve_centre(
         law,
         ephemeris,
         phase,
-        direction: direction_spec(request.imsize, request.cell, frame, longitude, latitude),
+        direction: direction_spec(
+            request.imsize,
+            request.cell,
+            request.projection,
+            frame,
+            [longitude, latitude],
+        ),
         image_centre,
         field_id,
     })
@@ -479,23 +484,36 @@ pub(super) fn observation_info(
         .with_pointing_center(pointing_longitude, centre.image_centre.as_angles().1))
 }
 
-/// A SIN direction coordinate of `image_size` (x, y) cells of `cell_arcsec`
-/// (x, y), centred on `(longitude, latitude)` in `frame`.
+/// The direction coordinate of `image_size` (x, y) cells of `cell_arcsec`
+/// (x, y) in `projection`, centred on `[longitude, latitude]` in `frame`,
+/// as CASA's `buildCoordinateSystem` makes it. Its poles are WCSLIB's
+/// defaults, which casacore takes when given none: the native pole's
+/// longitude is 180° for a zenithal projection, whose latitude it fixes,
+/// and for one that puts the reference on the native equator (`CAR`,
+/// `SFL`, `MER`, `AIT`) 0°, or 180° for a reference south of the celestial
+/// equator, with the celestial pole sought nearest +90°.
 pub(super) fn direction_spec(
     image_size: [usize; 2],
     cell_arcsec: [f64; 2],
+    projection: Projection,
     frame: DirectionFrame,
-    longitude: f64,
-    latitude: f64,
+    [longitude, latitude]: [f64; 2],
 ) -> DirectionCoordinateSpec {
     let [cell_x, cell_y] = cell_arcsec.map(|cell| cell * std::f64::consts::PI / (180.0 * 3600.0));
+    let poles = if projection.zenithal() {
+        [180.0, 0.0]
+    } else if latitude >= 0.0 {
+        [0.0, 90.0]
+    } else {
+        [180.0, 90.0]
+    };
     DirectionCoordinateSpec::new(
-        Projection::Sin,
+        projection,
         SkyDirection::new(frame, longitude, latitude),
         image_reference_pixel(image_size),
         [-cell_x, cell_y],
         [[1.0, 0.0], [0.0, 1.0]],
-        [180.0, 0.0],
+        poles,
     )
 }
 
@@ -526,9 +544,12 @@ pub(super) fn image_coordinates(
 ) -> CoordinateSystem {
     let reference = direction.reference_direction();
     let mut coordinates = CoordinateSystem::new();
+    // casacore's defaults for the poles, as `direction_spec` states them.
     coordinates.add_coordinate(DirectionCoordinate::new(
         reference.frame().direction_ref(),
-        CoordinateProjection::new(ProjectionType::SIN),
+        direction
+            .projection()
+            .coordinate_projection(reference.latitude_rad()),
         [reference.longitude_rad(), reference.latitude_rad()],
         direction.increment_rad(),
         image_reference_pixel(image_size),
@@ -649,7 +670,9 @@ fn parse_sexagesimal(text: &str, hours: bool) -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use casa_coordinates::{CoordinateModel, CoordinateType};
+    use casa_coordinates::{
+        CoordinateModel, CoordinateType, Projection as CoordinateProjection, ProjectionType,
+    };
 
     use super::*;
 
@@ -676,7 +699,13 @@ mod tests {
 
     #[test]
     fn a_direction_coordinate_takes_each_axis_size_and_cell() {
-        let spec = direction_spec([120, 80], [8.0, 6.0], DirectionFrame::J2000, 0.0, 0.0);
+        let spec = direction_spec(
+            [120, 80],
+            [8.0, 6.0],
+            Projection::Sin,
+            DirectionFrame::J2000,
+            [0.0, 0.0],
+        );
         let arcsec = std::f64::consts::PI / (180.0 * 3600.0);
         assert_eq!(spec.reference_pixel(), [60.0, 40.0]);
         let [x, y] = spec.increment_rad();
@@ -709,7 +738,13 @@ mod tests {
     #[test]
     fn the_stokes_axis_lists_the_imaged_coordinate() {
         let coordinates = image_coordinates(
-            direction_spec([64, 64], [8.0, 8.0], DirectionFrame::J2000, 0.0, 0.0),
+            direction_spec(
+                [64, 64],
+                [8.0, 8.0],
+                Projection::Sin,
+                DirectionFrame::J2000,
+                [0.0, 0.0],
+            ),
             [64, 64],
             &[PolarizationCoordinate::StokesQ],
             &ImageSpectralCoordinate {
@@ -784,5 +819,84 @@ mod tests {
         assert!(phase_direction_varies(&polynomial(&[
             1.0, 0.4, 0.0, -1.0e-9
         ])));
+    }
+
+    /// Each projection's direction coordinate, as `direction_spec` states
+    /// it for tclean's image, places pixels as CASA 6.7.6.14 does: the world
+    /// directions of six pixels of the 100 × 100 image of 8″ cells tclean
+    /// makes of refim_twochan.ms in each projection, read with casatools
+    /// (`tests/data/projections-casa-6.7.6.14.json`, written by
+    /// `tools/casa-compat/probe_tclean_projections.py`). CASA writes every
+    /// projection with the parameters `[0, 0]` and NCP as a slanted SIN.
+    #[test]
+    fn each_projection_places_pixels_as_casa_does() {
+        let casa: serde_json::Value = serde_json::from_str(include_str!(
+            "../../tests/data/projections-casa-6.7.6.14.json"
+        ))
+        .expect("CASA's projections");
+        let numbers = |value: &serde_json::Value| -> Vec<f64> {
+            value
+                .as_array()
+                .expect("an array")
+                .iter()
+                .map(|value| value.as_f64().expect("a number"))
+                .collect()
+        };
+        for (name, projection) in [
+            ("SIN", Projection::Sin),
+            ("NCP", Projection::Ncp),
+            ("TAN", Projection::Tan),
+            ("ARC", Projection::Arc),
+            ("STG", Projection::Stg),
+            ("ZEA", Projection::Zea),
+            ("CAR", Projection::Car),
+            ("SFL", Projection::Sfl),
+            ("MER", Projection::Mer),
+            ("AIT", Projection::Ait),
+        ] {
+            let entry = &casa["projections"][name];
+            let reference = numbers(&entry["crval_rad"]);
+            let spec = direction_spec(
+                [100, 100],
+                [8.0, 8.0],
+                projection,
+                DirectionFrame::J2000,
+                [reference[0], reference[1]],
+            );
+            let coordinate = spec.coordinate();
+            assert_eq!(
+                coordinate.projection().name(),
+                entry["projection"].as_str().expect("a name"),
+                "{name}"
+            );
+            assert_eq!(
+                coordinate.projection().parameters(),
+                numbers(&entry["projection_parameters"]),
+                "{name}"
+            );
+            let pixels = entry["pixels"].as_array().expect("pixels");
+            let worlds = entry["worlds_rad"].as_array().expect("worlds");
+            for (pixel, world) in pixels.iter().zip(worlds) {
+                let pixel = numbers(pixel);
+                let world = numbers(world);
+                let ours = coordinate
+                    .pixel_to_world([pixel[0], pixel[1]])
+                    .expect("a direction");
+                let longitude = (ours[0] - world[0] + std::f64::consts::PI)
+                    .rem_euclid(std::f64::consts::TAU)
+                    - std::f64::consts::PI;
+                assert!(
+                    longitude.abs() < 1e-12 && (ours[1] - world[1]).abs() < 1e-12,
+                    "{name} {pixel:?}: {ours:?}, CASA {world:?}"
+                );
+                let back = coordinate
+                    .world_to_pixel([world[0], world[1]])
+                    .expect("a pixel");
+                assert!(
+                    (back[0] - pixel[0]).abs() < 1e-7 && (back[1] - pixel[1]).abs() < 1e-7,
+                    "{name} {world:?}: {back:?}, CASA's {pixel:?}"
+                );
+            }
+        }
     }
 }

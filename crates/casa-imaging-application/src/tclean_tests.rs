@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use super::read;
 use crate::request::tests::{request, resolved};
 use crate::{DataColumn, Deconvolver, Gridder, ImagingRequest, SaveModel, SpecMode, TcleanRefusal};
+use casa_imaging_model::Projection;
 
 /// tclean's refusal of `overrides`.
 fn refusal(overrides: Value) -> TcleanRefusal {
@@ -160,8 +161,6 @@ fn parameters_a_mode_does_not_read_are_ignored() {
 #[test]
 fn the_catalog_refuses_what_casa_reads_in_every_mode() {
     for (overrides, issue) in [
-        // CASA projects with any projection in every mode.
-        (json!({ "projection": "NCP" }), "#1064"),
         // CASA masks within the primary beam with pbmask in every mask mode.
         (json!({ "pbmask": 0.5 }), "#1061"),
         // CASA reads psfphasecenter for every gridder named for a mosaic.
@@ -281,6 +280,29 @@ fn casa_values_become_the_request_casa_rs_runs() {
     // nterms is read with mtmfs.
     let terms = request(json!({ "deconvolver": "mtmfs", "nterms": 3 }));
     assert_eq!((terms.deconvolver, terms.nterms), (Deconvolver::Mtmfs, 3));
+    // projection names casacore's projection as casacore spells it.
+    for (text, projection) in [
+        ("SIN", Projection::Sin),
+        ("NCP", Projection::Ncp),
+        ("TAN", Projection::Tan),
+        ("ARC", Projection::Arc),
+        ("STG", Projection::Stg),
+        ("ZEA", Projection::Zea),
+        ("CAR", Projection::Car),
+        ("SFL", Projection::Sfl),
+        ("MER", Projection::Mer),
+        ("AIT", Projection::Ait),
+    ] {
+        assert_eq!(
+            request(json!({ "projection": text })).projection,
+            projection
+        );
+    }
+    // The catalog trims it, as it does every string; CASA refuses " TAN".
+    assert_eq!(
+        request(json!({ "projection": " TAN" })).projection,
+        Projection::Tan
+    );
     // savemodel names where the model goes, CASA's virtual model among them.
     for (text, saved) in [
         ("none", SaveModel::None),
@@ -386,6 +408,8 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "nchan",
             "#1066",
         ),
+        (json!({ "projection": "AZP" }), "projection", "#1101"),
+        (json!({ "projection": "HPX" }), "projection", "#1101"),
     ] {
         let refused = refusal(overrides.clone());
         assert_eq!(refused.parameter, parameter, "{overrides}");
@@ -399,6 +423,9 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "cell": [] }), "cell"),
         // CASA's tclean refuses these itself.
         (json!({ "weighting": "briggsbwtaper" }), "weighting"),
+        (json!({ "projection": "XYZ" }), "projection"),
+        (json!({ "projection": "ncp" }), "projection"),
+        (json!({ "projection": "tan" }), "projection"),
         (
             json!({ "gridder": "wproject", "wprojplanes": 0 }),
             "wprojplanes",

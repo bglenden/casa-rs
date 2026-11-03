@@ -195,7 +195,7 @@
       ]
     },
     "projection": {
-      "scope": "Read and ignored; non-default is catalog-refused (issue 980).",
+      "scope": "SIN (default), NCP (written as SIN with [0, cot dec0], as CASA writes it), TAN, ARC, STG, ZEA, CAR, SFL, MER and AIT: the image's direction coordinate records the projection and every placement on the image (mosaic and A-projection pointings, analytic primary beams, mask images, facet centres) converts through it; the gridded pixels do not depend on it, as in CASA. A name casacore does not know is refused as CASA refuses it; casacore's other projections are refused (issue 1101).",
       "evidence": [
         "signature",
         "reader"

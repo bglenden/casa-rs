@@ -36,7 +36,8 @@ CASA behaviours casa-rs does not follow:
 [`tb.putcell` with several rows](#tbputcell-with-several-rows-writes-those-before-a-missing-one),
 [`tb.addrows` with a negative count](#tbaddrows-with-a-negative-count-removes-rows),
 [`tb.removerows` and `tb.addcols` that fail part way](#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails),
-[`MSIter`'s receptor angles for a window without its own `FEED` row](#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row).
+[`MSIter`'s receptor angles for a window without its own `FEED` row](#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row),
+[a projection name with spaces](#tclean-refuses-a-projection-name-with-spaces-round-it).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -3343,3 +3344,22 @@ CASA works in arcseconds; the common beams agree within one of the algorithm's
 The two searches can stop at different enclosing beams. For four nearly
 equal channel beams (axis ratio 1.17, the simulation round trip's cube,
 2026-11-03), the axes differ by 2.2e-4 and the position angle by 0.036°.
+
+## `tclean` refuses a projection name with spaces round it
+
+- Date noted: 2026-11-03
+- Status: a casa-rs choice (#1064)
+- Affected code: casatools `synthesis/ImagerObjects/SynthesisUtilMethods.cc`
+  (`SynthesisParamsImage::fromRecord`, reading `projection`)
+
+CASA 6.7.6.14's tclean refuses `projection=' TAN'` with "Invalid projection
+code :  TAN", as it refuses `'tan'` and `'XYZ'`: casacore's
+`Projection::type` reads the name exactly. casa-rs's parameter catalog trims
+every string parameter before tclean reads it (`projection`'s normalization
+is `trim`), so casa-rs images `' TAN'` in TAN. A name of the wrong case or
+one casacore does not know is refused as CASA refuses it. No result of
+CASA's depends on the refusal, and following it would make `projection` the
+one string parameter the catalog does not trim. Evidence: CASA's refusals in
+`crates/casa-imaging-application/tests/data/projections-casa-6.7.6.14.json`,
+and the `tclean_tests` rows `casa_values_become_the_request_casa_rs_runs`
+and `values_casa_rs_cannot_honour_are_refused`.

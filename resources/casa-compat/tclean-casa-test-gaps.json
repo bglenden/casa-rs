@@ -3,20 +3,20 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "2c378613ec152edd5c34d66fd894879f23773199",
-  "parameter_surfaces_sha256": "75971d01b533264891d340a3f21f3f125e901c85093d52fe1129814972b3c506",
+  "casa_rs_revision": "bf61e7b8491f526bd712c46656c9215db8f2f29c",
+  "parameter_surfaces_sha256": "c4bbc5ac003e7b7d054af4924b83ada2d8db80591e00aceb9d29528bb284dae1",
   "parameter_catalog_sha256": "2feb237df1620d8b3ef76fd219fd27a252ca8e54621238aa91f0ce93b5acf5b9",
-  "tclean_rs_sha256": "133fee90787d952067685ad62e43bbb56421b1342ee163484846d6fee43f4909",
-  "tclean_contract_version": 38
+  "tclean_rs_sha256": "f63a364f338debfa7100e1f4748671f8911d09b801ffe6f8443ebcc77590585b",
+  "tclean_contract_version": 39
  },
  "totals": {
   "resolved_cases": 354,
   "cases_where_casa_expects_an_error": 4,
   "cases_counted": 350,
-  "cases_with_no_refusal": 243,
-  "cases_with_a_gap": 107,
+  "cases_with_no_refusal": 246,
+  "cases_with_a_gap": 104,
   "cases_with_only_refusals_casa_shares": 0,
-  "single_call_cases_with_no_refusal": 200
+  "single_call_cases_with_no_refusal": 203
  },
  "gaps": [
   {
@@ -179,18 +179,6 @@
     "test_stokes.test_stokes_mtmfs_Q.1",
     "test_stokes.test_stokes_mtmfs_IQUV.1+2",
     "test_stokes.test_stokes_weighting.8"
-   ]
-  },
-  {
-   "reason": "projection: only the default \"SIN\" is implemented",
-   "source": "surface: unimplemented (default only)",
-   "issue": 1064,
-   "cases": 3,
-   "sole_blocker": 3,
-   "examples": [
-    "test_onefield.test_onefield_projections.2",
-    "test_onefield.test_onefield_projections.3",
-    "test_onefield.test_onefield_projections.4"
    ]
   },
   {
@@ -659,37 +647,16 @@
    "refusals": []
   },
   "test_onefield.test_onefield_projections.2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "projection: only the default \"SIN\" is implemented",
-     "source": "surface: unimplemented (default only)",
-     "issue": 1064,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_projections.3": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "projection: only the default \"SIN\" is implemented",
-     "source": "surface: unimplemented (default only)",
-     "issue": 1064,
-     "call": 3
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_projections.4": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "projection: only the default \"SIN\" is implemented",
-     "source": "surface: unimplemented (default only)",
-     "issue": 1064,
-     "call": 4
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_psf_fit.1": {
    "runs_without_refusal": true,
