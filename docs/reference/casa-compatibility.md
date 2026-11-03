@@ -324,6 +324,270 @@ The CASA parameters casa-rs lacks or accepts only at their defaults are tracked 
 - Shared parameters: 38, in CASA's order: yes
 - Defaults that differ: none
 
+#### simobserve parameter implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
+
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Default only: 0, Implemented: 37, Not implemented: 0, Partial: 1, Unassessed: 0.
+
+Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
+
+| CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
+|---|---|---|---|---|---|
+| `project` | `'sim'` | `'sim'`; `project` → `project` | Implemented | The project directory and CASA's file stem <project>.<configuration>; a nested project path is named by its last component (decision). [outputs](#simobserve-behavior-outputs)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `skymodel` | `''` | `''`; `skymodel` → `skymodel` | Implemented | An image model, rewritten by modifymodel and flattened; a model that is the <stem>.skymodel the task writes is refused (decision). [sky-model](#simobserve-behavior-sky-model)<br>Catalog domain: `path` (image) | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [skymodel-fixture](#simobserve-evidence-skymodel-fixture) |
+| `inbright` | `''` | `''`; `inbright` → `inbright` | Implemented | Rescales the model's peak, as CASA does. [sky-model](#simobserve-behavior-sky-model)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [skymodel-fixture](#simobserve-evidence-skymodel-fixture) |
+| `indirection` | `''` | `''`; `indirection` → `indirection` | Implemented | Moves the model's reference direction. [sky-model](#simobserve-behavior-sky-model)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [skymodel-fixture](#simobserve-evidence-skymodel-fixture) |
+| `incell` | `''` | `''`; `incell` → `incell` | Implemented | Sets the model's cell; two cells are taken as given (decision in simutil). [sky-model](#simobserve-behavior-sky-model)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [skymodel-fixture](#simobserve-evidence-skymodel-fixture) |
+| `incenter` | `''` | `''`; `incenter` → `incenter` | Implemented | Sets the model's centre frequency. [sky-model](#simobserve-behavior-sky-model)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [skymodel-fixture](#simobserve-evidence-skymodel-fixture) |
+| `inwidth` | `''` | `''`; `inwidth` → `inwidth` | Implemented | Sets the model's channel width. [sky-model](#simobserve-behavior-sky-model)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [skymodel-fixture](#simobserve-evidence-skymodel-fixture) |
+| `complist` | `''` | `''`; `complist` → `complist` | Implemented | A component list, alone or with a sky model; with a calibrator both lists are predicted (decision). [sky-model](#simobserve-behavior-sky-model)<br>Catalog domain: `path` (product) | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [skymodel-fixture](#simobserve-evidence-skymodel-fixture) |
+| `compwidth` | `'"8GHz"'` | `'"8GHz"'`; `compwidth` → `compwidth` | Implemented | The bandwidth of a component-only model. [sky-model](#simobserve-behavior-sky-model)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [skymodel-fixture](#simobserve-evidence-skymodel-fixture) |
+| `comp_nchan` | `1` | `1`; `comp_nchan` → `comp_nchan` | Implemented | The channels of a component-only model. [sky-model](#simobserve-behavior-sky-model)<br>Catalog domain: `integer`; Constraints: `[{"kind": "number_range", "min": 1.0}]` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [skymodel-fixture](#simobserve-evidence-skymodel-fixture) |
+| `setpointings` | `True` | `True`; `setpointings` → `setpointings` | Implemented | Lays the pointings out, or reads ptgfile. [pointings](#simobserve-behavior-pointings)<br>Catalog domain: `bool` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `ptgfile` | `'$project.ptg.txt'` | `'$project.ptg.txt'`; `ptgfile` → `ptgfile` | Implemented | CASA's pointing file, read or written. [pointings](#simobserve-behavior-pointings)<br>Catalog domain: `path` (any) | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `integration` | `'10s'` | `'10s'`; `integration` → `integration` | Implemented | The integration time; one summing to zero pointing time is refused (decision). [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `direction` | `[]` | `[]`; `direction` → `direction` | Implemented | The map centre, or a list of pointings; a list of one is rounded to its mean as CASA does (decision). [pointings](#simobserve-behavior-pointings)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `mapsize` | `['', '']` | `['', '']`; `mapsize` → `mapsize` | Implemented | The map's size. [pointings](#simobserve-behavior-pointings)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `maptype` | `'hexagonal'` | `'hexagonal'`; `maptype` → `maptype` | Implemented | hexagonal, square and ALMA tilings. [pointings](#simobserve-behavior-pointings)<br>Catalog domain: `ALMA`, `ALMA-OT`, `ALMA2012`, `alma`, `hex`, `hexagonal`, `square` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `pointingspacing` | `''` | `''`; `pointingspacing` → `pointingspacing` | Implemented | The spacing, or a fraction of the primary beam. [pointings](#simobserve-behavior-pointings)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `caldirection` | `''` | `''`; `caldirection` → `caldirection` | Implemented | A calibrator's direction. [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `calflux` | `'1Jy'` | `'1Jy'`; `calflux` → `calflux` | Implemented | The calibrator's flux. [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `obsmode` | `'int'` | `'int'`; `obsmode` → `obsmode` | Implemented | 'int', 'sd', or '' to corrupt an existing MeasurementSet. [observation](#simobserve-behavior-observation)<br>Catalog domain: ``, `int`, `sd` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `refdate` | `'2014/01/01'` | `'2014/01/01'`; `refdate` → `refdate` | Implemented | The observation date. [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `hourangle` | `'transit'` | `'transit'`; `hourangle` → `hourangle` | Implemented | 'transit' or an hour angle. [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `totaltime` | `'7200s'` | `'7200s'`; `totaltime` → `totaltime` | Implemented | The total time; a pass the time does not complete is observed in part (decision). [schedule](#simobserve-behavior-schedule)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `antennalist` | `''` | `''`; `antennalist` → `antennalist` | Implemented | An interferometer configuration file or an ALMA resolution string. [antennas](#simobserve-behavior-antennas)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `sdantlist` | `'aca.tp.cfg'` | `'aca.tp.cfg'`; `sdantlist` → `sdantlist` | Implemented | The total-power configuration. [antennas](#simobserve-behavior-antennas)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `sdant` | `0` | `0`; `sdant` → `sdant` | Implemented | The total-power antenna's index. [antennas](#simobserve-behavior-antennas)<br>Catalog domain: `integer` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `outframe` | `'LSRK'` | `'LSRK'`; `outframe` → `outframe` | Implemented | The spectral frame written. [observation](#simobserve-behavior-observation)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `thermalnoise` | `'tsys-atm'` | `'tsys-atm'`; `thermalnoise` → `thermalnoise` | Implemented | 'tsys-atm', 'tsys-manual' or '' noise through the simulator's setnoise. [noise](#simobserve-behavior-noise)<br>Catalog domain: ``, `tsys-atm`, `tsys-manual` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `user_pwv` | `0.5` | `0.5`; `user_pwv` → `user_pwv` | Implemented | Precipitable water vapour for tsys-atm. [noise](#simobserve-behavior-noise)<br>Catalog domain: `float`; Constraints: `[{"kind": "number_range", "min": 0.0}]` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `t_ground` | `270.0` | `270.0`; `t_ground` → `t_ground` | Implemented | Ground temperature. [noise](#simobserve-behavior-noise)<br>Catalog domain: `float`; Constraints: `[{"kind": "number_range", "min": 0.0}]` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `t_sky` | `260.0` | `260.0`; `t_sky` → `t_sky` | Implemented | Sky temperature for tsys-manual. [noise](#simobserve-behavior-noise)<br>Catalog domain: `float`; Constraints: `[{"kind": "number_range", "min": 0.0}]` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `tau0` | `0.1` | `0.1`; `tau0` → `tau0` | Implemented | Zenith opacity for tsys-manual. [noise](#simobserve-behavior-noise)<br>Catalog domain: `float`; Constraints: `[{"kind": "number_range", "min": 0.0}]` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `seed` | `11111` | `11111`; `seed` → `seed` | Implemented | The random seed; casa-rs's draws differ from CASA's. [noise](#simobserve-behavior-noise)<br>Catalog domain: `integer` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `leakage` | `0.0` | `0.0`; `leakage` → `leakage` | Implemented | Polarization leakage through setleakage. [noise](#simobserve-behavior-noise)<br>Catalog domain: `float`; Constraints: `[{"kind": "number_range", "min": 0.0}]` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `correlator` | `''` | `''`; `correlator` → `correlator` | Implemented | The correlator efficiency passed to noisetemp. [noise](#simobserve-behavior-noise)<br>Catalog domain: ``, `ACA`, `ACASpec`, `BLC`, `BLC_4x4bit` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `graphics` | `'both'` | `'both'`; `graphics` → `graphics` | Partial | Accepted; writes no .skymodel.png, .observe.png or .quick.psf yet and warns, naming #1025. CASA's default 'both' writes them. [outputs](#simobserve-behavior-outputs)<br>Catalog domain: ``, `both`, `file`, `none`, `screen` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `verbose` | `False` | `False`; `verbose` → `verbose` | Implemented | More messages. [outputs](#simobserve-behavior-outputs)<br>Catalog domain: `bool` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `overwrite` | `True` | `True`; `overwrite` → `overwrite` | Implemented | Replaces the project's products; without it an existing MeasurementSet is refused with CASA's message. [outputs](#simobserve-behavior-outputs)<br>Catalog domain: `bool` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+
+#### simobserve interacting modes and task behavior
+
+<a id="simobserve-behavior-sky-model"></a>
+##### Sky model and component list
+
+**Partial** — skymodel through modifymodel and flatimage with inbright, indirection, incell, incenter and inwidth; complist with compwidth and comp_nchan, alone or with a sky model.
+
+Compared in 6 of #920's 11 cases and by the skymodel fixture; the indirection and incell overrides and comp_nchan > 1 are not exercised against CASA's task.
+
+Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103).
+
+<a id="simobserve-behavior-antennas"></a>
+##### Antenna lists
+
+**Partial** — antennalist and sdantlist as files, ALMA resolution strings ('alma;0.5arcsec'), the search through the project directory and CASA's alma/simmos, and sdant.
+
+Configuration names need CASA's data directory: casa-rs does not ship alma/simmos (an open owner question on #1053).
+
+Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103).
+
+<a id="simobserve-behavior-pointings"></a>
+##### Pointings
+
+**Partial** — setpointings with direction, mapsize, maptype and pointingspacing, or a ptgfile; written to <stem>.ptg.txt and checked against the model.
+
+maptype='square' is compared only through the single-dish case.
+
+Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103).
+
+<a id="simobserve-behavior-schedule"></a>
+##### Calibrator and observing schedule
+
+**Partial** — caldirection and calflux, integration, totaltime, refdate and hourangle.
+
+The calibrator cases are compared with CASA's sm re-predict, since CASA's task leaves the calibrator unpredicted (decision). hourangle other than 'transit' and refdate is compared only at 2012/06/21.
+
+Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103).
+
+<a id="simobserve-behavior-observation"></a>
+##### Observation and prediction
+
+**Partial** — obsmode 'int', 'sd' and '' (corrupting an existing MeasurementSet), outframe, and the prediction of the model and calibrator.
+
+outframe other than LSRK is not compared.
+
+Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103).
+
+<a id="simobserve-behavior-noise"></a>
+##### Thermal noise and leakage
+
+**Partial** — thermalnoise 'tsys-atm', 'tsys-manual' and '' with user_pwv, t_ground, t_sky, tau0, seed, leakage and correlator.
+
+Noise is compared statistically (variances and KS tests), since draws differ; each environment parameter is exercised once; seed is casa-rs's own stream.
+
+Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103).
+
+<a id="simobserve-behavior-outputs"></a>
+##### Files, overwrite and graphics
+
+**Partial** — CASA's file names under the project, overwrite, verbose and graphics.
+
+graphics writes no .skymodel.png, .observe.png or .quick.psf yet and warns (#1025).
+
+Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103).
+
+#### simobserve deviations and unfinished work
+
+##### compwidth-unset-spectral-increment: Previously agreed
+
+- Record: [An unset `compwidth` gives the component-only model a meaningless spectral increment](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#an-unset-compwidth-gives-the-component-only-model-a-meaningless-spectral-increment)
+- Inputs: simobserve with a component list, no sky image and compwidth=''.
+- CASA: It observes 2 GHz when compwidth is not a quantity, but sets the .compskymodel spectral increment from compwidth anyway, yielding a meaningless value (the RA in radians read as hertz, 4.976 Hz for RA 19h, in CASA 6.7.6).
+- casa-rs: Uses the 2 GHz simobserve observes with.
+- Rationale: The increment is the model's only spectral information beyond its reference frequency.
+- User impact: The component-only model carries a consistent spectral increment.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simobserve-evidence-bugs-record).
+
+##### calibrator-last-pass-scans-lists: Previously agreed
+
+- Record: [simobserve's calibrator: the last pass, its scans and two component lists](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#simobserves-calibrator-the-last-pass-its-scans-and-two-component-lists)
+- Inputs: simobserve with a phase calibrator (caldirection and calflux), also with a complist or totaltime ending inside a pass.
+- CASA: CASA 6.7.6 never observes the pointings of an incomplete last pass (a 300 s total on 105 pointings has only the calibrator's scan), selects fields range(0,nfld) so the calibrator's scans keep zeros plus noise, and joins component lists into one nonexistent table so predict returns False.
+- casa-rs: Observes the pointings the time allows, predicts every scan including the calibrator's, and predicts both lists as one list of their components.
+- Rationale: The task means to observe and predict all of these.
+- User impact: CASA data can lack pointings, have unpredicted calibrator scans, or be all zero; casa-rs data are complete (parity cases agree at 5e-9 NRMS).
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simobserve-evidence-bugs-record).
+
+##### noisier-t-cal-left: Previously agreed
+
+- Record: [simobserve leaves `<stem>.noisier.T.cal`](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#simobserve-leaves-stemnoisiertcal)
+- Inputs: simobserve with tsys-atm noise set after leakage (the noisier measurement set).
+- CASA: The setnoise table is written beside the noisy MeasurementSet, and the clean-up deletes <stem>.noisy.T.cal and <stem>.noisy.sd.T.cal but not <stem>.noisier.T.cal.
+- casa-rs: Writes no Tsys table for any of the three.
+- Rationale: The table is a by-product the task means to remove.
+- User impact: CASA leaves a stray table in the project that casa-rs never creates.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simobserve-evidence-bugs-record).
+
+##### observing-loop-never-ends: Previously agreed
+
+- Record: [simobserve's observing loop never ends for pointings of no length](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#simobserves-observing-loop-never-ends-for-pointings-of-no-length)
+- Inputs: simobserve with integration='0s' or a pointing file of zero times.
+- CASA: The while (sttime-scanstart) < totalsec loop advances by each pointing's scan length; when a pass's lengths sum to zero the time never advances and CASA loops forever, collecting pointings.
+- casa-rs: Refuses such a schedule with a message.
+- Rationale: A schedule with no length cannot be observed.
+- User impact: The task stops with an error instead of hanging.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simobserve-evidence-bugs-record).
+
+##### skymodel-deleted-when-output: Previously agreed
+
+- Record: [simobserve deletes a sky model that is the model it writes](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#simobserve-deletes-a-sky-model-that-is-the-model-it-writes)
+- Inputs: simobserve with skymodel given as the full path <project>/<stem>.skymodel (e.g. a rerun on an earlier run's model) and overwrite=True.
+- CASA: The output is the input: CASA deletes the model and then fails to read it.
+- casa-rs: Refuses the input, and the model is left in place.
+- Rationale: The user's input must not be destroyed.
+- User impact: The model survives and the user gets a clear refusal.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simobserve-evidence-bugs-record).
+
+##### project-path-nests-in-itself: Proposed
+
+- Record: [simobserve nests a project path inside itself](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#simobserve-nests-a-project-path-inside-itself)
+- Inputs: simobserve with project given as a path, e.g. 'a/b'.
+- CASA: The task names files fileroot + '/' + project + '.' + cfg, so 'a/b' gives a/b/a/b.<cfg> in a directory that does not exist; only a plain name in the working directory works.
+- casa-rs: Names files by the directory's last component, a/b/b.<cfg>.
+- Rationale: For a plain name the two are the same.
+- User impact: Project paths work in casa-rs and fail in CASA.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [bugs-record](#simobserve-evidence-bugs-record).
+
+##### symlink-in-project-write-through: Previously agreed
+
+- Record: [simobserve writes through a symbolic link in the project](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#simobserve-writes-through-a-symbolic-link-in-the-project)
+- Inputs: simobserve overwrite=True in a project containing a symbolic link such as <stem>.ptg.txt.
+- CASA: CASA copies ptgfile through the link, replacing the file the link points to outside the project, and creates outside files for dangling links; links to tables stop the task via rmtree; existence checks follow links.
+- casa-rs: Replaces a link in the project with the new file or table, leaves the target alone, and counts a link as existing under overwrite=False.
+- Rationale: Owner's decision of 2026-10-26: only the project's own files are replaced.
+- User impact: Files outside the project are no longer overwritten or created through links.
+- Owner decision: Owner decision, 2026-10-26: the project's own files are the only ones overwrite replaces (recorded with the provider contracts' overwrite exception).
+- Evidence: [bugs-record](#simobserve-evidence-bugs-record).
+
+##### direction-list-of-one-mean: Proposed
+
+- Record: [simobserve rounds a `direction` list of one to its mean](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#simobserve-rounds-a-direction-list-of-one-to-its-mean)
+- Inputs: simobserve with direction=['J2000 18h00m00.123456789s ...'] (a list of one) versus the same direction as a string.
+- CASA: CASA passes the list to calc_pointings2, and direction_splitter centres it at its mean written at precision 5, so the map is laid out about 1e-5 s of RA (0.15 mas) from the string case.
+- casa-rs: casa-rs's simutil follows CASA, but simobserve treats a list of one like a string and lays the map out at the exact direction.
+- Rationale: The task contract resolves a string to a list of one, and the rounding carries no information.
+- User impact: A map is placed at the exact direction, differing from CASA by about 0.15 mas for a list of one.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [bugs-record](#simobserve-evidence-bugs-record).
+
+#### simobserve evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="simobserve-evidence-signature"></a>
+##### signature
+
+**Signature/default inventory — recorded.** CASA 6.7.6.14 names and defaults; not behavior.
+
+- [resources/casa-compat/casa-6.7.6.14/tasks/simobserve.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/resources/casa-compat/casa-6.7.6.14/tasks/simobserve.json)
+
+<a id="simobserve-evidence-task-tests"></a>
+##### task-tests
+
+**casa-rs task tests — recorded.** The task's stages, files, refusals and messages, without CASA.
+
+- [crates/casa-simulation/tests/simobserve.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/simobserve.rs)
+- [crates/casa-simulation/src/simobserve/tests.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/src/simobserve/tests.rs)
+
+<a id="simobserve-evidence-parity-920"></a>
+##### parity-920
+
+**CASA-paired task runs (PR-reported) — superseded.** All 11 cases agree: DATA NRMS 6.2e-8 to 2.0e-7 for the interferometer cases, 1.05e-6 for leakage, calibrators against CASA's sm re-predict at 5.2e-9 and 5.5e-9; noise KS p 0.11 to 0.92. CASA 6.7.6-14's task_simobserve.py, casa-rs at 29f0b87a6e. Not re-run at a current revision; CASA's own test_task_simobserve cases are not compared. 11 cases: VLA and ALMA image models, a component-only model with tsys-atm, leakage with both noise modes, calibrators, single dish and a pointing file.
+
+- Superseded by [parity-20261103](#simobserve-evidence-parity-20261103).
+- [https://github.com/bglenden/casa-rs/pull/920](https://github.com/bglenden/casa-rs/pull/920)
+- [https://github.com/bglenden/casa-rs/pull/922](https://github.com/bglenden/casa-rs/pull/922)
+- [tools/simulation/simobserve_parity.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/simobserve_parity.py)
+- [tools/simulation/compare_sm_ms.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/compare_sm_ms.py)
+
+<a id="simobserve-evidence-skymodel-fixture"></a>
+##### skymodel-fixture
+
+**CASA fixture comparison — passed.** casa-simulation skymodel_casa: 5 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. modifymodel, flatimage and the component-only model that simobserve's sky-model stage uses.
+
+- [crates/casa-simulation/tests/skymodel_casa.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/skymodel_casa.rs)
+- [crates/casa-simulation/tests/data/skymodel_casa.json.gz](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/data/skymodel_casa.json.gz)
+- [tools/simulation/skymodel_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/skymodel_oracle.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/simutil-fixtures-20261103.json`.
+
+<a id="simobserve-evidence-bugs-record"></a>
+##### bugs-record
+
+**Deviation record — recorded.** Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.
+
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="simobserve-evidence-parity-20261103"></a>
+##### parity-20261103
+
+**CASA-paired task runs — passed.** All 11 cases agree: interferometer DATA NRMS 6.2e-8 to 2.9e-7 and leakage 1.05e-6 (limit 1e-3); calibrators against CASA's sm re-predict 5.3e-9 and 5.5e-9; single dish 8.7e-9; noise variances within 1 percent of unity on both sides (KS p 0.11 to 0.92); the coarse-cell case refused with CASA's message. CASA's own test_task_simobserve cases are not compared. #920's 11 cases: VLA and ALMA image models, a component-only model with tsys-atm, leakage with both noise modes, calibrators, single dish, a pointing file and a refused coarse cell.
+
+- [tools/simulation/simobserve_parity.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/simobserve_parity.py)
+- [tools/simulation/compare_sm_ms.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/compare_sm_ms.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatasks 6.7.6.14, casatools 6.7.6-14`.
+- Command: `CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata /Volumes/home/casatestdata --atmosphere-model TARGET/release/examples/at_tool_quantities (bg-mac-mini, CPU)`.
+- Receipt: `resources/casa-compat/evidence/simobserve-parity-20261103.json`.
+
 ### split
 
 - CASA source: `casatasks/split.py`, 19 parameters
@@ -1036,13 +1300,1531 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| componentlist | `casars.tools` | 61 | no | | | | | | |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 15 | 0 | 46 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
-| measures | `casars.tools` | 48 | no | | | | | | |
+| [measures](#measures) | `casars.tools` | 48 | yes | 20 | 0 | 28 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
-| quanta | `casars.tools` | 57 | no | | | | | | |
-| simulator | `casars.tools` | 33 | no | | | | | | |
-| simutil | `casars.simutil` | 57 | no | | | | | | |
+| [quanta](#quanta) | `casars.tools` | 57 | yes | 25 | 0 | 32 | 0 | 0 | 0 |
+| [simulator](#simulator) | `casars.tools` | 33 | yes | 18 | 11 | 0 | 3 | 1 | 0 |
+| [simutil](#simutil) | `casars.simutil` | 57 | yes | 19 | 0 | 38 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
+
+### componentlist
+
+#### componentlist method implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
+
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 15, Partial: 0, Not implemented: 46, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+
+| CASA method | CASA parameters | Implementation | Scope | Evidence |
+|---|---|---|---|---|
+| `add` | `thecomponent, iknow=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `addcomponent` | `flux=[], fluxunit='Jy', polarization='Stokes', dir=[], shape='point', majoraxis=[], minoraxis=[], positionangle=[], freq=[], spectrumtype='constant', index=[], optionalparms=[0.0], label=''` | Implemented | Adds point, Gaussian and disk components with constant or spectral-index spectra, call by call as CASA 6.7.6.14 does (`casa_componentlist_tool.json`); shapes CASA cannot construct raise and add nothing. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `asciitocomponentlist` | `filename, asciifile, refer='J2000', format='ST', direction={}, spectrum={}, flux={}, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `close` | `log=True` | Implemented | Writes the list to its table and empties the tool. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `concatenate` | `list=[], which=[-1], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `convertfluxpol` | `which, polarization='Stokes'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `convertfluxunit` | `which, unit='Jy'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `convertfrequnit` | `which, unit='GHz'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `convertrefdir` | `which, frame` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `convertshape` | `which, majoraxis='arcmin', minoraxis='arcmin', positionangle='deg'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `deselect` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `done` |  | Implemented | As close, and frees the tool. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `edit` | `which, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `fromrecord` | `record={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getcomponent` | `which, iknow=False` | Implemented | CASA's record of one component, with CASA's index errors. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `getfluxerror` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getfluxpol` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getfluxunit` | `which` | Implemented | A component's flux unit. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `getfluxvalue` | `which` | Implemented | A component's flux values. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `getfreq` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getfreqframe` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getfrequnit` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getfreqvalue` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getkeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getlabel` | `which` | Implemented | A component's label. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `getrefdir` | `which` | Implemented | A component's reference direction as a measure record. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `getrefdirdec` | `which, unit='deg', precision=6` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getrefdirframe` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getrefdirra` | `which, unit='deg', precision=6` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getshape` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getspectrum` | `which` | Implemented | A component's spectrum record. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `haskeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `indices` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `iscomponentlist` | `tool=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `isphysical` | `which=[-1]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `length` |  | Implemented | The number of components. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `open` | `filename='', nomodify=False, log=True` | Implemented | Opens a component-list table, writing a list it replaces first; refuses what is not a component list. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `purge` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `putkeyword` | `keyword='metadata', value=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `recover` | `log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `remove` | `which=[-1], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `rename` | `filename, log=True` | Implemented | Names the table the list is written to, writing at once. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `replace` | `which, list, whichones=[-1]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `sample` | `direction=[], pixellatsize=[], pixellongsize=[], frequency=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `select` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `selected` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setflux` | `which, value=[], unit='Jy', polarization='Stokes', error=[], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setfreq` | `which, value, unit='GHz', log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setfreqframe` | `which, frame='LSRK', log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setlabel` | `which, value, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setrefdir` | `which=1, ra=[], dec=[], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setrefdirframe` | `which, frame, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setshape` | `which, type='Point', majoraxis=[], minoraxis=[], positionangle=[], majoraxiserror=[], minoraxiserror=[], positionangleerror=[], optionalparms=[0.0], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setspectrum` | `which, type='spectral index', index=[], tabularfreqs=[100000000000.0], tabularflux=[1.0], tabularframe='LSRK'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setstokesspectrum` | `which, type='spectral index', index=[0.0], tabularfreqs=[100000000000.0], tabulari=[1.0], tabularq=[0.0], tabularu=[0.0], tabularv=[0.0], reffreq=[], frame='LSRK'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `shapetype` | `which` | Implemented | A component's shape name. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `simulate` | `howmany=1, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `sort` | `criteria='Flux', log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `spectrumtype` | `which` | Implemented | A component's spectrum name. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `summarize` | `which=-1` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `torecord` |  | Implemented | CASA's record of the list. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+
+#### componentlist interacting modes and tool behavior
+
+#### componentlist deviations and unfinished work
+
+##### limb-darkened-disk-no-exponent: Previously agreed
+
+- Record: [Writing a limb-darkened disk without an exponent aborts CASA](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa)
+- Inputs: cl.fromrecord for a limb-darkened disk without optionalParameters, then cl.close.
+- CASA: writeTable stores an empty optional-parameter vector and throws casacore::indexError from the ComponentList destructor, terminating the process (CASA 6.7.6: close aborts); readTable would read out of bounds.
+- casa-rs: Leaves the cell undefined, read as the shape's default exponent 0.05.
+- Rationale: The default exponent is what every undescribed row already reads as.
+- User impact: Such lists save and reload instead of aborting the process.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#componentlist-evidence-bugs-record).
+
+##### single-spectral-index-read-past-end: Previously agreed
+
+- Record: [A single spectral index is read past its end](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-single-spectral-index-is-read-past-its-end)
+- Inputs: cl.addcomponent(spectrumtype='spectral index', index=alpha) on a polarised component, then predict.
+- CASA: The matrix sampleStokes used by every component prediction has no one-index branch and reads indices 1 to 3 out of bounds; the per-frequency version scales only I (read from source, not probed).
+- casa-rs: Reads a single index as [alpha,0,0,0], so fractional polarisation is constant.
+- Rationale: This is what the matrix sampler's comments describe.
+- User impact: Polarised components with one index predict Q, U, V reliably instead of scaled by whatever follows the vector.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#componentlist-evidence-bugs-record).
+
+##### addcomponent-four-flux-as-stokes: Previously agreed
+
+- Record: [`cl.addcomponent` stores four flux values as Stokes](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#claddcomponent-stores-four-flux-values-as-stokes)
+- Inputs: cl.addcomponent(flux=[1,0.1,0.2,0.9], polarization='circular').
+- CASA: setflux stores four values with FluxRep::setValue(Vector<Double>), which resets the representation to Stokes, so the values become I,Q,U,V rather than RR,RL,LR,LL (probed with CASA 6.7.6).
+- casa-rs: Does the same (owner decision 2026-10-23), including raising for an unknown name or a non-Stokes representation with one value.
+- Rationale: Scripts get the list CASA would give them.
+- User impact: A circular or linear four-value flux is silently read as Stokes in both implementations.
+- Owner decision: Owner decision, 2026-10-23 (#841), recorded in docs/CASA (C++) bugs.md.
+- Evidence: [bugs-record](#componentlist-evidence-bugs-record).
+
+##### addcomponent-flux-single-precision: Proposed
+
+- Record: [`cl.addcomponent` stores the flux in single precision](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#claddcomponent-stores-the-flux-in-single-precision)
+- Inputs: cl.addcomponent(flux=0.1).
+- CASA: setflux reads values into a Vector<Complex> (single precision), so flux=0.1 is stored as 0.10000000149011612 (CASA 6.7.6).
+- casa-rs: Keeps the values given.
+- Rationale: Avoids a needless single-precision rounding.
+- User impact: Fluxes differ from CASA's by at most 6e-8 relative.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [bugs-record](#componentlist-evidence-bugs-record).
+
+##### shape-axes-recorded-units: Proposed
+
+- Record: [The `cl` tool records a shape's axes in the units it was given](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given)
+- Inputs: cl.addcomponent(majoraxis='1arcsec', ...) then reading the shape record.
+- CASA: TwoSidedShape remembers the units its axes were set in and records them so ({'unit':'arcsec','value':1.0}); a shape read from a table records arcmin axes and degree position angle.
+- casa-rs: Holds radians and records every shape as CASA records one read from a table (arcmin, 0.016666666666666666).
+- Rationale: The quantities are the same, and the table is the same either way.
+- User impact: The record's unit and value differ from the input's but denote the same quantity.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [bugs-record](#componentlist-evidence-bugs-record).
+
+##### addcomponent-point-for-bad-shape: Previously agreed
+
+- Record: [`cl.addcomponent` keeps a point for a shape it cannot make](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make)
+- Inputs: cl.addcomponent with a misspelled shape name, a limb-darkened disk, or an axis that is not an angle.
+- CASA: addcomponent ignores setshape's False return, so the component stays a point and addcomponent returns True (CASA 6.7.6).
+- casa-rs: Does the same and logs at ERROR; what setshape raises, addcomponent raises too after removing the component.
+- Rationale: Scripts that misspell a shape get points, as in CASA.
+- User impact: A misspelled shape yields a point source instead of an error.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it.
+- Evidence: [bugs-record](#componentlist-evidence-bugs-record).
+
+#### componentlist evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="componentlist-evidence-signature"></a>
+##### signature
+
+**Signature inventory — recorded.** CASA 6.7.6.14's methods, names and defaults, and the object-surface bundle's; not behavior.
+
+- [crates/casars-python/python/tests/data/casa_componentlist_signatures.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/data/casa_componentlist_signatures.json)
+- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_componentlist.py)
+- [crates/casars-python/src/tools/componentlist/surface.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/src/tools/componentlist/surface.rs)
+
+<a id="componentlist-evidence-refusals"></a>
+##### refusals
+
+**Refusal test — recorded.** Each method casa-rs does not implement raises NotImplementedError naming #1053.
+
+- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_componentlist.py)
+- [crates/casars-python/src/tools/mod.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/src/tools/mod.rs)
+
+<a id="componentlist-evidence-table-fixtures"></a>
+##### table-fixtures
+
+**CASA fixture comparison — passed.** casa-components casa_fixture: 3 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. The component-list tables open reads and close and rename write.
+
+- [crates/casa-components/tests/casa_fixture.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-components/tests/casa_fixture.rs)
+- [crates/casa-components/tests/data/casa-6.7.6](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-components/tests/data/casa-6.7.6)
+- [tools/simulation/componentlist_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/componentlist_oracle.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/componentlist-fixtures-20261103.json`.
+
+<a id="componentlist-evidence-casa-values"></a>
+##### casa-values
+
+**CASA-recorded call sequences — passed.** test_tools_componentlist.py: 19 tests pass at the revision; the 2 that need a live CASA are skipped there, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. addcomponent and the accessors on 20 components and 36 recorded calls, with CASA's edge cases.
+
+- [crates/casars-python/python/tests/data/casa_componentlist_tool.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/data/casa_componentlist_tool.json)
+- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_componentlist.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/componentlist-fixtures-20261103.json`.
+
+<a id="componentlist-evidence-bugs-record"></a>
+##### bugs-record
+
+**Deviation record — recorded.** Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.
+
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-casa-on-casa"></a>
+##### casa-on-casa
+
+**casa-rs's tests run on CASA itself — passed.** 11 of the 21 tests pass against CASA 6.7.6.14's own cl tool; the others test what only casa-rs has, compare log lines with CASA's timestamps or Python's log, or (rename) meet a CASA assertion failure. The receipt classifies each. The cl tests' expectations, checked against CASA itself.
+
+- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_componentlist.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- Command: `CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool componentlist (bg-mac-mini)`.
+- Receipt: `resources/casa-compat/evidence/cl-on-casa-20261103.json`.
+
+### measures
+
+#### measures method implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
+
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 20, Partial: 0, Not implemented: 28, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+
+| CASA method | CASA parameters | Implementation | Scope | Evidence |
+|---|---|---|---|---|
+| `addxvalue` | `a` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `asbaseline` | `pos` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `baseline` | `rf='ITRF', v0=[], v1=[], v2=[], off={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `cometangdiam` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `cometdist` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `cometname` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `comettopo` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `comettype` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `direction` | `rf='J2000', v0=[], v1=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `dirshow` | `v` | Implemented | Shows measures as CASA shows them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `doframe` | `v` | Implemented | Sets the frame's epoch, position and direction. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `done` |  | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `doppler` | `rf='RADIO', v0=[], off={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `earthmagnetic` | `rf='IGRF', v0=[], v1=[], v2=[], off={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `epoch` | `rf='UTC', v0=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `expand` | `v={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `framecomet` | `v=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `framenow` |  | Implemented | Sets the frame's epoch, position and direction. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `frequency` | `rf='LSRK', v0=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `getoffset` | `v` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `getref` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `gettype` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `getvalue` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `ismeasure` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `linelist` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `listcodes` | `ms` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `measure` | `v, rf, off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `observatory` | `name='ALMA'` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `obslist` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's readantenna, sensitivity and itrf2locname, and simobserve, call it; casa-rs ports readantenna and simobserve in Rust, so only a script calling it directly meets the refusal. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `posangle` | `m1, m2` | Implemented | Angular separation and position angle, as casacore computes them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `position` | `rf='WGS84', v0=[], v1=[], v2=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `radialvelocity` | `rf='LSRK', v0=[], off={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `rise` | `crd=[], ev=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `riseset` | `crd=[], ev=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simutil.ephemeris calls it; ephemeris is not implemented either. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `separation` | `m1, m2` | Implemented | Angular separation and position angle, as casacore computes them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `shift` | `v={}, offset=[], pa=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `show` | `v, refcode=True` | Implemented | Shows measures as CASA shows them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `showframe` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `source` | `name=[]` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `sourcelist` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `spectralline` | `name='HI'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `todoppler` | `rf, v0, rfq=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `tofrequency` | `rf, v0, rfq` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `toradialvelocity` | `rf, v0` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `torestfrequency` | `v0, d0` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `touvw` | `v={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `type` |  | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `uvw` | `rf='ITRF', v0=[], v1=[], v2=[], off={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+
+#### measures interacting modes and tool behavior
+
+#### measures deviations and unfinished work
+
+##### measures-tool-default-frame: Proposed
+
+- Record: [The measures tool converts with a frame at MJD 0 and the geocentre](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-measures-tool-converts-with-a-frame-at-mjd-0-and-the-geocentre)
+- Inputs: me.measure(me.direction('J2000','12h00m00','45d00m00'),'AZEL') in a fresh measures tool, with no doframe call.
+- CASA: The tool starts with a default frame (MJD 0 UTC, zero-vector position, J2000 pole) and converts using it without a warning, returning AZEL for 1858-11-17 at the Earth's centre.
+- casa-rs: Starts with an empty frame, so the conversion fails with 'Cannot convert due to missing frame information' until doframe sets the element.
+- Rationale: A conversion should not silently use placeholder epoch and position.
+- User impact: A script that forgot doframe gets an error rather than a meaningless answer.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [bugs-record](#measures-evidence-bugs-record).
+
+##### iau2000-keeps-iau1980-sidereal: Previously agreed
+
+- Record: [IAU 2000 keeps the IAU 1980 sidereal time and ecliptic obliquities](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-keeps-the-iau-1980-sidereal-time-and-ecliptic-obliquities)
+- Inputs: Conversions to HADEC, AZEL, ITRF, MECLIPTIC or TECLIPTIC with measures.iau2000.b_use set.
+- CASA: casacore still forms GAST from IAU 1982 GMST and the IAU 1980 equation of the equinoxes, and uses IAU 1980 obliquities (fundArg T^2 term -0.0059 arcsec, 0.37 mas in MECLIPTIC by 2026).
+- casa-rs: Computes all of these as casacore does (casacore_sidereal, casacore_frames).
+- Rationale: Follows casacore for parity; it moved IAU 2000A J2000 to HADEC from 20.4 to 16.7 mas off casacore.
+- User impact: Results under IAU 2000 match casacore, including its remaining IAU 1980 pieces.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it.
+- Evidence: [bugs-record](#measures-evidence-bugs-record).
+
+##### direction-latitude-unnormalized: Previously agreed
+
+- Record: [Direction latitudes come from an unnormalized vector](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#direction-latitudes-come-from-an-unnormalized-vector)
+- Inputs: Direction conversions that use the galactic or FK4 matrices, e.g. B1950 to GALACTIC or J2000 to B1950 near a pole.
+- CASA: The 10-digit literal matrices are orthogonal only to about 7e-11 and doConvert does not renormalize, so getLat's asin(z) is off by (|v|-1)tan(b) and becomes NaN once z exceeds 1.
+- casa-rs: Converts with the same matrices, renormalizes and reports the latitude of the unit vector.
+- Rationale: asin(z) assumes a unit vector.
+- User impact: Reported angles differ by up to 51 microarcsec (1.6 mas at b=-89.77 deg) while directions agree to 0.01 microarcsec.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#measures-evidence-bugs-record).
+
+##### iau2000-jmean-j2000-order: Previously agreed
+
+- Record: [IAU 2000 JMEAN to J2000 applies bias and precession in the wrong order](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-jmean-to-j2000-applies-bias-and-precession-in-the-wrong-order)
+- Inputs: MECLIPTIC or TECLIPTIC to J2000 conversion under IAU 2000.
+- CASA: deapplyPrecession applies B then P giving P*B*v', not the inverse B*P*v', so JMEAN to J2000 is not the inverse of J2000 to JMEAN (0.14 mas off in 2026, growing).
+- casa-rs: Inverts exactly.
+- Rationale: The reverse transform must invert the forward one.
+- User impact: Round trips through the IAU 2000 ecliptics differ from casacore by 0.14 mas in 2026.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#measures-evidence-bugs-record).
+
+##### iau2000-gmst1-tt-fraction: Previously agreed
+
+- Record: [IAU 2000 GMST1 adds the TT day fraction](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#iau-2000-gmst1-adds-the-tt-day-fraction)
+- Inputs: UT1 to GMST1 (and so LMST) under IAU 2000.
+- CASA: UT1_GMST1 adds GMST00/(2pi), already a sidereal time of day, to the TT epoch, counting the TT day fraction twice: UT1 51544.5 gives GMST1 58258.280 against 58257.779, and GMST1_UT1 does not undo it.
+- casa-rs: Uses the IAU 1976 GMST1 under either model, as casacore's own GAST does.
+- Rationale: This keeps GMST1, LMST, GAST and LAST consistent with each other.
+- User impact: LMST differs from casacore's IAU 2000 value but agrees with casacore under IAU 1976.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#measures-evidence-bugs-record).
+
+#### measures evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="measures-evidence-signature"></a>
+##### signature
+
+**Signature inventory — recorded.** CASA 6.7.6.14's methods, names and defaults, and the object-surface bundle's; not behavior.
+
+- [crates/casars-python/python/tests/data/casa_measures_signatures.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/data/casa_measures_signatures.json)
+- [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py)
+- [crates/casars-python/src/tools/measures/surface.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/src/tools/measures/surface.rs)
+
+<a id="measures-evidence-refusals"></a>
+##### refusals
+
+**Refusal test — recorded.** Each method casa-rs does not implement raises NotImplementedError naming #1053.
+
+- [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py)
+- [crates/casars-python/src/tools/mod.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/src/tools/mod.rs)
+
+<a id="measures-evidence-casa-values"></a>
+##### casa-values
+
+**CASA-probed values — passed.** 39 of the 78 tests pass against CASA 6.7.6.14's own me tool, including every measure, conversion and query value. Of the 39 others, 30 test what only casa-rs has, 8 assert messages CASA writes to its own log, and 1 is the recorded empty-frame decision; the receipt classifies each. casa-rs passes the same tests in CI. Every implemented method, with CASA's messages.
+
+- [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- Command: `CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool measures (bg-mac-mini)`.
+- Receipt: `resources/casa-compat/evidence/me-on-casa-20261103.json`.
+
+<a id="measures-evidence-bugs-record"></a>
+##### bugs-record
+
+**Deviation record — recorded.** Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.
+
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+### quanta
+
+#### quanta method implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
+
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 25, Partial: 0, Not implemented: 32, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+
+| CASA method | CASA parameters | Implementation | Scope | Evidence |
+|---|---|---|---|---|
+| `abs` | `v=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `acos` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `add` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `angle` | `v=[], prec=0, form=[], showform=False` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `asin` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `atan` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `atan2` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `canon` | `v=[]` | Implemented | Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance). | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `canonical` | `v=[]` | Implemented | Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance). | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `ceil` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `check` | `v` | Implemented | Answers as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `checkfreq` | `cm=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `compare` | `v=[], a=[]` | Implemented | Answers as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `constants` | `v='pi'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `convert` | `v=[], outunit=[]` | Implemented | Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance). | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `convertdop` | `v=[], outunit='km/s'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `convertfreq` | `v=[], outunit='Hz'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `cos` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `define` | `name, v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `div` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `done` | `kill=False` | Implemented | As CASA's. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `eq` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `exp` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `fits` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `floor` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `formxxx` | `v=[], format='dms', prec=2` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `ge` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `getformat` | `t=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `getunit` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `getvalue` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `gt` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `isangle` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `isquantity` | `v=[]` | Implemented | Answers as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `le` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `log` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `log10` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `lt` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `map` | `v='all'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `maprec` | `v='all'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `mul` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `ne` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `neg` | `v=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `norm` | `v=[], a=-0.5` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `pow` | `v=[], a=1` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `quantity` | `v=[], unitname='', keepshape=False` | Implemented | Builds quantities and quantity arrays from strings, numbers and records, as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `setformat` | `t='', v='F'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `sin` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `splitdate` | `v=[]` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `sqrt` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `sub` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `tan` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `time` | `v=[], prec=0, form=[], showform=False` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `toangle` | `v=[]` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `tos` | `v=[], prec=9` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `totime` | `v=[]` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `type` |  | Implemented | As CASA's. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `unit` | `v=[], unitname='', keepshape=False` | Implemented | Builds quantities and quantity arrays from strings, numbers and records, as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+
+#### quanta interacting modes and tool behavior
+
+#### quanta deviations and unfinished work
+
+##### quantities-non-conforming-units: Previously agreed
+
+- Record: [The tools convert quantities whose units do not conform](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-tools-convert-quantities-whose-units-do-not-conform)
+- Inputs: integrationtime='10Jy', integrationtime='10m' or freq='1s' passed to a simulator method; a direction string such as 'J2000 12h00m00 garbage'.
+- CASA: CASA 6.7.6 converts without checking conformance: '10Jy' becomes 1e-25 s, '10m' 10 s, '1s' 1 Hz, and an unreadable direction token keeps the previous value (declination 180 deg).
+- casa-rs: Refuses both with casacore's 'From/to units not consistent' or a parse error, while keeping CASA's cross-dimension conversions (number is SI, angle is time, length is frequency via c).
+- Rationale: Non-conforming units are almost certainly user errors and should not become silent wrong values.
+- User impact: Scripts with a wrong unit now stop with an error instead of running with a nonsense value.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#quanta-evidence-bugs-record).
+
+#### quanta evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="quanta-evidence-signature"></a>
+##### signature
+
+**Signature inventory — recorded.** CASA 6.7.6.14's methods, names and defaults, and the object-surface bundle's; not behavior.
+
+- [crates/casars-python/python/tests/data/casa_quanta_signatures.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/data/casa_quanta_signatures.json)
+- [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_quanta.py)
+- [crates/casars-python/src/tools/quanta/surface.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/src/tools/quanta/surface.rs)
+
+<a id="quanta-evidence-refusals"></a>
+##### refusals
+
+**Refusal test — recorded.** Each method casa-rs does not implement raises NotImplementedError naming #1053.
+
+- [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_quanta.py)
+- [crates/casars-python/src/tools/mod.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/src/tools/mod.rs)
+
+<a id="quanta-evidence-casa-values"></a>
+##### casa-values
+
+**CASA-probed values — passed.** 96 of the 131 tests pass against CASA 6.7.6.14's own qa tool: every test of a value or a raised message. The 35 others test what only casa-rs has (its refusals, bundle and import) or one message CASA writes to its own log; the receipt classifies each. casa-rs passes the same tests in CI. Every implemented method, with CASA's messages.
+
+- [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_quanta.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- Command: `CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool quanta (bg-mac-mini)`.
+- Receipt: `resources/casa-compat/evidence/qa-on-casa-20261103.json`.
+
+<a id="quanta-evidence-bugs-record"></a>
+##### bugs-record
+
+**Deviation record — recorded.** Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.
+
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+### simulator
+
+#### simulator method implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
+
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 18, Partial: 11, Not implemented: 0, Disabled in CASA: 3, Deprecated in CASA: 1, Unassessed: 0.
+
+| CASA method | CASA parameters | Implementation | Scope | Evidence |
+|---|---|---|---|---|
+| `close` |  | Implemented | Writes and closes the MeasurementSet, within the session's memory budget. CASA aborts here after a mosaic predict; casa-rs does not (decision). | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103) |
+| `corrupt` |  | Partial (#1053) | Applies the noise, gain, leakage, tropospheric and applied-table terms. Refused: a spectral window observed after setgain, setleakage or settrop terms were set, or defined after a tsys-atm setnoise. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [noise-20261103](#simulator-evidence-noise-20261103), [corruptions-20261103](#simulator-evidence-corruptions-20261103), [troposphere-20261103](#simulator-evidence-troposphere-20261103), [refusals](#simulator-evidence-refusals) |
+| `done` |  | Implemented | As close, and frees the tool. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
+| `name` |  | Implemented | The MeasurementSet's name. No CASA comparison executed. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
+| `observe` | `sourcename='', spwname='', starttime=[], stoptime=[], add_observation=False, state_sig=True, state_ref=False, state_cal=0.0, state_load=0.0, state_sub_scan=0, state_obs_mode='OBSERVE_TARGET.ON_SOURCE', observer='CASA simulator', project='CASA simulation'` | Partial (#1053) | Adds a scan's rows as CASA does, with shadowing and elevation limits (decisions). Refused after openfromms. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [scripts](#simulator-evidence-scripts), [refusals](#simulator-evidence-refusals) |
+| `observemany` | `sourcenames=[], spwname='', starttimes=['0s'], stoptimes=['3600s'], directions=[''], add_observation=False, state_sig=True, state_ref=False, state_cal=0.0, state_load=0.0, state_sub_scan=0, state_obs_mode='OBSERVE_TARGET#ON_SOURCE', observer='CASA simulator', project='CASA simulation'` | Partial (#1053) | Adds several pointings' rows. Refused after openfromms. CASA's padding and row-order defects are decisions. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [refusals](#simulator-evidence-refusals) |
+| `oldsetnoise` | `mode='calculate', table='', simplenoise=[], antefficiency=0.8, correfficiency=0.85, spillefficiency=0.85, tau=0.1, trx=50.0, tatmos=230.0, tcmb=2.7` | Deprecated in CASA | Raises, naming setnoise, as CASA does. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
+| `open` | `ms=''` | Implemented | Creates a MeasurementSet for observe. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [scripts](#simulator-evidence-scripts) |
+| `openfromms` | `ms=''` | Partial (#1053) | Opens an existing MeasurementSet for predict and corrupt. Refused: data descriptions that are not the spectral windows in order, channels not evenly spaced, several feeds per antenna, polynomial PHASE_DIR, POINTING away from PHASE_DIR, and rows flagged without FLAG_ROW. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [openfromms-20261103](#simulator-evidence-openfromms-20261103), [refusals](#simulator-evidence-refusals) |
+| `predict` | `imagename=[], complist='', incremental=False` | Partial (#1053) | Predicts image models (one Stokes I, J2000 image) and component lists through GridFT, WProjectFT, the mosaic machine and SDGrid, with setvp beams. Refused: several model images, model layouts casa-rs cannot read, refocusing to a field's distance, correlation codes casa-rs does not predict, limb-darkened disks and other frames, squinted VLA and EVLA beams on components, a primary beam or the mosaic machine on a pointing moved away from its field, scans whose windows have different correlations, and an incremental predict after a corrupt with setgain or setleakage terms. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [predict-image-20261103](#simulator-evidence-predict-image-20261103), [predict-components-20261103](#simulator-evidence-predict-components-20261103), [predict-sd-20261103](#simulator-evidence-predict-sd-20261103), [openfromms-20261103](#simulator-evidence-openfromms-20261103), [refusals](#simulator-evidence-refusals) |
+| `reset` |  | Implemented | Clears the corruption terms. No CASA comparison executed. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
+| `setapply` | `table='', type='', t=0.0, field=[], interp='linear', calwt=False, spwmap=[-1], opacity=0.0` | Partial (#1053) | Applies G and D tables with linear or nearest interpolation. Refused: calwt, a nonzero t, a nonzero opacity, other table types, per-channel or flagged solutions, a missing antenna solution, solutions without two receptors, and other interpolations. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [corruptions-20261103](#simulator-evidence-corruptions-20261103), [refusals](#simulator-evidence-refusals) |
+| `setauto` | `autocorrwt=0.0` | Implemented | Autocorrelation rows. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [predict-image-20261103](#simulator-evidence-predict-image-20261103) |
+| `setbandpass` | `mode='calculate', table='', interval=[], amplitude=[0.0]` | Disabled in CASA | Logs CASA's error and returns False, as CASA 6.7.6.14 does. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
+| `setconfig` | `telescopename='VLA', x=[0.0], y=[0.0], z=[0.0], dishdiameter=[0.0], offset=[0.0], mount=['ALT-AZ'], antname=['A'], padname=['P'], coordsystem='global', referencelocation=[]` | Implemented | The antenna configuration. Coordinate systems CASA accepts but cannot convert are refused (decision). | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [scripts](#simulator-evidence-scripts) |
+| `setdata` | `spwid=[0], fieldid=[0], msselect=''` | Partial (#1053) | Selects spectral windows and all fields. Refused: a selection keeping fewer than all scans observed so far, and a TaQL msselect. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [refusals](#simulator-evidence-refusals) |
+| `setfeed` | `mode='', x=[0.0], y=[0.0], pol=['R']` | Implemented | Feed and polarization settings. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [scripts](#simulator-evidence-scripts) |
+| `setfield` | `sourcename='SOURCE', sourcedirection=[], calcode='', distance=[]` | Implemented | A field. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [scripts](#simulator-evidence-scripts) |
+| `setgain` | `mode='fbm', table='', interval=[], amplitude=[0.01]` | Implemented | fBM and random gain screens, with tables (CASA's defects are decisions). | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [corruptions-20261103](#simulator-evidence-corruptions-20261103) |
+| `setleakage` | `mode='constant', table='', amplitude=[0.01], offset=[0.0]` | Implemented | Leakage terms, with tables (CASA's defects are decisions). | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [corruptions-20261103](#simulator-evidence-corruptions-20261103) |
+| `setlimits` | `shadowlimit=1e-06, elevationlimit=[]` | Implemented | Elevation and shadowing limits. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103) |
+| `setmosaicfield` | `sourcename='SOURCE', calcode='', fieldcenter=[], xmosp=1, ymosp=1, mosspacing=[], distance=[]` | Implemented | A mosaic of fields. Only probed against CASA: its grid sits off the field centre in CASA (decision). | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
+| `setnoise` | `mode='simplenoise', table='', simplenoise=[], pground=[], relhum=20.0, altitude=[], waterheight=[], pwv=[], tatmos=250.0, tau=0.1, antefficiency=0.8, spillefficiency=0.85, correfficiency=0.88, trx=50.0, tground=270.0, tcmb=2.73, OTF=True, senscoeff=0.0, rxtype=0` | Partial (#1053) | simplenoise, tsys-manual and tsys-atm noise with the ATM model. Refused: OTF=False and a Tsys mode with table, which write the T table. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [noise-20261103](#simulator-evidence-noise-20261103), [refusals](#simulator-evidence-refusals) |
+| `setoptions` | `ftmachine='ft', cache=0, tile=16, gridfunction='SF', location=[], padding=1.3, facets=1, maxdata=2000.0, wprojplanes=1` | Partial (#1053) | FTMachines ft, wproject, mosaic and sd with their grid functions; padding and location. Refused: other FTMachines (both, pbwproject), grid functions other than SF (or PB, BOX and SF for sd), sd with PB for a telescope without a default beam, and wproject on the Metal backend. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [predict-image-20261103](#simulator-evidence-predict-image-20261103), [predict-sd-20261103](#simulator-evidence-predict-sd-20261103), [refusals](#simulator-evidence-refusals) |
+| `setpa` | `mode='calculate', table='', interval=[]` | Disabled in CASA | Logs CASA's error and returns False, as CASA 6.7.6.14 does. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
+| `setpointingerror` | `epjtablename='', applypointingoffsets=False, dopbcorrection=False` | Disabled in CASA | Logs CASA's error and returns False, as CASA 6.7.6.14 does. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
+| `setseed` | `seed=185349251` | Implemented | The random seed; casa-rs's draws differ from CASA's, compared statistically. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [noise-20261103](#simulator-evidence-noise-20261103), [corruptions-20261103](#simulator-evidence-corruptions-20261103) |
+| `setspwindow` | `spwname='XBAND', freq=[], deltafreq=[], freqresolution=[], refcode='TOPO', nchannels=1, stokes='RR LL'` | Implemented | A spectral window, keeping each window's frame (decision). | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [scripts](#simulator-evidence-scripts) |
+| `settimes` | `integrationtime=[], usehourangle=True, referencetime=[]` | Implemented | Integration time, reference time and hour-angle use. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [observe-20261103](#simulator-evidence-observe-20261103), [scripts](#simulator-evidence-scripts) |
+| `settrop` | `mode='screen', table='', pwv=3.0, deltapwv=0.15, beta=1.1, windspeed=7.0, simint=-1.0` | Partial (#1053) | Individual and screen modes, with tables. Refused: mode='test', CASA's debugging ramp. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [troposphere-20261103](#simulator-evidence-troposphere-20261103), [refusals](#simulator-evidence-refusals) |
+| `setvp` | `dovp=True, usedefaultvp=True, vptable='', dosquint=True, parangleinc=[], skyposthreshold=[], pblimit=0.01` | Partial (#1053) | Default voltage patterns of ALMA, ACA, the VLA and the EVLA, with squint. Refused: a voltage-pattern table, and dovp=True for other telescopes. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests), [predict-image-20261103](#simulator-evidence-predict-image-20261103), [refusals](#simulator-evidence-refusals) |
+| `summary` |  | Implemented | Logs CASA's summary. No CASA comparison executed. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
+| `type` |  | Implemented | CASA's tool type. No CASA comparison executed. | [signature](#simulator-evidence-signature), [binding-tests](#simulator-evidence-binding-tests) |
+
+#### simulator interacting modes and tool behavior
+
+#### simulator deviations and unfinished work
+
+##### airy-blockage-ratio: Previously agreed
+
+- Record: [The Airy beam's blockage term uses the inverse length ratio](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-airy-beams-blockage-term-uses-the-inverse-length-ratio)
+- Inputs: Any Airy primary beam with a central blockage, e.g. ALMA's default 10.7 m dish with 0.75 m blockage via setvp.
+- CASA: PBMath1DAiry::fillPBArray evaluates the blockage term at x*D/b instead of x*b/D, so main-lobe power is about 1% above the physical pattern (0.507 against 0.500 at the half-power radius).
+- casa-rs: Tabulates the same expression (AnnularApertureVoltageTable), matching CASA's predictions to 1.6e-7.
+- Rationale: ALMA's 10.7 m effective diameter was chosen against CASA's beam.
+- User impact: Beam-dependent predictions and images agree with CASA but are about 1% off the physical pattern.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### tai-stored-as-utc: Previously agreed
+
+- Record: [The simulator stores TAI as UTC](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-simulator-stores-tai-as-utc)
+- Inputs: sm.observe with a reference epoch; the stored TIME column.
+- CASA: observe adds TAI seconds to the offsets and writes the result into TIME labelled UTC, so data start TAI-UTC (37 s since 2017) after the requested epoch; geometry reads the number as UT1.
+- casa-rs: Stores the requested UTC and also reads the stored TIME as UT1 for geometry, so uvw agree with CASA at equal TIME.
+- Rationale: The stored value should match its MEASINFO label; parity runs offset the start by TAI-UTC taken from the measures data.
+- User impact: Schedules and simulated calibration tables differ from CASA's by TAI-UTC (37 s today) unless the start is shifted.
+- Owner decision: Owner decision 5 of the simulation plan, accepted 2026-10-20 (docs/simulation/simulation-plan-20261020.md): TIME honours the requested UTC.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### shadowing-antenna-in-front: Previously agreed
+
+- Record: [The simulator charges shadowing to the antenna in front](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-simulator-charges-shadowing-to-the-antenna-in-front)
+- Inputs: sm.observe over antennas close enough to shadow each other.
+- CASA: NewMSSimulator::blockage leaves the blockage on the antenna in front (the one doing the blocking), whereas CASA's own flagger FlagAgentShadow flags the antenna behind.
+- casa-rs: Flags the antenna behind (ShadowedAntenna::Behind); the CASA convention remains available as CasaSimulatorFront.
+- Rationale: CASA's own flagger shows the intent: the antenna behind is the shadowed one.
+- User impact: Shadowed rows are flagged on the opposite antenna from CASA's simulator unless CasaSimulatorFront is selected.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### setspwindow-relabels-frame: Previously agreed
+
+- Record: [`setspwindow` relabels every spectral window's frame](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#setspwindow-relabels-every-spectral-windows-frame)
+- Inputs: setspwindow called twice with different frames, e.g. a TOPO window then an LSRK one.
+- CASA: Each call ends with measFreqRef().fillColumn(freqType), writing the new frame into MEAS_FREQ_REF for every row, so both windows end up labelled LSRK.
+- casa-rs: Writes each window's own frame.
+- Rationale: Frequencies were given in different frames, so each window must keep its own label.
+- User impact: Earlier windows get a wrong frame label in SPECTRAL_WINDOW.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### setconfig-unconvertible-coordsystem: Previously agreed
+
+- Record: [`setconfig` accepts coordinate systems it cannot convert](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#setconfig-accepts-coordinate-systems-it-cannot-convert)
+- Inputs: setconfig(coordsystem='longlat') or an unknown coordinate system name.
+- CASA: longlat2global logs SEVERE 'not yet implemented' (or initAnt 'Unknown coordinate system type'), the antennas are added at the Earth's centre, and setconfig returns True.
+- casa-rs: Raises RuntimeError for longlat; an unknown name logs CASA's message and returns False; neither adds antennas.
+- Rationale: An array with meaningless geometry should not be silently built.
+- User impact: A script continues with a meaningless array in CASA but stops or sees False in casa-rs.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### calls-before-setconfig-abort: Previously agreed
+
+- Record: [Simulator calls before `setconfig` abort the process](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#simulator-calls-before-setconfig-abort-the-process)
+- Inputs: setfeed or observe called before any setconfig.
+- CASA: The table slice over zero antennas throws std::runtime_error (an empty Slicer), which the tool binding does not catch, and the Python process aborts.
+- casa-rs: Raises RuntimeError from setfeed, and observe returns False with 'Antenna information not yet defined'.
+- Rationale: An unhandled C++ exception must not kill the interpreter.
+- User impact: A mis-ordered script gets a normal error instead of a process abort.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### zero-integration-time-unbounded-rows: Previously agreed
+
+- Record: [A zero integration time adds rows without bound](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-zero-integration-time-adds-rows-without-bound)
+- Inputs: settimes() with no arguments (0 s) or integrationtime of zero, then observe over a nonzero span.
+- CASA: settimes only asserts the time is not negative; observe divides the span by zero and adds billions of rows before the disk fills.
+- casa-rs: Observe returns False for a non-positive integration time ('observe: the integration time must be positive').
+- Rationale: A zero integration time cannot define a schedule.
+- User impact: The script stops cleanly instead of exhausting the disk.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### predict-rewrites-model: Proposed
+
+- Record: [`sm.predict` rewrites the model image](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#smpredict-rewrites-the-model-image)
+- Inputs: sm.predict with model images.
+- CASA: createSkyEquation opens each model as PagedImage<Float>, forces LSRK spectral conversion and Hz units and stores it back, so predicting rewrites the model's table.dat.
+- casa-rs: Converts the spectral axis to Hz in memory and never writes the model.
+- Rationale: A prediction should not modify its input.
+- User impact: Models stay as the user wrote them; CASA's oracle copies models per call.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### predict-unreadable-models: Proposed
+
+- Record: [`sm.predict` accepts models the simulator cannot read](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#smpredict-accepts-models-the-simulator-cannot-read)
+- Inputs: sm.predict with a FITS model or a complex-valued CASA image.
+- CASA: The binding checks with ImageFactory::fromFile, but the simulator reads PagedImage<Float>; predict logs 'Failed to create SkyEquation', returns False, and the script continues with DATA unpredicted (read from source, not probed).
+- casa-rs: Checks each model by opening it as the simulator reads it, so predict raises RuntimeError 'Unable to open image ...'.
+- Rationale: The check should match what is later read.
+- User impact: Unreadable models fail loudly at the call.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### negative-component-under-beam: Previously agreed
+
+- Record: [A negative component turns positive under the primary beam](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-negative-component-turns-positive-under-the-primary-beam)
+- Inputs: sm.setvp(dovp=True) with a negative-flux component, e.g. -0.4 Jy point 20 arcsec off centre.
+- CASA: The fullspectral beam path multiplies by a spectrum sample over abs(flux), restoring the sign twice, so a negative flux comes out positive (+0.4 Jy times the beam).
+- casa-rs: Keeps the sign.
+- Rationale: A beam attenuates; it should not change the flux's sign.
+- User impact: Negative components predict with the right sign under a beam.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### beam-component-spectrum-lsrk-label: Proposed
+
+- Record: [The primary beam's component spectrum labels topocentric samples LSRK](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-primary-beams-component-spectrum-labels-topocentric-samples-lsrk)
+- Inputs: Component prediction with the primary beam on (setvp) over channels with a topocentric-LSRK difference.
+- CASA: The full-spectral beam path stores products at the channels' LSRK frequencies, labels the table LSRK, and SkyCompRep::visibility reads it at topocentric frequencies, shifting each channel by up to about 1e-4 of the frequency.
+- casa-rs: Evaluates the beam and spectrum at each channel's own frequency.
+- Rationale: The table's frame label and lookup frequencies should agree.
+- User impact: With the beam on, scenarios agree with CASA to 7e-5 and 1e-4 normalized RMS instead of 1.3e-5.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### setmosaicfield-grid-offset: Previously agreed
+
+- Record: [`setmosaicfield` sits its grid off the field centre](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#setmosaicfield-sits-its-grid-off-the-field-centre)
+- Inputs: setmosaicfield with a 3x3 or 2x2 grid at 1 arcmin spacing.
+- CASA: The odd-count test (nx/2)!=floor(nx/2) on integers is always false, so every grid takes the even-count offsets; a 3x3 grid has RA offsets -1.5,-0.5,+0.5 spacings and Dec -2.5,-1.5,-0.5 (CASA 6.7.6).
+- casa-rs: Centres every grid at (i-(n-1)/2) spacings, divides RA by cos(dec), and keeps CASA's field names {sourcename}_{k}.
+- Rationale: The grid should be centred on the field centre.
+- User impact: Mosaic pointings sit at different offsets from CASA's, which are off-centre.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### observemany-pads-one-name: Previously agreed
+
+- Record: [`observemany` pads one name with empty ones](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#observemany-pads-one-name-with-empty-ones)
+- Inputs: observemany with one source name (or one direction) and several pointings.
+- CASA: casatools pads the list with Vector<String>::resize, giving empty names; pointing 1's field is '', observe raises 'Field 1: not yet defined' and observemany returns False (CASA 6.7.6).
+- casa-rs: Pads the same way and returns the same False, moving only the first pointing, but adds no rows before refusing.
+- Rationale: Follows CASA's outcome of refusing the call.
+- User impact: The call fails with the same message as CASA.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### observemany-rows-before-field-lookup: Previously agreed
+
+- Record: [`observemany` adds rows before it looks up later fields](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#observemany-adds-rows-before-it-looks-up-later-fields)
+- Inputs: observemany where a later pointing's field is not defined.
+- CASA: observe adds every pointing's MAIN rows before looking up later fields, so an undefined field raises with the rows added and FIELD_ID, TIME and UVW unwritten, and returns False.
+- casa-rs: Looks up every field before planning, so the call returns False with the same message and leaves no rows.
+- Rationale: A refused call should leave the MeasurementSet unchanged.
+- User impact: CASA leaves junk rows in the MeasurementSet after the error; casa-rs does not.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### predict-wprojectft-no-planes-crash: Previously agreed
+
+- Record: [`sm.predict` through `WProjectFT` without planes crashes the simulator](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#smpredict-through-wprojectft-without-planes-crashes-the-simulator)
+- Inputs: setoptions(ftmachine='wproject', wprojplanes=0 or -1) then sm.predict.
+- CASA: The simulator builds WProjectFT with no w statistics so the automatic branch gets a negative largest w and zero or negative planes; predict kills the Python process with a segmentation fault (exit 139, CASA 6.7.6).
+- casa-rs: Records the planes at setoptions as CASA does, and predict raises RuntimeError ('W projection needs at least two planes'); it follows CASA's other quirks of the machine.
+- Rationale: A segfault should be an error.
+- User impact: A bad plane count raises instead of killing the process.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### sdgrid-total-power-nonpositive-uvw: Previously agreed
+
+- Record: [`SDGrid` predicts total power into cross-correlations with no positive uvw](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#sdgrid-predicts-total-power-into-cross-correlations-with-no-positive-uvw)
+- Inputs: sm.predict after setoptions(ftmachine='sd') with cross-correlation rows whose u, v and w are all zero or negative.
+- CASA: SDGrid::get leaves out rows with max(uvw)>0, meant to keep cross-correlations at zero, but a cross-correlation with all components zero or negative passes and gets total power (read from source; a two-antenna probe saw only positive-component rows).
+- casa-rs: Predicts total power into autocorrelations only.
+- Rationale: The test was meant to keep cross-correlations at zero.
+- User impact: Cross-correlations of a single-dish prediction stay zero regardless of uvw sign.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### evla-beam-no-11052-fit: Previously agreed
+
+- Record: [The EVLA's beam table has no 11052 MHz fit](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-evlas-beam-table-has-no-11052-mhz-fit)
+- Inputs: Simulated EVLA beam near 10.05 or 11.05 GHz (X band).
+- CASA: PBMath1DEVLA::init inserts 10948, then 10052, then 11180 MHz; the second 10052 (meant 11052) overwrites the first, so the map has no 11052 entry and coefficients differ by about 1% in the linear term (few 1e-3 at half power).
+- casa-rs: casa-rs's table (EvlaPowerPattern, shared with imaging) is CASA's map as built.
+- Rationale: Kept for parity with CASA's beam.
+- User impact: EVLA X-band beams match CASA's, including its typo.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### close-aborts-after-mosaic-predict: Previously agreed
+
+- Record: [`sm.close()` aborts the process after a mosaic predict](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#smclose-aborts-the-process-after-a-mosaic-predict)
+- Inputs: setoptions(ftmachine='mosaic'), a successful predict, then sm.close() (simobserve's own sequence).
+- CASA: CASA 6.7.6 sm.close() kills the Python process with 'Pure virtual function called!' and SIGABRT (exit 134); DATA is already complete on disk.
+- casa-rs: Close returns normally; the CASA oracle runs these scenarios in a child process and records close as aborted.
+- Rationale: An abort at close is a defect, not behaviour to copy.
+- User impact: Scripts do not die at close in casa-rs.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### simulator-mosaic-machine-not-tclean: Previously agreed
+
+- Record: [The simulator's mosaic machine is not tclean's](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-simulators-mosaic-machine-is-not-tcleans)
+- Inputs: sm.predict with setoptions(ftmachine='mosaic') compared with tclean(gridder='mosaic').
+- CASA: The simulator degrids through the earlier HetArrayConvFunc/SimplePBConvFunc/MosaicFT, which differ from tclean's in support radius, screen size, frequency cells, support search and channel frequencies (4.5-5.6e-3 NRMS on the #875 probe).
+- casa-rs: casa-rs's mosaic set takes either machine's rules (MosaicRules): imaging follows tclean's, the simulator its own.
+- Rationale: Parity with each CASA machine.
+- User impact: Simulated and imaged mosaics each match CASA's own machine and differ from each other by up to about 5e-3 NRMS.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### predict-moved-pointing-phased-on-field: Previously agreed
+
+- Record: [`sm.predict` phases a moved `observemany` pointing on its field](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#smpredict-phases-a-moved-observemany-pointing-on-its-field)
+- Inputs: sm.predict over an observemany pointing moved off its field.
+- CASA: NewMSSimulator writes UVW at the moved direction but leaves FIELD unchanged, so predict (VisBuffer phase centre from FIELD) phases the pointing on its field; a source at the moved direction gets phases spread over +-180 deg (rms 101 deg).
+- casa-rs: Follows: UVW, elevation limit and POINTING at the moved direction, DATA phased on the field.
+- Rationale: FIELD is the only phase centre recorded, which every imager and calibrator assumes.
+- User impact: Moved-pointing DATA match CASA to 8.4e-6 NRMS or better.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### beam-moved-pointing-first-row: Previously agreed
+
+- Record: [The beam on a moved pointing stays where the field's first row points](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-beam-on-a-moved-pointing-stays-where-the-fields-first-row-points)
+- Inputs: setvp beam over a model, component list, total power or mosaic machine on a pointing observemany moved off its field.
+- CASA: VPSkyJones updates only when BeamSkyJones::changed fires and the pointing-direction comparisons are commented out, so every row of a field is beamed where the field's first-visited row points (0.652 of peak kept in both pointings in the probe).
+- casa-rs: Refuses a primary beam over a model image, component list or total power, and the mosaic machine, on a moved pointing; it does not reproduce the cache.
+- Rationale: None of CASA's outcomes is the beam the moved pointing sees.
+- User impact: Such runs raise an error; simobserve gives each pointing its own field and never reaches this.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### predict-corrupt-scratch-columns: Previously agreed
+
+- Record: [`predict` and `corrupt` add scratch columns to a MeasurementSet without them](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#predict-and-corrupt-add-scratch-columns-to-a-measurementset-without-them)
+- Inputs: sm.predict or sm.corrupt on a MeasurementSet without CORRECTED_DATA.
+- CASA: The VisSet constructor adds MODEL_DATA (1) and CORRECTED_DATA (DATA); predict sets CORRECTED_DATA to the new DATA and MODEL_DATA to 1, and corrupt sets CORRECTED_DATA to the corrupted DATA.
+- casa-rs: Writes DATA only, creates neither column after openfromms, and keeps existing ones in step with DATA.
+- Rationale: Plan decision 6: no scratch columns added as a side effect.
+- User impact: Output MeasurementSets lack MODEL_DATA and CORRECTED_DATA that CASA would add.
+- Owner decision: Owner decision 6 of the simulation plan, accepted 2026-10-20 (docs/simulation/simulation-plan-20261020.md): DATA only, unless a later step needs MODEL_DATA.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### gain-screens-read-past-transform: Previously agreed
+
+- Record: [CASA's gain screens read past their transform](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#casas-gain-screens-read-past-their-transform)
+- Inputs: setgain(mode='fbm') (and settrop(mode='individual')), corrupt.
+- CASA: fBM::initialize copies n values from a transform of length n-2 or n-3, reading the last two or three past the end, and the RMS normalisation includes them; amplitude scale varied 0.969, 0.966, 1.005 between runs and some antennas had unit gain throughout.
+- casa-rs: Transforms every slot, so screens have the documented scale; it refuses individual mode on fewer than six slots.
+- Rationale: Avoid reading out of bounds.
+- User impact: CASA gain scales vary from run to run; casa-rs screens are reproducible and at the documented scale.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### gain-screens-share-seed: Previously agreed
+
+- Record: [Gain screens of neighbouring antennas share a seed](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#gain-screens-of-neighbouring-antennas-share-a-seed)
+- Inputs: setgain(mode='fbm') on neighbouring antennas.
+- CASA: GJonesCorruptor::initialize seeds antenna a's receptor r screen with seed+a+r, so antenna a's second receptor and antenna a+1's first draw identical screens (measured identical amplitudes).
+- casa-rs: Keys each antenna's and receptor's screens apart.
+- Rationale: Independent errors should be independent draws.
+- User impact: CASA's neighbouring antennas have correlated gains; casa-rs's do not.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### setgain-random-about-zero: Previously agreed
+
+- Record: [`setgain(mode='random')` draws gains about zero](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#setgainmoderandom-draws-gains-about-zero)
+- Inputs: setgain(mode='random', amplitude=[0.05]) on a 1 Jy point.
+- CASA: simPar returns camp.re*n1 + i*camp.im*n2 without adding one: mean gain modulus 0.065 and DATA mean modulus 0.0046 Jy, nearly erasing the data (CASA 6.7.6).
+- casa-rs: Draws 1 + camp.re*n1 + i*camp.im*n2.
+- Rationale: Gain errors are multiplicative and near unity; the owner said follow CASA only if there is a good reason, which there is not.
+- User impact: random gains perturb the data instead of destroying it.
+- Owner decision: Owner, 2026-10-24 (#841 Phase 3): follow CASA only if there is a good reason for its behaviour, which there is not.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### autocorrelation-resets-term: Previously agreed
+
+- Record: [An autocorrelation row resets its antenna's simulated term](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#an-autocorrelation-row-resets-its-antennas-simulated-term)
+- Inputs: setgain or setleakage with autocorrelations written (CASA's default).
+- CASA: setSimulate sets ANTENNA1's value at every row and 1 at an autocorrelation, so the last antenna (ANTENNA1 only of its autocorrelation) has unit gain and leakage 1 throughout (antenna 42 of 43 in corrupt-gain).
+- casa-rs: Simulates every antenna's term, including settrop's Tf term.
+- Rationale: Every antenna should be corrupted.
+- User impact: CASA leaves the last antenna uncorrupted; casa-rs does not.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### setleakage-first-two-spws: Previously agreed
+
+- Record: [`setleakage` simulates only the first two spectral windows](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#setleakage-simulates-only-the-first-two-spectral-windows)
+- Inputs: setleakage(table=...) with three, four or eight spectral windows, then corrupt.
+- CASA: The table has solutions for windows 0 and 1 only; corrupt logs 'no (simulated) calibration' for later windows and leaves their rows uncorrupted (CASA 6.7.6; cause not traced).
+- casa-rs: Simulates a leakage for every window.
+- Rationale: All windows should be corrupted; setgain already does so.
+- User impact: Windows beyond the second are unchanged in CASA but corrupted in casa-rs.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### setleakage-one-per-window: Previously agreed
+
+- Record: [`setleakage` draws one leakage per window for the whole run](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#setleakage-draws-one-leakage-per-window-for-the-whole-run)
+- Inputs: setleakage followed by corrupt over several scans, or setgain with interval=.
+- CASA: setleakage simulates with an infinite solution interval (one solution per window and antenna spanning all scans) and corrupt applies it as the linearised JonesGenLin, which raises on two-correlation data; setgain's interval is not used.
+- casa-rs: Follows both, and does not read setgain's interval.
+- Rationale: Parity with CASA's documented and observed behaviour.
+- User impact: Leakage is constant across scans; two-correlation data are refused as in CASA.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### term-table-written-when-set: Proposed
+
+- Record: [A simulated term's table is written when the term is set](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-simulated-terms-table-is-written-when-the-term-is-set)
+- Inputs: setgain(table=...) or setleakage(table=...).
+- CASA: CASA writes the calibration table as soon as it simulates the term, replacing a table of that name, with subtables copied from the MeasurementSet as it then is.
+- casa-rs: Writes the table at close from the written MeasurementSet; rows are the same but subtables include what was observed after the call, and it refuses to replace anything but a table.
+- Rationale: casa-rs writes the MeasurementSet only at close.
+- User impact: The table appears later (at close) and its subtables include later observations.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### tsys-manual-stale-or-borrowed: Previously agreed
+
+- Record: [`tsys-manual` noise takes stale or borrowed system temperatures](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#tsys-manual-noise-takes-stale-or-borrowed-system-temperatures)
+- Inputs: setnoise(mode='tsys-manual') then corrupt, especially at low elevation, with rows observed after setnoise, changed integration time or shadowed antennas.
+- CASA: The airmass cache is up to 100 s stale (variance sawtooth 1.01 to 1.56), later scans take the nearest earlier integration's solution, every row takes the first row's EXPOSURE, and an antenna without an unflagged row applies as 1.
+- casa-rs: Computes each row's sigma from its own integration: airmass at the row's TIME, own EXPOSURE, window and dishes, regardless of flags; non-finite T keeps CASA's scale of 1.
+- Rationale: Each row's noise should follow its own conditions.
+- User impact: CASA's noise is wrong by up to 1.5x at low elevation or after changing the integration time; scenarios above 40 degrees agree.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### tsys-manual-scales-every-noise-term: Previously agreed
+
+- Record: [A `tsys-manual` term scales every noise term](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-tsys-manual-term-scales-every-noise-term)
+- Inputs: Two tsys-manual terms, or simplenoise plus tsys-manual, then corrupt.
+- CASA: collapseForSim adds every ANoise term then applies every NoiseScale T term to DATA, so each term's scale multiplies all noise: variance 4 sigma^4 for two terms, and a 0.5 Jy simplenoise comes out scaled by the system temperature.
+- casa-rs: Adds each term's noise with its own sigma, so simplenoise stays in Jy and terms of one seed still add coherently.
+- Rationale: Owner: follow CASA only if its product is the better simulation, which it is not; powers of uncorrelated noise add.
+- User impact: Combined noise terms add in quadrature rather than multiply.
+- Owner decision: Owner, 2026-10-24 (#841 Phase 3): follow CASA only if its product is the better simulation, which it is not.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### refused-tsys-manual-leaves-noise: Previously agreed
+
+- Record: [A refused `tsys-manual` `setnoise` leaves a unit noise term](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#a-refused-tsys-manual-setnoise-leaves-a-unit-noise-term)
+- Inputs: setnoise(mode='tsys-manual', pwv='200mm') or a zenith Tsys that is not positive or above 1e6 K, then corrupt.
+- CASA: setnoise creates the unit ANoise term before checking parameters; the refused call returns False but the ANoise stays and the next corrupt adds 1 Jy of noise (tsys-atm takes the same path, read from source).
+- casa-rs: Refuses such a setnoise without adding a term.
+- Rationale: A refused call should have no effect.
+- User impact: A refused setnoise no longer adds unexpected 1 Jy noise.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### tsys-atm-half-band-below: Previously agreed
+
+- Record: [`tsys-atm` noise takes its atmosphere half a band below each channel](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#tsys-atm-noise-takes-its-atmosphere-half-a-band-below-each-channel)
+- Inputs: setnoise(mode='tsys-atm') on windows spanning an atmospheric line (183 GHz) or a one-channel window after the first.
+- CASA: initAtm builds the ATM grid so channel c reads the atmosphere half a band below it (variance off by mean factor 6.1, up to 103 across 183 GHz), and a one-channel later window reads the channel map past its end, so its T was bad and applied as 1.
+- casa-rs: Evaluates ATM at each channel's CHAN_FREQ for every window, one-channel windows included; it also refuses a term whose zenith Tsys is not a number.
+- Rationale: A channel's noise should follow the sky it observes.
+- User impact: Noise across line features and for one-channel windows differs strongly from CASA's.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### settrop-dispersive-wet-delay: Previously agreed
+
+- Record: [`settrop` turns the phase by the dispersive wet delay alone](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#settrop-turns-the-phase-by-the-dispersive-wet-delay-alone)
+- Inputs: sm.settrop with default pwv and deltapwv.
+- CASA: cphase takes the zenith wet phase delay from getDispersiveH2OPhaseDelay (the dispersive part alone), which is 940, 119, 36, 23 and 8.5 times smaller than the whole wet delay at 43, 100, 183, 230 and 345 GHz.
+- casa-rs: Takes the whole wet delay (dispersive plus non-dispersive), so deltapwv means the fluctuation of the water column it names.
+- Rationale: The path a water column adds is mostly non-dispersive (Thompson, Moran & Swenson eq. 13.19).
+- User impact: CASA phases are too small (3 deg rms at 100 GHz); casa-rs phases are fully scrambled with defaults at millimetre wavelengths.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### settrop-half-band-below: Previously agreed
+
+- Record: [`settrop` takes its atmosphere half a band below each channel](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#settrop-takes-its-atmosphere-half-a-band-below-each-channel)
+- Inputs: sm.settrop on windows spanning an atmospheric line, or a one-channel window after the first.
+- CASA: cphase reads channel c of the same ATM grid as tsys-atm, so each channel's phase uses the atmosphere half a band below it, and a later one-channel window reads the map past its end.
+- casa-rs: Evaluates ATM at each channel's CHAN_FREQ.
+- Rationale: Same grid error as the tsys-atm noise.
+- User impact: Phases across the 183 GHz line spread by 2.5 of themselves in CASA relative to the channel's own frequency.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### settrop-screen-anisotropic: Previously agreed
+
+- Record: [`settrop`'s screen has an anisotropic spectrum](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#settrops-screen-has-an-anisotropic-spectrum)
+- Inputs: settrop(mode='screen') on a screen long along the wind (e.g. 1359 by 271 pixels).
+- CASA: fBM::initialize uses index rather than wavenumber (stretching the spectrum along the wind), does not wrap the full axis, uses exponent -(beta+1/2)/2 (comment: 'still something not quite right'), and sets values past the half axis's end, copying the last two pixels from past the output.
+- casa-rs: Draws |k|^-(beta+1)/2 on wrapped wavenumbers in cycles per pixel with proper conjugate pairs and transforms every pixel, giving equal structure along and across the wind.
+- Rationale: Isotropic turbulence's phase spectrum depends only on spatial frequency size.
+- User impact: CASA structure functions differ by a factor of five between the axes; casa-rs's are the same.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### settrop-simint-stamp: Previously agreed
+
+- Record: [`settrop` with `simint` stamps a solution halfway to its interval's start](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#settrop-with-simint-stamps-a-solution-halfway-to-its-intervals-start)
+- Inputs: settrop with simint longer than an integration (e.g. simint=6 on 2 s integrations).
+- CASA: setSimulate stamps each solution (t0+t)/2, so times are 0,1,2,6,7,8 s for integrations at 0,2,4,6,8,10 s, and corrupt gives later integrations a slot from earlier in the interval.
+- casa-rs: Stamps each solution with its integration's time, as CASA does when simint is unset.
+- Rationale: Each integration should use its own time.
+- User impact: Time-varying troposphere in later integrations of an interval lags in CASA.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### atm-hcn-106ghz-line: Previously agreed
+
+- Record: [ATM's HCN catalogue misplaces a line at 106 GHz](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#atms-hcn-catalogue-misplaces-a-line-at-106-ghz)
+- Inputs: Any ATM calculation near 106.3 GHz.
+- CASA: mkSpecificRefractivity_hcn lists the J=12-11 line as 106.298069519 GHz (decimal point moved from 1062.98), so ATM sums an HCN line there and none at 1063 GHz; zenith opacity 0.029368 against 0.028919 corrected, 1.5% high.
+- casa-rs: Moves the decimal point back (1062.98069519 GHz), one of four corrections in atm-corrections.patch.
+- Rationale: The catalogue (JPL c027001.cat) puts the line at 1062.98 GHz; owner decision.
+- User impact: Opacity near 106 GHz is about 1.5% lower than CASA's; elsewhere changes are below 3.5e-5.
+- Owner decision: Owner decision, 2026-10-24 (#841 Phase 4): ATM's data errors are corrected.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### atm-air-density-sea-level: Previously agreed
+
+- Record: [ATM's reference air densities drop a digit at sea level](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#atms-reference-air-densities-drop-a-digit-at-sea-level)
+- Inputs: ATM with mid-latitude, subarctic or US Standard atmospheres at sea level to 1 km.
+- CASA: st76's sea-level reference air densities lost their leading digit (.496E+19 etc., about 2.5e19 meant), so minor gases (O3, N2O, CO, NO2, SO2, HCl, HCN) are up to about four times too scarce in the lowest layers.
+- casa-rs: Restores the digit (2.496e19, 2.711e19, 2.549e19, 2.855e19, 2.548e19 cm^-3).
+- Rationale: Air density falls with height; US Standard gives 2.547e19 by the ideal gas law (owner decision).
+- User impact: Sites below 1 km see O3, CO, N2O line opacities up to 1.8%, 7.7%, 8.5% higher; sites at 1 km and above are unchanged.
+- Owner decision: Owner decision, 2026-10-24 (#841 Phase 4): ATM's data errors are corrected.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### atm-h2-17o-abundance: Previously agreed
+
+- Record: [ATM weights H2(17)O by the (18)O abundance](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#atm-weights-h217o-by-the-18o-abundance)
+- Inputs: Any ATM wet opacity calculation.
+- CASA: ratiohh17o uses the (18)O abundance (0.0020439) where the (17)O abundance (0.000375) belongs, so H2(17)O lines are 5.45 times too strong.
+- casa-rs: Uses abun_17o, as ATM does for oxygen and ozone.
+- Rationale: The siblings use abun_17o (owner decision).
+- User impact: Wet opacity falls by up to 0.61% (990 GHz); at Chajnantor 230 GHz opacity moves by 2e-4.
+- Owner decision: Owner decision, 2026-10-24 (#841 Phase 4): ATM's data errors are corrected.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### atm-hdo-weight: Previously agreed
+
+- Record: [ATM's HDO weight divides by three](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#atms-hdo-weight-divides-by-three)
+- Inputs: Any ATM wet opacity calculation.
+- CASA: ratiohdo reads 2-0*abun_d for 2.0*abun_d, so the denominator is 3.0024 instead of 1.0030 and HDO lines are about three times too weak.
+- casa-rs: Uses 2.0*abun_d.
+- Rationale: It is a typo; every sibling ratio uses 2.0*abun_d (owner decision).
+- User impact: At Chajnantor zenith opacity rises 0.32% at 230 GHz and 0.15% at 90 GHz; wet opacity up to 1.8%.
+- Owner decision: Owner decision, 2026-10-24 (#841 Phase 4): ATM's data errors are corrected.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### atm-hcn-profile-100km: Previously agreed
+
+- Record: [ATM's HCN profile stops at 100 km](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#atms-hcn-profile-stops-at-100-km)
+- Inputs: ATM profiles topped above about 90 km.
+- CASA: hcn[50] is initialised with 45 values, so the last five levels (100 to 120 km) are zero and interpolated HCN falls to zero over them.
+- casa-rs: Follows it: there are no values to restore, and air above 90 km is about 2e-6 of the column.
+- Rationale: No data exist to replace the zeros.
+- User impact: Negligible effect, only on profiles topped above about 90 km.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### atm-profile-copy-bottom-pressures: Previously agreed
+
+- Record: [Copying an AtmProfile copies its top pressures as bottom pressures](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#copying-an-atmprofile-copies-its-top-pressures-as-bottom-pressures)
+- Inputs: Copying an AtmProfile (via RefractiveIndexProfile or SkyStatus) then getLayerBottomPressure or setAltitude.
+- CASA: The copy constructor fills v_layerPressure0_ from a.v_layerPressure1_, so bottom pressures return the top pressures; no opacity, path or brightness calculation reads them.
+- casa-rs: Keeps one profile and never copies it through such a path.
+- Rationale: The defect cannot arise in what casa-rs ports.
+- User impact: No effect on results.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### atm-ozone-isotopologue-padding: Previously agreed
+
+- Record: [ATM leaves the ozone isotopologue layers unpadded](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#atm-leaves-the-ozone-isotopologue-layers-unpadded)
+- Inputs: An ATM user profile with a layer that has zero ozone.
+- CASA: mkRefractiveIndexProfile pushes a zero onto the total-ozone vector only, so the eight ozone state and isotopologue vectors become shorter than the layer count and later layers' values shift down one place.
+- casa-rs: The document records no casa-rs action; ATM's standard profiles have ozone in every layer so it does not arise.
+- Rationale: Latent ATM bug that does not arise with ATM's own profiles.
+- User impact: Only user profiles with zero-ozone layers would be affected.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### atm-omits-16o17o: Previously agreed
+
+- Record: [ATM omits (16)O(17)O](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#atm-omits-16o17o)
+- Inputs: ATM opacity near (16)O(17)O lines.
+- CASA: mkSpecificRefractivity_16o17o returns zero before its line loop; the comment says the isotope was removed in 2024 while its catalogue is reviewed because it gave lines that do not exist.
+- casa-rs: The port returns zero too and keeps the catalogue in its tables for the record.
+- Rationale: The omission is deliberate in ATM.
+- User impact: Results match ATM, without (16)O(17)O lines.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+##### atm-averaged-nondispersive-wet-phase: Previously agreed
+
+- Record: [RefractiveIndexProfile's averaged non-dispersive wet phase reads a channel as a water column](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#refractiveindexprofiles-averaged-non-dispersive-wet-phase-reads-a-channel-as-a-water-column)
+- Inputs: RefractiveIndexProfile::getAverageNonDispersiveH2OPhaseDelay on a window (e.g. 22 GHz, 1.3 mm water).
+- CASA: The call getNonDispersiveH2OPhaseDelay(v_transfertId_[spwid]+i) converts the index to a Length in metres, returning channel 0's phase for a water column of 0, 1, 2 ... m, giving 306,132 degrees; CASA's at tool (SkyStatus) is unaffected.
+- casa-rs: casa-atmosphere takes the mean of the channels' phases.
+- Rationale: The overload resolution is an error.
+- User impact: The window-averaged phase is a few degrees, not hundreds of thousands.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simulator-evidence-bugs-record).
+
+#### simulator evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="simulator-evidence-signature"></a>
+##### signature
+
+**Signature inventory — recorded.** CASA 6.7.6.14's 33 methods, names and defaults, and the object-surface bundle's; not behavior.
+
+- [crates/casars-python/python/tests/data/casa_simulator_signatures.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/data/casa_simulator_signatures.json)
+- [crates/casars-python/python/tests/test_tools_simulator.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_simulator.py)
+- [crates/casars-python/src/tools/simulator/surface.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/src/tools/simulator/surface.rs)
+
+<a id="simulator-evidence-refusals"></a>
+##### refusals
+
+**Refusal records and tests — recorded.** Every mode refused as not yet implemented names #1053; the Rust and Python tests check the refusals.
+
+- [crates/casa-simulation/tests/refusals_name_an_issue.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/refusals_name_an_issue.rs)
+- [crates/casars-python/python/tests/test_tools_simulator.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_simulator.py)
+
+<a id="simulator-evidence-binding-tests"></a>
+##### binding-tests
+
+**Python binding tests — recorded.** CASA's return values, logged errors, raised errors and state for each method, on CASA's messages.
+
+- [crates/casars-python/python/tests/test_tools_simulator.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_simulator.py)
+
+<a id="simulator-evidence-observe"></a>
+##### observe
+
+**CASA-paired MeasurementSets (PR-reported) — superseded.** 10/10 agree with the 10 recorded descriptor differences; UVW within 3.4 um, 107 um on the 36 km VLA A. CASA 6.7.6 (6.7.6-14 per the reviews); records on the NAS (issue-841/evidence-2c-observemany-4cb59c6d3c). Not re-run at a current revision. open, setconfig, setfeed, setspwindow, setfield, settimes, setlimits, setauto, observe and observemany: every subtable, row and cell of 10 scenarios.
+
+- Superseded by [observe-20261103](#simulator-evidence-observe-20261103).
+- [https://github.com/bglenden/casa-rs/pull/848](https://github.com/bglenden/casa-rs/pull/848)
+- [https://github.com/bglenden/casa-rs/pull/861](https://github.com/bglenden/casa-rs/pull/861)
+- [https://github.com/bglenden/casa-rs/pull/919](https://github.com/bglenden/casa-rs/pull/919)
+- [tools/simulation/sm_observe_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_observe_scenarios.json)
+- [tools/simulation/casa_sm_observe_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/casa_sm_observe_oracle.py)
+- [tools/simulation/compare_sm_ms.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/compare_sm_ms.py)
+
+<a id="simulator-evidence-scripts"></a>
+##### scripts
+
+**CASA sm scripts run unchanged (PR-reported) — measured.** 3/3 agree with the 10 known differences; UVW within 3.37 um. Not re-run. Three CASA sm scripts (VLA D, ALMA dual and full polarization) run in CASA and casa-rs with only the import changed.
+
+- [https://github.com/bglenden/casa-rs/pull/851](https://github.com/bglenden/casa-rs/pull/851)
+- [tools/simulation/sm_scripts/run_sm_scripts.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_scripts/run_sm_scripts.py)
+
+<a id="simulator-evidence-predict-image"></a>
+##### predict-image
+
+**CASA-paired predictions (PR-reported) — superseded.** 21 predict scenarios agree; DATA NRMS 1.3e-7 to 1.35e-5 (limit 1e-3), mosaic 2.6e-7 to 6.6e-7 on CPU and Metal. CASA 6.7.6; records on the NAS (issue-841/evidence-855-d6ab21e2de, -2d-wproject-06737ef31a, -2e-vla-evla-16e61ae0c7). Not re-run at a current revision. predict of image models through GridFT, WProjectFT and the mosaic machine, with and without setvp (ALMA, ACA, VLA, EVLA), padding, several fields, incremental predicts and cubes with autocorrelations.
+
+- Superseded by [predict-image-20261103](#simulator-evidence-predict-image-20261103).
+- [https://github.com/bglenden/casa-rs/pull/843](https://github.com/bglenden/casa-rs/pull/843)
+- [https://github.com/bglenden/casa-rs/pull/853](https://github.com/bglenden/casa-rs/pull/853)
+- [https://github.com/bglenden/casa-rs/pull/856](https://github.com/bglenden/casa-rs/pull/856)
+- [https://github.com/bglenden/casa-rs/pull/865](https://github.com/bglenden/casa-rs/pull/865)
+- [https://github.com/bglenden/casa-rs/pull/871](https://github.com/bglenden/casa-rs/pull/871)
+- [https://github.com/bglenden/casa-rs/pull/879](https://github.com/bglenden/casa-rs/pull/879)
+- [tools/simulation/sm_predict_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_predict_scenarios.json)
+- [tools/simulation/casa_sm_predict_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/casa_sm_predict_oracle.py)
+- [tools/simulation/compare_sm_ms.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/compare_sm_ms.py)
+
+<a id="simulator-evidence-predict-components"></a>
+##### predict-components
+
+**CASA-paired component predictions (PR-reported) — superseded.** 7/7 agree; NRMS 3.2e-7 to 1.0e-4, the beam cases' 7e-5 to 1e-4 attributed but not isolated. Tabular spectra not covered. NAS issue-841/evidence-2f-complist-b2971f1923.tar. Not re-run. predict(complist=...) of point, Gaussian and disk components with polarization, spectra, a beam and incremental predicts.
+
+- Superseded by [predict-components-20261103](#simulator-evidence-predict-components-20261103).
+- [https://github.com/bglenden/casa-rs/pull/872](https://github.com/bglenden/casa-rs/pull/872)
+- [tools/simulation/sm_components_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_components_scenarios.json)
+
+<a id="simulator-evidence-predict-sd"></a>
+##### predict-sd
+
+**CASA-paired total-power predictions (PR-reported) — superseded.** 7/7 agree: six bit-identical, one at 6.3e-8 NRMS. NAS issue-841/evidence-2g-sd-c76220b9fa.tar. Not re-run. setoptions(ftmachine='sd') with the PB, SF and BOX kernels, the beam twice, four correlations and incremental predicts.
+
+- Superseded by [predict-sd-20261103](#simulator-evidence-predict-sd-20261103).
+- [https://github.com/bglenden/casa-rs/pull/874](https://github.com/bglenden/casa-rs/pull/874)
+- [tools/simulation/sm_sd_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_sd_scenarios.json)
+
+<a id="simulator-evidence-openfromms"></a>
+##### openfromms
+
+**CASA-paired openfromms runs (PR-reported) — superseded.** 7/7 agree on CPU and Metal; NRMS up to 9.0e-6. Not re-run. openfromms then predict, corrupt, a moved pointing and the mosaic machine, on CASA's MeasurementSet and on casa-rs's.
+
+- Superseded by [openfromms-20261103](#simulator-evidence-openfromms-20261103).
+- [https://github.com/bglenden/casa-rs/pull/886](https://github.com/bglenden/casa-rs/pull/886)
+- [tools/simulation/sm_openfromms_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_openfromms_scenarios.json)
+
+<a id="simulator-evidence-noise"></a>
+##### noise
+
+**CASA-paired noise statistics (PR-reported) — superseded.** tsys-manual sigma within 1.9e-6 of CASA's T table; variances within 1 percent, KS p 0.11 to 0.84. tsys-predict UVW differs by 3.7 to 4.6 mm beyond +1 h, unexplained. After #902 the ATM corrections differ from CASA's at tool deliberately (decisions). Not re-run. setnoise simplenoise, tsys-manual and tsys-atm (with pground, relhum, altitude, waterheight) then corrupt: per-row sigma and normalized variances.
+
+- Superseded by [noise-20261103](#simulator-evidence-noise-20261103).
+- [https://github.com/bglenden/casa-rs/pull/853](https://github.com/bglenden/casa-rs/pull/853)
+- [https://github.com/bglenden/casa-rs/pull/889](https://github.com/bglenden/casa-rs/pull/889)
+- [https://github.com/bglenden/casa-rs/pull/897](https://github.com/bglenden/casa-rs/pull/897)
+- [https://github.com/bglenden/casa-rs/pull/902](https://github.com/bglenden/casa-rs/pull/902)
+- [tools/simulation/sm_noise_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_noise_scenarios.json)
+- [tools/simulation/sm_atm_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_atm_scenarios.json)
+- [tools/simulation/corruption_stats.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/corruption_stats.py)
+
+<a id="simulator-evidence-corruptions"></a>
+##### corruptions
+
+**CASA-paired corruption statistics and tables (PR-reported) — superseded.** Statistics agree (screen autocorrelation 0.386/0.226/0.086 against CASA's 0.366/0.223/0.086); the leakage scale test has low power. CASA's applycal of casa-rs's G and D tables corrects to 4.9e-7 and 4.6e-9; setapply NRMS 4.3e-8 to 5.8e-9. Not re-run. setgain (fBM, random), setleakage, their tables, and setapply of CASA-written G and D tables.
+
+- Superseded by [corruptions-20261103](#simulator-evidence-corruptions-20261103).
+- [https://github.com/bglenden/casa-rs/pull/890](https://github.com/bglenden/casa-rs/pull/890)
+- [https://github.com/bglenden/casa-rs/pull/891](https://github.com/bglenden/casa-rs/pull/891)
+- [https://github.com/bglenden/casa-rs/pull/893](https://github.com/bglenden/casa-rs/pull/893)
+- [tools/simulation/sm_corrupt_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_corrupt_scenarios.json)
+- [tools/simulation/corruption_stats.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/corruption_stats.py)
+
+<a id="simulator-evidence-troposphere"></a>
+##### troposphere
+
+**CASA-paired tropospheric phase (PR-reported) — superseded.** DATA against its own table to 9e-8; CASA applies casa-rs's tables to 1.7e-7. CASA's predict of a component list segfaulted on a 12 m and 7 m mix, so the scenarios use 12 m dishes. Not re-run. settrop individual and screen modes, and CASA applying casa-rs's tables.
+
+- Superseded by [troposphere-20261103](#simulator-evidence-troposphere-20261103).
+- [https://github.com/bglenden/casa-rs/pull/899](https://github.com/bglenden/casa-rs/pull/899)
+- [https://github.com/bglenden/casa-rs/pull/902](https://github.com/bglenden/casa-rs/pull/902)
+- [tools/simulation/sm_trop_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_trop_scenarios.json)
+- [tools/simulation/troposphere_stats.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/troposphere_stats.py)
+
+<a id="simulator-evidence-bugs-record"></a>
+##### bugs-record
+
+**Deviation record — recorded.** Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.
+
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="simulator-evidence-observe-20261103"></a>
+##### observe-20261103
+
+**CASA-paired scenarios — passed.** 10/10 agree: every subtable, row and cell, with the 9 known descriptor differences; UVW within 1.07e-4 m (the 36 km VLA A), 3.9e-6 m elsewhere. Each comparison is in the receipt. open, setconfig, setfeed, setspwindow, setfield, settimes, setlimits, setauto, observe and observemany: every subtable, row and cell of 10 scenarios.
+
+- [tools/simulation/sm_observe_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_observe_scenarios.json)
+- [tools/simulation/casa_sm_observe_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/casa_sm_observe_oracle.py)
+- [tools/simulation/compare_sm_ms.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/compare_sm_ms.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- Command: `CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT observe (bg-mac-mini, CPU backend), then sm_parity_receipt.py`.
+- Receipt: `resources/casa-compat/evidence/sm-parity-20261103.json`.
+
+<a id="simulator-evidence-predict-image-20261103"></a>
+##### predict-image-20261103
+
+**CASA-paired scenarios — passed.** 26/26 agree: DATA NRMS at most 1.35e-5 (limit 1e-3) through GridFT, WProjectFT, the mosaic machine and setvp beams; noise twins by statistics. Each comparison is in the receipt. predict of image models through GridFT, WProjectFT and the mosaic machine, with and without setvp (ALMA, ACA, VLA, EVLA), padding, several fields, incremental predicts and cubes with autocorrelations.
+
+- [tools/simulation/sm_predict_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_predict_scenarios.json)
+- [tools/simulation/casa_sm_observe_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/casa_sm_observe_oracle.py)
+- [tools/simulation/compare_sm_ms.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/compare_sm_ms.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- Command: `CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT predict (bg-mac-mini, CPU backend), then sm_parity_receipt.py`.
+- Receipt: `resources/casa-compat/evidence/sm-parity-20261103.json`.
+
+<a id="simulator-evidence-predict-components-20261103"></a>
+##### predict-components-20261103
+
+**CASA-paired scenarios — passed.** 8/8 agree: DATA NRMS at most 1.0e-4 (the beam cases), the rest below. Each comparison is in the receipt. predict(complist=...) of point, Gaussian and disk components with polarization, spectra, a beam and incremental predicts.
+
+- [tools/simulation/sm_components_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_components_scenarios.json)
+- [tools/simulation/casa_sm_observe_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/casa_sm_observe_oracle.py)
+- [tools/simulation/compare_sm_ms.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/compare_sm_ms.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- Command: `CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT components (bg-mac-mini, CPU backend), then sm_parity_receipt.py`.
+- Receipt: `resources/casa-compat/evidence/sm-parity-20261103.json`.
+
+<a id="simulator-evidence-predict-sd-20261103"></a>
+##### predict-sd-20261103
+
+**CASA-paired scenarios — passed.** 7/7 agree: DATA NRMS at most 6.3e-8. Each comparison is in the receipt. setoptions(ftmachine='sd') with the PB, SF and BOX kernels, the beam twice, four correlations and incremental predicts.
+
+- [tools/simulation/sm_sd_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_sd_scenarios.json)
+- [tools/simulation/casa_sm_observe_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/casa_sm_observe_oracle.py)
+- [tools/simulation/compare_sm_ms.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/compare_sm_ms.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- Command: `CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT sd (bg-mac-mini, CPU backend), then sm_parity_receipt.py`.
+- Receipt: `resources/casa-compat/evidence/sm-parity-20261103.json`.
+
+<a id="simulator-evidence-openfromms-20261103"></a>
+##### openfromms-20261103
+
+**CASA-paired scenarios — passed.** 7/7 agree: DATA NRMS at most 9.0e-6; noise by statistics. Each comparison is in the receipt. openfromms then predict, corrupt, a moved pointing and the mosaic machine, on CASA's MeasurementSet and on casa-rs's.
+
+- [tools/simulation/sm_openfromms_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_openfromms_scenarios.json)
+- [tools/simulation/casa_sm_observe_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/casa_sm_observe_oracle.py)
+- [tools/simulation/compare_sm_ms.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/compare_sm_ms.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- Command: `CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT openfromms (bg-mac-mini, CPU backend), then sm_parity_receipt.py`.
+- Receipt: `resources/casa-compat/evidence/sm-parity-20261103.json`.
+
+<a id="simulator-evidence-noise-20261103"></a>
+##### noise-20261103
+
+**CASA-paired scenarios — passed.** noise 6/6 and atm 4/4 agree: tsys-manual and tsys-atm noise over each side's sigma within the comparator's variance, KS and group limits. Each comparison is in the receipt. setnoise simplenoise, tsys-manual and tsys-atm (with pground, relhum, altitude, waterheight) then corrupt: per-row sigma and normalized variances.
+
+- [tools/simulation/sm_noise_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_noise_scenarios.json)
+- [tools/simulation/sm_atm_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_atm_scenarios.json)
+- [tools/simulation/casa_sm_observe_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/casa_sm_observe_oracle.py)
+- [tools/simulation/compare_sm_ms.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/compare_sm_ms.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- Command: `CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT noise atm (bg-mac-mini, CPU backend), then sm_parity_receipt.py`.
+- Receipt: `resources/casa-compat/evidence/sm-parity-20261103.json`.
+
+<a id="simulator-evidence-corruptions-20261103"></a>
+##### corruptions-20261103
+
+**CASA-paired scenarios — passed.** 12/12 agree: gain and leakage statistics, their tables, and setapply of CASA's G and D tables (DATA NRMS at most 5.4e-8). Each comparison is in the receipt. setgain (fBM, random), setleakage, their tables, and setapply of CASA-written G and D tables.
+
+- [tools/simulation/sm_corrupt_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_corrupt_scenarios.json)
+- [tools/simulation/casa_sm_observe_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/casa_sm_observe_oracle.py)
+- [tools/simulation/compare_sm_ms.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/compare_sm_ms.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- Command: `CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT corrupt (bg-mac-mini, CPU backend), then sm_parity_receipt.py`.
+- Receipt: `resources/casa-compat/evidence/sm-parity-20261103.json`.
+
+<a id="simulator-evidence-troposphere-20261103"></a>
+##### troposphere-20261103
+
+**CASA-paired scenarios — passed.** 3/3 agree: DATA against each side's tropospheric table. Each comparison is in the receipt. settrop individual and screen modes, and CASA applying casa-rs's tables.
+
+- [tools/simulation/sm_trop_scenarios.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/sm_trop_scenarios.json)
+- [tools/simulation/casa_sm_observe_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/casa_sm_observe_oracle.py)
+- [tools/simulation/compare_sm_ms.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/compare_sm_ms.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
+- Command: `CASA_RS_CASA_PYTHON=CASAPY tools/simulation/sm_parity_campaign.sh OUT trop (bg-mac-mini, CPU backend), then sm_parity_receipt.py`.
+- Receipt: `resources/casa-compat/evidence/sm-parity-20261103.json`.
+
+### simutil
+
+#### simutil method implementation
+
+Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
+
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 19, Partial: 0, Not implemented: 38, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+
+| CASA method | CASA parameters | Implementation | Scope | Evidence |
+|---|---|---|---|---|
+| `applyRotate` | `x, y, tcos, tsin` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `approxBeam` | `configfile, freq` | Implemented | CASA's approximate synthesized beam of a configuration at a frequency. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `average_direction` | `directions=None` | Implemented | CASA's mean of directions, as text at its precision. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `bandname` | `freq` | Implemented | CASA's band names. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `baselineLengths` | `configfile` | Implemented | Baseline lengths of a configuration file, as CASA computes them. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `calc_pointings2` | `spacing, size, maptype='hex', direction=None, relmargin=0.5, beam=0.0` | Implemented | Hexagonal, square and ALMA tilings of a map about a direction or the object's own, CASA's pointing text exactly; kept as `pointings`. CASA's ALMA tiling without a beam raises; casa-rs uses simobserve's beam (decision below). | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `cellsize` | `image` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `closereport` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `convimage` | `modelflat, outflat, complist=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `dir_m2s` | `dir` | Implemented | Writes a direction measure as simutil's text. | [signature](#simutil-evidence-signature), [binding-tests](#simutil-evidence-binding-tests) |
+| `dir_s2m` | `direction=None` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `direction_splitter` | `direction=None` | Implemented | Splits a direction into epoch and two quantities; a list of one is split at its rounded mean, as CASA does. A direction without an epoch, which CASA cannot split, is refused (decision below). | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `endfig` | `show=True, filename=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `ephemeris` | `date, usehourangle=True, direction=None, telescope=None, ms=None, cofa=None` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `flatimage` | `image, complist='', verbose=False` | Implemented | Collapses a model to CASA's flat image, adding a component list as CASA does. | [signature](#simutil-evidence-signature), [skymodel-casa-fixture](#simutil-evidence-skymodel-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `getBaseTriangularTiling` | `width, height, angle, spacing, pb` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `getdatum` | `datumcode, verbose=False` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `getShiftTriangularTiling` | `width, height, angle, spacing, pb` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `getTrianglePoints` | `width, height, angle, spacing` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `getTriangularTiling` | `longlength, latlength, angle, spacing, pb` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `imclean` | `mstoimage, imagename, cleanmode, psfmode, cell, imsize, imcenter, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, sourcefieldlist='', modelimage='', mask=[], dryrun=False` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `imtclean` | `mstoimage, imagename, gridder, deconvolver, cell, imsize, imdirection, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, modelimage='', mask=[], dryrun=False` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `is4d` | `image` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `isdirection` | `s, halt=True` | Implemented | CASA's direction test, with its message when `halt`. | [signature](#simutil-evidence-signature), [binding-tests](#simutil-evidence-binding-tests) |
+| `isEven` | `num` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `ismstp` | `s, halt=False` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `isquantity` | `s, halt=True` | Implemented | CASA's quantity test, with its message when `halt`. | [signature](#simutil-evidence-signature), [binding-tests](#simutil-evidence-binding-tests) |
+| `isreport` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `itrf2loc` | `x, y, z, cx, cy, cz` | Implemented | ITRF to local east, north and up about a centre, as NumPy arrays. | [signature](#simutil-evidence-signature), [binding-tests](#simutil-evidence-binding-tests) |
+| `itrf2locname` | `x, y, z, obsname` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `locxyz2itrf` | `lat, longitude, alt, locx=0.0, locy=0.0, locz=0.0` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `long2xyz` | `lon, lat, elevation, datum` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `median_direction` | `directions=None` | Implemented | CASA's median of directions, as text at its precision. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `modifymodel` | `inimage, outimage, inbright, indirection, incell, incenter, inwidth, innchan, flatimage=False` | Implemented | Rewrites a sky model's brightness, direction, cell, centre and width as CASA does and returns CASA's tuple; the axis, Stokes and two-cell defects listed below are decisions. | [signature](#simutil-evidence-signature), [skymodel-casa-fixture](#simutil-evidence-skymodel-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `msg` | `s, origin=None, priority=None` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `needsFiller` | `length, spacing, bs, npoints` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `newfig` | `multi=0, show=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `nextfig` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `noisetemp` | `telescope=None, freq=None, diam=None, epsilon=None, correlator=None` | Implemented | CASA's receiver and atmosphere parameters for ALMA, ACA, total power, the (E)VLA, SMA and other telescopes; the band-edge lookups CASA gets wrong are decisions below. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `openreport` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `plotants` | `x, y, z, d, name` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `polsettings` | `telescope, poltype=None, listall=False` | Implemented | CASA's feed and correlation settings per telescope. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `read_pointings` | `filename` | Implemented | Reads CASA's pointing files; the text read is CASA's. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `readantenna` | `antab=None` | Implemented | Reads CASA's antenna configuration files (XYZ, UTM, LOC and geodetic, with `observatory` and `COFA` headers) and returns CASA's tuple; keeps the telescope as `telescopename`. The two CASA reading bugs it does not follow are decisions below. | [signature](#simutil-evidence-signature), [readantenna-casa-fixture](#simutil-evidence-readantenna-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `sensitivity` | `freq, bandwidth, etime, elevation, pwv=None, telescope=None, diam=None, nant=None, antennalist=None, doimnoise=None, integration=None, debug=None, method='tsys-atm', tau0=None, t_sky=None` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `setcfg` | `mysm, telescope, x, y, z, diam, padnames, posobs, mounttype=None` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `sfBeam1d` | `beam='', cell='', convsupport=-1, sampling=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `spectral` | `image` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `statim` | `image, plot=True, incell=None, disprange=None, bar=True, showstats=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `tconpc` | `sf, orlim, er, esq, rf` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `tmgeod` | `n, e, eps, cm, fe, sf, so, r, v0, v2, v4, v6, fn, er, esq` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `utm2long` | `east, north, zone, datum, nors` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `utm2xyz` | `easting, northing, elevation, zone, datum, nors` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `wrapang` | `ang, target, period=360.0` | Implemented | CASA's angle wrapping. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture) |
+| `write_pointings` | `filename, pointings, time=1.0` | Implemented | Writes CASA's pointing file text. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
+| `xyz2long` | `x, y, z, datum` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `xyz2long_old` | `x, y, z, datum` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+
+#### simutil interacting modes and tool behavior
+
+#### simutil deviations and unfinished work
+
+##### readantenna-stale-loop-variable: Previously agreed
+
+- Record: [`simutil.readantenna` averages a stale loop variable](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#simutilreadantenna-averages-a-stale-loop-variable)
+- Inputs: readantenna on a configuration file with absolute coordinates, no known observatory and no COFA header.
+- CASA: readantenna averages the UTM branch's loop variables x, y, z instead of stnx, stny, stnz: UnboundLocalError for an XYZ file, the last antenna for a UTM file; it also swaps latitude and longitude from xyz2long.
+- casa-rs: Converts the mean antenna position, as the code's comment intends (casa_simulation::readantenna).
+- Rationale: The comment shows the observatory was meant to sit at the mean antenna position.
+- User impact: Such configuration files work in casa-rs instead of raising or placing the observatory wrongly.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simutil-evidence-bugs-record).
+
+##### readantenna-blank-line-names: Previously agreed
+
+- Record: [`simutil.readantenna` names antennas after blank lines](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#simutilreadantenna-names-antennas-after-blank-lines)
+- Inputs: readantenna on a configuration file with blank lines, e.g. CASA's own WSRT.cfg (two blank lines).
+- CASA: A line with fewer than four values is skipped but still gets a default pad and antenna name, so readantenna returns 16 names for 14 WSRT antennas starting A00, A01, RT0.
+- casa-rs: Skips such lines entirely.
+- Rationale: Names must stay aligned with positions.
+- User impact: CASA misnames every dish in a WSRT simulation; casa-rs does not.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simutil-evidence-bugs-record).
+
+##### calc-pointings2-undefined-pbcoeff: Previously agreed
+
+- Record: [`calc_pointings2`'s ALMA tiling reads an undefined `pbcoeff`](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#calc_pointings2s-alma-tiling-reads-an-undefined-pbcoeff)
+- Inputs: calc_pointings2 with maptype='ALMA' (or alma, ALMA-OT) and no primary beam (beam <= 0), e.g. simobserve with an ALMA map and no antenna list.
+- CASA: The default spacing_asec*pbcoeff*sqrt(3) uses pbcoeff, a local of task_simobserve.py not defined in simutil.py, so the call raises NameError (CASA 6.7.6).
+- casa-rs: Uses simobserve's value 1.13 (PBCOEFF), so the beam is spacing x 1.13 x sqrt(3).
+- Rationale: The default clearly intends simobserve's value.
+- User impact: The call works instead of raising NameError.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simutil-evidence-bugs-record).
+
+##### noisetemp-table-edges: Previously agreed
+
+- Record: [`noisetemp` reads the wrong receiver temperature at the edges of its tables](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#noisetemp-reads-the-wrong-receiver-temperature-at-the-edges-of-its-tables)
+- Inputs: noisetemp at exactly the first band edge (e.g. ALMA at 35 GHz, VLA 0.8-1 GHz, SMA 180 GHz) or above 900 GHz for an unknown telescope such as WSRT.
+- CASA: The lookup leaves z=0 at the first edge so t0[-1] (the last entry) is used (230 K instead of 28 K for ALMA at 35 GHz), and for unknown telescopes the test reads f0[2] before checking z and raises IndexError (CASA 6.7.6, WSRT at 950 GHz).
+- casa-rs: Takes the first temperature at the first edge and keeps the last temperature (200 K) above the last edge.
+- Rationale: The lookup was meant to return the band's own receiver temperature.
+- User impact: Receiver temperatures at band edges are right instead of wrapping around, and no IndexError.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simutil-evidence-bugs-record).
+
+##### direction-splitter-no-epoch: Previously agreed
+
+- Record: [`direction_splitter` cannot split a direction without an epoch](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#direction_splitter-cannot-split-a-direction-without-an-epoch)
+- Inputs: direction_splitter on a direction without an epoch, e.g. '18h00m00 -23d00m00'.
+- CASA: It reads the longitude from field 1 and the latitude from field 2 whatever the count, so a direction without an epoch raises IndexError and an unmatched latitude raises AttributeError (CASA 6.7.6).
+- casa-rs: Refuses both with "can't interpret ... as a direction" (the message isdirection gives); more than three fields split as CASA splits them.
+- Rationale: A clear error is better than a traceback.
+- User impact: simobserve stops with a clear message instead of a traceback.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simutil-evidence-bugs-record).
+
+##### modifymodel-axis-swap: Previously agreed
+
+- Record: [`modifymodel` swaps axes into place and refuses a cyclic order](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#modifymodel-swaps-axes-into-place-and-refuses-a-cyclic-order)
+- Inputs: modifymodel with a model whose axes are a cyclic order, e.g. [spectral, RA, Dec, Stokes].
+- CASA: The swapaxes loop orders only transpositions (e.g. the FITS order), leaving a cyclic order out of place so the check raises "internal error: I'm confused about the shape if your model data cube" with the new image already created and empty (CASA 6.7.6).
+- casa-rs: Permutes the axes, so any order of the four is written as [RA, Dec, Stokes, spectral].
+- Rationale: A model's axis order should not matter.
+- User impact: Models in any axis order work; CASA refuses cyclic orders.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simutil-evidence-bugs-record).
+
+##### modifymodel-stokes-labels: Previously agreed
+
+- Record: [`modifymodel` labels the new image's Stokes planes by their count](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#modifymodel-labels-the-new-images-stokes-planes-by-their-count)
+- Inputs: modifymodel on a model labelled I and V, or on three unlabelled planes.
+- CASA: The written image takes its Stokes axis from ia.fromshape's default, labelling planes by count (I, IQ, IQU, IQUV), so I and V comes out I and Q and the V data are read as Stokes Q; three unlabelled planes come out IQU though modifymodel returns 'IQV'.
+- casa-rs: Keeps the model's labels and labels unlabelled planes as modifymodel reports them; circular or linear bases keep their labels, so flatimage and adding components refuse them.
+- Rationale: modifymodel itself returns the model's Stokes labels.
+- User impact: CASA mislabels non-I Stokes planes; casa-rs preserves them but refuses polarisation bases CASA relabels.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simutil-evidence-bugs-record).
+
+##### modifymodel-incell-map: Previously agreed
+
+- Record: [`modifymodel` indexes the map it makes of two cells](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#modifymodel-indexes-the-map-it-makes-of-two-cells)
+- Inputs: modifymodel with incell given as a list of two cells.
+- CASA: incell = map(qa.convert, incell, ['arcsec','arcsec']) is then indexed as incell[0]; under Python 3 map returns an iterator, so it raises TypeError: 'map' object is not subscriptable (CASA 6.7.6).
+- casa-rs: Takes the two cells, converted to arcsec and used as given (signs included), as under Python 2; a single cell is unaffected.
+- Rationale: The code was written for Python 2.
+- User impact: A two-cell incell works instead of raising TypeError.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simutil-evidence-bugs-record).
+
+##### ia-modify-default-measures-frame: Proposed
+
+- Record: [`ia.modify` converts a component spectrum through the image's default measures frame](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#iamodify-converts-a-component-spectrum-through-the-images-default-measures-frame)
+- Inputs: ia.modify adding a component list to an image from ia.fromshape (as modifymodel and simobserve make), with spectra in a different frame, e.g. TOPO spectrum on an LSRK image.
+- CASA: Each spectral model converts its reference frequency through the image's default measures frame (geocentre, epoch 0, J2000 pole), shifting frequencies by a velocity no observation has, about 1e-4 of the frequency in CASA 6.7.6.
+- casa-rs: Converts when the image's conversion layer carries a real frame (epoch and observatory position) and otherwise takes the frequencies as they are.
+- Rationale: A meaningful conversion needs the observation's epoch and position, which such a sky model does not carry.
+- User impact: Frequencies and spectral-index fluxes differ from CASA by about 1e-4 on frame-mismatched components; matched frames agree to 1e-6.
+- Owner decision: Pending; not an accepted deviation.
+- Evidence: [bugs-record](#simutil-evidence-bugs-record).
+
+##### ismstp-any-zero-uvw: Previously agreed
+
+- Record: [`simutil.ismstp` takes any zero UVW value for total power](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#simutilismstp-takes-any-zero-uvw-value-for-total-power)
+- Inputs: simobserve corrupting an existing MeasurementSet (obsmode='') whose first antenna name lacks 'TP' and which has more than one antenna.
+- CASA: The test uvw.all() == 0. is true when any UVW value is zero, not all, so an interferometer MeasurementSet with one zero coordinate is corrupted as single dish with wrong file names and sensitivity constant.
+- casa-rs: Tests whether every value is zero.
+- Rationale: The test is meant to detect total power data.
+- User impact: Interferometric data with one zero UVW value are handled as interferometry.
+- Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it.
+- Evidence: [bugs-record](#simutil-evidence-bugs-record).
+
+#### simutil evidence
+
+Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.
+
+<a id="simutil-evidence-signature"></a>
+##### signature
+
+**Signature inventory — recorded.** CASA 6.7.6.14's 57 public methods, names and defaults; not behavior.
+
+- [crates/casars-python/python/tests/data/casa_simutil_signatures.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/data/casa_simutil_signatures.json)
+- [crates/casars-python/python/tests/test_simutil.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_simutil.py)
+
+<a id="simutil-evidence-refusals"></a>
+##### refusals
+
+**Refusal test — recorded.** Each method casa-rs does not implement raises NotImplementedError naming #1053.
+
+- [crates/casars-python/src/tools/simutil/stubs.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/src/tools/simutil/stubs.rs)
+- [crates/casars-python/python/tests/test_simutil.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_simutil.py)
+
+<a id="simutil-evidence-simutil-casa-fixture"></a>
+##### simutil-casa-fixture
+
+**CASA fixture comparison — passed.** casa-simulation simutil_casa: 5 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. The pointing, direction, receiver and beam helpers.
+
+- [crates/casa-simulation/tests/simutil_casa.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/simutil_casa.rs)
+- [crates/casa-simulation/tests/data/simutil_casa.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/data/simutil_casa.json)
+- [tools/simulation/simutil_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/simutil_oracle.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/simutil-fixtures-20261103.json`.
+
+<a id="simutil-evidence-readantenna-casa-fixture"></a>
+##### readantenna-casa-fixture
+
+**CASA fixture comparison — passed.** casa-simulation readantenna_casa: 2 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. readantenna on CASA's configuration files and observatories.
+
+- [crates/casa-simulation/tests/readantenna_casa.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/readantenna_casa.rs)
+- [crates/casa-simulation/tests/data/readantenna_casa.json](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/data/readantenna_casa.json)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/simutil-fixtures-20261103.json`.
+
+<a id="simutil-evidence-skymodel-casa-fixture"></a>
+##### skymodel-casa-fixture
+
+**CASA fixture comparison — passed.** casa-simulation skymodel_casa: 5 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in. modifymodel and flatimage, and components added to models.
+
+- [crates/casa-simulation/tests/skymodel_casa.rs](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/skymodel_casa.rs)
+- [crates/casa-simulation/tests/data/skymodel_casa.json.gz](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casa-simulation/tests/data/skymodel_casa.json.gz)
+- [tools/simulation/skymodel_oracle.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/tools/simulation/skymodel_oracle.py)
+- Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures`.
+- Command: `python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)`.
+- Receipt: `resources/casa-compat/evidence/simutil-fixtures-20261103.json`.
+
+<a id="simutil-evidence-binding-tests"></a>
+##### binding-tests
+
+**Python binding tests — recorded.** Arguments, results, state and messages of the binding, on a sample of CASA's fixture values and on CASA's source.
+
+- [crates/casars-python/python/tests/test_simutil.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_simutil.py)
+
+<a id="simutil-evidence-bugs-record"></a>
+##### bugs-record
+
+**Deviation record — recorded.** Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.
+
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md)

@@ -1,0 +1,733 @@
+{
+ "schema_version": 1,
+ "task": "simobserve",
+ "casa_version": "6.7.6.14",
+ "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "parameters": {
+  "project": {
+   "status": "Implemented",
+   "scope": "The project directory and CASA's file stem <project>.<configuration>; a nested project path is named by its last component (decision).",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "outputs"
+   ]
+  },
+  "skymodel": {
+   "status": "Implemented",
+   "scope": "An image model, rewritten by modifymodel and flattened; a model that is the <stem>.skymodel the task writes is refused (decision).",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103",
+    "skymodel-fixture"
+   ],
+   "behaviors": [
+    "sky-model"
+   ]
+  },
+  "inbright": {
+   "status": "Implemented",
+   "scope": "Rescales the model's peak, as CASA does.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103",
+    "skymodel-fixture"
+   ],
+   "behaviors": [
+    "sky-model"
+   ]
+  },
+  "indirection": {
+   "status": "Implemented",
+   "scope": "Moves the model's reference direction.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103",
+    "skymodel-fixture"
+   ],
+   "behaviors": [
+    "sky-model"
+   ]
+  },
+  "incell": {
+   "status": "Implemented",
+   "scope": "Sets the model's cell; two cells are taken as given (decision in simutil).",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103",
+    "skymodel-fixture"
+   ],
+   "behaviors": [
+    "sky-model"
+   ]
+  },
+  "incenter": {
+   "status": "Implemented",
+   "scope": "Sets the model's centre frequency.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103",
+    "skymodel-fixture"
+   ],
+   "behaviors": [
+    "sky-model"
+   ]
+  },
+  "inwidth": {
+   "status": "Implemented",
+   "scope": "Sets the model's channel width.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103",
+    "skymodel-fixture"
+   ],
+   "behaviors": [
+    "sky-model"
+   ]
+  },
+  "complist": {
+   "status": "Implemented",
+   "scope": "A component list, alone or with a sky model; with a calibrator both lists are predicted (decision).",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103",
+    "skymodel-fixture"
+   ],
+   "behaviors": [
+    "sky-model"
+   ]
+  },
+  "compwidth": {
+   "status": "Implemented",
+   "scope": "The bandwidth of a component-only model.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103",
+    "skymodel-fixture"
+   ],
+   "behaviors": [
+    "sky-model"
+   ]
+  },
+  "comp_nchan": {
+   "status": "Implemented",
+   "scope": "The channels of a component-only model.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103",
+    "skymodel-fixture"
+   ],
+   "behaviors": [
+    "sky-model"
+   ]
+  },
+  "setpointings": {
+   "status": "Implemented",
+   "scope": "Lays the pointings out, or reads ptgfile.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "pointings"
+   ]
+  },
+  "ptgfile": {
+   "status": "Implemented",
+   "scope": "CASA's pointing file, read or written.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "pointings"
+   ]
+  },
+  "integration": {
+   "status": "Implemented",
+   "scope": "The integration time; one summing to zero pointing time is refused (decision).",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "schedule"
+   ]
+  },
+  "direction": {
+   "status": "Implemented",
+   "scope": "The map centre, or a list of pointings; a list of one is rounded to its mean as CASA does (decision).",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "pointings"
+   ]
+  },
+  "mapsize": {
+   "status": "Implemented",
+   "scope": "The map's size.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "pointings"
+   ]
+  },
+  "maptype": {
+   "status": "Implemented",
+   "scope": "hexagonal, square and ALMA tilings.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "pointings"
+   ]
+  },
+  "pointingspacing": {
+   "status": "Implemented",
+   "scope": "The spacing, or a fraction of the primary beam.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "pointings"
+   ]
+  },
+  "caldirection": {
+   "status": "Implemented",
+   "scope": "A calibrator's direction.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "schedule"
+   ]
+  },
+  "calflux": {
+   "status": "Implemented",
+   "scope": "The calibrator's flux.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "schedule"
+   ]
+  },
+  "obsmode": {
+   "status": "Implemented",
+   "scope": "'int', 'sd', or '' to corrupt an existing MeasurementSet.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "observation"
+   ]
+  },
+  "refdate": {
+   "status": "Implemented",
+   "scope": "The observation date.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "schedule"
+   ]
+  },
+  "hourangle": {
+   "status": "Implemented",
+   "scope": "'transit' or an hour angle.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "schedule"
+   ]
+  },
+  "totaltime": {
+   "status": "Implemented",
+   "scope": "The total time; a pass the time does not complete is observed in part (decision).",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "schedule"
+   ]
+  },
+  "antennalist": {
+   "status": "Implemented",
+   "scope": "An interferometer configuration file or an ALMA resolution string.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "antennas"
+   ]
+  },
+  "sdantlist": {
+   "status": "Implemented",
+   "scope": "The total-power configuration.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "antennas"
+   ]
+  },
+  "sdant": {
+   "status": "Implemented",
+   "scope": "The total-power antenna's index.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "antennas"
+   ]
+  },
+  "outframe": {
+   "status": "Implemented",
+   "scope": "The spectral frame written.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "observation"
+   ]
+  },
+  "thermalnoise": {
+   "status": "Implemented",
+   "scope": "'tsys-atm', 'tsys-manual' or '' noise through the simulator's setnoise.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "noise"
+   ]
+  },
+  "user_pwv": {
+   "status": "Implemented",
+   "scope": "Precipitable water vapour for tsys-atm.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "noise"
+   ]
+  },
+  "t_ground": {
+   "status": "Implemented",
+   "scope": "Ground temperature.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "noise"
+   ]
+  },
+  "t_sky": {
+   "status": "Implemented",
+   "scope": "Sky temperature for tsys-manual.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "noise"
+   ]
+  },
+  "tau0": {
+   "status": "Implemented",
+   "scope": "Zenith opacity for tsys-manual.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "noise"
+   ]
+  },
+  "seed": {
+   "status": "Implemented",
+   "scope": "The random seed; casa-rs's draws differ from CASA's.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "noise"
+   ]
+  },
+  "leakage": {
+   "status": "Implemented",
+   "scope": "Polarization leakage through setleakage.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "noise"
+   ]
+  },
+  "correlator": {
+   "status": "Implemented",
+   "scope": "The correlator efficiency passed to noisetemp.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "noise"
+   ]
+  },
+  "graphics": {
+   "status": "Partial",
+   "scope": "Accepted; writes no .skymodel.png, .observe.png or .quick.psf yet and warns, naming #1025. CASA's default 'both' writes them.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "outputs"
+   ]
+  },
+  "verbose": {
+   "status": "Implemented",
+   "scope": "More messages.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "outputs"
+   ]
+  },
+  "overwrite": {
+   "status": "Implemented",
+   "scope": "Replaces the project's products; without it an existing MeasurementSet is refused with CASA's message.",
+   "evidence": [
+    "signature",
+    "task-tests",
+    "parity-20261103"
+   ],
+   "behaviors": [
+    "outputs"
+   ]
+  }
+ },
+ "behaviors": [
+  {
+   "id": "sky-model",
+   "title": "Sky model and component list",
+   "status": "Partial",
+   "scope": "skymodel through modifymodel and flatimage with inbright, indirection, incell, incenter and inwidth; complist with compwidth and comp_nchan, alone or with a sky model.",
+   "gap": "Compared in 6 of #920's 11 cases and by the skymodel fixture; the indirection and incell overrides and comp_nchan > 1 are not exercised against CASA's task.",
+   "evidence": [
+    "task-tests",
+    "parity-20261103"
+   ]
+  },
+  {
+   "id": "antennas",
+   "title": "Antenna lists",
+   "status": "Partial",
+   "scope": "antennalist and sdantlist as files, ALMA resolution strings ('alma;0.5arcsec'), the search through the project directory and CASA's alma/simmos, and sdant.",
+   "gap": "Configuration names need CASA's data directory: casa-rs does not ship alma/simmos (an open owner question on #1053).",
+   "evidence": [
+    "task-tests",
+    "parity-20261103"
+   ]
+  },
+  {
+   "id": "pointings",
+   "title": "Pointings",
+   "status": "Partial",
+   "scope": "setpointings with direction, mapsize, maptype and pointingspacing, or a ptgfile; written to <stem>.ptg.txt and checked against the model.",
+   "gap": "maptype='square' is compared only through the single-dish case.",
+   "evidence": [
+    "task-tests",
+    "parity-20261103"
+   ]
+  },
+  {
+   "id": "schedule",
+   "title": "Calibrator and observing schedule",
+   "status": "Partial",
+   "scope": "caldirection and calflux, integration, totaltime, refdate and hourangle.",
+   "gap": "The calibrator cases are compared with CASA's sm re-predict, since CASA's task leaves the calibrator unpredicted (decision). hourangle other than 'transit' and refdate is compared only at 2012/06/21.",
+   "evidence": [
+    "task-tests",
+    "parity-20261103"
+   ]
+  },
+  {
+   "id": "observation",
+   "title": "Observation and prediction",
+   "status": "Partial",
+   "scope": "obsmode 'int', 'sd' and '' (corrupting an existing MeasurementSet), outframe, and the prediction of the model and calibrator.",
+   "gap": "outframe other than LSRK is not compared.",
+   "evidence": [
+    "task-tests",
+    "parity-20261103"
+   ]
+  },
+  {
+   "id": "noise",
+   "title": "Thermal noise and leakage",
+   "status": "Partial",
+   "scope": "thermalnoise 'tsys-atm', 'tsys-manual' and '' with user_pwv, t_ground, t_sky, tau0, seed, leakage and correlator.",
+   "gap": "Noise is compared statistically (variances and KS tests), since draws differ; each environment parameter is exercised once; seed is casa-rs's own stream.",
+   "evidence": [
+    "task-tests",
+    "parity-20261103"
+   ]
+  },
+  {
+   "id": "outputs",
+   "title": "Files, overwrite and graphics",
+   "status": "Partial",
+   "scope": "CASA's file names under the project, overwrite, verbose and graphics.",
+   "gap": "graphics writes no .skymodel.png, .observe.png or .quick.psf yet and warns (#1025).",
+   "evidence": [
+    "task-tests",
+    "parity-20261103"
+   ]
+  }
+ ],
+ "decisions": [
+  {
+   "id": "compwidth-unset-spectral-increment",
+   "record": "An unset `compwidth` gives the component-only model a meaningless spectral increment",
+   "inputs": "simobserve with a component list, no sky image and compwidth=''.",
+   "casa": "It observes 2 GHz when compwidth is not a quantity, but sets the .compskymodel spectral increment from compwidth anyway, yielding a meaningless value (the RA in radians read as hertz, 4.976 Hz for RA 19h, in CASA 6.7.6).",
+   "ours": "Uses the 2 GHz simobserve observes with.",
+   "rationale": "The increment is the model's only spectral information beyond its reference frequency.",
+   "impact": "The component-only model carries a consistent spectral increment.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "calibrator-last-pass-scans-lists",
+   "record": "simobserve's calibrator: the last pass, its scans and two component lists",
+   "inputs": "simobserve with a phase calibrator (caldirection and calflux), also with a complist or totaltime ending inside a pass.",
+   "casa": "CASA 6.7.6 never observes the pointings of an incomplete last pass (a 300 s total on 105 pointings has only the calibrator's scan), selects fields range(0,nfld) so the calibrator's scans keep zeros plus noise, and joins component lists into one nonexistent table so predict returns False.",
+   "ours": "Observes the pointings the time allows, predicts every scan including the calibrator's, and predicts both lists as one list of their components.",
+   "rationale": "The task means to observe and predict all of these.",
+   "impact": "CASA data can lack pointings, have unpredicted calibrator scans, or be all zero; casa-rs data are complete (parity cases agree at 5e-9 NRMS).",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "noisier-t-cal-left",
+   "record": "simobserve leaves `<stem>.noisier.T.cal`",
+   "inputs": "simobserve with tsys-atm noise set after leakage (the noisier measurement set).",
+   "casa": "The setnoise table is written beside the noisy MeasurementSet, and the clean-up deletes <stem>.noisy.T.cal and <stem>.noisy.sd.T.cal but not <stem>.noisier.T.cal.",
+   "ours": "Writes no Tsys table for any of the three.",
+   "rationale": "The table is a by-product the task means to remove.",
+   "impact": "CASA leaves a stray table in the project that casa-rs never creates.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "observing-loop-never-ends",
+   "record": "simobserve's observing loop never ends for pointings of no length",
+   "inputs": "simobserve with integration='0s' or a pointing file of zero times.",
+   "casa": "The while (sttime-scanstart) < totalsec loop advances by each pointing's scan length; when a pass's lengths sum to zero the time never advances and CASA loops forever, collecting pointings.",
+   "ours": "Refuses such a schedule with a message.",
+   "rationale": "A schedule with no length cannot be observed.",
+   "impact": "The task stops with an error instead of hanging.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "skymodel-deleted-when-output",
+   "record": "simobserve deletes a sky model that is the model it writes",
+   "inputs": "simobserve with skymodel given as the full path <project>/<stem>.skymodel (e.g. a rerun on an earlier run's model) and overwrite=True.",
+   "casa": "The output is the input: CASA deletes the model and then fails to read it.",
+   "ours": "Refuses the input, and the model is left in place.",
+   "rationale": "The user's input must not be destroyed.",
+   "impact": "The model survives and the user gets a clear refusal.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "project-path-nests-in-itself",
+   "record": "simobserve nests a project path inside itself",
+   "inputs": "simobserve with project given as a path, e.g. 'a/b'.",
+   "casa": "The task names files fileroot + '/' + project + '.' + cfg, so 'a/b' gives a/b/a/b.<cfg> in a directory that does not exist; only a plain name in the working directory works.",
+   "ours": "Names files by the directory's last component, a/b/b.<cfg>.",
+   "rationale": "For a plain name the two are the same.",
+   "impact": "Project paths work in casa-rs and fail in CASA.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Proposed"
+  },
+  {
+   "id": "symlink-in-project-write-through",
+   "record": "simobserve writes through a symbolic link in the project",
+   "inputs": "simobserve overwrite=True in a project containing a symbolic link such as <stem>.ptg.txt.",
+   "casa": "CASA copies ptgfile through the link, replacing the file the link points to outside the project, and creates outside files for dangling links; links to tables stop the task via rmtree; existence checks follow links.",
+   "ours": "Replaces a link in the project with the new file or table, leaves the target alone, and counts a link as existing under overwrite=False.",
+   "rationale": "Owner's decision of 2026-10-26: only the project's own files are replaced.",
+   "impact": "Files outside the project are no longer overwritten or created through links.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Owner decision, 2026-10-26: the project's own files are the only ones overwrite replaces (recorded with the provider contracts' overwrite exception)."
+  },
+  {
+   "id": "direction-list-of-one-mean",
+   "record": "simobserve rounds a `direction` list of one to its mean",
+   "inputs": "simobserve with direction=['J2000 18h00m00.123456789s ...'] (a list of one) versus the same direction as a string.",
+   "casa": "CASA passes the list to calc_pointings2, and direction_splitter centres it at its mean written at precision 5, so the map is laid out about 1e-5 s of RA (0.15 mas) from the string case.",
+   "ours": "casa-rs's simutil follows CASA, but simobserve treats a list of one like a string and lays the map out at the exact direction.",
+   "rationale": "The task contract resolves a string to a list of one, and the rounding carries no information.",
+   "impact": "A map is placed at the exact direction, differing from CASA by about 0.15 mas for a list of one.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Proposed"
+  }
+ ],
+ "evidence": {
+  "signature": {
+   "kind": "Signature/default inventory",
+   "state": "recorded",
+   "scope": "CASA 6.7.6.14 names and defaults; not behavior.",
+   "links": [
+    "resources/casa-compat/casa-6.7.6.14/tasks/simobserve.json"
+   ]
+  },
+  "task-tests": {
+   "kind": "casa-rs task tests",
+   "state": "recorded",
+   "scope": "The task's stages, files, refusals and messages, without CASA.",
+   "links": [
+    "crates/casa-simulation/tests/simobserve.rs",
+    "crates/casa-simulation/src/simobserve/tests.rs"
+   ]
+  },
+  "parity-920": {
+   "kind": "CASA-paired task runs (PR-reported)",
+   "state": "superseded",
+   "result": "All 11 cases agree: DATA NRMS 6.2e-8 to 2.0e-7 for the interferometer cases, 1.05e-6 for leakage, calibrators against CASA's sm re-predict at 5.2e-9 and 5.5e-9; noise KS p 0.11 to 0.92. CASA 6.7.6-14's task_simobserve.py, casa-rs at 29f0b87a6e. Not re-run at a current revision; CASA's own test_task_simobserve cases are not compared.",
+   "scope": "11 cases: VLA and ALMA image models, a component-only model with tsys-atm, leakage with both noise modes, calibrators, single dish and a pointing file.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/920",
+    "https://github.com/bglenden/casa-rs/pull/922",
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "superseded_by": "parity-20261103"
+  },
+  "skymodel-fixture": {
+   "kind": "CASA fixture comparison",
+   "state": "passed",
+   "result": "casa-simulation skymodel_casa: 5 tests pass at the revision, against outputs recorded from CASA 6.7.6.14 (casatools 6.7.6-14) and checked in.",
+   "scope": "modifymodel, flatimage and the component-only model that simobserve's sky-model stage uses.",
+   "links": [
+    "crates/casa-simulation/tests/skymodel_casa.rs",
+    "crates/casa-simulation/tests/data/skymodel_casa.json.gz",
+    "tools/simulation/skymodel_oracle.py"
+   ],
+   "casa_version": "6.7.6.14 (casatools 6.7.6-14), as recorded in the fixtures",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "python3 tools/casa-compat/fixture_receipt.py (the receipt lists each test command)",
+   "receipt": "resources/casa-compat/evidence/simutil-fixtures-20261103.json"
+  },
+  "bugs-record": {
+   "kind": "Deviation record",
+   "state": "recorded",
+   "scope": "Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.",
+   "links": [
+    "docs/CASA (C++) bugs.md"
+   ]
+  },
+  "parity-20261103": {
+   "kind": "CASA-paired task runs",
+   "state": "passed",
+   "result": "All 11 cases agree: interferometer DATA NRMS 6.2e-8 to 2.9e-7 and leakage 1.05e-6 (limit 1e-3); calibrators against CASA's sm re-predict 5.3e-9 and 5.5e-9; single dish 8.7e-9; noise variances within 1 percent of unity on both sides (KS p 0.11 to 0.92); the coarse-cell case refused with CASA's message. CASA's own test_task_simobserve cases are not compared.",
+   "scope": "#920's 11 cases: VLA and ALMA image models, a component-only model with tsys-atm, leakage with both noise modes, calibrators, single dish, a pointing file and a refused coarse cell.",
+   "links": [
+    "tools/simulation/simobserve_parity.py",
+    "tools/simulation/compare_sm_ms.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata /Volumes/home/casatestdata --atmosphere-model TARGET/release/examples/at_tool_quantities (bg-mac-mini, CPU)",
+   "receipt": "resources/casa-compat/evidence/simobserve-parity-20261103.json"
+  }
+ }
+}

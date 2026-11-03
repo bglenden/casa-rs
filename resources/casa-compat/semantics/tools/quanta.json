@@ -1,0 +1,555 @@
+{
+ "schema_version": 1,
+ "tool": "quanta",
+ "casa_version": "6.7.6.14",
+ "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "methods": {
+  "abs": {
+   "status": "Implemented",
+   "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "acos": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "add": {
+   "status": "Implemented",
+   "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "angle": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "asin": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "atan": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "atan2": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "canon": {
+   "status": "Implemented",
+   "scope": "Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance).",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "canonical": {
+   "status": "Implemented",
+   "scope": "Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance).",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "ceil": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "check": {
+   "status": "Implemented",
+   "scope": "Answers as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "checkfreq": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "compare": {
+   "status": "Implemented",
+   "scope": "Answers as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "constants": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "convert": {
+   "status": "Implemented",
+   "scope": "Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance).",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "convertdop": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "convertfreq": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "cos": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "define": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "div": {
+   "status": "Implemented",
+   "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "done": {
+   "status": "Implemented",
+   "scope": "As CASA's.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "eq": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "exp": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "fits": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "floor": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "formxxx": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "ge": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getformat": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getunit": {
+   "status": "Implemented",
+   "scope": "Reads a quantity's value and unit back.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "getvalue": {
+   "status": "Implemented",
+   "scope": "Reads a quantity's value and unit back.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "gt": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "isangle": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "isquantity": {
+   "status": "Implemented",
+   "scope": "Answers as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "le": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "log": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "log10": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "lt": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "map": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "maprec": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "mul": {
+   "status": "Implemented",
+   "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "ne": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "neg": {
+   "status": "Implemented",
+   "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "norm": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "pow": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "quantity": {
+   "status": "Implemented",
+   "scope": "Builds quantities and quantity arrays from strings, numbers and records, as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "setformat": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "sin": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "splitdate": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "sqrt": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "sub": {
+   "status": "Implemented",
+   "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "tan": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "time": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "toangle": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "tos": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "totime": {
+   "status": "Implemented",
+   "scope": "Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "type": {
+   "status": "Implemented",
+   "scope": "As CASA's.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "unit": {
+   "status": "Implemented",
+   "scope": "Builds quantities and quantity arrays from strings, numbers and records, as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  }
+ },
+ "behaviors": [],
+ "decisions": [
+  {
+   "id": "quantities-non-conforming-units",
+   "record": "The tools convert quantities whose units do not conform",
+   "inputs": "integrationtime='10Jy', integrationtime='10m' or freq='1s' passed to a simulator method; a direction string such as 'J2000 12h00m00 garbage'.",
+   "casa": "CASA 6.7.6 converts without checking conformance: '10Jy' becomes 1e-25 s, '10m' 10 s, '1s' 1 Hz, and an unreadable direction token keeps the previous value (declination 180 deg).",
+   "ours": "Refuses both with casacore's 'From/to units not consistent' or a parse error, while keeping CASA's cross-dimension conversions (number is SI, angle is time, length is frequency via c).",
+   "rationale": "Non-conforming units are almost certainly user errors and should not become silent wrong values.",
+   "impact": "Scripts with a wrong unit now stop with an error instead of running with a nonsense value.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  }
+ ],
+ "evidence": {
+  "signature": {
+   "kind": "Signature inventory",
+   "state": "recorded",
+   "scope": "CASA 6.7.6.14's methods, names and defaults, and the object-surface bundle's; not behavior.",
+   "links": [
+    "crates/casars-python/python/tests/data/casa_quanta_signatures.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py",
+    "crates/casars-python/src/tools/quanta/surface.rs"
+   ]
+  },
+  "refusals": {
+   "kind": "Refusal test",
+   "state": "recorded",
+   "scope": "Each method casa-rs does not implement raises NotImplementedError naming #1053.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_quanta.py",
+    "crates/casars-python/src/tools/mod.rs"
+   ]
+  },
+  "casa-values": {
+   "kind": "CASA-probed values",
+   "state": "passed",
+   "result": "96 of the 131 tests pass against CASA 6.7.6.14's own qa tool: every test of a value or a raised message. The 35 others test what only casa-rs has (its refusals, bundle and import) or one message CASA writes to its own log; the receipt classifies each. casa-rs passes the same tests in CI.",
+   "scope": "Every implemented method, with CASA's messages.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "casa_version": "casatools 6.7.6-14, casatasks 6.7.6.14",
+   "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+   "command": "CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool quanta (bg-mac-mini)",
+   "receipt": "resources/casa-compat/evidence/qa-on-casa-20261103.json"
+  },
+  "bugs-record": {
+   "kind": "Deviation record",
+   "state": "recorded",
+   "scope": "Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.",
+   "links": [
+    "docs/CASA (C++) bugs.md"
+   ]
+  }
+ }
+}
