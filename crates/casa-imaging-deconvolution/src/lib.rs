@@ -56,9 +56,8 @@ pub use mask::{
     AutoMaskPsf, AutoMaskRead, AutoMaskSource, AutoMaskThreshold, AutoMultithreshControls,
     AutoMultithreshEvidence, ImageDomainMaskMaterialization, ImageDomainReconstructionMaskPlans,
     ImageDomainReconstructionMasks, MaskBeamRead, MaskBox, MaskError, MaskPlaneKey, MaskPlanes,
-    MaskSources, NoiseMaskExclusion, ReconstructionMask, ReconstructionMaskPlan,
-    ReconstructionMaskSet, auto_multithresh, auto_multithresh_bytes, direction_world_to_pixel,
-    reproject_mask_support,
+    MaskReprojection, MaskSources, NoiseMaskExclusion, ReconstructionMask, ReconstructionMaskPlan,
+    ReconstructionMaskSet, auto_multithresh, auto_multithresh_bytes, reproject_mask_support,
 };
 pub(crate) use model_lifecycle::validate_model_value;
 pub use model_lifecycle::{

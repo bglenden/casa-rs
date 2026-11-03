@@ -18,7 +18,7 @@ use std::{fmt, num::NonZeroUsize, path::PathBuf, str::FromStr};
 
 use casa_imaging_model::{
     FixedRestoringBeam, HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization,
-    RestoringBeamPolicy, UvTaper,
+    Projection, RestoringBeamPolicy, UvTaper,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::{Diagnostics, ResourcePolicy};
@@ -59,6 +59,10 @@ pub struct ImagingRequest {
     /// `cell` does.
     #[serde(deserialize_with = "cell_pair_arcsec")]
     pub cell: [f64; 2],
+    /// The celestial projection of the image's direction axes, CASA's
+    /// `projection` (`SIN` by default).
+    #[serde(deserialize_with = "projection")]
+    pub projection: Projection,
     /// The visibility column imaged; `None` takes `CORRECTED_DATA` when it
     /// exists and `DATA` otherwise. `CORRECTED_DATA` asked for on a
     /// MeasurementSet without it images `DATA`, as CASA's `tclean` does;
@@ -724,10 +728,12 @@ impl ImagingRequest {
                  main field's overlap with no start model of its own",
             );
         }
-        if self.nterms == 0 || (self.nterms > 1) != (self.deconvolver == Deconvolver::Mtmfs) {
+        // CASA's `mtmfs` takes one Taylor term or more; every other
+        // deconvolver images one.
+        if self.nterms == 0 || (self.nterms > 1 && self.deconvolver != Deconvolver::Mtmfs) {
             return invalid(
                 "nterms, deconvolver",
-                "nterms > 1 exactly when deconvolver = mtmfs",
+                "nterms is at least one, and more than one only with deconvolver = mtmfs",
             );
         }
         if self.deconvolver == Deconvolver::Mtmfs && self.specmode != SpecMode::Mfs {
@@ -1218,6 +1224,13 @@ fn choice<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error
     }
 }
 
+fn projection<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Projection, D::Error> {
+    let text = choice(deserializer)?;
+    Projection::from_casa_name(&text).ok_or_else(|| {
+        D::Error::custom(format!("projection {text:?} is not one casa-rs images in"))
+    })
+}
+
 fn save_model<'de, D: Deserializer<'de>>(deserializer: D) -> Result<SaveModel, D::Error> {
     match choice(deserializer)?.as_str() {
         text if unset(text) => Ok(SaveModel::None),
@@ -1297,8 +1310,9 @@ fn interpolation<'de, D: Deserializer<'de>>(
     match choice(deserializer)?.as_str() {
         "nearest" => Ok(CubeInterpolation::Nearest),
         "linear" => Ok(CubeInterpolation::Linear),
+        "cubic" => Ok(CubeInterpolation::Cubic),
         other => Err(D::Error::custom(format!(
-            "interpolation {other:?} is neither nearest nor linear"
+            "interpolation {other:?} is none of nearest, linear and cubic"
         ))),
     }
 }

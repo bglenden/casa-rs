@@ -20,8 +20,8 @@
 //! image's and whose channels are the image's, or one continuum channel,
 //! and does not regrid a mask along frequency or Stokes yet (#980).
 //!
-//! Each plane is reprojected onto the domain's direction grid
-//! ([`casa_imaging_deconvolution::reproject_mask_support`]); a plane's
+//! Each plane is reprojected onto the domain's direction grid through one
+//! pixel map the planes share ([`casa_imaging_deconvolution::MaskReprojection`]); a plane's
 //! support is its finite, non-zero pixels valid in the image's default
 //! pixel mask.
 
@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, SpectralCoordinate};
 use casa_images::{AnyPagedImage, ImagePixel, PagedImage};
-use casa_imaging_deconvolution::{MaskPlanes, ReconstructionMaskPlan, reproject_mask_support};
+use casa_imaging_deconvolution::{MaskPlanes, MaskReprojection, ReconstructionMaskPlan};
 use casa_imaging_model::DirectionCoordinateSpec;
 
 use super::PrepareError;
@@ -157,7 +157,7 @@ impl MaskImage {
 
     /// Heap bytes [`Self::read`] holds at most: one source plane as it is
     /// read (its pixels, its default pixel mask and its support) and that
-    /// plane reprojected; every plane's support as it is gathered and as
+    /// plane reprojected; the pixel map every plane shares; every plane's support as it is gathered and as
     /// the plan shares it; the bounded tile cache and two decoded/I/O tile
     /// buffers.
     pub(crate) fn reading_bytes(&self) -> u64 {
@@ -165,6 +165,7 @@ impl MaskImage {
             .plane_cells()
             .saturating_mul(self.pixel_bytes + 2)
             .saturating_add(self.target_plane())
+            .saturating_add(MaskReprojection::bytes(self.target_size))
             .saturating_add(self.retained_bytes().saturating_mul(2))
             .saturating_add(self.tile_bytes.saturating_mul(2))
             .saturating_add(CACHE_BYTES as u64)
@@ -183,6 +184,9 @@ impl MaskImage {
         let held = self.held;
         let cells = self.target_size[0] * self.target_size[1];
         let mut support = Vec::with_capacity(cells * held.count());
+        // Every plane shares the direction grids, so one map reprojects
+        // them all.
+        let map = MaskReprojection::new(self.source, source_shape, self.target, self.target_size)?;
         for channel in 0..held.channels() {
             for stokes in 0..held.polarizations() {
                 let (start, shape) = self.axes.plane(channel, stokes);
@@ -190,13 +194,7 @@ impl MaskImage {
                     RealImage::Float32(image) => plane_support(image, &start, &shape)?,
                     RealImage::Float64(image) => plane_support(image, &start, &shape)?,
                 };
-                support.extend_from_slice(&reproject_mask_support(
-                    self.source,
-                    source_shape,
-                    &plane,
-                    self.target,
-                    self.target_size,
-                )?);
+                support.extend_from_slice(&map.apply(&plane)?);
             }
         }
         let support: Arc<[bool]> = support.into();

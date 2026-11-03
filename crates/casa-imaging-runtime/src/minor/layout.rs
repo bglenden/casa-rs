@@ -66,10 +66,10 @@ impl MinorLayout {
         }
     }
 
-    /// The layout the first major cycle of `problem` forms: one Taylor
-    /// family of `T` residual terms and `2T − 1` normal moments on the first
-    /// image domain, or a plane per polarization, image domain and output
-    /// channel, paged when there is a plane per channel.
+    /// The layout the first major cycle of `problem` forms: a Taylor family
+    /// of `T` residual terms and `2T − 1` normal moments per polarization on
+    /// the first image domain, or a plane per polarization, image domain and
+    /// output channel, paged when there is a plane per channel.
     #[must_use]
     pub fn planned(problem: &CompiledProblem) -> Self {
         let target = problem.model_lifecycle().target();
@@ -88,7 +88,7 @@ impl MinorLayout {
         let per_channel = target.polarizations() * domains.len();
         let (planes, shape, terms, paged, channels) = match problem.reconstruction().basis() {
             ReconstructionBasis::Taylor { terms } => (
-                1,
+                target.polarizations(),
                 largest(&domains[..domains.len().min(1)]),
                 (terms as u64, (2 * terms).saturating_sub(1) as u64),
                 false,

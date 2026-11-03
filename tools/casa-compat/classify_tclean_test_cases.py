@@ -71,6 +71,16 @@ NOTE = "surface note: restart (#944)"
 CF_NOTE = "surface note: cfcache"
 GATE = "availability.rs gate"
 
+# `Tclean::projection`: casacore's projection names, and those casa-rs
+# images in (`Projection::from_casa_name`), spelt exactly.
+CASACORE_PROJECTIONS = {
+    "AZP", "SZP", "TAN", "SIN", "STG", "ARC", "ZPN", "ZEA", "AIR", "CYP", "CEA", "CAR", "MER",
+    "COP", "COE", "COD", "COO", "SFL", "PAR", "MOL", "AIT", "BON", "PCO", "TSC", "CSC", "QSC",
+    "HPX",
+}
+CASA_RS_PROJECTIONS = {"SIN", "NCP", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "MER", "AIT"}
+PROJECTION_ISSUE = 1101
+
 
 def plain(value):
     """A catalog ParameterValue as Python."""
@@ -306,6 +316,8 @@ class Refusals:
         if deconvolver not in ("hogbom", "clark", "multiscale", "mtmfs"):
             issue = 223 if deconvolver == "asp" else 1060
             self.add(f"deconvolver={deconvolver!r}", NOT_YET, issue)
+        if deconvolver == "mtmfs" and specmode in ("cube", "cubedata"):
+            self.add("deconvolver='mtmfs' with specmode='cube' or 'cubedata'", PARITY)
         weighting = self.text("weighting")
         if weighting not in ("natural", "uniform", "briggs", "briggsbwtaper"):
             self.add(f"weighting={weighting!r}", NOT_YET, 980)
@@ -381,17 +393,22 @@ class Refusals:
             self.per_measurement_set(name)
 
     def geometry(self):
-        """`Tclean::geometry`."""
+        """`Tclean::geometry` and `Tclean::projection`."""
         if self.values.get("cell") == []:
             self.add("cell: empty", PARITY)
         self.text("phasecenter")
+        projection = self.text("projection")
+        if isinstance(projection, str):
+            if projection != "NCP" and projection not in CASACORE_PROJECTIONS:
+                self.add("projection: not a casacore projection", PARITY)
+            elif projection not in CASA_RS_PROJECTIONS:
+                self.add(f"projection={projection!r}", NOT_YET, PROJECTION_ISSUE)
 
     def spectral(self, modes):
-        """`Tclean::spectral` and `refuse_derived_extent`."""
+        """`Tclean::spectral`."""
         nchan = self.integer("nchan")
         if modes["cube"] and isinstance(nchan, int) and nchan < 1 and nchan != -1:
             self.add("nchan below 1 (other than -1)", CASA_RS)
-        start, width = self.text("start"), self.text("width")
         outframe, veltype = self.text("outframe"), self.text("veltype")
         restfreq = self.texts("restfreq")
         interpolation = self.text("interpolation")
@@ -405,24 +422,16 @@ class Refusals:
             if restfreq:
                 self.add("restfreq with specmode='mfs'", NOT_YET, 980)
             return
-        # A channel selection in any MeasurementSet's spw.
-        selected = any(":" in spw for spw in self.per_measurement_set("spw"))
-        if nchan == -1 and (selected or width not in ("", "1", None) or start not in ("", None)):
-            self.add(
-                "nchan=-1 with a channel selection, start or width (derived cube extent)",
-                NOT_YET,
-                1066,
-            )
-        if selected and start == "":
-            self.add("start='' with a channel selection in spw", NOT_YET, 980)
         if not valid_frame:
             self.add(f"outframe={outframe!r}", NOT_YET, 980)
         if (veltype or "").lower() not in ("radio", "optical", "z", "beta", "relativistic", "true"):
             self.add(f"veltype={veltype!r}", NOT_YET, 980)
+        elif (veltype or "").lower() in ("optical", "z") and any(
+            is_velocity(self.text(name)) for name in ("start", "width")
+        ):
+            self.add("veltype='optical' with a velocity start or width (tabular axis)", NOT_YET, 1096)
         if len(restfreq) > 1:
             self.add("restfreq: a list of rest frequencies", NOT_YET, 980)
-        if interpolation == "cubic":
-            self.add("interpolation='cubic'", NOT_YET, 1066)
 
     def gridding(self, modes):
         """`Tclean::gridding` and `aw_terms`."""
@@ -470,18 +479,14 @@ class Refusals:
                 CF_NOTE,
             )
 
-    def deconvolution(self, modes):
+    def deconvolution(self):
         """`Tclean::deconvolution`."""
-        if modes["deconvolver"] == "mtmfs" and self.integer("nterms") == 1:
-            self.add("nterms=1 with deconvolver='mtmfs'", NOT_YET, 1065)
         beam = self.texts("restoringbeam")
         if beam not in ([], ["common"]):
             self.add("restoringbeam: a beam given by its axes", NOT_YET, 980)
 
     def iteration(self):
         """`Tclean::iteration`."""
-        if self.values.get("savemodel") == "virtual":
-            self.add("savemodel='virtual'", NOT_YET, 823)
         self.integer("cycleniter")
 
     def masking(self, modes):
@@ -508,7 +513,7 @@ class Refusals:
         self.geometry()
         self.spectral(modes)
         self.gridding(modes)
-        self.deconvolution(modes)
+        self.deconvolution()
         self.iteration()
         self.masking(modes)
         self.gate(modes)
@@ -516,12 +521,14 @@ class Refusals:
     def gate(self, modes):
         """`availability::check`, for what the parameters alone decide."""
         taylor = modes["deconvolver"] == "mtmfs"
-        if taylor and str(self.values.get("stokes", "I")).strip() != "I":
-            self.add("a Taylor basis (mtmfs) of polarizations other than Stokes I", GATE)
         facets = self.values.get("facets")
         faceted = isinstance(facets, int) and facets > 1
         if faceted and modes["gridder"] in ("standard", "wproject") and (taylor or modes["cube"]):
             self.add("facets beyond single-term MFS", GATE)
+        stokes = self.values.get("stokes", "I")
+        if taylor and stokes != "I" and modes["gridder"] != "standard":
+            self.add("mtmfs of Stokes planes other than I alone beyond the standard gridder",
+                     GATE, 1112)
         if modes["gridder"] == "awproject":
             if modes["cube"]:
                 self.add("AW projection of a cube (#719)", GATE, 719)
@@ -532,6 +539,15 @@ class Refusals:
             cell = cell if isinstance(cell, list) else [cell]
             if len(set(map(str, imsize))) > 1 or len(set(map(str, cell))) > 1:
                 self.add("AW projection of a non-square grid", GATE)
+
+
+def is_velocity(text):
+    """`tclean.rs`'s `is_velocity`: a start or width in velocity units, or a
+    dimensionless Doppler value (a number that is not a whole channel)."""
+    text = (text or "").strip()
+    if not text or re.fullmatch(r"[-+]?\d+", text):
+        return False
+    return bool(re.fullmatch(r"[-+]?[0-9.eE+-]+\s*(k?m/s)?", text))
 
 
 def selector_ids(text):

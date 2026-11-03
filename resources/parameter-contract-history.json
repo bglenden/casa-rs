@@ -4730,8 +4730,13 @@
     },
     {
       "id": "tclean",
+      "contract_version": 39,
+      "fingerprint": "e505149507d797b55cfd47b6e20685c12ee657fb82a6c523bd9a03cc53970434"
+    },
+    {
+      "id": "tclean",
       "contract_version": 40,
-      "fingerprint": "49bbb73d398dafff2d592d6b18aec656732426b6cb0de68598b702d85bfc36ac"
+      "fingerprint": "882d248668ce4cb4001247f1cbd1d87475888a64c665316622956a88d2b0979c"
     },
     {
       "id": "uvcontsub",

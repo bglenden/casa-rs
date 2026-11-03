@@ -26,7 +26,12 @@ use std::{collections::BTreeSet, fmt, str::FromStr};
 use casa_types::quanta::{Quantity, Unit};
 use serde_json::{Map, Value, json};
 
+use casa_imaging_model::Projection;
+
 use crate::ImagingRequest;
+
+/// The issue that tracks the projections casa-rs does not image in yet.
+const PROJECTION_ISSUE: u32 = 1101;
 
 /// A tclean value casa-rs refuses, and the parameter that holds it.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -344,6 +349,17 @@ impl<'a> Tclean<'a> {
                 issue,
             ));
         }
+        // CASA's tclean images nothing for this pair, whatever `nterms`
+        // (`task_tclean.py` warns and returns before imaging).
+        if deconvolver == "mtmfs" && matches!(specmode, "cube" | "cubedata") {
+            return Err(TcleanRefusal::new(
+                "deconvolver",
+                format!(
+                    "deconvolver='mtmfs' with specmode='{specmode}' is not supported: CASA's \
+                     tclean images nothing for it, and so does casa-rs"
+                ),
+            ));
+        }
         self.set("deconvolver", deconvolver);
         let weighting = self.text("weighting")?;
         if !matches!(
@@ -512,38 +528,37 @@ impl<'a> Tclean<'a> {
             },
         );
         self.set("phasecenter_field", if field { centre } else { "none" });
-        self.ignore(&["projection", "psfphasecenter", "vptable"])
+        self.projection()?;
+        self.ignore(&["psfphasecenter", "vptable"])
     }
 
-    /// Refuse the cube extents CASA derives from the channels `spw` selects,
-    /// which casa-rs does not yet (#980). CASA's `getImFreq` passes
-    /// `nchan=-1` and its `start` and `width` to
-    /// `MSTransformRegridder::calcChanFreqs`, which counts the selected
-    /// channels from `start` in steps of `width`; casa-rs counts them only
-    /// for a channel grid from the selected windows' first channel in steps
-    /// of one. (Where an unset `start` begins, the first selected channel,
-    /// casa-rs follows.)
-    fn refuse_derived_extent(
-        &mut self,
-        nchan: i64,
-        counted: bool,
-        start: &str,
-        width: &str,
-    ) -> Result<(), TcleanRefusal> {
-        // A channel selection in any MeasurementSet's spw.
-        let channels_selected = self
-            .per_measurement_set("spw", None)?
-            .iter()
-            .any(|spw| spw.as_str().is_some_and(|text| text.contains(':')));
-        let wide = !matches!(width, "" | "1");
-        if nchan == -1 && !counted && (channels_selected || wide || !start.is_empty()) {
-            return Err(TcleanRefusal::not_yet(
-                "nchan",
-                "-1 with a channel selection in spw, a start or a width, whose extent CASA \
-                 derives from the selected channels; give nchan",
-                1066,
+    /// CASA's `projection` (`SynthesisParamsImage::fromRecord`): `NCP`, which
+    /// CASA writes as a slanted `SIN`, or any of casacore's projections,
+    /// spelt as `Projection::type` reads them; any other text CASA refuses.
+    /// casa-rs images in those [`Projection::from_casa_name`] names. The
+    /// catalog trims the text first, as it does every string, so `' TAN'`
+    /// is `TAN` here where CASA refuses it (`docs/CASA (C++) bugs.md`).
+    fn projection(&mut self) -> Result<(), TcleanRefusal> {
+        const CASACORE: [&str; 27] = [
+            "AZP", "SZP", "TAN", "SIN", "STG", "ARC", "ZPN", "ZEA", "AIR", "CYP", "CEA", "CAR",
+            "MER", "COP", "COE", "COD", "COO", "SFL", "PAR", "MOL", "AIT", "BON", "PCO", "TSC",
+            "CSC", "QSC", "HPX",
+        ];
+        let name = self.text("projection")?;
+        if name != "NCP" && !CASACORE.contains(&name) {
+            return Err(TcleanRefusal::new(
+                "projection",
+                format!("Invalid projection code : {name}, as CASA's tclean refuses it"),
             ));
         }
+        if Projection::from_casa_name(name).is_none() {
+            return Err(TcleanRefusal::not_yet(
+                "projection",
+                format!("{name:?}"),
+                PROJECTION_ISSUE,
+            ));
+        }
+        self.set("projection", name);
         Ok(())
     }
 
@@ -607,14 +622,20 @@ impl<'a> Tclean<'a> {
             }
             return Ok(());
         }
-        self.refuse_derived_extent(nchan, counted, start, width)?;
+        let convention = velocity_convention(veltype)?;
+        // An optical-velocity grid is equal in optical velocity, not in
+        // frequency, and CASA tabulates its axis (#1096).
+        if convention == "OPTICAL" && (is_velocity(start) || is_velocity(width)) {
+            return Err(TcleanRefusal::not_yet(
+                "veltype",
+                "'optical' with a velocity start or width, whose channels CASA tabulates",
+                1096,
+            ));
+        }
         self.set("start", start);
         self.set("width", width);
         self.set("outframe", frame);
-        self.set("veltype", velocity_convention(veltype)?);
-        if interpolation == "cubic" {
-            return Err(TcleanRefusal::not_yet("interpolation", "'cubic'", 1066));
-        }
+        self.set("veltype", convention);
         self.set("interpolation", interpolation);
         Ok(())
     }
@@ -843,13 +864,6 @@ impl<'a> Tclean<'a> {
             },
         );
         let nterms = self.integer("nterms")?;
-        if modes.deconvolver == "mtmfs" && nterms == 1 {
-            return Err(TcleanRefusal::not_yet(
-                "nterms",
-                "1 with deconvolver='mtmfs'",
-                1065,
-            ));
-        }
         self.set(
             "nterms",
             if modes.deconvolver == "mtmfs" {
@@ -1023,6 +1037,22 @@ fn output_frame(text: &str) -> Result<String, TcleanRefusal> {
         "LSRK" | "BARY" | "TOPO" | "REST" => Ok(frame),
         _ => Err(TcleanRefusal::not_yet("outframe", format!("{text:?}"), 980)),
     }
+}
+
+/// Whether a cube's `start` or `width` text makes its axis a velocity
+/// grid (`SynthesisParamsImage::findSpecMode`): a velocity, or a
+/// dimensionless Doppler value, which the axis builder takes as the
+/// velocity it stands for (`CubeAxisValue::parse`). A whole number is a
+/// channel.
+fn is_velocity(text: &str) -> bool {
+    let text = text.trim();
+    if text.parse::<i32>().is_ok() {
+        return false;
+    }
+    let velocity = Unit::new("m/s").expect("built-in velocity unit");
+    Quantity::from_str(text).is_ok_and(|quantity| {
+        quantity.unit().conformant(&velocity) || quantity.unit().conformant(&Unit::dimensionless())
+    })
 }
 
 /// A cube's velocity convention, in casacore's spelling: `z` is optical and

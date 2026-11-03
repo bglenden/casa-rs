@@ -1,0 +1,202 @@
+{
+  "source": {
+    "purpose": "casa-rs's own tclean cases of the projections it images in (#1064)",
+    "casa_version": "6.7.6.14",
+    "tool": "tools/casa-compat/tclean_case_matrix.py"
+  },
+  "format": "tclean_case_matrix.py's case matrix (resources/casa-compat/tclean-casa-test-cases.json documents it)",
+  "inputs": {
+    "refim_twochan.ms": "unittest/tclean/refim_twochan.ms",
+    "refim_mawproject.ms": "unittest/tclean/refim_mawproject.ms"
+  },
+  "common": {},
+  "cases": {
+    "projection_onefield.SIN": {
+      "vis": "refim_twochan.ms",
+      "imagename": "tstSIN",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "parallel": false,
+        "projection": "SIN"
+      },
+      "note": "refim_twochan.ms cleaned 10 iterations in SIN, as test_onefield_projections images it dirty: the pixels SIN's, the direction coordinate the projection's",
+      "skip_scalars": false
+    },
+    "projection_onefield.NCP": {
+      "vis": "refim_twochan.ms",
+      "imagename": "tstNCP",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "parallel": false,
+        "projection": "NCP"
+      },
+      "note": "refim_twochan.ms cleaned 10 iterations in NCP, as test_onefield_projections images it dirty: the pixels SIN's, the direction coordinate the projection's",
+      "skip_scalars": false
+    },
+    "projection_onefield.TAN": {
+      "vis": "refim_twochan.ms",
+      "imagename": "tstTAN",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "parallel": false,
+        "projection": "TAN"
+      },
+      "note": "refim_twochan.ms cleaned 10 iterations in TAN, as test_onefield_projections images it dirty: the pixels SIN's, the direction coordinate the projection's",
+      "skip_scalars": false
+    },
+    "projection_onefield.ARC": {
+      "vis": "refim_twochan.ms",
+      "imagename": "tstARC",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "parallel": false,
+        "projection": "ARC"
+      },
+      "note": "refim_twochan.ms cleaned 10 iterations in ARC, as test_onefield_projections images it dirty: the pixels SIN's, the direction coordinate the projection's",
+      "skip_scalars": false
+    },
+    "projection_onefield.STG": {
+      "vis": "refim_twochan.ms",
+      "imagename": "tstSTG",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "parallel": false,
+        "projection": "STG"
+      },
+      "note": "refim_twochan.ms cleaned 10 iterations in STG, as test_onefield_projections images it dirty: the pixels SIN's, the direction coordinate the projection's",
+      "skip_scalars": false
+    },
+    "projection_onefield.ZEA": {
+      "vis": "refim_twochan.ms",
+      "imagename": "tstZEA",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "parallel": false,
+        "projection": "ZEA"
+      },
+      "note": "refim_twochan.ms cleaned 10 iterations in ZEA, as test_onefield_projections images it dirty: the pixels SIN's, the direction coordinate the projection's",
+      "skip_scalars": false
+    },
+    "projection_onefield.CAR": {
+      "vis": "refim_twochan.ms",
+      "imagename": "tstCAR",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "parallel": false,
+        "projection": "CAR"
+      },
+      "note": "refim_twochan.ms cleaned 10 iterations in CAR, as test_onefield_projections images it dirty: the pixels SIN's, the direction coordinate the projection's",
+      "skip_scalars": false
+    },
+    "projection_onefield.SFL": {
+      "vis": "refim_twochan.ms",
+      "imagename": "tstSFL",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "parallel": false,
+        "projection": "SFL"
+      },
+      "note": "refim_twochan.ms cleaned 10 iterations in SFL, as test_onefield_projections images it dirty: the pixels SIN's, the direction coordinate the projection's",
+      "skip_scalars": false
+    },
+    "projection_onefield.MER": {
+      "vis": "refim_twochan.ms",
+      "imagename": "tstMER",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "parallel": false,
+        "projection": "MER"
+      },
+      "note": "refim_twochan.ms cleaned 10 iterations in MER, as test_onefield_projections images it dirty: the pixels SIN's, the direction coordinate the projection's",
+      "skip_scalars": false
+    },
+    "projection_onefield.AIT": {
+      "vis": "refim_twochan.ms",
+      "imagename": "tstAIT",
+      "params": {
+        "imsize": 100,
+        "cell": "8.0arcsec",
+        "niter": 10,
+        "parallel": false,
+        "projection": "AIT"
+      },
+      "note": "refim_twochan.ms cleaned 10 iterations in AIT, as test_onefield_projections images it dirty: the pixels SIN's, the direction coordinate the projection's",
+      "skip_scalars": false
+    },
+    "projection_mosaic.NCP": {
+      "vis": "refim_mawproject.ms",
+      "imagename": "tstNCP",
+      "params": {
+        "spw": "1",
+        "field": "*",
+        "imsize": 512,
+        "cell": "10.0arcsec",
+        "phasecenter": "J2000 19:59:28.500 +40.44.01.50",
+        "niter": 30,
+        "gridder": "mosaic",
+        "deconvolver": "hogbom",
+        "pblimit": 0.3,
+        "parallel": false,
+        "projection": "NCP"
+      },
+      "note": "test_widefield_mosaicft_mfs's mosaic in NCP: every pointing and the mosaic's primary beam placed through the projection",
+      "skip_scalars": false
+    },
+    "projection_mosaic.TAN": {
+      "vis": "refim_mawproject.ms",
+      "imagename": "tstTAN",
+      "params": {
+        "spw": "1",
+        "field": "*",
+        "imsize": 512,
+        "cell": "10.0arcsec",
+        "phasecenter": "J2000 19:59:28.500 +40.44.01.50",
+        "niter": 30,
+        "gridder": "mosaic",
+        "deconvolver": "hogbom",
+        "pblimit": 0.3,
+        "parallel": false,
+        "projection": "TAN"
+      },
+      "note": "test_widefield_mosaicft_mfs's mosaic in TAN: every pointing and the mosaic's primary beam placed through the projection",
+      "skip_scalars": false
+    },
+    "projection_mosaic.CAR": {
+      "vis": "refim_mawproject.ms",
+      "imagename": "tstCAR",
+      "params": {
+        "spw": "1",
+        "field": "*",
+        "imsize": 512,
+        "cell": "10.0arcsec",
+        "phasecenter": "J2000 19:59:28.500 +40.44.01.50",
+        "niter": 30,
+        "gridder": "mosaic",
+        "deconvolver": "hogbom",
+        "pblimit": 0.3,
+        "parallel": false,
+        "projection": "CAR"
+      },
+      "note": "test_widefield_mosaicft_mfs's mosaic in CAR: every pointing and the mosaic's primary beam placed through the projection",
+      "skip_scalars": false
+    }
+  }
+}

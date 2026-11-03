@@ -8,9 +8,7 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo, ProjectionType,
-};
+use casa_coordinates::{CoordinateModel, CoordinateSystem, CoordinateType, ObsInfo};
 use casa_imaging_deconvolution::{
     AutoMultithreshControls, ImageDomainReconstructionMaskPlans, MaskBox, MaskPlanes,
     NoiseEstimate, ReconstructionMaskPlan,
@@ -144,12 +142,15 @@ pub(super) fn prepare_domains(
     if let Some(path) = request.outlierfile.as_deref() {
         for outlier in read_outlier_domains(path, request.imsize, request.cell)? {
             let centre = parse_phase_center_direction(&outlier.phase_center)?;
+            super::direction::refuse_ncp_at_equator(request.projection, centre.latitude_rad())?;
+            // An outlier field projects as the main image: CASA's outlier
+            // records start from the main image's parameters.
             let direction = direction_spec(
                 outlier.image_size,
                 outlier.cell_arcsec,
+                request.projection,
                 DirectionFrame::J2000,
-                centre.longitude_rad(),
-                centre.latitude_rad(),
+                [centre.longitude_rad(), centre.latitude_rad()],
             );
             domains.push(PreparedImageDomain {
                 role: ImageDomainRole::Outlier(outlier.name),
@@ -495,17 +496,20 @@ fn mask_plan(
 }
 
 /// The model's direction coordinate of a mask image's direction
-/// `coordinate`.
+/// `coordinate`: a projection casa-rs images in, with the parameters CASA
+/// writes for it (`NCP` is `SIN` slanted by `[0, cot δ₀]`).
 pub(super) fn direction_model_spec(
     coordinate: &CoordinateModel,
 ) -> Result<DirectionCoordinateSpec, PrepareError> {
     let CoordinateModel::Direction(direction) = coordinate else {
         unreachable!("find_coordinate(Direction) names a direction coordinate");
     };
-    let projection = direction.projection().projection_type();
-    if projection != ProjectionType::SIN {
-        return Err(PrepareError::MaskImageProjection { projection });
-    }
+    let reference = coordinate.reference_value();
+    let projection = Projection::of_coordinate(direction.projection(), reference[1]).ok_or(
+        PrepareError::MaskImageProjection {
+            projection: direction.projection().projection_type(),
+        },
+    )?;
     let frame = match direction.direction_ref() {
         DirectionRef::J2000 => DirectionFrame::J2000,
         DirectionRef::B1950 => DirectionFrame::B1950,
@@ -513,12 +517,11 @@ pub(super) fn direction_model_spec(
         DirectionRef::ICRS => DirectionFrame::Icrs,
         frame => return Err(PrepareError::MaskImageFrame { frame }),
     };
-    let reference = coordinate.reference_value();
     let pixel = coordinate.reference_pixel();
     let increment = coordinate.increment();
     let pc = direction.pc_matrix();
     Ok(DirectionCoordinateSpec::new(
-        Projection::Sin,
+        projection,
         SkyDirection::new(frame, reference[0], reference[1]),
         [pixel[0], pixel[1]],
         [increment[0], increment[1]],
@@ -553,8 +556,8 @@ pub(super) fn model_samples(
 mod tests {
     use super::*;
     use casa_coordinates::{
-        DirectionCoordinate, Projection as CoordinateProjection, SpectralCoordinate,
-        StokesCoordinate, StokesType,
+        DirectionCoordinate, Projection as CoordinateProjection, ProjectionType,
+        SpectralCoordinate, StokesCoordinate, StokesType,
     };
     use casa_images::{ImagePixel, PagedImage};
     use casa_types::measures::frequency::FrequencyRef;

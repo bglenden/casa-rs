@@ -100,8 +100,15 @@ pub enum ProductsError {
         term: ProductTerm,
     },
     /// A Taylor run's principal sum of weights, normal or published, is not
-    /// positive and finite: no weighted sample reached the image.
-    #[error("Taylor products need a positive principal sum of weights, not {sum_weight}")]
+    /// positive and finite. Every Stokes plane takes the first gridded
+    /// correlation's sum (`MultiTermFTNew`), so this is a run whose first
+    /// correlation has no weight: CASA writes every plane as zeros, and
+    /// casa-rs refuses it until #1109.
+    #[error(
+        "Taylor products need a positive principal sum of weights, not {sum_weight}: every \
+         Stokes plane takes the first gridded correlation's sum, which has no weight; casa-rs \
+         does not image this yet (#1109)"
+    )]
     PrincipalSumWeight {
         /// The principal sum of weights.
         sum_weight: f64,

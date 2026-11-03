@@ -8356,8 +8356,7 @@
             "provider": {"field": "projection"},
             "python": {"name": "projection"},
             "presentation": {"label": "Projection", "group": "Stage Parameters", "advanced": true}
-          },
-          "unimplemented": {"issue": 1064}
+          }
         },
         {
           "name": "startmodel",

@@ -6,6 +6,8 @@ use std::{cmp::Ordering, collections::BTreeSet, f64::consts::TAU};
 
 use thiserror::Error;
 
+use crate::sky_projection::Projection;
+
 /// Celestial reference frame attached to a sky direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DirectionFrame {
@@ -68,13 +70,6 @@ impl SkyDirection {
         self.latitude_rad = canonical_zero(self.latitude_rad);
         Ok(self)
     }
-}
-
-/// Celestial map projection represented by the direction-coordinate law.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Projection {
-    /// Orthographic sine projection used by the current imaging surface.
-    Sin,
 }
 
 /// Exact two-dimensional direction WCS requested for an image domain.
@@ -1390,29 +1385,11 @@ fn direction_at_pixel(
     direction: DirectionCoordinateSpec,
     pixel: [f64; 2],
 ) -> Result<SkyDirection, CompileGeometryError> {
-    let delta = [
-        pixel[0] - direction.reference_pixel()[0],
-        pixel[1] - direction.reference_pixel()[1],
-    ];
-    let pc = direction.pc();
-    let increment = direction.increment_rad();
-    let projected = [
-        increment[0] * (pc[0][0] * delta[0] + pc[0][1] * delta[1]),
-        increment[1] * (pc[1][0] * delta[0] + pc[1][1] * delta[1]),
-    ];
-    let radius_squared = projected[0] * projected[0] + projected[1] * projected[1];
-    if !radius_squared.is_finite() || radius_squared > 1.0 {
-        return Err(CompileGeometryError::FacetCentreOutsideProjection);
-    }
-    let reference = direction.reference_direction();
-    let (sin_latitude, cos_latitude) = reference.latitude_rad().sin_cos();
-    let normal = (1.0 - radius_squared).sqrt();
-    let latitude = (projected[1] * cos_latitude + normal * sin_latitude)
-        .clamp(-1.0, 1.0)
-        .asin();
-    let longitude = reference.longitude_rad()
-        + projected[0].atan2(normal * cos_latitude - projected[1] * sin_latitude);
-    SkyDirection::new(reference.frame(), longitude, latitude).canonicalize()
+    let [longitude, latitude] = direction
+        .coordinate()
+        .pixel_to_world(pixel)
+        .map_err(|_| CompileGeometryError::FacetCentreOutsideProjection)?;
+    SkyDirection::new(direction.reference_direction().frame(), longitude, latitude).canonicalize()
 }
 
 fn canonicalize_centres(centres: &mut CentreLaws) -> Result<(), CompileGeometryError> {

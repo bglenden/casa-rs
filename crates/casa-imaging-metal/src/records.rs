@@ -29,8 +29,8 @@ const _: () = {
     assert!(size_of::<SampleRecord>() == crate::SAMPLE_BYTES);
     assert!(size_of::<TableRecord>() == 16);
     assert!(size_of::<Params>() == 152);
-    assert!(size_of::<casa_imaging_operator::NativeTerm>() == 20);
-    assert!(size_of::<casa_imaging_operator::NativeSource>() == 24);
+    assert!(size_of::<casa_imaging_operator::NativeTerm>() == crate::SOURCE_BYTES);
+    assert!(size_of::<casa_imaging_operator::NativeSource>() == crate::SOURCE_BYTES);
 };
 
 /// One located sample (`Sample` in the kernels).

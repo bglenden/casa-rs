@@ -12,9 +12,9 @@ use casa_imaging_model::{
     CorrectedDataWrite, DeclaredInnerProducts, DensityCells, FiniteValuePolicy,
     HogbomIterationAccounting, InstrumentModel, InstrumentResponse, MeasurementEquationContract,
     ModelColumnWrite, ModelInnerProduct, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationTransactionRequirements, PolarizationContract, PrimaryBeamValidityPolicy,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    ObservationTransactionRequirements, PolarizationContract, PolarizationCoordinate,
+    PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
     ReductionPolicy, RestoringBeamPolicy, ScientificContract, SequentialContinuumTransform,
     SpectralContract, SpectralCoupling, StageErrorBudget, TaylorSupportReference,
@@ -190,13 +190,16 @@ pub(super) fn specification(
 
 /// The beam the products restore with: none without restoration, else the
 /// request's, `mtmfs`'s one plane restoring with its fitted beam as one
-/// common beam.
+/// common beam. A Taylor family per Stokes plane restores each with its
+/// own, as `SDAlgorithmMSMFS::restore` records a beam per plane.
 fn restoring_beam(request: &ImagingRequest) -> RestoringBeamPolicy {
     match request.restoringbeam {
         _ if !request.restoration || !crate::restart::has_residual(request) => {
             RestoringBeamPolicy::None
         }
-        RestoringBeamPolicy::PerPlane if request.deconvolver == Deconvolver::Mtmfs => {
+        RestoringBeamPolicy::PerPlane
+            if request.deconvolver == Deconvolver::Mtmfs && request.stokes.len() == 1 =>
+        {
             RestoringBeamPolicy::Common
         }
         policy => policy,
@@ -406,9 +409,14 @@ fn requested_products(
         products.push(ProductKind::Mask);
     }
     products.push(ProductKind::Beam);
+    // A spectral index needs two terms of a Stokes I image
+    // (`calculateAlphaBeta`'s `itsNTerms > 1 && isOnlyStokesI`): one Taylor
+    // term, or any other polarization, writes none.
+    let spectral_index =
+        mtmfs && request.nterms > 1 && request.stokes == [PolarizationCoordinate::StokesI];
     if mtmfs {
         products.push(ProductKind::TaylorTerms);
-        if restored {
+        if restored && spectral_index {
             products.extend([ProductKind::SpectralIndex, ProductKind::SpectralIndexError]);
         }
     }
@@ -420,7 +428,7 @@ fn requested_products(
     }
     if request.pbcor && restored {
         products.push(ProductKind::PbCorrectedImage);
-        if mtmfs && matches!(request.gridder, Gridder::Mosaic { .. }) {
+        if spectral_index && matches!(request.gridder, Gridder::Mosaic { .. }) {
             products.push(ProductKind::PbCorrectedSpectralIndex);
         }
     }
@@ -896,7 +904,8 @@ mod tests {
     }
 
     /// `mtmfs` restores its one plane with its fitted beam as one common
-    /// beam, unless the request gives a beam; a given beam couples no planes.
+    /// beam, and each Stokes plane's family with its own, unless the request
+    /// gives a beam; a given beam couples no planes.
     #[test]
     fn the_restoring_beam_follows_the_request() {
         let policy = |overrides| restoring_beam(&crate::request::tests::request(overrides));
@@ -904,6 +913,10 @@ mod tests {
         assert_eq!(
             policy(serde_json::json!({ "deconvolver": "mtmfs", "nterms": 2 })),
             RestoringBeamPolicy::Common
+        );
+        assert_eq!(
+            policy(serde_json::json!({ "deconvolver": "mtmfs", "nterms": 2, "stokes": "IQUV" })),
+            RestoringBeamPolicy::PerPlane
         );
         for overrides in [
             serde_json::json!({ "restoringbeam": ["2arcsec", "1arcsec", "10deg"] }),
@@ -971,5 +984,47 @@ mod tests {
             assert!(products.contains(&product));
         }
         assert!(!products.contains(&ProductKind::Sensitivity));
+    }
+
+    /// One Taylor term, or a polarization other than Stokes I alone, writes
+    /// the family (`.tt0`, ...) and no spectral index, corrected or not:
+    /// `calculateAlphaBeta` needs `itsNTerms > 1` and `isOnlyStokesI`
+    /// (CASA's `test_onefield_mtmfs_nterms1` and `test_stokes_mtmfs_Q`).
+    #[test]
+    fn one_taylor_term_or_a_polarized_family_writes_no_spectral_index() {
+        for (nterms, stokes, indexed) in [
+            (1, "I", false),
+            (2, "Q", false),
+            (2, "IQUV", false),
+            (2, "I", true),
+        ] {
+            let products = products(serde_json::json!({
+                "deconvolver": "mtmfs",
+                "nterms": nterms,
+                "stokes": stokes,
+                "niter": 10,
+                "gridder": "mosaic",
+                "pbcor": true,
+            }));
+            for product in [
+                ProductKind::TaylorTerms,
+                ProductKind::RestoredImage,
+                ProductKind::PbCorrectedImage,
+                ProductKind::Weight,
+            ] {
+                assert!(products.contains(&product), "{product:?}");
+            }
+            for product in [
+                ProductKind::SpectralIndex,
+                ProductKind::SpectralIndexError,
+                ProductKind::PbCorrectedSpectralIndex,
+            ] {
+                assert_eq!(
+                    products.contains(&product),
+                    indexed,
+                    "{nterms} terms of {stokes}: {product:?}"
+                );
+            }
+        }
     }
 }

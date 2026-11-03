@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use super::read;
 use crate::request::tests::{request, resolved};
 use crate::{DataColumn, Deconvolver, Gridder, ImagingRequest, SaveModel, SpecMode, TcleanRefusal};
+use casa_imaging_model::Projection;
 
 /// tclean's refusal of `overrides`.
 fn refusal(overrides: Value) -> TcleanRefusal {
@@ -162,8 +163,6 @@ fn parameters_a_mode_does_not_read_are_ignored() {
 #[test]
 fn the_catalog_refuses_what_casa_reads_in_every_mode() {
     for (overrides, issue) in [
-        // CASA projects with any projection in every mode.
-        (json!({ "projection": "NCP" }), "#1064"),
         // CASA reads psfphasecenter for every gridder named for a mosaic.
         (
             json!({ "gridder": "ftmosaic", "mosweight": false, "psfphasecenter": "J2000 0rad 0rad" }),
@@ -278,9 +277,38 @@ fn casa_values_become_the_request_casa_rs_runs() {
         (bare.threshold, bare.cell, bare.imsize),
         (0.002, [0.5, 0.5], [64, 32])
     );
-    // nterms is read with mtmfs.
-    let terms = request(json!({ "deconvolver": "mtmfs", "nterms": 3 }));
-    assert_eq!((terms.deconvolver, terms.nterms), (Deconvolver::Mtmfs, 3));
+    // nterms is read with mtmfs, one term included (CASA's
+    // `test_onefield_mtmfs_nterms1`).
+    for nterms in [1, 3] {
+        let terms = request(json!({ "deconvolver": "mtmfs", "nterms": nterms }));
+        assert_eq!(
+            (terms.deconvolver, terms.nterms),
+            (Deconvolver::Mtmfs, nterms)
+        );
+    }
+    // projection names casacore's projection as casacore spells it.
+    for (text, projection) in [
+        ("SIN", Projection::Sin),
+        ("NCP", Projection::Ncp),
+        ("TAN", Projection::Tan),
+        ("ARC", Projection::Arc),
+        ("STG", Projection::Stg),
+        ("ZEA", Projection::Zea),
+        ("CAR", Projection::Car),
+        ("SFL", Projection::Sfl),
+        ("MER", Projection::Mer),
+        ("AIT", Projection::Ait),
+    ] {
+        assert_eq!(
+            request(json!({ "projection": text })).projection,
+            projection
+        );
+    }
+    // The catalog trims it, as it does every string; CASA refuses " TAN".
+    assert_eq!(
+        request(json!({ "projection": " TAN" })).projection,
+        Projection::Tan
+    );
     // savemodel names where the model goes, CASA's virtual model among them.
     for (text, saved) in [
         ("none", SaveModel::None),
@@ -318,11 +346,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "deconvolver": "mem" }), "deconvolver", "#1060"),
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
         (
-            json!({ "specmode": "cube", "interpolation": "cubic" }),
-            "interpolation",
-            "#1066",
-        ),
-        (
             json!({ "specmode": "cube", "outframe": "GALACTO" }),
             "outframe",
             "#980",
@@ -331,6 +354,17 @@ fn values_casa_rs_cannot_honour_are_refused() {
             json!({ "specmode": "cube", "veltype": "ratio" }),
             "veltype",
             "#980",
+        ),
+        (
+            json!({ "specmode": "cube", "veltype": "optical", "width": "20000km/s" }),
+            "veltype",
+            "#1096",
+        ),
+        // A dimensionless start is a Doppler value, a velocity grid too.
+        (
+            json!({ "specmode": "cube", "veltype": "z", "start": "0.01" }),
+            "veltype",
+            "#1096",
         ),
         // A source-frame cube's per-channel density, mosaic or not.
         (
@@ -356,35 +390,13 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "#980",
         ),
         (
-            json!({ "deconvolver": "mtmfs", "nterms": 1 }),
-            "nterms",
-            "#1065",
-        ),
-        (
             json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
                     "wprojplanes": 32, "facets": 2 }),
             "facets",
             "#1070",
         ),
-        // Astra's #1015 F1: CASA derives a cube's extent from the selected
-        // channels, the start and the width (probed: spw='0:2~4' gives three
-        // channels from the third; width=2 four of 2 MHz from the first
-        // pair's centre); casa-rs's takes the window's channel count.
-        (
-            json!({ "specmode": "cubedata", "spw": "0:2~4" }),
-            "nchan",
-            "#1066",
-        ),
-        (
-            json!({ "specmode": "cubedata", "width": "2" }),
-            "nchan",
-            "#1066",
-        ),
-        (
-            json!({ "specmode": "cube", "start": "1.4GHz" }),
-            "nchan",
-            "#1066",
-        ),
+        (json!({ "projection": "AZP" }), "projection", "#1101"),
+        (json!({ "projection": "HPX" }), "projection", "#1101"),
     ] {
         let refused = refusal(overrides.clone());
         assert_eq!(refused.parameter, parameter, "{overrides}");
@@ -398,6 +410,18 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "cell": [] }), "cell"),
         // CASA's tclean refuses these itself.
         (json!({ "weighting": "briggsbwtaper" }), "weighting"),
+        (json!({ "projection": "XYZ" }), "projection"),
+        (json!({ "projection": "ncp" }), "projection"),
+        (json!({ "projection": "tan" }), "projection"),
+        // `test_cube_mtmfs_nterms1`, `test_cubedata_mtmfs_nterms1`.
+        (
+            json!({ "specmode": "cube", "deconvolver": "mtmfs", "nterms": 1 }),
+            "deconvolver",
+        ),
+        (
+            json!({ "specmode": "cubedata", "deconvolver": "mtmfs", "nterms": 1 }),
+            "deconvolver",
+        ),
         (
             json!({ "gridder": "wproject", "wprojplanes": 0 }),
             "wprojplanes",

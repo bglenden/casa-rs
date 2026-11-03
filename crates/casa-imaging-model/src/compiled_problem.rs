@@ -2133,9 +2133,13 @@ fn validate_reconstruction(
     geometry: &CompiledGeometry,
 ) -> Result<(), CompileProblemError> {
     match contract.basis {
-        ReconstructionBasis::Taylor { terms: 0 | 1 } => {
+        // CASA's `mtmfs` runs one Taylor term as a multi-term family
+        // (`SIImageStoreMultiTerm` with `itsNTerms = 1`); every other
+        // single-term MFS deconvolver uses the constant basis, which the
+        // MT-MFS pairing check below keeps apart.
+        ReconstructionBasis::Taylor { terms: 0 } => {
             return Err(CompileProblemError::InvalidCapabilityCombination {
-                reason: "a Taylor basis requires at least two terms; single-term MFS uses the constant basis",
+                reason: "a Taylor basis requires at least one term",
             });
         }
         ReconstructionBasis::ChannelLocal { channels: 0 } => {
@@ -2312,14 +2316,17 @@ fn validate_products(
             reason: "a Taylor coefficient set requires at least one Taylor image product",
         });
     }
+    // CASA forms a spectral index only for a Stokes I image
+    // (`SIImageStoreMultiTerm::calculateAlphaBeta`'s `isOnlyStokesI`).
     if products.contains(ProductKind::SpectralIndex)
         && !(taylor_terms >= 2
+            && reconstruction.polarization.coordinates() == [PolarizationCoordinate::StokesI]
             && products.contains(ProductKind::TaylorTerms)
             && products.contains(ProductKind::Residual)
             && products.contains(ProductKind::RestoredImage))
     {
         return Err(CompileProblemError::InvalidProductCombination {
-            reason: "spectral index requires at least two Taylor terms plus Taylor, residual, and restored-image products",
+            reason: "spectral index requires at least two Taylor terms of Stokes I alone plus Taylor, residual, and restored-image products",
         });
     }
     if products.contains(ProductKind::SpectralIndexError)

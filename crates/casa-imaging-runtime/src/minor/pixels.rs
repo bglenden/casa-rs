@@ -290,7 +290,7 @@ pub(super) fn domain_beams(
 
 /// The pixels of plane `key`, x-major, whose `.pb` exceeds `level`, zero
 /// or more (`pb > level`): the weight image's Float beam under a response
-/// (a Taylor family's principal one), else the analytic beam at the
+/// (its polarization's Taylor family's principal one), else the analytic beam at the
 /// plane's channel (channel zero for a Taylor family). A plane no weighted
 /// sample reached has a zero `.pb`; `None` for a run without a `.pb`.
 pub(super) fn plane_beam(
@@ -314,7 +314,7 @@ pub(super) fn plane_beam(
     let (sensitivity, sum_weight) = if taylor {
         let window = normal.read_window(normal.slab().core_range())?;
         let principal = window
-            .normal_moment(0)
+            .normal_moment(0, key.polarization)
             .expect("a Taylor family has its zeroth moment");
         (
             Cow::Owned(principal.sensitivity().to_vec()),

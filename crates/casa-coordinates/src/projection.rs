@@ -263,43 +263,53 @@ fn deproject_sin(x: f64, y: f64, params: &[f64]) -> Result<(f64, f64), Coordinat
         };
         Ok((phi, theta))
     } else {
-        // Generalised SIN:
+        // Generalised (slant) SIN, as WCSLIB's `sinx2s` solves it:
         //   x = cos(theta)*sin(phi) + xi*(1 - sin(theta))
         //   y = -cos(theta)*cos(phi) + eta*(1 - sin(theta))
-        //
-        // Let s = sin_theta, c = cos_theta = sqrt(1-s^2).
-        // x' = x - xi*(1-s) = c*sin(phi)
-        // y' = y - eta*(1-s) = -c*cos(phi)
-        // x'^2 + y'^2 = c^2 = 1 - s^2
-        //
-        // Expand: [x - xi + xi*s]^2 + [y - eta + eta*s]^2 = 1 - s^2
-        // Let a = xi, b = eta, X = x - xi, Y = y - eta:
-        // (X + a*s)^2 + (Y + b*s)^2 = 1 - s^2
-        // X^2 + 2*X*a*s + a^2*s^2 + Y^2 + 2*Y*b*s + b^2*s^2 = 1 - s^2
-        // s^2*(a^2 + b^2 + 1) + 2*s*(X*a + Y*b) + (X^2 + Y^2 - 1) = 0
-        let big_x = x - xi;
-        let big_y = y - eta;
-        let a_coeff = xi * xi + eta * eta + 1.0;
-        let b_coeff = 2.0 * (big_x * xi + big_y * eta);
-        let c_coeff = big_x * big_x + big_y * big_y - 1.0;
-        let disc = b_coeff * b_coeff - 4.0 * a_coeff * c_coeff;
-        if disc < -1e-12 {
-            return Err(CoordinateError::ConversionFailed(
-                "SIN deproject: no solution (generalised)".into(),
-            ));
-        }
-        let disc = disc.max(0.0);
-        // Take the root closest to 1 (near the pole):
-        let s = (-b_coeff + disc.sqrt()) / (2.0 * a_coeff);
-        let s = s.clamp(-1.0, 1.0);
-        let theta = s.asin();
-        let cos_theta = theta.cos();
-        let xp = x - xi * (1.0 - s);
-        let yp = y - eta * (1.0 - s);
-        let phi = if cos_theta.abs() < 1e-15 {
+        // so that, with s = sin(theta), w1 = xi^2 + eta^2 and
+        // xy = x*xi + y*eta,
+        //   (1 + w1)*s^2 + 2*(xy - w1)*s + (r2 - 2*xy + w1 - 1) = 0.
+        // Near the native pole the root is s ~ 1, where asin would turn
+        // the root's rounding into an error of sqrt(eps) in theta; WCSLIB
+        // takes the small-angle form there instead.
+        let r2 = x * x + y * y;
+        let xy = x * xi + y * eta;
+        let w1 = xi * xi + eta * eta;
+        let (theta, z) = if r2 < 1.0e-10 {
+            (FRAC_PI_2 - (r2 / (1.0 + xy)).sqrt(), r2 / 2.0)
+        } else {
+            let a = w1 + 1.0;
+            let b = xy - w1;
+            let c = r2 - xy - xy + w1 - 1.0;
+            let d = b * b - a * c;
+            if d < 0.0 {
+                return Err(CoordinateError::ConversionFailed(
+                    "SIN deproject: no solution (generalised)".into(),
+                ));
+            }
+            let d = d.sqrt();
+            // The solution nearest the pole.
+            let (s1, s2) = ((-b + d) / a, (-b - d) / a);
+            let mut s = s1.max(s2);
+            if s > 1.0 {
+                s = if s - 1.0 < 1.0e-13 { 1.0 } else { s1.min(s2) };
+            }
+            if s < -1.0 && s + 1.0 > -1.0e-13 {
+                s = -1.0;
+            }
+            if !(-1.0..=1.0).contains(&s) {
+                return Err(CoordinateError::ConversionFailed(
+                    "SIN deproject: no solution (generalised)".into(),
+                ));
+            }
+            (s.asin(), 1.0 - s)
+        };
+        let x1 = -y + eta * z;
+        let y1 = x - xi * z;
+        let phi = if x1 == 0.0 && y1 == 0.0 {
             0.0
         } else {
-            xp.atan2(-yp)
+            y1.atan2(x1)
         };
         Ok((phi, theta))
     }

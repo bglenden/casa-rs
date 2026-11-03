@@ -732,6 +732,97 @@ fn a_cubedata_range_with_a_stride_is_read_whole() {
     );
 }
 
+/// `interpolation='cubic'` (#1066) grids each output sample from the cubic
+/// through the four native channels about it and predicts the model at
+/// native channels by the cubic through four output points
+/// (`FTMachine::interpolateFrequencyTogrid`, `interpolateFrequencyFromgrid`):
+/// the cleaned cube follows the injected spectrum as the linear one does,
+/// its residual formed at native channels through the four-point sources.
+#[test]
+fn a_cubic_cube_follows_the_injected_spectrum() {
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
+    let cubic = image(
+        &observation,
+        "cube-cubic",
+        json!({ "weighting": "natural", "interpolation": "cubic" }),
+    );
+    assert_follows_the_spectrum(&observation, &cubic, "cubic");
+    let residual = cubic.get(".residual").values();
+    let image = cubic.get(".image").values();
+    let peak = image
+        .iter()
+        .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+    let worst = residual
+        .iter()
+        .fold(0.0_f32, |worst, value| worst.max(value.abs()));
+    assert!(
+        worst < 0.05 * peak,
+        "the cubic residual {worst} is not cleaned below the peak {peak}"
+    );
+}
+
+/// tclean's `nchan=-1` takes CASA's count (`MSTransformRegridder::
+/// regridChanBounds` with `nchan < 0`, #1066): from the first selected
+/// channel when `start` is unset, as many channels of the output width as
+/// fit to the band's far edge. CASA 6.7.6.14 gives `spw='0:2~4'` three
+/// channels from the third, `width=2` the centres of the pairs, and
+/// `start=5` every channel from the sixth (probed on `refim_point.ms`).
+#[test]
+fn a_cube_without_nchan_counts_the_channels_from_its_start() {
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
+    let native = observation.channel_frequencies_hz();
+    let planes = |name: &str, extra: serde_json::Value| {
+        let mut controls = json!({ "specmode": "cubedata", "nchan": -1, "niter": 0 });
+        controls
+            .as_object_mut()
+            .expect("cube controls")
+            .extend(extra.as_object().expect("controls").clone());
+        let image = observation.image(name, controls).1;
+        let image = image.get(".image");
+        (0..image.channels())
+            .map(|channel| image.channel_frequency_hz(channel))
+            .collect::<Vec<_>>()
+    };
+    let close = |image: &[f64], expected: &[f64]| {
+        image.len() == expected.len()
+            && image
+                .iter()
+                .zip(expected)
+                .all(|(image, expected)| (image - expected).abs() <= 1.0e-9 * expected)
+    };
+    let selected = planes("derived-selection", json!({ "spw": "0:2~4" }));
+    assert!(close(&selected, &native[2..=4]), "{selected:?}");
+    let paired = planes("derived-width", json!({ "width": 2 }));
+    let pairs = native
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|[low, high]| (low + high) / 2.0)
+        .collect::<Vec<_>>();
+    assert!(close(&paired, &pairs), "{paired:?}");
+    let started = planes("derived-start", json!({ "start": 5 }));
+    assert!(close(&started, &native[5..]), "{started:?}");
+    // A frequency grid (`regridChanBounds`' "freq" branch with nchan < 0):
+    // from `start`'s lower edge to the band's upper edge in whole widths,
+    // with CASA's 1% tolerance.
+    let spacing_hz = native[1] - native[0];
+    let (start_hz, width_hz) = (native[2] + 0.3 * spacing_hz, 2.0 * spacing_hz);
+    let upper_edge_hz = native[native.len() - 1] + spacing_hz / 2.0;
+    let count =
+        ((upper_edge_hz - (start_hz - width_hz / 2.0) + 0.01 * width_hz) / width_hz).floor();
+    let expected = (0..count as usize)
+        .map(|plane| start_hz + plane as f64 * width_hz)
+        .collect::<Vec<_>>();
+    let frequency = planes(
+        "derived-frequency",
+        json!({ "start": format!("{start_hz}Hz"), "width": format!("{width_hz}Hz") }),
+    );
+    assert!(
+        close(&frequency, &expected),
+        "{frequency:?} against {expected:?}"
+    );
+}
+
 /// CASA's visibility iterator selects a cube's channels at each time by
 /// frequency (`vi::FrequencySelectionUsingFrame`, #980): by the LSRK band
 /// from the lowest to the highest frequency the channels `spw` names take

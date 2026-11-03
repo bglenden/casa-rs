@@ -30,9 +30,7 @@ mod write;
 
 use std::ops::Range;
 
-use casa_imaging_model::{
-    BatchGeometry, CompiledProblem, DirectionCoordinateSpec, GeometryPlan, GeometryTraversal,
-};
+use casa_imaging_model::{BatchGeometry, CompiledProblem, GeometryPlan, GeometryTraversal};
 use casa_imaging_operator::PlaneRange;
 use casa_imaging_runtime::pass::{
     BlockShape, BoundedSource, NativeBlock, SampleContent, SourceError,
@@ -271,12 +269,13 @@ impl<'a> ObservationSource<'a> {
         pointing_ramp: bool,
     ) -> Self {
         let layout = row_layout(problem);
-        let pointing: Vec<DirectionCoordinateSpec> = if pointing_ramp {
+        let pointing = if pointing_ramp {
             problem
                 .geometry()
                 .domains()
                 .iter()
                 .flat_map(|domain| std::iter::repeat_n(domain.direction(), domain.facets().len()))
+                .map(|direction| (direction, direction.coordinate()))
                 .collect()
         } else {
             Vec::new()

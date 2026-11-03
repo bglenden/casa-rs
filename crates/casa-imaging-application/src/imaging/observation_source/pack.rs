@@ -2,7 +2,7 @@
 //! One batch packed into a native block: each selected sample's geometry,
 //! values, weights and flags, copied once.
 
-use casa_imaging_deconvolution::direction_world_to_pixel;
+use casa_coordinates::DirectionCoordinate;
 use casa_imaging_model::{
     AntennaResponseClass, BatchGeometry, CompiledProblem, DirectionCoordinateSpec,
     FiniteValuePolicy, FrequencyBands, GeometryPlan, SelectedAntennaResponses, SkyDirection,
@@ -139,9 +139,10 @@ pub(super) struct Packer<'p> {
     pub(super) plans: Vec<&'p GeometryPlan>,
     /// Projections per row: one per chart.
     pub(super) charts: usize,
-    /// Each chart's direction law when a kernel set ramps each row to its
-    /// pointing; empty otherwise.
-    pub(super) pointing: Vec<DirectionCoordinateSpec>,
+    /// Each chart's direction law, and the coordinate that places a
+    /// pointing on it, when a kernel set ramps each row to its pointing;
+    /// empty otherwise.
+    pub(super) pointing: Vec<(DirectionCoordinateSpec, DirectionCoordinate)>,
     /// The keys of the route's stores: the aperture classes a row's
     /// antenna types index, and the window and field keys its context
     /// carries.
@@ -394,7 +395,7 @@ impl Packer<'_> {
             let projection = geometry.projection(sample, chart);
             let pointing_offset_rad = match self.pointing.get(chart) {
                 Some(direction) => pointing_offset(
-                    *direction,
+                    direction,
                     geometry.aw_pointing_pixel(sample, chart),
                     geometry
                         .chart_pointing(sample, chart)
@@ -550,7 +551,7 @@ fn antenna_types(
 /// the chart's frame and less a moving source's shift when the geometry
 /// placed it ([`BatchGeometry::chart_pointing`]).
 fn pointing_offset(
-    direction: DirectionCoordinateSpec,
+    (direction, coordinate): &(DirectionCoordinateSpec, DirectionCoordinate),
     aw_pixel: Option<[f64; 2]>,
     pointing: SkyDirection,
 ) -> Result<[f64; 2], SourceError> {
@@ -560,10 +561,7 @@ fn pointing_offset(
             if pointing.frame() != direction.reference_direction().frame() {
                 return Err("a row's pointing direction is not in the image frame".into());
             }
-            direction_world_to_pixel(
-                direction,
-                [pointing.longitude_rad(), pointing.latitude_rad()],
-            )?
+            coordinate.world_to_pixel([pointing.longitude_rad(), pointing.latitude_rad()])?
         }
     };
     let reference = direction.reference_pixel();

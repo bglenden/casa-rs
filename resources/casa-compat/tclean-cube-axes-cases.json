@@ -1,0 +1,285 @@
+{
+ "note": "#1066: cube axes CASA derives from the selection, start and width (nchan=-1), strided channel selections and cubic spectral interpolation, against CASA 6.7.6.14, with tools/casa-compat/tclean_case_matrix.py. refim_point.ms holds one window of 20 TOPO channels of 50 MHz from 1 GHz; refim_point_withline.ms the same window with a spectral line. Optical-velocity (tabular) axes wait for #1096 and are refused. refim_point_withline_flag9.ms is refim_point_withline.ms with channel 9 flagged in every row by CASA's flagdata(mode='manual', spw='0:9', flagbackup=False); it is made beside the data root's copy, as casatestdata has none.",
+ "inputs": {
+  "point": "unittest/tclean/refim_point.ms",
+  "line": "unittest/tclean/refim_point_withline.ms",
+  "line_flag9": "unittest/tclean/refim_point_withline_flag9.ms"
+ },
+ "common": {},
+ "cases": {
+  "derived_start_channel": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "nchan": -1,
+    "start": 5,
+    "width": 2,
+    "niter": 10
+   },
+   "note": "nchan=-1 from channel 5 in pairs: seven channels (regridChanBounds with nchan<0)"
+  },
+  "derived_width_channel": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "nchan": -1,
+    "width": 3,
+    "niter": 0
+   },
+   "note": "nchan=-1, a three-channel width from the first channel: six channels"
+  },
+  "derived_start_frequency": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "nchan": -1,
+    "start": "1.2GHz",
+    "width": "100MHz",
+    "niter": 10
+   },
+   "note": "nchan=-1 from 1.2 GHz in 100 MHz channels: eight channels"
+  },
+  "derived_width_frequency": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "nchan": -1,
+    "width": "-100MHz",
+    "niter": 0
+   },
+   "note": "nchan=-1, a negative frequency width and no start: ten channels down from the top"
+  },
+  "derived_start_velocity": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "nchan": -1,
+    "start": "-11991.7km/s",
+    "width": "20000km/s",
+    "restfreq": [
+     "1.25GHz"
+    ],
+    "niter": 10
+   },
+   "note": "nchan=-1 from a radio velocity in 20000 km/s channels: four channels"
+  },
+  "derived_width_velocity": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "nchan": -1,
+    "width": "20000km/s",
+    "restfreq": [
+     "1.25GHz"
+    ],
+    "niter": 0
+   },
+   "note": "nchan=-1, a radio-velocity width and no start: twelve channels"
+  },
+  "derived_spw_range": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "nchan": -1,
+    "spw": "0:5~12",
+    "niter": 10
+   },
+   "note": "nchan=-1 with spw='0:5~12' and no start: the eight selected channels (test_modelvis_8's first call)"
+  },
+  "derived_spw_range_start": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "nchan": -1,
+    "spw": "0:5~12",
+    "start": 6,
+    "niter": 0
+   },
+   "note": "nchan=-1 with spw='0:5~12' and start=6: every channel from the seventh to the window's end, fourteen"
+  },
+  "derived_spw_range_width": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "nchan": -1,
+    "spw": "0:5~12",
+    "width": "100MHz",
+    "niter": 0
+   },
+   "note": "nchan=-1 with spw='0:5~12' and a 100 MHz width: four channels over the selection"
+  },
+  "derived_negative_width_from_start_error": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "nchan": -1,
+    "width": -2,
+    "niter": 0
+   },
+   "note": "nchan=-1 with width=-2 and no start: no output channel fits below the first, and CASA's coordinate build fails",
+   "expect_error": true
+  },
+  "strided_default_start": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "nchan": -1,
+    "spw": "0:4~16^3",
+    "niter": 10
+   },
+   "note": "a strided selection with nchan=-1: the axis spans channels 4 to 16, the stride selects the data"
+  },
+  "strided_explicit_axis": {
+   "vis": "point",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "nchan": 5,
+    "spw": "0:2~18^4",
+    "start": 2,
+    "width": 4,
+    "niter": 10,
+    "interpolation": "nearest"
+   },
+   "note": "a strided selection under an explicit axis of four-channel bins"
+  },
+  "cubic_line": {
+   "vis": "line",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "interpolation": "cubic",
+    "niter": 50
+   },
+   "note": "interpolation='cubic' on a line dataset, the axis on the data channels"
+  },
+  "cubic_line_offset": {
+   "vis": "line",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "interpolation": "cubic",
+    "start": "1.225GHz",
+    "width": "50MHz",
+    "nchan": 16,
+    "niter": 50
+   },
+   "note": "interpolation='cubic' half a channel off the data channels"
+  },
+  "cubic_line_wide": {
+   "vis": "line",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "interpolation": "cubic",
+    "width": 2,
+    "niter": 50
+   },
+   "note": "interpolation='cubic' onto two-channel bins: CASA's fine frequency grid"
+  },
+  "cubic_line_briggs": {
+   "vis": "line",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "interpolation": "cubic",
+    "start": "1.225GHz",
+    "width": "50MHz",
+    "nchan": 16,
+    "niter": 50,
+    "weighting": "briggs",
+    "robust": 0.5
+   },
+   "note": "interpolation='cubic' with per-channel Briggs weights (the nearer channel's weight)"
+  },
+  "cubic_line_flagged_channel": {
+   "vis": "line_flag9",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "interpolation": "cubic",
+    "start": "1.225GHz",
+    "width": "50MHz",
+    "nchan": 16,
+    "niter": 50
+   },
+   "note": "interpolation='cubic' half a channel off the data with channel 9 flagged: the samples whose four channels hold it fit its stored value and no model there, as CASA's swapyz leaves the flagged model zero"
+  },
+  "cubic_line_flagged_channel_wide": {
+   "vis": "line_flag9",
+   "imagename": "img",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "parallel": false,
+    "interpolation": "cubic",
+    "width": 2,
+    "niter": 50
+   },
+   "note": "the flagged channel under two-channel bins"
+  }
+ }
+}

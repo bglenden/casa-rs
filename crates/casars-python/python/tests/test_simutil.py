@@ -37,9 +37,10 @@ CASA = casa_signatures("simutil")
 #: The methods casa-rs implements; CASA's others refuse, naming #1053.
 IMPLEMENTED = {
     "approxBeam", "average_direction", "bandname", "baselineLengths", "calc_pointings2", "cellsize",
-    "convimage", "dir_m2s", "direction_splitter", "flatimage", "getdatum", "isdirection", "ismstp",
-    "isquantity", "itrf2loc", "itrf2locname", "locxyz2itrf", "long2xyz", "median_direction",
-    "modifymodel", "noisetemp", "polsettings", "read_pointings", "readantenna", "statim", "tconpc",
+    "closereport", "convimage", "dir_m2s", "dir_s2m", "direction_splitter", "flatimage", "getdatum",
+    "is4d", "isdirection", "ismstp", "isquantity", "isreport", "itrf2loc", "itrf2locname",
+    "locxyz2itrf", "long2xyz", "median_direction", "modifymodel", "msg", "noisetemp", "openreport",
+    "polsettings", "read_pointings", "readantenna", "setcfg", "spectral", "statim", "tconpc",
     "tmgeod", "utm2long", "utm2xyz", "wrapang", "write_pointings", "xyz2long", "xyz2long_old",
 }
 
