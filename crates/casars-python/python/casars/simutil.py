@@ -20,7 +20,9 @@ use:
   `median_direction`, `dir_m2s`, `wrapang`, `isquantity` and `isdirection`;
 - `noisetemp`, `bandname` and `polsettings`;
 - `itrf2loc`, `baselineLengths` and `approxBeam`;
-- the sky-model helpers `modifymodel` and `flatimage`.
+- the sky-model helpers `modifymodel` and `flatimage`;
+- the analysis helpers `simanalyze` uses: `ismstp`, `cellsize`, `statim`
+  (whose plot is not drawn yet) and `convimage`.
 
 CASA's other public methods exist with CASA's signatures and raise
 `NotImplementedError` naming issue #1053, which records which ones casa-rs

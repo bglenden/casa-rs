@@ -126,6 +126,25 @@ pub trait MeasuresProvider: Debug + Send + Sync {
         Ok(None)
     }
 
+    /// Every observatory's name, in the catalogue's order (casacore's
+    /// `MeasTable::Observatories`, which `me.obslist` lists). A provider
+    /// without a catalogue has none.
+    fn observatory_names(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Every fixed source's name, in the catalogue's order
+    /// (`MeasTable::Sources`, which `me.sourcelist` lists).
+    fn source_names(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Every rest line's name, in the catalogue's order (`MeasTable::Lines`,
+    /// which `me.linelist` lists).
+    fn spectral_line_names(&self) -> Result<Vec<String>, String> {
+        Ok(Vec::new())
+    }
+
     /// Look up a rest-line frequency by case-insensitive name.
     fn spectral_line_hz(&self, _name: &str) -> Result<Option<f64>, String> {
         Ok(None)

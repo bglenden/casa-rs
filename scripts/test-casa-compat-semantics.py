@@ -4,7 +4,10 @@
 
 import copy
 import importlib.util
+import subprocess
+import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import casa_compat_semantics as semantics
@@ -61,6 +64,38 @@ class SemanticReferenceTests(unittest.TestCase):
         self.data["evidence"]["reader"]["links"].append("does-not-exist.rs")
         with self.assertRaisesRegex(ValueError, "absent at its pinned revision"):
             semantics.validate_source_links(ROOT, self.data)
+
+    def test_evidence_pins_must_outlive_their_branch(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            repo = Path(scratch)
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+                     "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", *args],
+                    text=True, capture_output=True, check=True,
+                ).stdout.strip()
+
+            git("init", "-q", "-b", "main")
+            git("commit", "-q", "--allow-empty", "-m", "on main")
+            on_main = git("rev-parse", "HEAD")
+            git("checkout", "-q", "-b", "feature")
+            git("commit", "-q", "--allow-empty", "-m", "evidence on a pull request's branch")
+            on_branch = git("rev-parse", "HEAD")
+            git("checkout", "-q", "main")
+
+            # Before its squash merge, only the pull request's branch holds the pin.
+            self.assertEqual(semantics.undurable_pins(repo, {on_main, on_branch}), [on_branch])
+            # evidence-pins keeps it: a merge of the pinned commit, as EVIDENCE-PINS.md says.
+            keeper = git("commit-tree", f"{on_main}^{{tree}}", "-p", on_main, "-p", on_branch, "-m", "keep")
+            git("update-ref", "refs/heads/evidence-pins", keeper)
+            git("branch", "-q", "-D", "feature")
+            self.assertEqual(semantics.undurable_pins(repo, {on_main, on_branch}), [])
+            git("update-ref", "-d", "refs/heads/evidence-pins")
+            self.assertEqual(semantics.undurable_pins(repo, {on_main, on_branch}), [on_branch])
+            git("branch", "-q", "-m", "main", "trunk")
+            with self.assertRaisesRegex(ValueError, "checked against main"):
+                semantics.undurable_pins(repo, {on_main})
 
     def test_valid_mask_nan_cannot_pass_the_paired_product_comparison(self):
         spec = importlib.util.spec_from_file_location("lifecycle", ROOT / "tools/casa-compat/tclean_lifecycle_probe.py")
@@ -146,6 +181,32 @@ class EvidenceStateTests(unittest.TestCase):
 
     def test_only_the_grandfathered_files_keep_free_text_states(self):
         self.assertEqual(semantics.FREE_TEXT_STATES, {"tclean"})
+
+
+class DecisionRecordTests(unittest.TestCase):
+    def test_a_record_links_to_its_heading_in_the_deviations_document(self):
+        # The document's own index links its headings this way.
+        text = (ROOT / semantics.DEVIATIONS).read_text(encoding="utf-8")
+        self.assertIn("(#smpredict-phases-a-moved-observemany-pointing-on-its-field)", text)
+        self.assertEqual(semantics.heading_anchor("`sm.predict` phases a moved `observemany` pointing on its field"),
+                         "smpredict-phases-a-moved-observemany-pointing-on-its-field")
+        self.assertEqual(semantics.blob("0" * 40, semantics.DEVIATIONS),
+                         f"https://github.com/bglenden/casa-rs/blob/{'0' * 40}/docs/CASA%20%28C%2B%2B%29%20bugs.md")
+
+    def test_a_record_must_name_a_heading_at_the_audit_revision(self):
+        data, _ = quanta_review()
+        data["audit_revision"] = semantics.subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        data["evidence"]["signature"]["links"] = []
+        data["decisions"] = [{"id": "x", "state": "Proposed", "record": "The tools convert quantities whose units do not conform",
+                              "inputs": "i", "casa": "c", "ours": "o", "rationale": "r", "impact": "m", "evidence": []}]
+        # HEAD is a pull request's own commit in its CI, which the pin-durability check
+        # (test_evidence_pins_must_outlive_their_branch) rightly refuses; this law is the records'.
+        with mock.patch.object(semantics, "undurable_pins", return_value=[]):
+            semantics.validate_source_links(ROOT, data)
+            data["decisions"][0]["record"] = "A heading the document lacks"
+            with self.assertRaisesRegex(ValueError, "name no heading"):
+                semantics.validate_source_links(ROOT, data)
 
 
 if __name__ == "__main__":
