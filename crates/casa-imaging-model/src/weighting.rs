@@ -74,6 +74,17 @@ pub enum WeightDensityScope {
         /// The FIELD_IDs the densities span.
         fields: NonZeroU32,
     },
+    /// One density per field and output channel: tclean's `mosweight` on a
+    /// cube's per-channel density (`BriggsCubeWeightor`'s `multiField`).
+    /// Each field's densities are the [`Self::PerOutputChannel`] densities
+    /// of that field's samples alone, each channel with its own Briggs
+    /// factors, over the fields [`Self::PerField`] spans.
+    PerFieldAndOutputChannel {
+        /// The first FIELD_ID with densities.
+        first_field: u32,
+        /// The FIELD_IDs the densities span.
+        fields: NonZeroU32,
+    },
 }
 
 impl WeightDensityScope {
@@ -83,6 +94,33 @@ impl WeightDensityScope {
     #[must_use]
     pub const fn is_continuum(self) -> bool {
         matches!(self, Self::GlobalSelection | Self::PerField { .. })
+    }
+
+    /// Whether each output channel has its own density: CASA's
+    /// `BriggsCubeWeightor`.
+    #[must_use]
+    pub const fn is_per_channel(self) -> bool {
+        matches!(
+            self,
+            Self::PerOutputChannel | Self::PerFieldAndOutputChannel { .. }
+        )
+    }
+
+    /// The first FIELD_ID and the FIELD_IDs spanned by a density per field
+    /// (`mosweight`); `None` when one density covers every field.
+    #[must_use]
+    pub const fn fields(self) -> Option<(u32, NonZeroU32)> {
+        match self {
+            Self::PerField {
+                first_field,
+                fields,
+            }
+            | Self::PerFieldAndOutputChannel {
+                first_field,
+                fields,
+            } => Some((first_field, fields)),
+            Self::NotApplicable | Self::GlobalSelection | Self::PerOutputChannel => None,
+        }
     }
 }
 
@@ -223,9 +261,7 @@ impl WeightingContract {
 
     /// Why the requirements are outside the logical domain, if they are.
     pub(crate) fn validate(self) -> Result<(), &'static str> {
-        if self.casa_cube_density_padding.is_some()
-            && self.density_scope != WeightDensityScope::PerOutputChannel
-        {
+        if self.casa_cube_density_padding.is_some() && !self.density_scope.is_per_channel() {
             return Err("CASA cube density requires per-output-channel weighting");
         }
         let density = self.scheme.uses_density();
@@ -299,6 +335,10 @@ mod tests {
             first_field: 2,
             fields: NonZeroU32::new(3).expect("non-zero"),
         };
+        let per_field_channel = WeightDensityScope::PerFieldAndOutputChannel {
+            first_field: 2,
+            fields: NonZeroU32::new(3).expect("non-zero"),
+        };
         for valid in [
             contract(WeightingScheme::Radial, NotApplicable),
             // `mosweight`'s densities are continuum densities.
@@ -315,6 +355,10 @@ mod tests {
             contract(absolute, PerOutputChannel)
                 .with_density_cells(DensityCells::Box(cells(2)))
                 .with_casa_cube_density_padding(4),
+            // `mosweight` on a cube: `BriggsCubeWeightor`'s `multiField`.
+            contract(briggs, per_field_channel)
+                .with_density_cells(DensityCells::Box(cells(2)))
+                .with_casa_cube_density_padding(2),
         ] {
             assert_eq!(valid.validate(), Ok(()), "{valid:?}");
         }
@@ -322,6 +366,9 @@ mod tests {
             contract(WeightingScheme::Radial, GlobalSelection),
             contract(WeightingScheme::Natural, per_field),
             contract(briggs, per_field).with_casa_cube_density_padding(1),
+            contract(briggs, per_field_channel)
+                .with_density_cells(DensityCells::Square(cells(8)))
+                .with_casa_cube_density_padding(2),
             contract(WeightingScheme::Natural, NotApplicable)
                 .with_density_cells(DensityCells::Box(cells(3))),
             contract(briggs, PerOutputChannel).with_density_cells(DensityCells::Square(cells(8))),
@@ -354,6 +401,11 @@ mod tests {
         ] {
             assert!(invalid.validate().is_err(), "{invalid:?}");
         }
+        assert_eq!(per_field.fields(), per_field_channel.fields());
+        assert_eq!(per_field.fields().map(|(first, _)| first), Some(2));
+        assert!(per_field_channel.is_per_channel() && !per_field_channel.is_continuum());
+        assert!(per_field.is_continuum() && !per_field.is_per_channel());
+        assert_eq!(PerOutputChannel.fields(), None);
         // Either term alone keeps the absolute denominator positive.
         for (robust, noise_jy) in [(0.0, 1.0), (-1.0, 0.0)] {
             let scheme = WeightingScheme::BriggsAbsolute { robust, noise_jy };

@@ -784,7 +784,7 @@ fn the_density_pass_holds_at_most_its_charge_on_every_npixels_grid() {
         box_half_width,
         increment_rad: [-1.0e-5, 1.0e-5],
         rule: DensityCellRule::Standard,
-        first_field: None,
+        fields: None,
     };
     // The teams live for the whole law: a team dropped between cases ends
     // its threads while the next case is measured, and on macOS a thread
@@ -818,6 +818,73 @@ fn the_density_pass_holds_at_most_its_charge_on_every_npixels_grid() {
             held <= admitted,
             "{side}² cells, box {box_half_width}, {workers} workers: the density pass held \
              {held} bytes against {admitted} admitted"
+        );
+    }
+}
+
+/// `mosweight` on a cube (#818): the density pass holds at most its charge
+/// with every field's padded density cube (`BriggsCubeWeightor`'s
+/// `multiField`), three fields of a linear cube of eight channels padded by
+/// two planes on each side, where the charge of one field's cube is
+/// exceeded.
+#[test]
+fn the_density_pass_holds_at_most_its_charge_with_every_fields_cube() {
+    use casa_imaging_operator::{DensityCellRule, DensityFields, DensityGridShape};
+    use casa_imaging_runtime::pass::{density_pass_bytes, run_density_pass};
+    if !alone("the_density_pass_holds_at_most_its_charge_with_every_fields_cube") {
+        return;
+    }
+    const CHANNELS: u32 = 8;
+    const PADDING: u32 = 2;
+    let resampler = SpectralResampler::channel_local(
+        SpectralAxis::new(1.0e9, 4.0e4, CHANNELS).expect("axis"),
+        SpectralKernel::Linear,
+    );
+    let operator = operator_of(64, GridPrecision::F64, resampler.basis());
+    let shape = |fields| DensityGridShape {
+        width: 64,
+        height: 64,
+        planes: (CHANNELS + 2 * PADDING) as usize,
+        padding: PADDING,
+        box_half_width: 0,
+        increment_rad: [-1.0e-5, 1.0e-5],
+        rule: DensityCellRule::Cube,
+        fields,
+    };
+    let per_field = shape(Some(DensityFields {
+        first: 0,
+        count: std::num::NonZeroU32::new(3).expect("three fields"),
+    }));
+    assert_eq!(per_field.bytes(), 3 * shape(None).bytes());
+    let teams = [1, 3].map(|workers| WorkerTeam::new(workers).expect("team"));
+    for team in &teams {
+        let workers = team.workers();
+        // Natives 10 kHz apart from 1 GHz span the padded axis and beyond.
+        let mut rows = Rows::at(300, 29, operator.geometry(), natives(48));
+        let block = rows.maximum_block();
+        let admitted =
+            density_pass_bytes(&resampler, &per_field, block, workers) + source_block_bytes(block);
+        let one_field = density_pass_bytes(&resampler, &shape(None), block, workers)
+            + source_block_bytes(block);
+        let baseline = LIVE.load(Ordering::Relaxed);
+        PEAK.store(baseline, Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let result = run_density_pass(
+            &operator,
+            &resampler,
+            per_field,
+            &mut rows,
+            team,
+            &Cancel::new(),
+        );
+        MEASURING.store(false, Ordering::Relaxed);
+        let grid = result.expect("density pass");
+        assert!(grid.cells().iter().any(|cell| *cell > 0.0));
+        let held = PEAK.load(Ordering::Relaxed) - baseline;
+        assert!(
+            held <= admitted && held > one_field,
+            "{workers} workers: the density pass held {held} bytes against {admitted} \
+             admitted, {one_field} for one field's cube"
         );
     }
 }

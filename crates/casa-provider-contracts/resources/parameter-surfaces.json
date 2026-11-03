@@ -8614,7 +8614,6 @@
           "default": {"kind": "literal", "value": {"kind": "bool", "value": true}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "casa-rs's mosaic weighs density over all fields (CASA's mosweight=False): with the mosaic gridder and density weighting, True is refused (#818).",
           "projections": {
             "cli": {"flags": ["--mosweight"], "false_flags": ["--no-mosweight"]},
             "provider": {"field": "mosweight"},

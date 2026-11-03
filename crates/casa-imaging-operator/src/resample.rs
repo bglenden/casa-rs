@@ -441,7 +441,8 @@ fn unpolarized_weight(row: &NativeRow<'_>, npol: usize, channel: usize) -> f32 {
 /// (`BriggsCubeWeightor::getWeightUniform`), whose density plane for a
 /// native channel is its rounded spectral pixel on the padded density axis
 /// `density_axis` (`FTMachine::matchChannel`); a channel off that axis
-/// weighs nothing.
+/// weighs nothing. Under `mosweight` that plane is one of the row's field's
+/// ([`WeightingGeneration::density_plane`]).
 fn sample_weight(
     weighting: &WeightingGeneration,
     row: &NativeRow<'_>,
@@ -457,14 +458,12 @@ fn sample_weight(
         }
         let frequency_hz = row.frequencies_hz[channel];
         let plane = match density_axis {
-            Some(axis) => match axis.nearest_channel(frequency_hz) {
-                Some(plane) => plane,
-                None => return 0.0,
-            },
-            None => match weighting.density_plane(placement.plane, row.context.field) {
-                Some(plane) => plane,
-                None => return 0.0,
-            },
+            Some(axis) => axis.nearest_channel(frequency_hz),
+            None => Some(placement.plane),
+        };
+        let Some(plane) = plane.and_then(|plane| weighting.density_plane(plane, row.context.field))
+        else {
+            return 0.0;
         };
         let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
         // `VisImagingWeight` weighs, tapers and bins the MeasurementSet
@@ -991,6 +990,10 @@ impl SpectralResampler {
     /// of the output axis padded by `shape.padding` planes on each side, at
     /// the double coordinates CASA grids its weight density with
     /// (`BriggsCubeWeightor::init` grids the PSF onto its padded template).
+    /// A per-field generation places each sample on its field's planes
+    /// ([`DensityGridShape::density_plane`]), as CASA grids each field's
+    /// density from its rows alone (`multiField`: `VisImagingWeight`, and
+    /// `BriggsCubeWeightor::fillImgWeightCol` one field at a time).
     pub fn place_density(
         &self,
         operator: &MeasurementOperator,
@@ -1006,8 +1009,16 @@ impl SpectralResampler {
                 reason: "density buffers carry one polarization",
             });
         }
+        // `mosweight` grids each field's samples on its own planes alone; a
+        // field outside the span grids nothing.
+        if shape.density_plane(0, row.context.field).is_none() {
+            return Ok(());
+        }
         let cf = operator.cf();
         let mut visit = |plane: u32, frequency_hz: f64, source: Source| {
+            let Some(plane) = shape.density_plane(plane, row.context.field) else {
+                return;
+            };
             let Some(input_weight) = self.density_weight(row, npol, source, rule) else {
                 return;
             };
@@ -1038,12 +1049,8 @@ impl SpectralResampler {
         };
         match rule {
             DensityCellRule::Standard => {
-                // `mosweight` grids each field's samples on its own plane.
-                let Some(plane) = shape.density_plane(0, row.context.field) else {
-                    return Ok(());
-                };
                 for (channel, frequency_hz) in row.frequencies_hz.iter().enumerate() {
-                    visit(plane, *frequency_hz, Source::Channel(channel));
+                    visit(0, *frequency_hz, Source::Channel(channel));
                 }
             }
             DensityCellRule::Cube => self

@@ -149,7 +149,6 @@ struct Modes {
     per_field_density: bool,
     deconvolver: String,
     weighting: String,
-    density_weighting: bool,
     user_mask: bool,
 }
 
@@ -393,8 +392,6 @@ impl<'a> Tclean<'a> {
             per_field_density: gridder_name == "mosaic",
             deconvolver: deconvolver.to_string(),
             weighting: weighting.to_string(),
-            // `VisImagingWeight("natural")` and `("radial")` grid no density.
-            density_weighting: !matches!(weighting, "natural" | "radial"),
             user_mask: usemask == "user",
         })
     }
@@ -697,22 +694,12 @@ impl<'a> Tclean<'a> {
         }
         // CASA weighs density by field only for the gridder named mosaic
         // (`task_tclean.py`), and over all fields for mosaicft and
-        // ftmosaic. A cube's per-channel density by field
-        // (`BriggsCubeWeightor`'s `multiField`) is not yet native.
+        // ftmosaic: a continuum density per field (`VisImagingWeight`'s
+        // `multiField`) or a cube's per-channel density per field
+        // (`BriggsCubeWeightor`'s).
         let mosweight = self.flag("mosweight")?;
         if modes.gridder == "mosaic" {
-            let mosweight = mosweight && modes.per_field_density;
-            let per_channel = modes.cube
-                && self.flag("perchanweightdensity")?
-                && modes.weighting != "superuniform";
-            if mosweight && modes.density_weighting && per_channel {
-                return Err(TcleanRefusal::not_yet(
-                    "mosweight",
-                    "True with a cube's per-channel density (perchanweightdensity=True)",
-                    818,
-                ));
-            }
-            self.set("mosweight", mosweight);
+            self.set("mosweight", mosweight && modes.per_field_density);
         }
         self.aw_terms(modes)?;
         let cfcache = self.text("cfcache")?;

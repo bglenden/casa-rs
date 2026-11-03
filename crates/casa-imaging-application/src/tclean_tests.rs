@@ -331,11 +331,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "#1063",
         ),
         (json!({ "gridder": "awp2" }), "gridder", "#1071"),
-        (
-            json!({ "gridder": "mosaic", "weighting": "briggs", "specmode": "cube", "nchan": 4 }),
-            "mosweight",
-            "#818",
-        ),
         (json!({ "mask": ["one.mask", "two.mask"] }), "mask", "#980"),
         (json!({ "gridder": "awprojectft" }), "gridder", "#980"),
         // An mfs image's REST axis grids the data's frequencies as they are.
@@ -609,13 +604,14 @@ fn briggsabs_reads_noise_as_a_flux_density() {
     );
 }
 
-/// `mosweight=True` weighs a continuum density by field; a cube's
-/// per-channel density by field is refused, but a cube's superuniform
+/// `mosweight=True` weighs each field's density apart under every
+/// weighting with a density, as `SynthesisImagerVi2::weight` does: a
+/// continuum density per field, or a cube's per-channel density per field
+/// (`BriggsCubeWeightor`'s `multiField`, #818); a cube's superuniform
 /// density and a cube without `perchanweightdensity` grid one continuum
-/// density per field, as `SynthesisImagerVi2::weight` does; radial
-/// weighting grids no density.
+/// density per field; radial weighting grids no density.
 #[test]
-fn per_field_density_is_refused_only_per_channel() {
+fn mosweight_holds_for_every_density() {
     let mosaic = |weighting: &str| json!({ "gridder": "mosaic", "weighting": weighting });
     let cube = |weighting: &str, perchanweightdensity: bool| {
         json!({
@@ -634,7 +630,9 @@ fn per_field_density_is_refused_only_per_channel() {
     assert!(mosweight(mosaic("superuniform")));
     assert!(mosweight(cube("superuniform", true)));
     assert!(mosweight(cube("uniform", false)));
-    assert_eq!(refusal(cube("uniform", true)).parameter, "mosweight");
+    for weighting in ["uniform", "briggs", "briggsabs", "briggsbwtaper"] {
+        assert!(mosweight(cube(weighting, true)), "{weighting}");
+    }
     assert_eq!(
         request(mosaic("radial")).weighting,
         crate::Weighting::Radial

@@ -397,6 +397,72 @@ fn a_mosaic_cube_keeps_each_channels_weight_image() {
     );
 }
 
+/// `mosweight` on a cube's per-channel density (`BriggsCubeWeightor`'s
+/// `multiField`, #818): each field's samples are weighed by the padded
+/// density cube of its own rows, with Briggs factors of its own per
+/// channel, so a field weighs as it does imaged alone, and each channel's
+/// sum of weights over the three pointings is the sum of the three imaged
+/// one at a time, under uniform and Briggs weighting alike. One density
+/// over all three (`mosweight=False`) has every cell's samples from the
+/// three round-robin pointings, and a third of their uniform weights.
+#[test]
+fn a_mosweight_cube_weighs_each_field_by_its_own_density() {
+    let (observation, mut controls) = mosaic_run(true);
+    controls["niter"] = json!(0);
+    controls["pbcor"] = json!(false);
+    // The centre pointing's direction, which every field's run images at.
+    controls["phasecenter"] = json!(format!(
+        "J2000 {}rad {}rad",
+        PHASE_CENTER_RAD[0], PHASE_CENTER_RAD[1]
+    ));
+    let sumwt = |name: &str, controls: &serde_json::Value| -> Vec<f64> {
+        let (_, products) = observation.image(name, controls.clone());
+        let sums = products.get(".sumwt").channel_values();
+        assert_eq!(sums.len(), 2, "{name}: two channels");
+        sums.into_iter().map(f64::from).collect()
+    };
+    let mut alone_uniform = Vec::new();
+    for weighting in ["uniform", "briggs"] {
+        controls["weighting"] = json!(weighting);
+        controls["mosweight"] = json!(true);
+        let together = sumwt(&format!("mosweight-{weighting}"), &controls);
+        let mut alone = vec![0.0; together.len()];
+        for field in ["0", "1", "2"] {
+            controls["field"] = json!(field);
+            let one = sumwt(&format!("mosweight-{weighting}-{field}"), &controls);
+            assert!(
+                one.iter().all(|sum| *sum > 0.0),
+                "{weighting}, field {field}"
+            );
+            for (sum, value) in alone.iter_mut().zip(one) {
+                *sum += value;
+            }
+        }
+        controls["field"] = json!("0,1,2");
+        eprintln!("T1 mosweight cube {weighting}: sumwt {together:?}, fields alone {alone:?}");
+        for (channel, (together, alone)) in together.iter().zip(&alone).enumerate() {
+            assert!(
+                (together - alone).abs() <= 1.0e-5 * alone,
+                "{weighting}, channel {channel}: sumwt {together} over the mosaic, {alone} over \
+                 its fields alone"
+            );
+        }
+        if weighting == "uniform" {
+            alone_uniform = alone;
+        }
+    }
+    controls["weighting"] = json!("uniform");
+    controls["mosweight"] = json!(false);
+    let joint = sumwt("joint-uniform", &controls);
+    eprintln!("T1 joint uniform cube: sumwt {joint:?}");
+    for (channel, (joint, alone)) in joint.iter().zip(&alone_uniform).enumerate() {
+        assert!(
+            *joint < 0.6 * alone,
+            "channel {channel}: one density's sumwt {joint}, the fields' alone {alone}"
+        );
+    }
+}
+
 /// CASA's flat-noise and flat-sky normalizations: a dirty flat-noise
 /// residual divides by `pbmax·√weight`, a flat-sky one by the weight, so
 /// flat noise is flat sky times the PB inside the PB's support, and both

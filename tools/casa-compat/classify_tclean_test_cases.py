@@ -317,10 +317,8 @@ class Refusals:
         return {
             "cube": cube,
             "gridder": gridder,
-            "per_field_density": name == "mosaic",
             "deconvolver": deconvolver,
             "weighting": weighting,
-            "density": weighting != "natural",
             "user_mask": usemask == "user",
         }
 
@@ -434,22 +432,6 @@ class Refusals:
         normtype = self.text("normtype")
         if gridder in ("mosaic", "awproject") and normtype == "pbsquare":
             self.add("normtype='pbsquare'", NOT_YET, 1061)
-        per_channel = (
-            modes["cube"]
-            and self.flag("perchanweightdensity") is not False
-            and modes["weighting"] != "superuniform"
-        )
-        if (
-            self.flag("mosweight")
-            and modes["per_field_density"]
-            and modes["density"]
-            and per_channel
-        ):
-            self.add(
-                "mosweight=True with gridder='mosaic' and a cube's per-channel density",
-                NOT_YET,
-                818,
-            )
         if gridder == "awproject":
             # `AwProjection::validate`: CASA's `AWConvFunc` refuses both
             # terms off; deriving the planes waits for #980.

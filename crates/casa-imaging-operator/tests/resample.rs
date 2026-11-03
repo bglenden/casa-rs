@@ -5,14 +5,16 @@
 
 mod common;
 
+use std::num::NonZeroU32;
+
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
-    Basis, CellHold, CfKey, ConvolutionFunctionSet, DensityCellRule, DensityGridShape, DensityUv,
-    GridGeometry, GridPadding, GridPrecision, ImageCorrection, ImageExtent, KernelNormalisation,
-    MeasurementOperator, MuellerRouting, NativeRow, OperatorError, PaddingFactor,
-    PolarizationRouting, RowContext, RowSpectrum, SampleBuffer, SpectralAxis, SpectralKernel,
-    SpectralResampler, Spheroidal, TapLayout, Taper, WPlaneCount, WPlanes, WeightingGeneration,
-    build_density_grid,
+    Basis, CellHold, CfKey, ConvolutionFunctionSet, DensityCellRule, DensityFields,
+    DensityGridShape, DensityUv, GridGeometry, GridPadding, GridPrecision, ImageCorrection,
+    ImageExtent, KernelNormalisation, MeasurementOperator, MuellerRouting, NativeRow,
+    OperatorError, PaddingFactor, PolarizationRouting, RowContext, RowSpectrum, SampleBuffer,
+    SpectralAxis, SpectralKernel, SpectralResampler, Spheroidal, TapLayout, Taper, WPlaneCount,
+    WPlanes, WeightingGeneration, build_density_grid,
 };
 use casa_types::Correlation;
 use common::{Rng, geometry, operator};
@@ -131,7 +133,7 @@ fn the_standard_density_bins_the_measurement_set_uvw() {
         box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Standard,
-        first_field: None,
+        fields: None,
     };
     let mut density = SampleBuffer::new(1);
     resampler
@@ -191,7 +193,7 @@ fn the_uv_taper_weighs_each_channel_at_its_own_frequency_after_the_density() {
         box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Standard,
-        first_field: None,
+        fields: None,
     };
     let mut density = SampleBuffer::new(1);
     resampler
@@ -262,12 +264,15 @@ fn a_per_field_density_weighs_each_field_by_its_own_samples() {
     let shape = |first_field: Option<u32>| DensityGridShape {
         width: 64,
         height: 64,
-        planes: if first_field.is_some() { 2 } else { 1 },
+        planes: 1,
         padding: 0,
         box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Standard,
-        first_field,
+        fields: first_field.map(|first| DensityFields {
+            first,
+            count: NonZeroU32::new(2).expect("two fields"),
+        }),
     };
     let [a, b] = [[300.0, -150.0, 0.0], [-700.0, 420.0, 0.0]];
     let rows = [
@@ -590,7 +595,7 @@ fn linear_mapping_interpolates_values_and_channel_weights_and_ors_flags() {
         box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Standard,
-        first_field: None,
+        fields: None,
     };
     let mut density = SampleBuffer::new(1);
     resampler
@@ -674,7 +679,7 @@ fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis()
         box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Cube,
-        first_field: None,
+        fields: None,
     };
     let row = |frequencies: &[f64], weights: &[f32]| -> (Vec<f64>, Vec<Complex32>, Vec<f32>) {
         (
@@ -947,7 +952,7 @@ fn density_shape(resampler: &SpectralResampler, padding: u32) -> DensityGridShap
         box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Cube,
-        first_field: None,
+        fields: None,
     }
 }
 
@@ -1099,7 +1104,7 @@ fn density_pass_carries_the_unpolarized_weight_without_a_support_test() {
         box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Standard,
-        first_field: None,
+        fields: None,
     };
     let mut out = SampleBuffer::new(1);
     resampler
@@ -1147,7 +1152,7 @@ fn cube_density_samples_interpolate_native_weights_linearly() {
         box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Cube,
-        first_field: None,
+        fields: None,
     };
     let mut out = SampleBuffer::new(1);
     resampler
@@ -1190,7 +1195,7 @@ fn the_cube_density_counts_each_unflagged_parallel_hand() {
             box_half_width: 0,
             increment_rad: [-2.0e-5, 2.0e-5],
             rule,
-            first_field: None,
+            fields: None,
         };
         let resampler = if rule == DensityCellRule::Cube {
             &cube
@@ -1245,7 +1250,7 @@ fn autocorrelations_reach_the_density_but_not_the_grid() {
         box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Standard,
-        first_field: None,
+        fields: None,
     };
     let mut density = SampleBuffer::new(1);
     resampler
@@ -1315,7 +1320,7 @@ fn standard_density_cells_use_casa_single_precision_coordinates() {
         box_half_width: 0,
         increment_rad: [increment, increment],
         rule: DensityCellRule::Standard,
-        first_field: None,
+        fields: None,
     };
     let mut density = SampleBuffer::new(1);
     resampler
