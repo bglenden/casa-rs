@@ -20,9 +20,9 @@
     "deconvolver": "hogbom",
     "niter": 1000,
     "threshold": "0Jy",
-    "nsigma": 3.0
+    "nsigma": 30.0
    },
-   "note": "#1078: a standard-gridder ALMA field, 38 arcsec across, whose 0.2 primary-beam circle is about 26 arcsec across; nsigma noise inside the beam"
+   "note": "#1078: a standard-gridder ALMA field, 38 arcsec across, whose 0.2 primary-beam circle is about 26 arcsec across; the noise-free residual's peak stays about 110 times its noise, so an nsigma of 30 sets every minor cycle's threshold from the noise inside the beam"
   },
   "point_standard_nsigma": {
    "vis": "point",
@@ -35,9 +35,9 @@
     "deconvolver": "hogbom",
     "niter": 1000,
     "threshold": "0Jy",
-    "nsigma": 3.0
+    "nsigma": 5.0
    },
-   "note": "#1078: a VLA image of 1.7 degrees, past the L-band beam's 0.2 circle; nsigma noise and peaks inside the beam"
+   "note": "#1078: a VLA image of 1.7 degrees, past the L-band beam's 0.2 circle; the nsigma noise and the peaks inside the beam, and the run stops on nsigma (stopcode 8)"
   },
   "point_standard_nsigma_robust": {
    "vis": "point",
@@ -50,10 +50,11 @@
     "deconvolver": "hogbom",
     "niter": 1000,
     "threshold": "0Jy",
-    "nsigma": 3.0,
-    "fastnoise": false
+    "nsigma": 5.0,
+    "fastnoise": false,
+    "mask": "box[[206pix,206pix],[305pix,305pix]]"
    },
-   "note": "#1078 under fastnoise=False: calcRobustImageStatistics inside the beam"
+   "note": "#1078 under fastnoise=False: calcRobustImageStatistics's classical statistics outside the clean mask and inside the beam. Without a mask, CASA 6.7.6.14 cleans nothing here (docs/CASA (C++) bugs.md), so the case names a box around the source"
   },
   "point_cube_automask": {
    "vis": "point",
@@ -80,7 +81,7 @@
     "deconvolver": "hogbom",
     "niter": 1000,
     "usemask": "auto-multithresh",
-    "nsigma": 3.0,
+    "nsigma": 5.0,
     "pblimit": -0.2
    },
    "note": "#1079 with a negative pblimit: the residual carries no mask, so the automatic mask reads every pixel, except at the first boundary, where it takes calcRobustRMS's statistics inside the beam"
