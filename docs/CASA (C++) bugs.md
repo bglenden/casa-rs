@@ -2139,6 +2139,30 @@ Earth. Choosing the other column per row would need knowing which one was
 meant, and would make casa-rs and CASA disagree about the same data; the
 correction belongs in the table.
 
+## `simutil.msg` posts a verbose message twice, in colour
+
+- Date noted: 2026-11-03
+- Status: casa-rs posts it once (#1053)
+- Affected code: `casatasks/src/private/simutil.py` (`msg`)
+
+With `verbose=True`, CASA's `msg` posts each message to its log twice at
+INFO: once with ANSI colour codes around `[origin]` and the words `WARNING`
+and `ERROR`, once with those words still coloured. casa-rs logs it once,
+plain, at INFO on `casars.<origin>`, and writes the open report as CASA
+does. Without `verbose` the two log alike (CASA 6.7.6.14,
+`tools/simulation/simutil_helpers_oracle.py`).
+
+## `simutil.is4d` leaves the image tool open
+
+- Date noted: 2026-11-03
+- Status: CASA defect; casa-rs does not follow it (#1053)
+- Affected code: `casatasks/src/private/simutil.py` (`is4d`)
+
+`is4d` returns `False` before `ia.done()` for an image without CASA's four
+axes in order, so the module's shared image tool stays open and the next
+`ia.open` warns "Another image is already open, closing first". casa-rs
+opens nothing that outlives the call.
+
 ## `MDirection::from_source_name` trims a source name
 
 - Date noted: 2026-11-03

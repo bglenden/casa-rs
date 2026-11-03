@@ -30,9 +30,9 @@
 //! `ismstp`, `cellsize`, `statim` and `convimage` (`analysis.rs`); and the
 //! geodesy `getdatum`, `tconpc`, `tmgeod`, `utm2long`, `long2xyz`,
 //! `xyz2long`, `xyz2long_old`, `utm2xyz`, `locxyz2itrf` and `itrf2locname`
-//! (`geodesy.rs`). CASA's
-//! other public methods
-//! have its signatures and raise `NotImplementedError` naming #1053, which
+//! (`geodesy.rs`); and `msg`, `isreport`, `openreport`, `closereport`,
+//! `dir_s2m`, `is4d`, `spectral` and `setcfg` (`helpers.rs`). CASA's other
+//! public methods have its signatures and raise `NotImplementedError` naming #1053, which
 //! classifies them (`stubs.rs`).
 //!
 //! Not being a CASA tool, the class is not in the object-surface bundle
@@ -57,6 +57,7 @@
 
 mod analysis;
 mod geodesy;
+mod helpers;
 mod ops;
 mod stubs;
 
@@ -105,6 +106,12 @@ pub(crate) struct PySimutil {
     /// The telescope `noisetemp` defaults to.
     #[pyo3(get, set)]
     telescopename: Option<Py<PyAny>>,
+    /// The report file's path, which CASA's tasks set before `openreport`.
+    #[pyo3(get, set)]
+    reportfile: Option<Py<PyAny>>,
+    /// The report file `openreport` opened, a Python file object.
+    #[pyo3(get, set)]
+    report: Option<Py<PyAny>>,
 }
 
 /// A configuration-file error as the Python exception CASA's raises.
@@ -168,6 +175,8 @@ impl PySimutil {
             totaltime: or_quantity(totaltime, 0.0, "h")?,
             pointings: None,
             telescopename: None,
+            reportfile: None,
+            report: None,
         })
     }
 
