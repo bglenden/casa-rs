@@ -31,34 +31,38 @@ pub enum NormalBasis {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SpectralBasisPlan {
     ChannelLocal,
-    /// A constant (one term) or Taylor basis: `terms` residual terms and
-    /// the `2·terms − 1` moments of its Hankel block normal. `2·terms`
-    /// fits in `usize` (checked where the plan is made).
-    Polynomial {
-        terms: usize,
-    },
+    /// The constant basis: one residual term and one PSF moment.
+    Constant,
+    /// A Taylor basis of `terms ≥ 1` coefficients: `terms` residual terms
+    /// and the `2·terms − 1` moments of its Hankel block normal. One term is
+    /// CASA's `mtmfs` with `nterms=1`, a Taylor family like any other
+    /// (`SIImageStoreMultiTerm`). `2·terms` fits in `usize` (checked where
+    /// the plan is made).
+    Taylor { terms: usize },
 }
 
 impl SpectralBasisPlan {
     const fn basis(self) -> NormalBasis {
         match self {
             Self::ChannelLocal => NormalBasis::ChannelLocal,
-            Self::Polynomial { terms } if terms > 1 => NormalBasis::Taylor,
-            Self::Polynomial { .. } => NormalBasis::Constant,
+            Self::Constant => NormalBasis::Constant,
+            Self::Taylor { .. } => NormalBasis::Taylor,
         }
     }
 
     const fn coefficient_terms(self, slab: SpectralSlabPlan) -> usize {
         match self {
             Self::ChannelLocal => slab.core_depth(),
-            Self::Polynomial { terms } => terms,
+            Self::Constant => 1,
+            Self::Taylor { terms } => terms,
         }
     }
 
     const fn normal_moments(self, slab: SpectralSlabPlan) -> usize {
         match self {
             Self::ChannelLocal => slab.core_depth(),
-            Self::Polynomial { terms } => 2 * terms - 1,
+            Self::Constant => 1,
+            Self::Taylor { terms } => 2 * terms - 1,
         }
     }
 }

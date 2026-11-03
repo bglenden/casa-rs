@@ -323,7 +323,7 @@ fn selective_normal_plane_borrows_constant_polynomial_planes_exactly() {
             let mut input = domain(0..1, true);
             input.domain_ordinal = ordinal;
             input.primitives.slab.total_channels = 1;
-            input.primitives.basis = SpectralBasisPlan::Polynomial { terms: 1 };
+            input.primitives.basis = SpectralBasisPlan::Constant;
             if ordinal == 1 {
                 input.domain_role = ImageDomainRole::Outlier("constant".into());
                 input.primitives.shape = [2, 3];
@@ -379,14 +379,21 @@ fn selective_normal_plane_borrows_constant_polynomial_planes_exactly() {
 
 #[test]
 fn selective_normal_plane_rejects_nonconstant_families_and_propagates_storage_errors() {
-    let mut input = domain(0..1, false);
-    input.primitives.basis = SpectralBasisPlan::Polynomial { terms: 2 };
-    let coupled =
-        NormalStatePrimitives::Coupled(SpectralPrimitiveDomains::new(vec![input].into()).unwrap());
-    assert!(matches!(
-        coupled.read_plane(0, 0, 0),
-        Err(NormalStateError::NormalStorage(_))
-    ));
+    // A one-term Taylor family has the constant basis's shape but is read
+    // as a family (`coefficient_term`, `normal_moment`), as CASA's `mtmfs`
+    // reads `.residual.tt0` and `.psf.tt0`.
+    for terms in [1, 2] {
+        let mut input = domain(0..1, false);
+        input.primitives.basis = SpectralBasisPlan::Taylor { terms };
+        let coupled = NormalStatePrimitives::Coupled(
+            SpectralPrimitiveDomains::new(vec![input].into()).unwrap(),
+        );
+        assert_eq!(coupled.basis(), crate::NormalBasis::Taylor);
+        assert!(matches!(
+            coupled.read_plane(0, 0, 0),
+            Err(NormalStateError::NormalStorage(_))
+        ));
+    }
 
     #[derive(Debug)]
     struct FailedRead;

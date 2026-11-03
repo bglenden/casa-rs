@@ -111,7 +111,7 @@ fn reading_an_earlier_runs_normal_state_fits_its_charge_and_inverts_normalizatio
     write(&prefix.with_extension("residual"), &cube, residual);
     write(&prefix.with_extension("sumwt"), &[1, 1, 1, CHANNELS], sumwt);
 
-    let input = Input::open(&prefix, 1, ([SIDE, SIDE], 1, CHANNELS), true).unwrap();
+    let input = Input::open(&prefix, None, ([SIDE, SIDE], 1, CHANNELS), true).unwrap();
     let window = 3;
     let (reading, holding) = (input.reading_bytes(window), input.images_bytes(window));
     PEAK.store(0, Ordering::Relaxed);

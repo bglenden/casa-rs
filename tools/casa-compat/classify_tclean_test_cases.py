@@ -475,10 +475,8 @@ class Refusals:
                 CF_NOTE,
             )
 
-    def deconvolution(self, modes):
+    def deconvolution(self):
         """`Tclean::deconvolution`."""
-        if modes["deconvolver"] == "mtmfs" and self.integer("nterms") == 1:
-            self.add("nterms=1 with deconvolver='mtmfs'", NOT_YET, 1065)
         beam = self.texts("restoringbeam")
         if beam not in ([], ["common"]):
             self.add("restoringbeam: a beam given by its axes", NOT_YET, 980)
@@ -507,7 +505,7 @@ class Refusals:
         self.geometry()
         self.spectral(modes)
         self.gridding(modes)
-        self.deconvolution(modes)
+        self.deconvolution()
         self.iteration()
         self.masking(modes)
         self.gate(modes)
