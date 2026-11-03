@@ -345,7 +345,8 @@
       "scope": "Aliases standard/ft/gridft, W aliases, and mosaic aliases normalize; awproject accepted; awprojectft and other unsupported families refused (issue 980).",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "aw-cube-20261103"
       ],
       "behaviors": [
         "gridders"
@@ -1884,6 +1885,23 @@
         "crates/casa-images/src/regrid/spectral.rs",
         "crates/casa-imaging-application/src/compile/start_model.rs",
         "crates/casars-imager/tests/t1/start_model.rs"
+      ]
+    },
+    "aw-cube-20261103": {
+      "kind": "casa-rs's own AW cube cases against CASA, CASA's AW cases, T1 laws, a counting law",
+      "state": "passed",
+      "source_revision": "97388e9c9a8f73b1a77cf8750d1efa5b9f19867f",
+      "revision": "74d130aced33336c4a552d08fefed3ab74572eeb",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with tclean-aw-cube-cases.json, and with tclean-casa-test-cases.json --case-prefix test_mosaic_cube.test_cube_awproject --case-prefix test_mosaic_mtmfs.test_mtmfs_awproject",
+      "receipt": "resources/casa-compat/evidence/tclean-aw-cube-20261103.json",
+      "scope": "gridder='awproject' on a cube (issue 719). Three channels on an imported cache, with and without conjugate beams, dirty and cleaned, as fresh calls: every product within 5.7e-7 NRMS, once the weight image counts rows off the grid as AWProjectWBFT::resampleCFToGrid does. test_mosaic_cube's six AW cases make a second call on the same image name and differ through CASA's weight-image reload (docs/CASA (C++) bugs.md), and on two fields through AW mosaics on imported caches (issue 1070).",
+      "links": [
+        "resources/casa-compat/evidence/tclean-aw-cube-20261103.json",
+        "resources/casa-compat/tclean-aw-cube-cases.json",
+        "crates/casa-imaging-operator/src/resample.rs",
+        "crates/casars-imager/tests/t1/aw_projection.rs",
+        "crates/casa-imaging-application/tests/admission_memory/aw.rs"
       ]
     },
     "pb-masks-20261103": {
