@@ -140,7 +140,13 @@ impl DensityGridShape {
 
     /// Bytes a [`DensityGrid`] of this shape holds: an `f64` per cell and a
     /// weight sum per plane, over every field's planes. A weighting
-    /// generation keeps its grid for the whole run.
+    /// generation keeps its grid for the whole run, so a per-field cube
+    /// density (`mosweight`) holds every field's `f64` cube at once,
+    /// `8·(nx·ny + 1)·F·(C + 2·padding)` bytes for `F` fields spanned and
+    /// `C` channels, where CASA holds one field's `Float` cube at a time
+    /// (`BriggsCubeWeightor::fillImgWeightCol`): 20 fields of 480 channels
+    /// at 800² hold about 50 GB, which admission refuses on most hosts
+    /// (#1085).
     #[must_use]
     pub const fn bytes(&self) -> u64 {
         ((self.cells() + self.total_planes()) * size_of::<f64>()) as u64

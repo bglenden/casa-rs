@@ -672,6 +672,7 @@ fn cube_density_padding(
     per_field: bool,
 ) -> Result<Option<usize>, PrepareError> {
     let (survey, spectral) = (surveyed.survey, surveyed.spectral);
+    specification::refuse_source_frame_cube_density(request)?;
     if !specification::cube_density_padded(request) {
         return Ok(None);
     }

@@ -196,6 +196,16 @@ pub enum PrepareError {
         /// The requested channel.
         channel: usize,
     },
+    /// A source-frame cube with a per-channel density: CASA pads its
+    /// density axis by the swing it estimates in the source's frame
+    /// (`BriggsCubeWeightor::estimateSwingChanPad` with the ephemeris),
+    /// which casa-rs does not yet.
+    #[error(
+        "a per-channel density weighting (perchanweightdensity=True with uniform or Briggs \
+         weighting) of a source-frame cube (specmode cubesource) is not implemented by casa-rs \
+         yet (#980)"
+    )]
+    SourceFrameCubeDensity,
     /// A CRTF region limited to part of a cube's channels: the user mask
     /// holds one plane for every channel until per-channel masks are native.
     #[error(

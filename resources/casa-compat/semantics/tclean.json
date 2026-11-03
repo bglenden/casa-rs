@@ -382,7 +382,7 @@
     },
     "mosweight": {
       "status": "Implemented",
-      "scope": "With gridder exactly mosaic and density weighting, True weighs each field by its own density and Briggs factors (multiField): a continuum density per field (VisImagingWeight), or with a cube's per-channel density each field's padded density cube, gridded from that field's rows alone with Briggs factors per channel and a fixed swing pad of two planes a side (BriggsCubeWeightor::fillImgWeightCol, issue 818); mosaicft and ftmosaic set it False, as CASA. The density spans the selected fields' keys from the first to the last with data and is held for the whole run.",
+      "scope": "With gridder exactly mosaic and density weighting, True weighs each field by its own density and Briggs factors (multiField): a continuum density per field (VisImagingWeight), or with a cube's per-channel density each field's padded density cube, gridded from that field's rows alone with Briggs factors per channel and a fixed swing pad of two planes a side (BriggsCubeWeightor::fillImgWeightCol, issue 818); mosaicft and ftmosaic set it False, as CASA. Every field's f64 density cube is resident for the whole run, 8·(nx·ny+1)·F·(C+4) bytes for F field keys spanned (the selected fields with data, first to last, so a sparse selection multiplies it) and C channels, where CASA holds one field's Float cube at a time: a large cube mosaic is refused by admission (20 fields × 480 channels × 800² is about 50 GB; issue 1085).",
       "evidence": [
         "signature",
         "reader",

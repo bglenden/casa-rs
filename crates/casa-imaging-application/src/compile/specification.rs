@@ -561,9 +561,46 @@ pub(super) fn cube_density_padded(request: &ImagingRequest) -> bool {
         && request.perchanweightdensity
 }
 
+/// Refuse a source-frame cube's per-channel density, whose padding CASA
+/// estimates in the source's frame: every surface's request reaches
+/// compile, so the refusal holds beyond tclean's.
+pub(super) fn refuse_source_frame_cube_density(
+    request: &ImagingRequest,
+) -> Result<(), PrepareError> {
+    if request.specmode == SpecMode::Cubesource
+        && request.weighting.per_channel_density()
+        && request.perchanweightdensity
+    {
+        return Err(PrepareError::SourceFrameCubeDensity);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A source-frame cube's per-channel density is refused, naming #980,
+    /// whatever surface made the request; its continuum density, natural
+    /// weighting and a frequency cube's per-channel density are not.
+    #[test]
+    fn a_source_frame_cube_density_is_refused_by_name() {
+        let cube = |weighting: &str, perchanweightdensity: bool, specmode: SpecMode| {
+            let mut request = crate::request::tests::request(json_cube(weighting, true));
+            request.perchanweightdensity = perchanweightdensity;
+            request.specmode = specmode;
+            refuse_source_frame_cube_density(&request)
+        };
+        for weighting in ["uniform", "briggs", "briggsbwtaper"] {
+            let error = cube(weighting, true, SpecMode::Cubesource).expect_err(weighting);
+            assert!(matches!(error, PrepareError::SourceFrameCubeDensity));
+            assert!(error.to_string().contains("(#980)"), "{error}");
+        }
+        assert!(cube("briggs", false, SpecMode::Cubesource).is_ok());
+        assert!(cube("natural", true, SpecMode::Cubesource).is_ok());
+        assert!(cube("superuniform", true, SpecMode::Cubesource).is_ok());
+        assert!(cube("briggs", true, SpecMode::Cube).is_ok());
+    }
 
     /// `SynthesisImagerVi2::weight`'s readings of tclean's weighting:
     /// superuniform is uniform over a box on one density, a cube's
