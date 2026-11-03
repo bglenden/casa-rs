@@ -529,7 +529,9 @@ impl SpectralWindowCoordinateCatalog {
 /// times, and a channel never selected at some time is read as if it were
 /// not in the window. The bands are `SynthesisImagerVi2::selectData`'s,
 /// narrowed to the image's band where `SynthesisImager::tuneSelectData`
-/// tunes it.
+/// tunes it. A band may reach zero hertz or below, as the image's band of
+/// a few wide channels padded below a low first channel does: it selects
+/// every channel up to its upper end.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrequencyBands {
     frame: crate::FrequencyFrame,
@@ -537,16 +539,25 @@ pub struct FrequencyBands {
 }
 
 impl FrequencyBands {
-    /// Bands `bands_hz`, each `[lower, upper]` in hertz in `frame`;
-    /// `None` unless there is a band and each is finite and positive with
-    /// its lower end at most its upper.
-    #[must_use]
-    pub fn new(frame: crate::FrequencyFrame, bands_hz: Vec<[f64; 2]>) -> Option<Self> {
-        (!bands_hz.is_empty()
-            && bands_hz.iter().all(|[lower, upper]| {
-                lower.is_finite() && upper.is_finite() && *lower > 0.0 && lower <= upper
-            }))
-        .then_some(Self { frame, bands_hz })
+    /// Bands `bands_hz`, each `[lower, upper]` in hertz in `frame`.
+    ///
+    /// # Errors
+    ///
+    /// [`CompileObservationError::InvalidFrequencyBands`] when there is no
+    /// band, or a band's ends are not finite or its lower end lies above
+    /// its upper.
+    pub fn new(
+        frame: crate::FrequencyFrame,
+        bands_hz: Vec<[f64; 2]>,
+    ) -> Result<Self, CompileObservationError> {
+        if bands_hz.is_empty()
+            || !bands_hz
+                .iter()
+                .all(|[lower, upper]| lower.is_finite() && upper.is_finite() && lower <= upper)
+        {
+            return Err(CompileObservationError::InvalidFrequencyBands);
+        }
+        Ok(Self { frame, bands_hz })
     }
 
     /// The frame the bands are stated in.
@@ -1125,6 +1136,10 @@ pub enum CompileObservationError {
     /// A UV range was unbounded, non-finite, or inverted.
     #[error("selection range is unbounded, non-finite, or inverted")]
     InvalidScalarRange,
+    /// A window's frequency selection held no band, or one whose ends are
+    /// not finite or inverted ([`FrequencyBands::new`]).
+    #[error("a frequency selection needs a band, each with finite ends in ascending order")]
+    InvalidFrequencyBands,
     /// A UV-distance range used a negative bound.
     #[error("UV-distance selection bounds must be non-negative")]
     NegativeUvDistance,

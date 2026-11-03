@@ -23,6 +23,7 @@ use casa_imaging_operator::{
 use common::{
     ALL_KERNELS, Kernels, MOSAIC_DISHES_M, MOSAIC_FREQUENCIES_HZ, Rng, assert_close,
     assert_same_grids, block, edge_placements, metal, model, operator, placements,
+    sectioned_edge_placements, w_planes_operator,
 };
 use num_complex::Complex32;
 
@@ -260,6 +261,39 @@ fn the_mosaic_sets_edge_placements_grid_alike() {
             &format!("mosaic edges of {label}"),
         );
     }
+}
+
+/// #980 review: W projection's sectioned edge (`GridEdge::Sectioned`)
+/// grids and weighs alike on both backends. On three W planes of
+/// different supports, both signs of `w`, the samples about each of the
+/// grid's four edges ([`sectioned_edge_placements`]): supports overrunning
+/// it with the anchor on the grid and off it, a support with one tap on the
+/// grid or none, and one whose last tap lies on the last column or row the
+/// sectors leave out. Each backend clips the spread to the sectors and adds
+/// `W · Re Σ` of the kept taps to `sumwt`, so the grids agree to `f32`
+/// additions and `sumwt` exactly, in the data and the PSF modes.
+#[test]
+fn the_w_sets_sectioned_edge_placements_grid_alike() {
+    let mut rng = Rng::new(61);
+    let operator = w_planes_operator();
+    let Some(mut metal) = metal(&operator) else {
+        return;
+    };
+    let placed = sectioned_edge_placements(&operator, &mut rng);
+    assert_eq!(
+        placed.len(),
+        3 * 2 * 2 * 13,
+        "three planes, both signs of w, both axes, thirteen anchors"
+    );
+    let buffer = block(&placed, &mut rng);
+    grid_both(
+        &operator,
+        &mut metal,
+        &buffer,
+        full(&operator),
+        ModeSet::DATA_PSF,
+        "W planes' sectioned edges",
+    );
 }
 
 #[test]

@@ -11,7 +11,7 @@ use crate::sample::CfKey;
 
 /// Taps of one convolution-function cell in the layout the kernels read.
 ///
-/// Fine-offset rows are indexed by [`CellLocation`](crate::CellLocation)'s
+/// Fine-offset rows are indexed by [`CellLocation`]'s
 /// `ox`/`oy`, which run over `0..=oversampling`, so every layout holds
 /// `oversampling + 1` rows per axis and `oversampling` must be even.
 #[derive(Clone, Copy, Debug)]

@@ -7,7 +7,11 @@
 //! `SynthesisImagerVi2::selectData` states each channel range `spw` names
 //! as a band in the selection's frame, tclean's `outframe`: the range's
 //! lowest and highest channel centres converted at every epoch of the
-//! window's samples ([`selection_band`]). A cube is gridded by
+//! window's samples ([`selection_band`]). A selection frame of `REST` or
+//! `Undefined` (`ignoreframe`, as tclean sets it for `cubedata` and
+//! `cubesource`) takes the range's centres as they are, in the data's
+//! frame, so each range selects its channels at every time; a range with a
+//! stride is read whole there too. A cube is gridded by
 //! `CubeMajorCycleAlgorithm`'s own imager, which selects the same way and,
 //! where `SynthesisImagerVi2::tuneSelectData` tunes the selection
 //! ([`super::spectral`]), narrows each band that the image's LSRK band
@@ -20,6 +24,16 @@
 //! shift across an observation is a sizeable part of a channel, the
 //! channels a time reads move with it, and a channel range with a stride
 //! is read whole.
+//!
+//! Compile ([`CubeBands::epoch_selection`]) and the gridding passes'
+//! packer test a channel by the same predicate,
+//! [`FrequencyBands::meets`]; they differ only in where the frame
+//! conversion is evaluated: compile at each surveyed epoch of the window,
+//! towards its field ([`epoch_frame`]), the packer at each row's time and
+//! field through the run's geometry. A channel a time's bands miss is read
+//! as flagged: no sample of it, or interpolated from it, is imaged, but the
+//! density pass still counts it, as CASA's density reads the untuned
+//! selection.
 //!
 //! casa-rs departs from CASA in two ways, both recorded in
 //! `docs/CASA (C++) bugs.md`: a tuned band is narrowed by the selection's
@@ -42,11 +56,22 @@ use super::selection::SourceSpectralWindow;
 use super::spectral::FrameContext;
 use super::survey::Survey;
 
-/// The bands of each surveyed window a cube's gridding selects by, in one
-/// frame, before what they select at each epoch is known.
+/// The bands of each surveyed window a cube's gridding selects by, all in
+/// one frame, before what they select at each epoch is known; a window CASA
+/// selects nothing of by frequency is absent.
 pub(super) struct CubeBands {
-    frame: FrequencyRef,
-    bands_hz: BTreeMap<usize, Vec<[f64; 2]>>,
+    bands: BTreeMap<usize, FrequencyBands>,
+}
+
+/// The frame a cube's per-time frequency selection is stated in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SelectionFrame {
+    /// Each range's channel centres converted to this frame at every
+    /// epoch, and narrowed by the image's band where it is given.
+    Converted(FrequencyRef),
+    /// The data's frame, each range's channel centres as they are (CASA's
+    /// `ignoreframe` for a selection frame of `REST` or `Undefined`).
+    Data,
 }
 
 /// The image's band in LSRK as `SynthesisImager::tuneSelectData` states
@@ -84,26 +109,25 @@ pub(super) fn image_band_lsrk(
 
 /// The bands a cube's gridding selects each surveyed window's channels by:
 /// those of the channel ranges `spw` names (a window it names without
-/// channels is one range) in `outframe`, or, where `tuned_image_band` gives
-/// the image's LSRK band, those ranges' bands in LSRK narrowed to it.
-/// `None` where CASA selects by channel numbers alone, as for a selection
-/// frame of `REST` (`ignoreframe`): the bands then select exactly the
-/// named channels at every time.
+/// channels is one range) in `frame`, narrowed to the image's LSRK band
+/// where `tuned_image_band` gives it (`frame` is then LSRK).
+///
+/// # Errors
+///
+/// A frame conversion that fails, or a frame the image model does not
+/// hold.
 pub(super) fn cube_bands(
     (catalogue, engine): (&Catalogue, &MsCalEngine),
     survey: &Survey,
-    outframe: FrequencyRef,
+    frame: SelectionFrame,
     tuned_image_band: Option<[f64; 2]>,
-) -> Result<Option<CubeBands>, PrepareError> {
-    let frame = if tuned_image_band.is_some() {
-        FrequencyRef::LSRK
-    } else {
-        outframe
+) -> Result<CubeBands, PrepareError> {
+    let reference = match frame {
+        SelectionFrame::Converted(reference) => reference,
+        SelectionFrame::Data => survey.source_frequency_reference,
     };
-    if frame == FrequencyRef::REST {
-        return Ok(None);
-    }
-    let mut bands_hz = BTreeMap::new();
+    let model_frame = super::spectral::imaging_frequency_frame(reference)?;
+    let mut by_window = BTreeMap::new();
     for window in &survey.spectral_windows {
         let whole = [[0, window.frequencies_hz.len().saturating_sub(1)]];
         let ranges = survey
@@ -111,19 +135,43 @@ pub(super) fn cube_bands(
             .get(&window.spw_id)
             .map_or(&whole[..], Vec::as_slice);
         let mut bands = Vec::with_capacity(ranges.len() + 1);
-        for range in ranges {
-            if let Some(band) =
-                selection_band((catalogue, engine), (survey, window), *range, frame)?
-            {
-                bands.push(band);
-            }
+        for &range in ranges {
+            let band = match frame {
+                SelectionFrame::Converted(reference) => {
+                    selection_band((catalogue, engine), (survey, window), range, reference)?
+                }
+                SelectionFrame::Data => Some(centre_span(window, range)?),
+            };
+            bands.extend(band);
         }
         if let Some(image) = tuned_image_band {
             and_band(&mut bands, image);
         }
-        bands_hz.insert(window.spw_id, bands);
+        if !bands.is_empty() {
+            by_window.insert(window.spw_id, FrequencyBands::new(model_frame, bands)?);
+        }
     }
-    Ok(Some(CubeBands { frame, bands_hz }))
+    Ok(CubeBands { bands: by_window })
+}
+
+/// The lowest and highest centre of `window`'s channels `[first, last]`, in
+/// its own frame.
+fn centre_span(
+    window: &SourceSpectralWindow,
+    [first, last]: [usize; 2],
+) -> Result<[f64; 2], PrepareError> {
+    let centres =
+        window
+            .frequencies_hz
+            .get(first..=last)
+            .ok_or(PrepareError::SpectralWindowCoordinates {
+                spw_id: window.spw_id,
+            })?;
+    Ok(centres
+        .iter()
+        .fold([f64::INFINITY, f64::NEG_INFINITY], |[lower, upper], hz| {
+            [lower.min(*hz), upper.max(*hz)]
+        }))
 }
 
 /// `SynthesisImagerVi2::andFreqSelection` of `[lower, upper]` on one
@@ -168,27 +216,29 @@ impl CubeBands {
     /// What `window`'s bands select at each epoch of its samples: at each,
     /// the bands converted to the window's frame towards the epoch's field
     /// ([`epoch_frame`]), as the visibility iterator converts them, select
-    /// the channels whose extent meets one. `None` for a window without
-    /// bands or epochs.
+    /// the channels whose extent meets one ([`FrequencyBands::meets`]).
+    /// `None` for a window without bands or epochs.
     pub(super) fn epoch_selection(
         &self,
         (catalogue, engine): (&Catalogue, &MsCalEngine),
         survey: &Survey,
         window: &SourceSpectralWindow,
     ) -> Result<Option<EpochSelection>, PrepareError> {
-        let bands = self.window_bands(window.spw_id);
+        let Some(bands) = self.bands.get(&window.spw_id) else {
+            return Ok(None);
+        };
         let epochs = survey.window_epochs(window.spw_id);
-        if bands.is_empty() || epochs.is_empty() {
+        if epochs.is_empty() {
             return Ok(None);
         }
-        let source = window.frequency_reference;
+        let (source, frame) = (window.frequency_reference, bands.frame().frequency_ref());
         let mut counts = vec![0_u32; window.frequencies_hz.len()];
         for epoch in epochs {
-            let factor = if source == self.frame || source == FrequencyRef::REST {
+            let factor = if source == frame || source == FrequencyRef::REST {
                 1.0
             } else {
-                let frame = epoch_frame((catalogue, engine), *epoch)?;
-                PreparedFrequencyConversion::new(self.frame, source, Some(&frame), Some(&frame))?
+                let at = epoch_frame((catalogue, engine), *epoch)?;
+                PreparedFrequencyConversion::new(frame, source, Some(&at), Some(&at))?
                     .convert_hz(1.0)
             };
             for (count, (centre, width)) in counts
@@ -196,9 +246,7 @@ impl CubeBands {
                 .zip(window.frequencies_hz.iter().zip(&window.channel_widths_hz))
             {
                 let half = width.abs() / 2.0;
-                if bands.iter().any(|[lower, upper]| {
-                    centre + half >= lower * factor && centre - half <= upper * factor
-                }) {
+                if bands.meets(factor, [centre - half, centre + half]) {
                     *count += 1;
                 }
             }
@@ -209,23 +257,10 @@ impl CubeBands {
         }))
     }
 
-    /// The bands of window `spw_id`; none for a window CASA selects nothing
-    /// of by frequency.
-    fn window_bands(&self, spw_id: usize) -> &[[f64; 2]] {
-        self.bands_hz.get(&spw_id).map_or(&[], Vec::as_slice)
-    }
-
-    /// The model's bands of window `spw_id`, for the gridding to select a
-    /// time's channels by.
-    pub(super) fn frequency_bands(
-        &self,
-        spw_id: usize,
-    ) -> Result<Option<FrequencyBands>, PrepareError> {
-        let frame = super::spectral::imaging_frequency_frame(self.frame)?;
-        Ok(FrequencyBands::new(
-            frame,
-            self.window_bands(spw_id).to_vec(),
-        ))
+    /// The bands of window `spw_id`, for the gridding to select a time's
+    /// channels by; none for a window CASA selects nothing of by frequency.
+    pub(super) fn frequency_bands(&self, spw_id: usize) -> Option<&FrequencyBands> {
+        self.bands.get(&spw_id)
     }
 }
 

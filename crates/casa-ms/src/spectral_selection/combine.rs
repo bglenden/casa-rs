@@ -26,6 +26,16 @@ use crate::error::{MsError, MsResult};
 /// are simply concatenated. The caller refuses windows in different frames,
 /// which CASA cannot combine.
 ///
+/// The eight layouts of this module's `touching_windows_…` and
+/// `overlapping_windows_…` tests (the latter's numbers taken as 1e8 Hz)
+/// were combined by CASA 6.7.6.14 too, by `mstransform(combinespws=True)`,
+/// whose log states the combined window's channel count, first and last
+/// centres and last width before it regrids. Those agree on each: the
+/// overlaps below and above the axis, the 1% rule both ways, descending
+/// windows and the sort by lowest frequency. CASA states no interior
+/// channel, so a widened channel's centre and width follow from the count
+/// and the C++ alone.
+///
 /// # Errors
 ///
 /// Returns an error when no window is given, or a window is empty or its
@@ -174,13 +184,28 @@ mod tests {
             (vec![1.2e9, 1.5e9, 1.8e9], vec![3.0e8; 3])
         );
         // Separated windows append or prepend; a descending window is
-        // reversed and its negative widths made positive.
+        // reversed and its negative widths made positive, and sorts by its
+        // lowest channel.
         assert_eq!(
             combined(&[
                 (vec![3.0e9, 2.9e9], vec![-1.0e8, -1.0e8]),
-                (vec![2.0e9], vec![2.0e8]),
+                (vec![2.0e9, 2.2e9], vec![2.0e8, 2.0e8]),
             ]),
-            (vec![2.0e9, 2.9e9, 3.0e9], vec![2.0e8, 1.0e8, 1.0e8])
+            (
+                vec![2.0e9, 2.2e9, 2.9e9, 3.0e9],
+                vec![2.0e8, 2.0e8, 1.0e8, 1.0e8]
+            )
+        );
+        assert_eq!(
+            combined(&[
+                (vec![1.2e9, 1.3e9], vec![1.0e8, 1.0e8]),
+                (vec![3.1e9, 3.0e9], vec![-1.0e8, -1.0e8]),
+                (vec![2.0e9, 2.1e9], vec![1.0e8, 1.0e8]),
+            ]),
+            (
+                vec![1.2e9, 1.3e9, 2.0e9, 2.1e9, 3.0e9, 3.1e9],
+                vec![1.0e8; 6]
+            )
         );
     }
 

@@ -581,9 +581,14 @@ fn a_one_channel_cube_has_a_per_channel_briggs_density() {
 /// and alike whether the selection is tuned (`savemodel='modelcolumn'`) or
 /// not. Over two adjacent 30-channel windows here, the first window's
 /// buffer tunes the selection; the cube of both windows grids the samples
-/// of the first's alone, and weighs them otherwise.
+/// of the first's alone, and weighs them otherwise: the second window's
+/// samples add to the uniform density, so every plane's sum of weights
+/// falls, and with them flagged the cube of both windows weighs as the
+/// first's alone.
 #[test]
 fn a_cube_density_counts_a_window_its_axis_misses() {
+    use casa_ms::MeasurementSet;
+    use casa_types::{ScalarValue, Value};
     let (observation, _) = adjacent_windows(30);
     let cube = |name: &str, spw: &str| {
         observation.image(
@@ -601,10 +606,130 @@ fn a_cube_density_counts_a_window_its_axis_misses() {
     let [ours, theirs] = [&both, &alone].map(|products| products.get(".sumwt").channel_values());
     for (channel, (ours, theirs)) in ours.iter().zip(&theirs).enumerate() {
         assert!(
-            (ours - theirs).abs() > 1.0e-3 * theirs,
+            *ours < theirs * (1.0 - 1.0e-3),
             "sumwt of channel {channel}: {ours} with the missed window, {theirs} without"
         );
     }
+    // The missed window's rows flagged, its samples leave the density.
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    for row in 0..ms.row_count() {
+        let description = ms
+            .main_table()
+            .cell_accessor(row, "DATA_DESC_ID")
+            .unwrap()
+            .scalar()
+            .unwrap()
+            .clone();
+        if description == ScalarValue::Int32(1) {
+            ms.main_table_mut()
+                .row_accessor_mut()
+                .set_cell(row, "FLAG_ROW", Value::Scalar(ScalarValue::Bool(true)))
+                .unwrap();
+        }
+    }
+    ms.save().unwrap();
+    drop(ms);
+    let flagged = cube("tuned-both-flagged", "*")
+        .1
+        .get(".sumwt")
+        .channel_values();
+    for (channel, (flagged, theirs)) in flagged.iter().zip(&theirs).enumerate() {
+        assert!(
+            (flagged - theirs).abs() <= 1.0e-6 * theirs,
+            "sumwt of channel {channel}: {flagged} with the missed window flagged, {theirs} \
+             without it"
+        );
+    }
+}
+
+/// A cube with per-channel Briggs density pads its density cube whatever
+/// its channel count and interpolation, as CASA's `BriggsCubeWeightor`
+/// always does (`estimateSwingChanPad`, whose edge step is the image's
+/// increment for one channel), so a one-channel cube
+/// (`test_onefield_pcwdT_and_pcwdF.1`: `refim_twochan.ms`, `spw='0:1'`) and
+/// a nearest-interpolation cube image, with a sum of weights on every plane
+/// and a PSF peaking at 1 (#980). Padding only linearly interpolated cubes
+/// of several channels left both without the density padding their
+/// per-channel weighting needs, and the run refused them.
+#[test]
+fn a_one_channel_or_nearest_cube_pads_its_per_channel_density() {
+    let observation = Observation::synthesise_band(2, &[("point", POINT)]);
+    for (name, controls) in [
+        (
+            "one-channel-briggs",
+            json!({
+                "specmode": "cube", "nchan": 1, "spw": "0:1", "perchanweightdensity": true,
+                "weighting": "briggs", "niter": 0,
+            }),
+        ),
+        (
+            "nearest-briggs",
+            json!({
+                "specmode": "cube", "interpolation": "nearest", "perchanweightdensity": true,
+                "weighting": "briggs", "niter": 0,
+            }),
+        ),
+    ] {
+        let (_, products) = observation.image(name, controls);
+        let sumwt = products.get(".sumwt").channel_values();
+        assert!(
+            !sumwt.is_empty() && sumwt.iter().all(|sumwt| sumwt.is_finite() && *sumwt > 0.0),
+            "{name}: sumwt {sumwt:?}"
+        );
+        let psf = products.get(".psf");
+        assert_eq!(psf.channels(), sumwt.len(), "{name}");
+        for channel in 0..psf.channels() {
+            let peak = psf
+                .plane(channel)
+                .iter()
+                .fold(f32::NEG_INFINITY, |peak, value| peak.max(*value));
+            assert!(
+                peak.is_finite() && (peak - 1.0).abs() < 1.0e-3,
+                "{name}: PSF peak {peak} on plane {channel}"
+            );
+        }
+    }
+}
+
+/// tclean selects a `cubedata` cube's channels in the data's frame
+/// (`ignoreframe`: its selection frame is `Undefined`), by a band from the
+/// lowest to the highest channel centre of each range `spw` names, so a
+/// range with a stride is read whole, as a `cube`'s is (#980): the cube of
+/// `spw='0:0~10^2'` is the cube of `spw='0:0~10'`. Reading the named
+/// channels alone filled each odd plane by interpolating its neighbours'
+/// noisy samples, where it holds its own channel's.
+#[test]
+fn a_cubedata_range_with_a_stride_is_read_whole() {
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
+    let cube = |name: &str, spw: &str| {
+        observation
+            .image(
+                name,
+                json!({
+                    "specmode": "cubedata", "spw": spw, "start": 0, "width": 1, "nchan": 11,
+                    "niter": 0,
+                }),
+            )
+            .1
+    };
+    let strided = cube("cubedata-strided", "0:0~10^2");
+    let whole = cube("cubedata-whole", "0:0~10");
+    assert_eq!(
+        strided.get(".sumwt").channel_values(),
+        whole.get(".sumwt").channel_values()
+    );
+    let [strided, whole] = [&strided, &whole].map(|products| products.get(".image").values());
+    let peak = whole
+        .iter()
+        .fold(0.0_f32, |peak, value| peak.max(value.abs()));
+    let worst = strided
+        .iter()
+        .zip(&whole)
+        .fold(0.0_f32, |worst, (a, b)| worst.max((a - b).abs()));
+    assert!(
+        worst <= 1.0e-6 * peak,
+        "the strided cube differs from the whole range's by {worst} of a peak {peak}"
+    );
 }
 
 /// CASA's visibility iterator selects a cube's channels at each time by

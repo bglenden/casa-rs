@@ -3169,26 +3169,32 @@ no such file; CASA 6.7.6.14 writes `tst2.gridwt` in
 ## W projection grids a support the grid's edge cuts, and never its last row and column
 
 - Date noted: 2026-11-03
-- Status: CASA behaviour casa-rs follows for parity, but for a write before
-  the grid it corrects (#980, `casa-imaging-operator` `GridEdge::Sectioned`)
+- Status: CASA behaviour casa-rs follows for parity (#980,
+  `casa-imaging-operator` `GridEdge::Sectioned`)
 - Affected code: casatools `synthesis/TransformMachines2/WProjectFT.cc`
-  (`put`), `FTMachine.cc` (`findGridSector`), `synthesis/fortran/wprojgrid.f`
-  (`sectgwgridd`, `sectgwgrids`, `onmywgrid`, `sectdwgrid`, `owp`)
+  (`put`), `FTMachine.cc` (`findGridSector`, `tweakGridSector`),
+  `synthesis/fortran/wprojgrid.f` (`sectgwgridd`, `sectgwgrids`,
+  `onmywgrid`, `sectdwgrid`, `owp`)
 
 `WProjectFT::put` grids through the sectioned `sectgwgridd`: each sector
 `findGridSector` cuts grids the taps of a sample that fall on it and adds
 `weight · Σ Re(cwt)` over those taps to `sumwt`, wherever the sample's anchor
-lies. A support that overruns the grid is therefore gridded in part and
-weighed by the part, where the unsectioned `gwgrid` and the degridder
-(`sectdwgrid` through `owp`) drop it. The sectors start at the 0-based
-`x0 = 0` and are compared with 1-based positions, so they cover every column
-and row but the grid's last, and a tap one column below the first lands at
-`grid(0, y)`, outside the array: in memory it is the last column of the row
-before. casa-rs grids the taps on the sectors and weighs them, as CASA does,
-never grids the last column and row, and drops a tap that would land before
-the grid instead of writing it elsewhere. Dropping the whole sample, as
+lies (`onmywgrid` asks only that the support meet the sector). A support
+that overruns the grid is therefore gridded in part and weighed by the part,
+where the unsectioned `gwgrid` and the degridder (`sectdwgrid` through
+`owp`) drop it. The sectors start at the grid's first column and row (both
+`findGridSector` and `tweakGridSector` add one to the 0-based start, giving
+the 1-based `x0 = 1`, and `onmywgrid` clips a support's low end to it), and
+`findGridSector` cuts the last one short (`nxsub = nxp - x0 - 1` before that
+increment), so they cover every column and row but the grid's last: no tap
+lands before the grid, and the last column and row are never gridded,
+though `owp` predicts a support that reaches them. casa-rs grids the taps
+on the sectors and weighs them, as CASA does. Dropping the whole sample, as
 casa-rs did, left `test_cube_wproj_onefield`'s 1.5 and 1.8 GHz planes
 (`refim_oneshiftpoint.mosaic.ms`, four planes, whose supports overrun the
 grid at those frequencies) short of CASA's `sumwt` by 3.06 and 14.57 and
 their PSFs 3.6% and 5.3% apart in normalized RMS; they now agree with CASA
-6.7.6.14 to 8e-7.
+6.7.6.14 to 8e-7. (An earlier reading of the sectors as starting at the
+0-based column 0, so that a tap one column below the grid would be written
+before it and weighed, mistook `findGridSector`'s start before its final
+increment for the start it returns.)

@@ -11,11 +11,11 @@ use casa_imaging_model::{
     ItrfPosition, ReconstructionBasis, RestFrequency, SpectralCoordinateSpec, SpectralFrameAnchor,
     SpectralSamplingLaw, SpectralWcs, TimeScale,
 };
+use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeInterpolation, CubeSpectralSetup, MeasurementSet,
     SubtableId, spectral_selection::CubeSpecMode,
 };
-use casa_ms::derived::engine::MsCalEngine;
 use casa_observation::{Catalogue, FieldId, WindowId};
 use casa_types::ArrayValue;
 use casa_types::measures::{
@@ -386,17 +386,29 @@ fn cube_setup(
     frame: &FrameContext<'_>,
     mut axis: CubeAxisConfig,
 ) -> Result<(CubeSpectralSetup, [f64; 2]), PrepareError> {
-    let windows = &survey.spectral_windows;
-    let band_hz = casa_ms::casa_selected_band_hz(windows.iter().map(|window| {
+    fn selected<'w>(
+        survey: &'w Survey,
+        window: &'w SourceSpectralWindow,
+    ) -> (&'w [f64], &'w [f64], Option<&'w [usize]>) {
         (
             window.frequencies_hz.as_slice(),
             window.channel_widths_hz.as_slice(),
             survey.spw_channels.get(&window.spw_id).map(Vec::as_slice),
         )
-    }))
-    .ok_or(PrepareError::SpectralWindowCoordinates {
-        spw_id: windows[0].spw_id,
-    })?;
+    }
+    let windows = &survey.spectral_windows;
+    // Name the window whose selection spans no band.
+    if let Some(window) = windows
+        .iter()
+        .find(|window| casa_ms::casa_selected_band_hz([selected(survey, window)]).is_none())
+    {
+        return Err(PrepareError::SpectralWindowCoordinates {
+            spw_id: window.spw_id,
+        });
+    }
+    let band_hz =
+        casa_ms::casa_selected_band_hz(windows.iter().map(|window| selected(survey, window)))
+            .ok_or(PrepareError::NoSelectedSamples)?;
     axis.selected_band_hz = Some(band_hz);
     let (frequencies_hz, widths_hz) = match windows.as_slice() {
         [window] => (
@@ -502,8 +514,8 @@ struct StoreReads {
 /// ([`CubeSpectralSetup::source_channel_support`]) and that the window's
 /// frequency bands, tuned to the image's band `image_band` where CASA
 /// tunes the selection ([`tunes_selection`]), select at some epoch of its
-/// samples ([`frequency_bands`]); where CASA selects by channel numbers
-/// instead, those `spw` names unless it tunes. Where the bands do not
+/// samples ([`cube_bands`]); a `fitspw` fit, which has no bands, reads
+/// those `spw` names. Where the bands do not
 /// select every channel read at every epoch, the window carries them and
 /// each time reads only the channels they select then, as CASA's iterator
 /// does.
@@ -557,9 +569,9 @@ fn store_reads(
             reads.reaches_axis = true;
             if let (Some(bands), Some(selection)) = (&bands, &selection)
                 && channels.iter().any(|channel| !selection.always(*channel))
-                && let Some(window_bands) = bands.frequency_bands(window.spw_id)?
+                && let Some(window_bands) = bands.frequency_bands(window.spw_id)
             {
-                reads.bands.insert(window.spw_id, window_bands);
+                reads.bands.insert(window.spw_id, window_bands.clone());
             }
         }
         reads.channels.insert(window.spw_id, channels);
@@ -586,21 +598,34 @@ fn image_band(
     )?))
 }
 
-/// The bands a `cube`'s gridding selects one store's windows' channels by
-/// at each time ([`frequency_bands::cube_bands`]), tuned to the image's
-/// band `image_band` where CASA tunes the selection; none for any other
-/// mode, which CASA selects by channel numbers (`cubedata`, `cubesource`),
-/// or a `fitspw` fit, which reads its channels as named.
+/// The bands a cube's gridding selects one store's windows' channels by at
+/// each time ([`frequency_bands::cube_bands`]): a `cube`'s in `outframe`,
+/// or tuned to the image's band `image_band` where CASA tunes the
+/// selection; in the data's frame where tclean's selection frame is
+/// `Undefined` (`cubedata`) or `REST` (`cubesource`, or a `cube` whose
+/// `outframe` is `REST`), which select each named range's channels at
+/// every time, a range with a stride whole. None for a `fitspw` fit,
+/// which reads its channels as named.
 fn cube_bands(
     request: &ImagingRequest,
     (catalogue, engine): (&Catalogue, &MsCalEngine),
     survey: &Survey,
     image_band: Option<[f64; 2]>,
 ) -> Result<Option<frequency_bands::CubeBands>, PrepareError> {
-    if request.specmode != SpecMode::Cube || request.fitspw.is_some() {
+    use frequency_bands::SelectionFrame;
+    if request.fitspw.is_some() {
         return Ok(None);
     }
-    frequency_bands::cube_bands((catalogue, engine), survey, request.outframe, image_band)
+    let frame = match request.specmode {
+        SpecMode::Cube if image_band.is_some() => SelectionFrame::Converted(FrequencyRef::LSRK),
+        SpecMode::Cube if request.outframe != FrequencyRef::REST => {
+            SelectionFrame::Converted(request.outframe)
+        }
+        SpecMode::Mfs | SpecMode::Cube | SpecMode::Cubedata | SpecMode::Cubesource => {
+            SelectionFrame::Data
+        }
+    };
+    frequency_bands::cube_bands((catalogue, engine), survey, frame, image_band).map(Some)
 }
 
 /// A cube in its output frame (`cube`) or the data's (`cubedata`), laid

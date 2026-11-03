@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    CompileObservationError, CorrelationProduct, FlagPolicy, IdSelection, IntentSelection,
-    ObservationSelection, ObservationSnapshot, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, PartitionId, PartitionSelection, RowSelection, SelectedColumns,
-    SelectionBound, SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange,
-    UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    CompileObservationError, CorrelationProduct, FlagPolicy, FrequencyBands, FrequencyFrame,
+    IdSelection, IntentSelection, ObservationSelection, ObservationSnapshot,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance, PartitionId,
+    PartitionSelection, RowSelection, SelectedColumns, SelectionBound,
+    SpectralWindowCoordinateCatalog, SpectralWindowSelection, UvDistanceRange, UvDistanceUnit,
+    UvSelection, VisibilityColumn, WeightColumn, compile_observation,
 };
 use casa_types::Correlation;
 
@@ -547,5 +548,31 @@ fn numeric_intervals_canonicalize_and_charge_spare_capacity() {
     }
     for value in [-1, 0, 1, i64::from(u32::MAX) + 1] {
         assert!(!scans.holds(value));
+    }
+}
+
+/// A window's frequency bands: a band may reach zero hertz or below (the
+/// image's band of a few wide channels padded below a low first channel,
+/// which `SynthesisImager::tuneSelectData` adds to a window none of whose
+/// bands it overlaps) and then selects every channel up to its upper end;
+/// no band, or one with a non-finite or inverted end, is a typed error.
+#[test]
+fn frequency_bands_take_any_finite_ascending_band_and_refuse_the_rest() {
+    let bands = FrequencyBands::new(FrequencyFrame::Lsrk, vec![[-0.5e9, 1.2e9]])
+        .expect("a band reaching below zero hertz");
+    assert!(bands.meets(1.0, [0.9e9, 1.1e9]));
+    assert!(bands.meets(1.0, [1.15e9, 1.25e9]));
+    assert!(!bands.meets(1.0, [1.25e9, 1.35e9]));
+    for refused in [
+        Vec::new(),
+        vec![[1.2e9, 1.0e9]],
+        vec![[f64::NAN, 1.0e9]],
+        vec![[1.0e9, f64::INFINITY]],
+    ] {
+        assert_eq!(
+            FrequencyBands::new(FrequencyFrame::Lsrk, refused.clone()),
+            Err(CompileObservationError::InvalidFrequencyBands),
+            "{refused:?}"
+        );
     }
 }
