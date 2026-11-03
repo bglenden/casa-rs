@@ -171,9 +171,10 @@ impl DensityGridShape {
             .filter(|index| *index < fields.count.get())?;
         let plane = if self.planes == 1 { 0 } else { plane };
         let planes = u32::try_from(self.planes).ok()?;
-        (plane < planes)
-            .then(|| index.checked_mul(planes)?.checked_add(plane))
-            .flatten()
+        if plane >= planes {
+            return None;
+        }
+        index.checked_mul(planes)?.checked_add(plane)
     }
 
     /// Density plane of a placement: plane 0 for a global generation.
