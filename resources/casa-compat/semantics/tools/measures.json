@@ -238,7 +238,8 @@
    "scope": "The measures data's observatories and sources, and casacore's reference codes.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-observatories"
    ]
   },
   "obslist": {
@@ -533,6 +534,15 @@
    "state": "measured",
    "result": "Recorded from CASA 6.7.6-14 by measures_lists_oracle.py, with how CASA makes each list from its table. obslist and linelist equal CASA's character for character (the tables are the same in both data versions); sourcelist is checked against casa-rs's own Sources table, which its data version holds with more rows than CASA's 1139. Passes in the Python tests.",
    "scope": "me.obslist, me.sourcelist and me.linelist.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_measures.py"
+   ]
+  },
+  "casa-observatories": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Recorded from CASA 6.7.6-14 by observatories_oracle.py with each observatory's table row: me.observatory for all 59 observatories equals CASA's to 1e-14 relative, ITRF entries included, which casacore reads from Long, Lat and Height and not X, Y, Z (#1106). Passes in the Python tests.",
+   "scope": "me.observatory for every name me.obslist gives.",
    "links": [
     "crates/casars-python/python/tests/test_tools_measures.py"
    ]

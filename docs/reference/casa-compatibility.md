@@ -1570,7 +1570,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `linelist` |  | Implemented | The rest lines of the measures data, their names joined by spaces in the table's order, with CASA's deprecation warning. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists) |
 | `listcodes` | `ms` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `measure` | `v, rf, off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `observatory` | `name='ALMA'` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `observatory` | `name='ALMA'` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [casa-observatories](#measures-evidence-casa-observatories) |
 | `obslist` |  | Implemented | The observatories of the measures data, by name in the table's order, as CASA lists them; CASA's readantenna, sensitivity and itrf2locname, and simobserve, call it. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists), [casa-values](#measures-evidence-casa-values) |
 | `posangle` | `m1, m2` | Implemented | Angular separation and position angle, as casacore computes them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `position` | `rf='WGS84', v0=[], v1=[], v2=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
@@ -1693,6 +1693,13 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 ##### casa-lists
 
 **CASA-recorded values — measured.** Recorded from CASA 6.7.6-14 by measures_lists_oracle.py, with how CASA makes each list from its table. obslist and linelist equal CASA's character for character (the tables are the same in both data versions); sourcelist is checked against casa-rs's own Sources table, which its data version holds with more rows than CASA's 1139. Passes in the Python tests. me.obslist, me.sourcelist and me.linelist.
+
+- [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py)
+
+<a id="measures-evidence-casa-observatories"></a>
+##### casa-observatories
+
+**CASA-recorded values — measured.** Recorded from CASA 6.7.6-14 by observatories_oracle.py with each observatory's table row: me.observatory for all 59 observatories equals CASA's to 1e-14 relative, ITRF entries included, which casacore reads from Long, Lat and Height and not X, Y, Z (#1106). Passes in the Python tests. me.observatory for every name me.obslist gives.
 
 - [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py)
 

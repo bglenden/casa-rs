@@ -995,26 +995,7 @@ impl MeasuresProvider for MeasuresRuntime {
 
     fn observatory(&self, name: &str) -> Result<Option<ObservatoryPosition>, String> {
         self.observatories()
-            .map(|catalog| {
-                catalog.get(name).and_then(|entry| {
-                    let observatory_type = entry.observatory_type.trim();
-                    if observatory_type.eq_ignore_ascii_case("ITRF") {
-                        Some(ObservatoryPosition::Itrf {
-                            x_m: entry.x_m,
-                            y_m: entry.y_m,
-                            z_m: entry.z_m,
-                        })
-                    } else if observatory_type.eq_ignore_ascii_case("WGS84") {
-                        Some(ObservatoryPosition::Wgs84 {
-                            longitude_rad: entry.longitude_deg.to_radians(),
-                            latitude_rad: entry.latitude_deg.to_radians(),
-                            height_m: entry.height_m,
-                        })
-                    } else {
-                        None
-                    }
-                })
-            })
+            .map(|catalog| catalog.get(name).and_then(ObservatoryEntry::position))
             .map_err(|error| error.to_string())
     }
 
