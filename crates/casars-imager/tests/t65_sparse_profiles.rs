@@ -335,10 +335,8 @@ fn an_imager_profile_migrates_to_tclean() -> Result<(), Box<dyn Error>> {
         ParameterValue::String("3".into())
     );
     let request = request_from_profile("none", source)?;
-    assert_eq!(
-        (request.phasecenter_field, request.mask_box),
-        (Some(3), vec![[1, 2, 10, 12]])
-    );
+    assert_eq!(request.phasecenter_field, Some(3));
+    assert_eq!(request.mask_box, [[1, 2, 10, 12]]);
     Ok(())
 }
 
