@@ -271,7 +271,13 @@ fn full_stokes_taylor_families_image_each_stokes_plane_on_its_own() {
         assert_eq!(sumwt.len(), 4, "{term}");
         assert_ne!(sumwt[0], 0.0, "{term}");
         assert_eq!(sumwt, [sumwt[0]; 4], "{term}");
-        assert_eq!(sumwt[0], i_only.get(term).channel_values()[0], "{term}");
+        // An I-only run grids both hands on its one plane; the fixture
+        // weighs RR and LL alike, so RR's sum is half of theirs.
+        assert_eq!(
+            2.0 * sumwt[0],
+            i_only.get(term).channel_values()[0],
+            "{term}"
+        );
     }
     for suffix in [
         ".psf.tt0",
