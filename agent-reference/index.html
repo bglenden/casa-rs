@@ -878,10 +878,11 @@ extend it; a session reads them when it starts.</p>
     line (<code>base64 -i KEY | tr -d '\n'</code> on macOS). <code>CASA_RS_MAC_USER</code> overrides
     the login name (default <code>brianglendenning</code>).</li>
 <li>Copies live in <code>~/ext/SoftwareProjects/casa-rs-cloud/src/&lt;branch&gt;/</code> on
-    the mini (the top of the <code>~/ext</code> volume is owned by root) and share one
-    <code>target/</code> beside <code>src/</code>; <code>CASA_RS_MAC_ROOT</code> overrides the location.
-    Remove a branch's copy with <code>scripts/mac-run.sh --clean</code> once its work is
-    merged or pushed.</li>
+    the mini (the top of the <code>~/ext</code> volume is owned by root), each building
+    in its own <code>targets/&lt;branch&gt;/</code> beside <code>src/</code>, since copies sharing one
+    target would link each other's crates; <code>CASA_RS_MAC_ROOT</code> overrides the
+    location. Remove a branch's copy and target with
+    <code>scripts/mac-run.sh --clean</code> once its work is merged or pushed.</li>
 <li>Commands run in a login shell, which reads <code>~/.zprofile</code> and <code>~/.zshenv</code>
     but not <code>~/.zshrc</code>; settings the tests need, such as
     <code>CASA_RS_MEASURESPATH</code>, belong in the former. <code>~/.zshenv</code> must print
