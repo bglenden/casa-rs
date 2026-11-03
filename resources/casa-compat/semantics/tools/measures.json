@@ -235,10 +235,12 @@
   },
   "observatory": {
    "status": "Implemented",
-   "scope": "The measures data's observatories and sources, and casacore's reference codes.",
+   "scope": "The measures data's observatories and sources, found by name as casacore's MeasTable finds them (ignoring case, or by a unique prefix), and casacore's reference codes.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-observatories",
+    "casa-names"
    ]
   },
   "obslist": {
@@ -332,7 +334,8 @@
    "scope": "The measures data's observatories and sources, and casacore's reference codes.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "casa-names"
    ]
   },
   "sourcelist": {
@@ -344,12 +347,11 @@
    ]
   },
   "spectralline": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "The rest frequency of a line in the measures data's Lines table, found by name as casacore finds it, REST frame; HI is casacore's QC::HI constant, as in CASA. CASA's simulation tasks and simutil do not call it.",
    "evidence": [
     "signature",
-    "refusals"
+    "casa-names"
    ]
   },
   "todoppler": {
@@ -533,6 +535,24 @@
    "state": "measured",
    "result": "Recorded from CASA 6.7.6-14 by measures_lists_oracle.py, with how CASA makes each list from its table. obslist and linelist equal CASA's character for character (the tables are the same in both data versions); sourcelist is checked against casa-rs's own Sources table, which its data version holds with more rows than CASA's 1139. Passes in the Python tests.",
    "scope": "me.obslist, me.sourcelist and me.linelist.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_measures.py"
+   ]
+  },
+  "casa-observatories": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Recorded from CASA 6.7.6-14 by observatories_oracle.py with each observatory's table row: me.observatory for all 59 observatories equals CASA's to 1e-14 relative, ITRF entries included, which casacore reads from Long, Lat and Height and not X, Y, Z (#1106). Passes in the Python tests.",
+   "scope": "me.observatory for every name me.obslist gives.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_measures.py"
+   ]
+  },
+  "casa-names": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Recorded from CASA 6.7.6-14 by measures_names_oracle.py: me.observatory for 471 names and me.spectralline for 125 (every prefix of every entry's name, upper and lower case, and names longer than an entry or with spaces around them), and me.source for 10. casa-rs finds what CASA finds for each, by casacore's MUString::minimaxNC rule (#1110). Passes in the Python tests.",
+   "scope": "How me.observatory, me.spectralline and me.source find an entry by name.",
    "links": [
     "crates/casars-python/python/tests/test_tools_measures.py"
    ]

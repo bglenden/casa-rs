@@ -116,12 +116,18 @@ pub trait MeasuresProvider: Debug + Send + Sync {
         Err("IGRF data is unavailable from this measures provider".to_string())
     }
 
-    /// Look up an observatory by case-insensitive name.
+    /// The observatory `name` finds.
+    ///
+    /// A provider finds `name` as casacore's `MeasTable` does
+    /// (`MUString::minimaxNC`, [`crate::quanta::unique_prefix_position`]):
+    /// the entry of that name ignoring case, else the one entry the name
+    /// agrees with over the shorter of their lengths, spaces included. Callers such as
+    /// `readantenna` rely on it to find `ALMASD` as ALMA.
     fn observatory(&self, _name: &str) -> Result<Option<ObservatoryPosition>, String> {
         Ok(None)
     }
 
-    /// Look up a fixed source by case-insensitive name.
+    /// The fixed source `name` finds, by the rule of [`Self::observatory`].
     fn source(&self, _name: &str) -> Result<Option<NamedSourceDirection>, String> {
         Ok(None)
     }
@@ -145,7 +151,8 @@ pub trait MeasuresProvider: Debug + Send + Sync {
         Ok(Vec::new())
     }
 
-    /// Look up a rest-line frequency by case-insensitive name.
+    /// The rest frequency of the line `name` finds, by the rule of
+    /// [`Self::observatory`].
     fn spectral_line_hz(&self, _name: &str) -> Result<Option<f64>, String> {
         Ok(None)
     }

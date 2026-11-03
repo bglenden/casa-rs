@@ -171,7 +171,7 @@ const METHODS: &[Method] = &[
         "spectralline",
         &[param("name", K::Text, Text("HI"))],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "todoppler",
