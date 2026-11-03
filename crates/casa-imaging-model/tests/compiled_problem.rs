@@ -389,7 +389,8 @@ fn compiler_owns_the_exact_product_list_and_atomic_publication_contract() {
         restored.beam(),
         ProductBeamRule::Restoring(RestoringBeamPolicy::PerPlane)
     );
-    assert_eq!(restored.validity(), ProductValidityRule::FinalNormalState);
+    // CASA restores every plane, a blank one's model included.
+    assert_eq!(restored.validity(), ProductValidityRule::All);
     assert!(list.publication().members().contains(&restored.id()));
 
     let spectral_index = list
@@ -444,9 +445,15 @@ fn uncorrected_mask_is_separate_from_numeric_support_and_binds_publication() {
     let compiled = compile_with_policy(validity);
     let absent = compile_with_policy(product_validity());
 
-    for role in [
-        ProductRole::Residual(ProductTerm::Taylor(0)),
-        ProductRole::RestoredImage(ProductTerm::Taylor(0)),
+    for (role, rule) in [
+        (
+            ProductRole::Residual(ProductTerm::Taylor(0)),
+            ProductValidityRule::FinalNormalState,
+        ),
+        (
+            ProductRole::RestoredImage(ProductTerm::Taylor(0)),
+            ProductValidityRule::All,
+        ),
     ] {
         assert_eq!(
             compiled
@@ -454,7 +461,7 @@ fn uncorrected_mask_is_separate_from_numeric_support_and_binds_publication() {
                 .entry(role)
                 .expect("uncorrected product")
                 .validity(),
-            ProductValidityRule::FinalNormalState,
+            rule,
         );
         assert_eq!(
             compiled
@@ -628,13 +635,19 @@ fn publishing_a_primary_beam_does_not_change_uncorrected_product_validity() {
     .expect("compile unit-response products with a published primary beam");
     let list = compiled.product_list();
 
-    for role in [
-        ProductRole::Residual(ProductTerm::Taylor(0)),
-        ProductRole::RestoredImage(ProductTerm::Taylor(0)),
+    for (role, rule) in [
+        (
+            ProductRole::Residual(ProductTerm::Taylor(0)),
+            ProductValidityRule::FinalNormalState,
+        ),
+        (
+            ProductRole::RestoredImage(ProductTerm::Taylor(0)),
+            ProductValidityRule::All,
+        ),
     ] {
         assert_eq!(
             list.entry(role).expect("uncorrected product").validity(),
-            ProductValidityRule::FinalNormalState,
+            rule
         );
     }
     assert_eq!(
