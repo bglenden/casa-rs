@@ -88,9 +88,10 @@ fn assert_holds_the_sources(mask: &Array2<f32>, label: &str) {
 }
 
 /// A cube's channels are masked each of its own: a leading channel with no
-/// data (the image starts 128 MHz below the band) keeps an empty mask,
-/// where the one-plane mask took the first channel's PSF beam and failed on
-/// its empty PSF, and every channel with data masks both sources.
+/// data (the cube starts at the window's first channel, which `spw` leaves
+/// unselected) keeps an empty mask, where the one-plane mask took the first
+/// channel's PSF beam and failed on its empty PSF, and every channel with
+/// data masks both sources.
 #[test]
 fn a_cube_is_automasked_channel_by_channel() {
     let observation =
@@ -99,9 +100,9 @@ fn a_cube_is_automasked_channel_by_channel() {
         "cube-automask",
         json!({
             "specmode": "cube",
+            "spw": format!("0:1~{}", CHANNELS - 1),
             "nchan": CHANNELS,
-            "start": "43.872GHz",
-            "width": "130MHz",
+            "start": "0",
             "weighting": "natural",
             "deconvolver": "hogbom",
             "niter": 2000,

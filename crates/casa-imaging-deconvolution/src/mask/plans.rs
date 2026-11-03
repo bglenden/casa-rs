@@ -430,8 +430,7 @@ impl ImageDomainReconstructionMaskPlans {
                 let read = size_of::<num_complex::Complex64>() as u64
                     + size_of::<ModelSample>() as u64
                     + polarizations as u64 * size_of::<bool>() as u64;
-                workers.min(channels).max(1) as u64
-                    * (auto_multithresh_bytes(shape) + cells * read)
+                workers.min(channels).max(1) as u64 * (auto_multithresh_bytes(shape) + cells * read)
             })
             .max()
             .unwrap_or(0);
