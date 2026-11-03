@@ -569,7 +569,13 @@ impl TaylorProducts {
             alpha_error,
             alpha_validity,
             primary_beam_validity,
-            clean_mask: crate::plane::reconstruction_support_plane(inputs, domain_role, cells),
+            // A Taylor family is one channel of Stokes I.
+            clean_mask: crate::plane::reconstruction_support_plane(
+                inputs,
+                domain_role,
+                (0, 0),
+                cells,
+            ),
             fitted_beam,
             restoring_beam,
         })

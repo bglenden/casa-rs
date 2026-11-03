@@ -39,6 +39,8 @@ mod mtmfs;
 mod non_square;
 #[path = "t1/pb_default.rs"]
 mod pb_default;
+#[path = "t1/plane_masks.rs"]
+mod plane_masks;
 #[path = "t1/reference_frequency.rs"]
 mod reference_frequency;
 #[path = "t1/restart.rs"]

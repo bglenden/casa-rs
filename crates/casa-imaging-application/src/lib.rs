@@ -11,12 +11,13 @@
 pub mod availability;
 mod compile;
 mod imaging;
+#[doc(hidden)]
+pub mod mask_image_law;
 mod native;
 #[doc(hidden)]
 pub mod product_law;
 mod request;
 mod restart;
-#[doc(hidden)]
 pub mod restart_mask_law;
 #[doc(hidden)]
 pub mod restart_products_law;

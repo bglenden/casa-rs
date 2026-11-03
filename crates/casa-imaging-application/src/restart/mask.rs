@@ -2,14 +2,14 @@
 //! An existing binary CLEAN mask, read once on its checked grid. CASA's
 //! SynthesisDeconvolver::setupMask reuses it when no new user mask is given.
 //!
-//! A mask has a plane per Stokes parameter and channel. casa-rs's
-//! reconstruction mask is one spatial support for every plane, so a mask is
-//! reused when its planes agree, as every mask casa-rs writes does, and
-//! refused otherwise.
+//! A mask has a plane per Stokes parameter and channel, and is reused
+//! plane by plane: as one support when its planes agree, as a static mask's
+//! do, else as a support for each plane, as an automatic mask's may.
 
 use std::path::{Path, PathBuf};
 
 use casa_images::PagedImage;
+use casa_imaging_deconvolution::MaskPlanes;
 
 use crate::PrepareError;
 
@@ -44,27 +44,29 @@ impl MaskInput {
         self.shape.iter().map(|&side| side as u64).product()
     }
 
-    fn plane_pixels(&self) -> u64 {
-        self.shape.iter().take(2).map(|&side| side as u64).product()
-    }
-
-    /// The read of every plane and its conversion, two support copies of one
-    /// plane (compile and run clone their plans), the bounded tile cache and
-    /// two decoded/I/O tile buffers.
+    /// The read of every plane and its conversion, two support copies of
+    /// every plane (compile and run clone their plans), the bounded tile
+    /// cache and two decoded/I/O tile buffers.
     pub(crate) fn reading_bytes(&self) -> u64 {
         self.pixels()
             .saturating_mul(2 * 4)
-            .saturating_add(self.plane_pixels().saturating_mul(2))
+            .saturating_add(self.pixels().saturating_mul(2))
             .saturating_add(self.tile_bytes.saturating_mul(2))
             .saturating_add(CACHE_BYTES as u64)
     }
 
-    /// Both the original and the cloned static reconstruction-mask plan.
-    pub(crate) fn retained_bytes(&self) -> u64 {
-        self.plane_pixels().saturating_mul(2)
+    /// Both the original and the cloned static reconstruction-mask plan of
+    /// the `planes` of `cells` pixels each that [`Self::read`] kept.
+    pub(crate) fn retained_bytes(planes: MaskPlanes, cells: usize) -> u64 {
+        (cells as u64)
+            .saturating_mul(planes.count() as u64)
+            .saturating_mul(2)
     }
 
-    pub(crate) fn read(self) -> Result<Box<[bool]>, PrepareError> {
+    /// The mask's support, its planes as CASA's `.mask` holds them: one
+    /// plane when every Stokes plane and channel agrees, as a static mask
+    /// casa-rs writes does, else a plane for each.
+    pub(crate) fn read(self) -> Result<(MaskPlanes, Box<[bool]>), PrepareError> {
         let refuse = |reason| PrepareError::Restart {
             path: self.path.clone(),
             reason,
@@ -83,32 +85,33 @@ impl MaskInput {
         };
         // The grid check holds the mask to the image's four axes,
         // [x, y, stokes, channel]; reconstruction support is x-major (y
-        // fastest), unlike model samples.
+        // fastest), unlike model samples, plane after plane, channel-major.
         let &[nx, ny, stokes, channels] = self.shape.as_slice() else {
             return Err(refuse(format!(
                 "a CLEAN mask has four axes, not {:?}",
                 self.shape
             )));
         };
-        let planes = stokes * channels;
-        let at =
-            |x: usize, y: usize, plane: usize| pixels[&[x, y, plane % stokes, plane / stokes][..]];
-        let mut support = Vec::with_capacity(nx * ny);
-        for x in 0..nx {
-            for y in 0..ny {
-                let first = binary(at(x, y, 0))?;
-                for plane in 1..planes {
-                    if binary(at(x, y, plane))? != first {
-                        return Err(refuse(
-                            "continuation with a CLEAN mask whose Stokes or channel planes \
-                             differ is not implemented yet"
-                                .into(),
-                        ));
+        let mut support = Vec::with_capacity(nx * ny * stokes * channels);
+        for channel in 0..channels {
+            for polarization in 0..stokes {
+                for x in 0..nx {
+                    for y in 0..ny {
+                        support.push(binary(pixels[&[x, y, polarization, channel][..]])?);
                     }
                 }
-                support.push(first);
             }
         }
-        Ok(support.into_boxed_slice())
+        let cells = nx * ny;
+        if support
+            .chunks(cells)
+            .all(|plane| plane == &support[..cells])
+        {
+            support.truncate(cells);
+            return Ok((MaskPlanes::SHARED, support.into_boxed_slice()));
+        }
+        let planes =
+            MaskPlanes::new(channels, stokes).map_err(|error| refuse(error.to_string()))?;
+        Ok((planes, support.into_boxed_slice()))
     }
 }

@@ -470,9 +470,11 @@ pub enum PrepareError {
     /// A reconstruction mask image is complex-valued.
     #[error("reconstruction masks require a real CASA image")]
     ComplexMaskImage,
-    /// A reconstruction mask image is not one direction plane.
+    /// A reconstruction mask image has an axis besides its direction,
+    /// Stokes and spectral axes with more than one pixel.
     #[error(
-        "reconstruction mask must contain one two-dimensional direction plane; shape {shape:?}"
+        "a reconstruction mask image has direction, Stokes and spectral axes, and any other \
+         axis one pixel long; shape {shape:?}"
     )]
     MaskImageShape {
         /// The image shape.
@@ -481,6 +483,28 @@ pub enum PrepareError {
     /// A reconstruction mask image has no direction coordinate.
     #[error("mask image has no direction coordinate")]
     MaskImageDirection,
+    /// tclean cannot expand a mask image to the image's channels or Stokes
+    /// planes (`SDMaskHandler::expandMask`), and refuses it.
+    #[error("Error in constructing the clean mask from {}: {reason}", path.display())]
+    MaskImageExpansion {
+        /// The mask image.
+        path: PathBuf,
+        /// CASA's reason.
+        reason: String,
+    },
+    /// A mask image tclean regrids along frequency or Stokes onto the image
+    /// (`SDMaskHandler::copyMask`), which casa-rs does not yet.
+    #[error(
+        "mask image {} of shape {shape:?} would be regridded along frequency or Stokes onto \
+         the image, which casa-rs does not implement yet (#980)",
+        path.display()
+    )]
+    MaskImageRegrid {
+        /// The mask image.
+        path: PathBuf,
+        /// Its shape.
+        shape: Vec<usize>,
+    },
     /// Native mask reprojection supports SIN only.
     #[error("native mask reprojection currently requires SIN coordinates, not {projection:?}")]
     MaskImageProjection {
