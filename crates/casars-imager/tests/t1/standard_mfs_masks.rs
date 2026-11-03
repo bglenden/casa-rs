@@ -390,9 +390,8 @@ fn clipped_pixel_boxes_and_empty_regions_preserve_casa_mask_semantics() {
 /// A CRTF region limited to a spectral range (CASA's test_mask_2) masks an
 /// MFS image when the range reaches its one channel, by casacore's
 /// rounding of each end's pixel, and is left out when it misses it, which
-/// here leaves an empty mask and no cleaning, as CASA's stop code 7. A
-/// range over part of a cube's channels is refused until masks hold a
-/// plane per channel (#980).
+/// here leaves an empty mask and no cleaning, as CASA's stop code 7. On a
+/// cube it masks its channels only.
 #[test]
 fn a_crtf_range_masks_an_mfs_image_where_it_reaches_its_channel() {
     let observation = Observation::synthesise(&[("point", POINT)]);
@@ -451,15 +450,35 @@ fn a_crtf_range_masks_an_mfs_image_where_it_reaches_its_channel() {
         );
     }
     assert_eq!(summary.actual_minor_iterations, 0);
+    // On a cube the region masks only its channels: channel 1 of three is
+    // masked and cleaned, the others hold no mask and no model.
     let cube = Observation::synthesise_band(3, &[("point", POINT)]);
-    let Err(refusal) = cube.try_image(
+    let (summary, products) = cube.image(
         "range-cube",
-        json!({ "specmode": "cube", "mask": format!("{region},range=[0pix,0pix]") }),
-    ) else {
-        panic!("a range over one channel of three was accepted");
-    };
-    assert!(
-        refusal.contains("channels 0~0") && refusal.contains("#980"),
-        "{refusal}"
+        json!({
+            "specmode": "cube",
+            "deconvolver": "hogbom",
+            "niter": 50,
+            "threshold": THRESHOLD,
+            "mask": format!("{region},range=[1pix,1pix]"),
+        }),
     );
+    assert!(summary.actual_minor_iterations > 0);
+    let (mask, model) = (products.get(".mask"), products.get(".model"));
+    assert_eq!(mask.channels(), 3);
+    let masked = |channel: usize| {
+        mask.plane(channel)
+            .iter()
+            .filter(|value| **value != 0.0)
+            .count()
+    };
+    assert_eq!(masked(1), 13 * 13, "the box on its channel");
+    assert_eq!((masked(0), masked(2)), (0, 0), "no mask off its channel");
+    for channel in [0, 2] {
+        assert!(
+            model.plane(channel).iter().all(|value| *value == 0.0),
+            "channel {channel}"
+        );
+    }
+    assert!(model.plane(1).iter().any(|value| *value != 0.0));
 }
