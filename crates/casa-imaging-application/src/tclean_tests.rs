@@ -853,6 +853,10 @@ fn automask_controls_and_the_noise_estimate_are_read() {
 fn pbmask_is_read_in_every_mask_mode_and_bounded_as_casa_bounds_it() {
     let pb = request(json!({ "usemask": "pb" }));
     assert_eq!((pb.usemask, pb.pbmask), (crate::UseMask::Pb, 0.0));
+    // Only CASA's automatic mask smooths, so only it needs a positive
+    // smoothfactor.
+    let unsmoothed = request(json!({ "usemask": "pb", "niter": 10, "smoothfactor": 0.0 }));
+    assert_eq!(unsmoothed.smoothfactor, 0.0);
     for usemask in ["user", "pb", "auto-multithresh"] {
         let read = request(json!({ "usemask": usemask, "pbmask": 0.25 }));
         assert_eq!(read.pbmask, 0.25, "{usemask}");

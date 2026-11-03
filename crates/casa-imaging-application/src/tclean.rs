@@ -138,6 +138,8 @@ struct Modes {
     deconvolver: String,
     weighting: String,
     user_mask: bool,
+    /// Whether the mask is CASA's automatic mask, which alone smooths.
+    automatic_mask: bool,
 }
 
 /// tclean's values, each read once, and the request made from them.
@@ -397,6 +399,7 @@ impl<'a> Tclean<'a> {
             deconvolver: deconvolver.to_string(),
             weighting: weighting.to_string(),
             user_mask: usemask == "user",
+            automatic_mask: usemask == "auto-multithresh",
         })
     }
 
@@ -947,7 +950,10 @@ impl<'a> Tclean<'a> {
             .and_then(Value::as_i64)
             .unwrap_or(0)
             > 0;
-        if !modes.user_mask && cleans && smoothfactor.as_f64().is_some_and(|factor| factor <= 0.0) {
+        if modes.automatic_mask
+            && cleans
+            && smoothfactor.as_f64().is_some_and(|factor| factor <= 0.0)
+        {
             return Err(TcleanRefusal::new(
                 "smoothfactor",
                 "CASA's auto-multithresh smooths its mask by a beam of positive width: \
