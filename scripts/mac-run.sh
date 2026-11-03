@@ -15,12 +15,17 @@ the CASA oracle, or a second build beside the local one.
 Each run first mirrors the working tree into ROOT/src/BRANCH/ on the Mac with
 rsync over SSH: tracked, modified and untracked files and .git, but not the
 files git ignores. COMMAND then runs there in the owner's login shell, with
-CARGO_TARGET_DIR=ROOT/target shared by every copy and CARGO_INCREMENTAL=0;
-~/.cargo/bin and /opt/homebrew/bin are appended to PATH. Its output streams
-back and its exit status is this script's.
+CARGO_TARGET_DIR=ROOT/targets/BRANCH and CARGO_INCREMENTAL=0; ~/.cargo/bin
+and /opt/homebrew/bin are appended to PATH. Its output streams back and its
+exit status is this script's.
+
+Each branch builds in a target of its own. Copies that shared one would link
+each other's builds of the workspace crates: cargo names a workspace crate's
+build by its path within the workspace, the same in every copy, and judges it
+fresh by file times, so a test could run another branch's code.
 
   --sync-only  mirror the tree and run nothing
-  --clean      delete this branch's copy on the Mac (the shared target stays)
+  --clean      delete this branch's copy and its target on the Mac
 
 Environment:
   CASA_RS_MAC_HOST  SSH destination (default bg-mac-mini). In a cloud
@@ -75,8 +80,8 @@ q() { printf '%q' "$1"; }
 # creating anything; setup then creates ROOT if needed (never on the small
 # internal disk while ~/ext exists) and prints its absolute path and the rsync
 # to use, preferring Homebrew's over the system openrsync, after removing
-# other branches' copies unused for 14 days (each sync touches its own copy).
-# clean removes this branch's copy.
+# other branches' copies and targets unused for 14 days (each sync touches its
+# own). clean removes this branch's copy and target.
 # shellcheck disable=SC2016 # It expands on the Mac, not here.
 remote_program='root=$mac_root
 if [ -z "$root" ]; then
@@ -96,16 +101,18 @@ if [ -z "$root" ]; then
   fi
 fi
 if [ "$verb" = clean ]; then
-  if [ -n "$root" ] && [ -d "$root/src/$name" ]; then
-    rm -rf "$root/src/$name" && echo "mac-run: removed $root/src/$name"
-  else
-    echo "mac-run: no copy of $name to remove"
-  fi
+  removed=
+  for d in "$root/src/$name" "$root/targets/$name"; do
+    if [ -n "$root" ] && [ -d "$d" ]; then
+      rm -rf "$d" && echo "mac-run: removed $d" && removed=1
+    fi
+  done
+  [ -n "$removed" ] || echo "mac-run: no copy of $name to remove"
   exit
 fi
-mkdir -p "$root/src/$name" "$root/target" || exit 3
-touch "$root/src/$name"
-find "$root/src" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null
+mkdir -p "$root/src/$name" "$root/targets/$name" || exit 3
+touch "$root/src/$name" "$root/targets/$name"
+find "$root/src" "$root/targets" -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} + 2>/dev/null
 cd "$root" && pwd || exit 3
 if [ -x /opt/homebrew/bin/rsync ]; then echo /opt/homebrew/bin/rsync; else echo rsync; fi'
 
@@ -153,7 +160,7 @@ fi
 # A login shell reads the profile files but not ~/.zshrc, so rustup's and
 # Homebrew's usual directories follow whatever PATH the profile set.
 run="cd $(q "$dest") && export PATH=\"\$PATH:\$HOME/.cargo/bin:/opt/homebrew/bin\""
-run+=" CARGO_TARGET_DIR=$(q "$root/target") CARGO_INCREMENTAL=0 && exec"
+run+=" CARGO_TARGET_DIR=$(q "$root/targets/$name") CARGO_INCREMENTAL=0 && exec"
 for arg in "$@"; do
   run+=" $(q "$arg")"
 done
