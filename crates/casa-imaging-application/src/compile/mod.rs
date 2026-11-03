@@ -185,8 +185,12 @@ pub(crate) fn prepare(
     let surveyed = &surveyed_observation;
     let (continuum_transform, channels) = continuum_selection(request, surveyed, &centre)?;
     let observation_info = direction::observation_info(catalogue, survey, &centre, engine)?;
-    let mut domains =
-        domains::prepare_domains(request, &centre, &spectral.image, &observation_info)?;
+    let mut domains = domains::prepare_domains(
+        request,
+        &centre,
+        (&spectral.image, spectral.output_channels),
+        &observation_info,
+    )?;
     let primary_beam = primary_beam_model(request, catalogue)?;
     let primary_beam_centres = match primary_beam {
         None | Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => None,

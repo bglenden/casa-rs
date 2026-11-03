@@ -1064,14 +1064,16 @@ fn pixel_box_list(text: &str) -> Option<Vec<String>> {
 
 /// The `box[[Xpix, Ypix], [Xpix, Ypix]]` and `circle[[Xpix, Ypix], Rpix]`
 /// regions of one CRTF text, as `x0,y0,x1,y1` boxes with the lower corner
-/// first (a circle as one box per row it covers, [`circle_rows`]); a `#`
-/// line is a comment, and any other region, or a region limited to a
-/// spectral `range`, is refused.
+/// first (a circle as one box per row it covers, [`circle_rows`]). A region
+/// limited to a spectral `range=[<low>, <high>]` gives each of its boxes
+/// that range as `@<low>~<high>`, in `Hz` or `pix` ([`spectral_range`]);
+/// compile turns it into channels. A `#` line is a comment, and any other
+/// region or keyword is refused.
 fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
     let refused = || {
         TcleanRefusal::not_yet(
             "mask",
-            format!("the region {text:?} (casa-rs takes pixel boxes)"),
+            format!("the region {text:?} (casa-rs takes pixel boxes and circles)"),
             980,
         )
     };
@@ -1091,14 +1093,7 @@ fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
     {
         let mut rest = line;
         while !rest.is_empty() {
-            if rest.contains("range=") || rest.contains("range =") {
-                return Err(TcleanRefusal::not_yet(
-                    "mask",
-                    format!("the region {text:?} limited to a spectral range"),
-                    980,
-                ));
-            }
-            if let Some(body) = rest
+            let (region, after) = if let Some(body) = rest
                 .strip_prefix("circle")
                 .map(str::trim_start)
                 .and_then(|body| body.strip_prefix("[["))
@@ -1117,34 +1112,95 @@ fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
                     .and_then(|after| after.split_once(']'))
                     .ok_or_else(refused)?;
                 let radius = pixels(radius).filter(|radius| *radius > 0.0);
-                boxes.extend(circle_rows([*x, *y], radius.ok_or_else(refused)?));
-                rest = after.trim_start_matches([',', ' ', '\t']);
-                continue;
-            }
-            let body = rest
-                .strip_prefix("box")
-                .map(str::trim_start)
-                .and_then(|body| body.strip_prefix("[["))
-                .ok_or_else(refused)?;
-            let (inside, after) = body.split_once("]]").ok_or_else(refused)?;
-            let corners = inside
-                .split(',')
-                .map(|corner| pixel(corner.trim_matches(['[', ']', ' '])))
-                .collect::<Result<Vec<_>, _>>()?;
-            let [xa, ya, xb, yb] = corners.as_slice() else {
-                return Err(refused());
+                (circle_rows([*x, *y], radius.ok_or_else(refused)?), after)
+            } else {
+                let body = rest
+                    .strip_prefix("box")
+                    .map(str::trim_start)
+                    .and_then(|body| body.strip_prefix("[["))
+                    .ok_or_else(refused)?;
+                let (inside, after) = body.split_once("]]").ok_or_else(refused)?;
+                let corners = inside
+                    .split(',')
+                    .map(|corner| pixel(corner.trim_matches(['[', ']', ' '])))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let [xa, ya, xb, yb] = corners.as_slice() else {
+                    return Err(refused());
+                };
+                let corners = format!(
+                    "{},{},{},{}",
+                    xa.min(*xb),
+                    ya.min(*yb),
+                    xa.max(*xb),
+                    ya.max(*yb)
+                );
+                (vec![corners], after)
             };
-            boxes.push(format!(
-                "{},{},{},{}",
-                xa.min(*xb),
-                ya.min(*yb),
-                xa.max(*xb),
-                ya.max(*yb)
-            ));
+            // The region's keywords run to the next region. casacore keeps
+            // the last `range` a region gives.
+            let mut range = None;
             rest = after.trim_start_matches([',', ' ', '\t']);
+            while let Some(value) = rest
+                .strip_prefix("range")
+                .map(str::trim_start)
+                .and_then(|value| value.strip_prefix('='))
+                .map(str::trim_start)
+                .and_then(|value| value.strip_prefix('['))
+            {
+                let (ends, after) = value.split_once(']').ok_or_else(refused)?;
+                range = Some(spectral_range(ends, text)?);
+                rest = after.trim_start_matches([',', ' ', '\t']);
+            }
+            let suffix = range.unwrap_or_default();
+            boxes.extend(region.into_iter().map(|corners| corners + &suffix));
         }
     }
     Ok(boxes)
+}
+
+/// A CRTF `range`'s ends, `<low>, <high>` in either order, as a mask box's
+/// `@<low>~<high>`: frequencies in hertz (`Hz` to `THz`) or channel pixels
+/// (`pix`), both ends of one kind, as casacore's
+/// `AnnotationBase::setFrequencyLimits` requires. Velocities are refused.
+fn spectral_range(ends: &str, text: &str) -> Result<String, TcleanRefusal> {
+    let quantity = |end: &str| {
+        let end = end.trim();
+        let split = end
+            .find(|c: char| c.is_ascii_alphabetic() && c != 'e' && c != 'E')
+            .unwrap_or(end.len());
+        let (number, unit) = end.split_at(split);
+        let number = number
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|n| n.is_finite())?;
+        let (scale, kind) = match unit.trim() {
+            "Hz" => (1.0, "Hz"),
+            "kHz" => (1.0e3, "Hz"),
+            "MHz" => (1.0e6, "Hz"),
+            "GHz" => (1.0e9, "Hz"),
+            "THz" => (1.0e12, "Hz"),
+            "pix" => (1.0, "pix"),
+            _ => return None,
+        };
+        Some((number * scale, kind))
+    };
+    let refused = || {
+        TcleanRefusal::not_yet(
+            "mask",
+            format!(
+                "the region {text:?}: a spectral range of two frequencies or two channel pixels"
+            ),
+            980,
+        )
+    };
+    let ends = ends.split(',').map(quantity).collect::<Option<Vec<_>>>();
+    match ends.as_deref() {
+        Some(&[(low, low_kind), (high, high_kind)]) if low_kind == high_kind => {
+            Ok(format!("@{low}{low_kind}~{high}{high_kind}"))
+        }
+        _ => Err(refused()),
+    }
 }
 
 /// A CRTF pixel value, `Npix`, fractional or not.
