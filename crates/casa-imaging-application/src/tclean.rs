@@ -1061,9 +1061,11 @@ fn pixel_box_list(text: &str) -> Option<Vec<String>> {
         .collect()
 }
 
-/// The `box[[Xpix, Ypix], [Xpix, Ypix]]` regions of one CRTF text, as
-/// `x0,y0,x1,y1` with the lower corner first; a `#` line is a comment, and
-/// any other region is refused.
+/// The `box[[Xpix, Ypix], [Xpix, Ypix]]` and `circle[[Xpix, Ypix], Rpix]`
+/// regions of one CRTF text, as `x0,y0,x1,y1` boxes with the lower corner
+/// first (a circle as one box per row it covers, [`circle_rows`]); a `#`
+/// line is a comment, and any other region, or a region limited to a
+/// spectral `range`, is refused.
 fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
     let refused = || {
         TcleanRefusal::not_yet(
@@ -1088,6 +1090,36 @@ fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
     {
         let mut rest = line;
         while !rest.is_empty() {
+            if rest.contains("range") {
+                return Err(TcleanRefusal::not_yet(
+                    "mask",
+                    format!("the region {text:?} limited to a spectral range"),
+                    980,
+                ));
+            }
+            if let Some(body) = rest
+                .strip_prefix("circle")
+                .map(str::trim_start)
+                .and_then(|body| body.strip_prefix("[["))
+            {
+                let (centre, after) = body.split_once(']').ok_or_else(refused)?;
+                let centre = centre
+                    .split(',')
+                    .map(|value| pixels(value).ok_or_else(refused))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let [x, y] = centre.as_slice() else {
+                    return Err(refused());
+                };
+                let (radius, after) = after
+                    .trim_start()
+                    .strip_prefix(',')
+                    .and_then(|after| after.split_once(']'))
+                    .ok_or_else(refused)?;
+                let radius = pixels(radius).filter(|radius| *radius > 0.0);
+                boxes.extend(circle_rows([*x, *y], radius.ok_or_else(refused)?));
+                rest = after.trim_start_matches([',', ' ', '\t']);
+                continue;
+            }
             let body = rest
                 .strip_prefix("box")
                 .map(str::trim_start)
@@ -1112,6 +1144,39 @@ fn crtf_pixel_boxes(text: &str) -> Result<Vec<String>, TcleanRefusal> {
         }
     }
     Ok(boxes)
+}
+
+/// A CRTF pixel value, `Npix`, fractional or not.
+fn pixels(text: &str) -> Option<f64> {
+    text.trim()
+        .strip_suffix("pix")
+        .and_then(|number| number.trim().parse::<f64>().ok())
+        .filter(|number| number.is_finite())
+}
+
+/// The pixels of the circle about `centre` of `radius` pixels, one
+/// `x0,y,x1,y` box per row. casacore's `LCEllipsoid` holds a pixel whose
+/// offset from the centre, in radii, has a squared length of at most one,
+/// in `Float`; a circle's rows are runs of pixels, so the boxes hold the
+/// same pixels. Rows and columns outside the image are clipped as a box's.
+fn circle_rows(centre: [f64; 2], radius: f64) -> Vec<String> {
+    let [x, y] = centre.map(|value| value as f32);
+    let radius = radius as f32;
+    let inside = |column: i64, row: i64| {
+        let dx = (column as f32 - x) / radius;
+        let dy = (row as f32 - y) / radius;
+        dx * dx + dy * dy <= 1.0
+    };
+    let span =
+        |centre: f32| (centre - radius).floor() as i64 - 1..=(centre + radius).ceil() as i64 + 1;
+    span(y)
+        .filter_map(|row| {
+            let mut columns = span(x).filter(|column| inside(*column, row));
+            let first = columns.next()?;
+            let last = columns.next_back().unwrap_or(first);
+            Some(format!("{first},{row},{last},{row}"))
+        })
+        .collect()
 }
 
 #[cfg(test)]

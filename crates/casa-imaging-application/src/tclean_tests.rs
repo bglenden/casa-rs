@@ -337,7 +337,7 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "#818",
         ),
         (
-            json!({ "mask": "circle[[10pix,10pix],5pix]" }),
+            json!({ "mask": "circle[[50pix,50pix],10pix],range=[1.1GHz,1.5GHz]" }),
             "mask",
             "#980",
         ),
@@ -837,4 +837,30 @@ fn automask_controls_and_the_noise_estimate_are_read() {
             factor
         );
     }
+}
+
+/// A CRTF circle holds the pixels casacore's `LCEllipsoid` holds: those
+/// whose offset from the centre is at most one radius. CASA's
+/// test_mask_1 mask, `circle[[50pix,80pix],10pix]`, holds 317 pixels from
+/// x 40 to 60 and y 70 to 90 (read from its tst2.mask).
+#[test]
+fn a_crtf_circle_masks_the_pixels_casa_masks() {
+    let boxes = super::crtf_pixel_boxes("circle[[50pix,80pix],10pix]").expect("a circle");
+    let rows = boxes
+        .iter()
+        .map(|text| {
+            let corners = text
+                .split(',')
+                .map(|corner| corner.parse::<i64>().expect("a corner"))
+                .collect::<Vec<_>>();
+            assert_eq!(corners[1], corners[3], "one row per box");
+            corners
+        })
+        .collect::<Vec<_>>();
+    let pixels: i64 = rows.iter().map(|corners| corners[2] - corners[0] + 1).sum();
+    assert_eq!(pixels, 317);
+    assert_eq!(rows.iter().map(|corners| corners[0]).min(), Some(40));
+    assert_eq!(rows.iter().map(|corners| corners[2]).max(), Some(60));
+    assert_eq!(rows.first().map(|corners| corners[1]), Some(70));
+    assert_eq!(rows.last().map(|corners| corners[1]), Some(90));
 }
