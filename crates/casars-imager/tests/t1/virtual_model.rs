@@ -5,6 +5,7 @@
 //! visibility iterator predicts from, and the padded grid it degrids,
 //! written beside SOURCE in place of a `MODEL_DATA` column.
 
+use std::collections::BTreeSet;
 use std::f64::consts::TAU;
 
 use casa_images::PagedImage;
@@ -132,4 +133,57 @@ fn a_virtual_model_is_replaced_and_cleared_as_casa_does() {
     let ms = MeasurementSet::open(observation.measurement_set()).expect("open the MS");
     assert!(virtual_model(&ms, 0).expect("read").is_none());
     assert!(!std::path::Path::new(text(&second, "diskimage")).exists());
+}
+
+/// The model is written for the rows and channels the run images, as the
+/// run's own grammars resolved them: a window named by its quoted `NAME`
+/// (casacore's spw lexer reads no `-` in a bare name) with a channel range,
+/// and one baseline (`A&B`). Every combination of the
+/// baseline's MAIN rows, and only those, is recorded, with the named
+/// channels; casa-ms's older row parser reads neither form.
+#[test]
+fn a_virtual_model_is_written_for_the_selection_the_run_images() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let ms = MeasurementSet::open(observation.measurement_set()).expect("open the MS");
+    let antennas = ms.antenna().expect("ANTENNA");
+    let names = [0, 1].map(|row| antennas.name(row).expect("an antenna name"));
+    let int = |row: usize, column: &str| match ms
+        .main_table()
+        .cell_accessor(row, column)
+        .expect("a MAIN cell")
+        .scalar()
+        .expect("a scalar cell")
+    {
+        ScalarValue::Int32(value) => *value,
+        other => panic!("{column}: {other:?}"),
+    };
+    let expected = (0..ms.row_count())
+        .filter(|&row| {
+            let pair = (int(row, "ANTENNA1"), int(row, "ANTENNA2"));
+            pair == (0, 1) || pair == (1, 0)
+        })
+        .map(|row| {
+            [
+                int(row, "FIELD_ID"),
+                int(row, "DATA_DESC_ID"),
+                int(row, "SCAN_NUMBER"),
+                int(row, "STATE_ID"),
+            ]
+        })
+        .collect::<BTreeSet<_>>();
+    drop(ms);
+    assert!(!expected.is_empty(), "the baseline has rows");
+    let mut values = controls("virtual");
+    values["spw"] = json!("\"t1-qband\":1~2");
+    values["antenna"] = json!(format!("{}&{}", names[0], names[1]));
+    observation.image("virtual-selection", values);
+    let entry = entry(&observation);
+    // One window, data description 0: the combinations name window 0.
+    let recorded = entry
+        .index_combination
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(recorded, expected, "the baseline's combinations");
+    assert_eq!(entry.channel_selection, [[0, 1, 2, 1]], "channels 1 and 2");
 }

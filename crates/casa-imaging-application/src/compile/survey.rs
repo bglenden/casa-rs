@@ -122,6 +122,10 @@ pub(super) struct Survey {
     /// ([`super::selection::SpwChoice::ranges`]), set with
     /// [`spw_channels`](Self::spw_channels).
     pub(super) spw_ranges: WindowRanges,
+    /// The selection `savemodel='virtual'` writes its model for, resolved
+    /// beside the survey from the same selection
+    /// ([`super::virtual_selection`]).
+    pub(super) virtual_model: Option<crate::virtual_model::CompiledSelection>,
 }
 
 impl Survey {
@@ -466,6 +470,7 @@ pub(super) fn survey(
             continuum: None,
             spw_channels: WindowChannels::new(),
             spw_ranges: WindowRanges::new(),
+            virtual_model: None,
         },
         reservation,
     })

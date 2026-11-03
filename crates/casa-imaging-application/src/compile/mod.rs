@@ -29,6 +29,7 @@ mod spectral;
 mod start_model;
 mod survey;
 mod time_selection;
+mod virtual_selection;
 
 pub(crate) use opening::{OpenedStore, open_observation};
 pub(crate) use start_model::StartModel;
@@ -149,6 +150,7 @@ pub(crate) fn prepare(
         },
         columns,
     ) = survey_observation(request, store, context)?;
+    let virtual_selection = survey.virtual_model.take();
     if request.specmode == SpecMode::Mfs {
         let selected = survey
             .spectral_windows
@@ -276,22 +278,23 @@ pub(crate) fn prepare(
         .and_then(PhaseCentreEphemeris::external_series)
         .cloned();
     drop(engine);
-    let virtual_model =
-        (request.savemodel == SaveModel::Virtual)
-            .then(|| {
-                if store.msv2().is_none() {
-                    return Err(PrepareError::MeasurementSet(casa_ms::MsError::InvalidInput(
+    let virtual_model = match (request.savemodel, virtual_selection) {
+        (SaveModel::Virtual, Some(selection)) => Some(crate::virtual_model::VirtualModelPlan::new(
+            request,
+            selection,
+            domains[0].coordinates.clone(),
+            Arc::clone(&measures),
+        )),
+        (SaveModel::Virtual, None) => {
+            return Err(PrepareError::MeasurementSet(
+                casa_ms::MsError::InvalidInput(
                     "savemodel='virtual' saves the model in a MeasurementSet v2, as CASA does"
                         .to_string(),
-                )));
-                }
-                Ok(crate::virtual_model::VirtualModelPlan::new(
-                    request,
-                    domains[0].coordinates.clone(),
-                    Arc::clone(&measures),
-                ))
-            })
-            .transpose()?;
+                ),
+            ));
+        }
+        _ => None,
+    };
     Ok(Prepared {
         specification,
         geometry,
@@ -371,9 +374,19 @@ fn survey_observation(
             Gridder::Awproject(aw) if matches!(aw.cf_source, AwCfSource::NativeEvla { .. })
         ),
     };
+    let virtual_model = match (request.savemodel, store.msv2()) {
+        (SaveModel::Virtual, Some(observation)) => Some(virtual_selection::resolve(
+            request,
+            (store, observation),
+            (&windows, &spw_channels),
+            (&plan.row_selection, &states),
+        )?),
+        _ => None,
+    };
     let mut surveyed = survey::survey(plan, spectral_windows, (&context.host, &context.policy))?;
     surveyed.value.spw_channels = spw_channels;
     surveyed.value.spw_ranges = spw_ranges;
+    surveyed.value.virtual_model = virtual_model;
     Ok((surveyed, columns))
 }
 

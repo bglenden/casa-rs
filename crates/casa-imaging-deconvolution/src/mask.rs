@@ -14,8 +14,8 @@ use thiserror::Error;
 
 use crate::FinalNormalState;
 pub use auto_multithresh::{
-    AUTO_MULTITHRESH_BYTES_PER_CELL, AutoMaskBeam, AutoMaskCycle, AutoMaskThreshold,
-    AutoMultithreshControls, AutoMultithreshEvidence, auto_multithresh,
+    AutoMaskBeam, AutoMaskCycle, AutoMaskThreshold, AutoMultithreshControls,
+    AutoMultithreshEvidence, auto_multithresh, auto_multithresh_bytes,
 };
 
 /// Reproject decoded source support onto the target direction grid.
@@ -499,8 +499,8 @@ impl ImageDomainReconstructionMaskPlans {
     }
 
     /// Heap bytes [`Self::materialize`] holds at most against `normal`: each
-    /// domain's support, and for an automatic mask its working planes
-    /// (`AUTO_MULTITHRESH_BYTES_PER_CELL`) with the model support it reads.
+    /// domain's support, and for an automatic mask what it holds
+    /// ([`auto_multithresh_bytes`]) with the model support it reads.
     #[must_use]
     pub fn materialize_bytes(&self, normal: &FinalNormalState) -> u64 {
         self.materialize_bytes_for(|ordinal| normal.domain_shape(ordinal))
@@ -515,17 +515,21 @@ impl ImageDomainReconstructionMaskPlans {
             .iter()
             .enumerate()
             .map(|(ordinal, plan)| {
-                let cells =
-                    domain_shape(ordinal).map_or(0, |[width, height]| (width * height) as u64);
-                let working = match plan {
-                    ReconstructionMaskPlan::AutoMultithresh { .. } => {
-                        AUTO_MULTITHRESH_BYTES_PER_CELL
-                            + size_of::<casa_imaging_model::ModelSample>() as u64
-                            + 1
-                    }
-                    _ => 0,
+                let Some(shape) = domain_shape(ordinal) else {
+                    return 0;
                 };
-                cells * (size_of::<bool>() as u64 + working)
+                let cells = (shape[0] * shape[1]) as u64;
+                let support = cells * size_of::<bool>() as u64;
+                match plan {
+                    // The model plane it reads, its valid support, and
+                    // what the automatic mask itself holds.
+                    ReconstructionMaskPlan::AutoMultithresh { .. } => {
+                        support
+                            + cells * (size_of::<casa_imaging_model::ModelSample>() as u64 + 1)
+                            + auto_multithresh_bytes(shape)
+                    }
+                    _ => support,
+                }
             })
             .sum()
     }

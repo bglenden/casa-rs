@@ -105,12 +105,34 @@ pub fn reconstruction_problem_with_domains(
     algorithm: ReconstructionAlgorithm,
     controls: ReconstructionControls,
 ) -> CompiledProblem {
-    let centre = width as f64 / 2.0;
+    reconstruction_problem_of_shape(
+        observation,
+        [width, width],
+        channels,
+        domains,
+        basis,
+        algorithm,
+        controls,
+    )
+}
+
+/// [`reconstruction_problem_with_domains`] with domains of `[width, height]`
+/// pixels.
+pub fn reconstruction_problem_of_shape(
+    observation: u8,
+    [width, height]: [usize; 2],
+    channels: usize,
+    domains: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+) -> CompiledProblem {
+    let centre = [width as f64 / 2.0, height as f64 / 2.0];
     let direction = |ordinal: usize| {
         DirectionCoordinateSpec::new(
             Projection::Sin,
             SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-            [centre + (ordinal * width) as f64, centre],
+            [centre[0] + (ordinal * width) as f64, centre[1]],
             [-1.0e-6, 1.0e-6],
             [[1.0, 0.0], [0.0, 1.0]],
             [180.0, 0.0],
@@ -125,7 +147,7 @@ pub fn reconstruction_problem_with_domains(
                     } else {
                         ImageDomainRole::Outlier(format!("outlier-{ordinal}"))
                     },
-                    ImageShape::new(width, width),
+                    ImageShape::new(width, height),
                     direction(ordinal),
                     FacetLayout::Single,
                     AxisOrder::new([

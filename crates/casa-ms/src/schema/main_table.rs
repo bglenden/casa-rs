@@ -349,8 +349,10 @@ pub const OPTIONAL_COLUMNS: &[ColumnDef] = &[
         data_type: PrimitiveType::Float64,
         column_kind: ColumnKind::FixedArray { shape: &[3] },
         unit: "m",
+        // A Muvw column like UVW, with the same ITRF default reference
+        // (`MeasurementSet.cc`'s `colMapDef` for UVW2).
         measure_type: None,
-        measure_ref: "",
+        measure_ref: "ITRF",
         comment: "UVW for second pair of triple correlation",
     },
     ColumnDef {

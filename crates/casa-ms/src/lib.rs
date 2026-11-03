@@ -201,9 +201,9 @@ pub use transform::{
     MsTransformError, MsTransformReport, MsTransformRequest, TransformDataColumn, mstransform,
 };
 pub use virtual_model::{
-    VirtualModelEntry, VirtualModelKind, VirtualModelRecord, VirtualModelSelection,
-    clear_virtual_model, put_virtual_model, virtual_model, virtual_model_clear_ids,
-    virtual_model_image_path, virtual_model_index_combination,
+    VirtualModelCombinations, VirtualModelEntry, VirtualModelKind, VirtualModelRecord,
+    VirtualModelRow, VirtualModelSelection, clear_virtual_model, put_virtual_model, virtual_model,
+    virtual_model_clear_ids, virtual_model_image_path, virtual_model_index_combination,
 };
 pub use visibility_buffer::{
     SourcePartition, SourcePartitionId, VisibilityBuffer, VisibilityBufferAllocationReport,
