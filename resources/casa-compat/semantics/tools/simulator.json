@@ -1,0 +1,1123 @@
+{
+ "schema_version": 1,
+ "tool": "simulator",
+ "casa_version": "6.7.6.14",
+ "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "methods": {
+  "open": {
+   "status": "Implemented",
+   "scope": "Creates a MeasurementSet for observe.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "observe",
+    "scripts"
+   ]
+  },
+  "openfromms": {
+   "status": "Partial",
+   "scope": "Opens an existing MeasurementSet for predict and corrupt. Refused: data descriptions that are not the spectral windows in order, channels not evenly spaced, several feeds per antenna, polynomial PHASE_DIR, POINTING away from PHASE_DIR, and rows flagged without FLAG_ROW.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "openfromms",
+    "refusals"
+   ],
+   "issue": 1053
+  },
+  "close": {
+   "status": "Implemented",
+   "scope": "Writes and closes the MeasurementSet, within the session's memory budget. CASA aborts here after a mosaic predict; casa-rs does not (decision).",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "observe"
+   ]
+  },
+  "done": {
+   "status": "Implemented",
+   "scope": "As close, and frees the tool.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "name": {
+   "status": "Implemented",
+   "scope": "The MeasurementSet's name. No CASA comparison executed.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "summary": {
+   "status": "Implemented",
+   "scope": "Logs CASA's summary. No CASA comparison executed.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "type": {
+   "status": "Implemented",
+   "scope": "CASA's tool type. No CASA comparison executed.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "settimes": {
+   "status": "Implemented",
+   "scope": "Integration time, reference time and hour-angle use.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "observe",
+    "scripts"
+   ]
+  },
+  "observe": {
+   "status": "Partial",
+   "scope": "Adds a scan's rows as CASA does, with shadowing and elevation limits (decisions). Refused after openfromms.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "observe",
+    "scripts",
+    "refusals"
+   ],
+   "issue": 1053
+  },
+  "observemany": {
+   "status": "Partial",
+   "scope": "Adds several pointings' rows. Refused after openfromms. CASA's padding and row-order defects are decisions.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "observe",
+    "refusals"
+   ],
+   "issue": 1053
+  },
+  "setlimits": {
+   "status": "Implemented",
+   "scope": "Elevation and shadowing limits.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "observe"
+   ]
+  },
+  "setauto": {
+   "status": "Implemented",
+   "scope": "Autocorrelation rows.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "observe",
+    "predict-image"
+   ]
+  },
+  "setconfig": {
+   "status": "Implemented",
+   "scope": "The antenna configuration. Coordinate systems CASA accepts but cannot convert are refused (decision).",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "observe",
+    "scripts"
+   ]
+  },
+  "setfeed": {
+   "status": "Implemented",
+   "scope": "Feed and polarization settings.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "observe",
+    "scripts"
+   ]
+  },
+  "setfield": {
+   "status": "Implemented",
+   "scope": "A field.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "observe",
+    "scripts"
+   ]
+  },
+  "setmosaicfield": {
+   "status": "Implemented",
+   "scope": "A mosaic of fields. Only probed against CASA: its grid sits off the field centre in CASA (decision).",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "setspwindow": {
+   "status": "Implemented",
+   "scope": "A spectral window, keeping each window's frame (decision).",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "observe",
+    "scripts"
+   ]
+  },
+  "setdata": {
+   "status": "Partial",
+   "scope": "Selects spectral windows and all fields. Refused: a selection keeping fewer than all scans observed so far, and a TaQL msselect.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "observe",
+    "refusals"
+   ],
+   "issue": 1053
+  },
+  "predict": {
+   "status": "Partial",
+   "scope": "Predicts image models (one Stokes I, J2000 image) and component lists through GridFT, WProjectFT, the mosaic machine and SDGrid, with setvp beams. Refused: several model images, model layouts casa-rs cannot read, refocusing to a field's distance, correlation codes casa-rs does not predict, limb-darkened disks and other frames, squinted VLA and EVLA beams on components, a primary beam or the mosaic machine on a pointing moved away from its field, scans whose windows have different correlations, and an incremental predict after a corrupt with setgain or setleakage terms.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "predict-image",
+    "predict-components",
+    "predict-sd",
+    "openfromms",
+    "refusals"
+   ],
+   "issue": 1053
+  },
+  "setoptions": {
+   "status": "Partial",
+   "scope": "FTMachines ft, wproject, mosaic and sd with their grid functions; padding and location. Refused: other FTMachines (both, pbwproject), grid functions other than SF (or PB, BOX and SF for sd), sd with PB for a telescope without a default beam, and wproject on the Metal backend.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "predict-image",
+    "predict-sd",
+    "refusals"
+   ],
+   "issue": 1053
+  },
+  "setvp": {
+   "status": "Partial",
+   "scope": "Default voltage patterns of ALMA, ACA, the VLA and the EVLA, with squint. Refused: a voltage-pattern table, and dovp=True for other telescopes.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "predict-image",
+    "refusals"
+   ],
+   "issue": 1053
+  },
+  "corrupt": {
+   "status": "Partial",
+   "scope": "Applies the noise, gain, leakage, tropospheric and applied-table terms. Refused: a spectral window observed after setgain, setleakage or settrop terms were set, or defined after a tsys-atm setnoise.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "noise",
+    "corruptions",
+    "troposphere",
+    "refusals"
+   ],
+   "issue": 1053
+  },
+  "reset": {
+   "status": "Implemented",
+   "scope": "Clears the corruption terms. No CASA comparison executed.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "setbandpass": {
+   "status": "Disabled in CASA",
+   "scope": "Logs CASA's error and returns False, as CASA 6.7.6.14 does.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "setapply": {
+   "status": "Partial",
+   "scope": "Applies G and D tables with linear or nearest interpolation. Refused: calwt, a nonzero t, a nonzero opacity, other table types, per-channel or flagged solutions, a missing antenna solution, solutions without two receptors, and other interpolations.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "corruptions",
+    "refusals"
+   ],
+   "issue": 1053
+  },
+  "setgain": {
+   "status": "Implemented",
+   "scope": "fBM and random gain screens, with tables (CASA's defects are decisions).",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "corruptions"
+   ]
+  },
+  "settrop": {
+   "status": "Partial",
+   "scope": "Individual and screen modes, with tables. Refused: mode='test', CASA's debugging ramp.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "troposphere",
+    "refusals"
+   ],
+   "issue": 1053
+  },
+  "setpointingerror": {
+   "status": "Disabled in CASA",
+   "scope": "Logs CASA's error and returns False, as CASA 6.7.6.14 does.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "setleakage": {
+   "status": "Implemented",
+   "scope": "Leakage terms, with tables (CASA's defects are decisions).",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "corruptions"
+   ]
+  },
+  "oldsetnoise": {
+   "status": "Deprecated in CASA",
+   "scope": "Raises, naming setnoise, as CASA does.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "setnoise": {
+   "status": "Partial",
+   "scope": "simplenoise, tsys-manual and tsys-atm noise with the ATM model. Refused: OTF=False and a Tsys mode with table, which write the T table.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "noise",
+    "refusals"
+   ],
+   "issue": 1053
+  },
+  "setpa": {
+   "status": "Disabled in CASA",
+   "scope": "Logs CASA's error and returns False, as CASA 6.7.6.14 does.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "setseed": {
+   "status": "Implemented",
+   "scope": "The random seed; casa-rs's draws differ from CASA's, compared statistically.",
+   "evidence": [
+    "signature",
+    "binding-tests",
+    "noise",
+    "corruptions"
+   ]
+  }
+ },
+ "behaviors": [],
+ "decisions": [
+  {
+   "id": "airy-blockage-ratio",
+   "record": "The Airy beam's blockage term uses the inverse length ratio",
+   "inputs": "Any Airy primary beam with a central blockage, e.g. ALMA's default 10.7 m dish with 0.75 m blockage via setvp.",
+   "casa": "PBMath1DAiry::fillPBArray evaluates the blockage term at x*D/b instead of x*b/D, so main-lobe power is about 1% above the physical pattern (0.507 against 0.500 at the half-power radius).",
+   "ours": "Tabulates the same expression (AnnularApertureVoltageTable), matching CASA's predictions to 1.6e-7.",
+   "rationale": "ALMA's 10.7 m effective diameter was chosen against CASA's beam.",
+   "impact": "Beam-dependent predictions and images agree with CASA but are about 1% off the physical pattern.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it."
+  },
+  {
+   "id": "tai-stored-as-utc",
+   "record": "The simulator stores TAI as UTC",
+   "inputs": "sm.observe with a reference epoch; the stored TIME column.",
+   "casa": "observe adds TAI seconds to the offsets and writes the result into TIME labelled UTC, so data start TAI-UTC (37 s since 2017) after the requested epoch; geometry reads the number as UT1.",
+   "ours": "Stores the requested UTC and also reads the stored TIME as UT1 for geometry, so uvw agree with CASA at equal TIME.",
+   "rationale": "The stored value should match its MEASINFO label; parity runs offset the start by TAI-UTC taken from the measures data.",
+   "impact": "Schedules and simulated calibration tables differ from CASA's by TAI-UTC (37 s today) unless the start is shifted.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Owner decision 5 of the simulation plan, accepted 2026-10-20 (docs/simulation/simulation-plan-20261020.md): TIME honours the requested UTC."
+  },
+  {
+   "id": "shadowing-antenna-in-front",
+   "record": "The simulator charges shadowing to the antenna in front",
+   "inputs": "sm.observe over antennas close enough to shadow each other.",
+   "casa": "NewMSSimulator::blockage leaves the blockage on the antenna in front (the one doing the blocking), whereas CASA's own flagger FlagAgentShadow flags the antenna behind.",
+   "ours": "Flags the antenna behind (ShadowedAntenna::Behind); the CASA convention remains available as CasaSimulatorFront.",
+   "rationale": "CASA's own flagger shows the intent: the antenna behind is the shadowed one.",
+   "impact": "Shadowed rows are flagged on the opposite antenna from CASA's simulator unless CasaSimulatorFront is selected.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "setspwindow-relabels-frame",
+   "record": "`setspwindow` relabels every spectral window's frame",
+   "inputs": "setspwindow called twice with different frames, e.g. a TOPO window then an LSRK one.",
+   "casa": "Each call ends with measFreqRef().fillColumn(freqType), writing the new frame into MEAS_FREQ_REF for every row, so both windows end up labelled LSRK.",
+   "ours": "Writes each window's own frame.",
+   "rationale": "Frequencies were given in different frames, so each window must keep its own label.",
+   "impact": "Earlier windows get a wrong frame label in SPECTRAL_WINDOW.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "setconfig-unconvertible-coordsystem",
+   "record": "`setconfig` accepts coordinate systems it cannot convert",
+   "inputs": "setconfig(coordsystem='longlat') or an unknown coordinate system name.",
+   "casa": "longlat2global logs SEVERE 'not yet implemented' (or initAnt 'Unknown coordinate system type'), the antennas are added at the Earth's centre, and setconfig returns True.",
+   "ours": "Raises RuntimeError for longlat; an unknown name logs CASA's message and returns False; neither adds antennas.",
+   "rationale": "An array with meaningless geometry should not be silently built.",
+   "impact": "A script continues with a meaningless array in CASA but stops or sees False in casa-rs.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "calls-before-setconfig-abort",
+   "record": "Simulator calls before `setconfig` abort the process",
+   "inputs": "setfeed or observe called before any setconfig.",
+   "casa": "The table slice over zero antennas throws std::runtime_error (an empty Slicer), which the tool binding does not catch, and the Python process aborts.",
+   "ours": "Raises RuntimeError from setfeed, and observe returns False with 'Antenna information not yet defined'.",
+   "rationale": "An unhandled C++ exception must not kill the interpreter.",
+   "impact": "A mis-ordered script gets a normal error instead of a process abort.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "zero-integration-time-unbounded-rows",
+   "record": "A zero integration time adds rows without bound",
+   "inputs": "settimes() with no arguments (0 s) or integrationtime of zero, then observe over a nonzero span.",
+   "casa": "settimes only asserts the time is not negative; observe divides the span by zero and adds billions of rows before the disk fills.",
+   "ours": "Observe returns False for a non-positive integration time ('observe: the integration time must be positive').",
+   "rationale": "A zero integration time cannot define a schedule.",
+   "impact": "The script stops cleanly instead of exhausting the disk.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "predict-rewrites-model",
+   "record": "`sm.predict` rewrites the model image",
+   "inputs": "sm.predict with model images.",
+   "casa": "createSkyEquation opens each model as PagedImage<Float>, forces LSRK spectral conversion and Hz units and stores it back, so predicting rewrites the model's table.dat.",
+   "ours": "Converts the spectral axis to Hz in memory and never writes the model.",
+   "rationale": "A prediction should not modify its input.",
+   "impact": "Models stay as the user wrote them; CASA's oracle copies models per call.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Proposed"
+  },
+  {
+   "id": "predict-unreadable-models",
+   "record": "`sm.predict` accepts models the simulator cannot read",
+   "inputs": "sm.predict with a FITS model or a complex-valued CASA image.",
+   "casa": "The binding checks with ImageFactory::fromFile, but the simulator reads PagedImage<Float>; predict logs 'Failed to create SkyEquation', returns False, and the script continues with DATA unpredicted (read from source, not probed).",
+   "ours": "Checks each model by opening it as the simulator reads it, so predict raises RuntimeError 'Unable to open image ...'.",
+   "rationale": "The check should match what is later read.",
+   "impact": "Unreadable models fail loudly at the call.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Proposed"
+  },
+  {
+   "id": "negative-component-under-beam",
+   "record": "A negative component turns positive under the primary beam",
+   "inputs": "sm.setvp(dovp=True) with a negative-flux component, e.g. -0.4 Jy point 20 arcsec off centre.",
+   "casa": "The fullspectral beam path multiplies by a spectrum sample over abs(flux), restoring the sign twice, so a negative flux comes out positive (+0.4 Jy times the beam).",
+   "ours": "Keeps the sign.",
+   "rationale": "A beam attenuates; it should not change the flux's sign.",
+   "impact": "Negative components predict with the right sign under a beam.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "beam-component-spectrum-lsrk-label",
+   "record": "The primary beam's component spectrum labels topocentric samples LSRK",
+   "inputs": "Component prediction with the primary beam on (setvp) over channels with a topocentric-LSRK difference.",
+   "casa": "The full-spectral beam path stores products at the channels' LSRK frequencies, labels the table LSRK, and SkyCompRep::visibility reads it at topocentric frequencies, shifting each channel by up to about 1e-4 of the frequency.",
+   "ours": "Evaluates the beam and spectrum at each channel's own frequency.",
+   "rationale": "The table's frame label and lookup frequencies should agree.",
+   "impact": "With the beam on, scenarios agree with CASA to 7e-5 and 1e-4 normalized RMS instead of 1.3e-5.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Proposed"
+  },
+  {
+   "id": "setmosaicfield-grid-offset",
+   "record": "`setmosaicfield` sits its grid off the field centre",
+   "inputs": "setmosaicfield with a 3x3 or 2x2 grid at 1 arcmin spacing.",
+   "casa": "The odd-count test (nx/2)!=floor(nx/2) on integers is always false, so every grid takes the even-count offsets; a 3x3 grid has RA offsets -1.5,-0.5,+0.5 spacings and Dec -2.5,-1.5,-0.5 (CASA 6.7.6).",
+   "ours": "Centres every grid at (i-(n-1)/2) spacings, divides RA by cos(dec), and keeps CASA's field names {sourcename}_{k}.",
+   "rationale": "The grid should be centred on the field centre.",
+   "impact": "Mosaic pointings sit at different offsets from CASA's, which are off-centre.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "observemany-pads-one-name",
+   "record": "`observemany` pads one name with empty ones",
+   "inputs": "observemany with one source name (or one direction) and several pointings.",
+   "casa": "casatools pads the list with Vector<String>::resize, giving empty names; pointing 1's field is '', observe raises 'Field 1: not yet defined' and observemany returns False (CASA 6.7.6).",
+   "ours": "Pads the same way and returns the same False, moving only the first pointing, but adds no rows before refusing.",
+   "rationale": "Follows CASA's outcome of refusing the call.",
+   "impact": "The call fails with the same message as CASA.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it."
+  },
+  {
+   "id": "observemany-rows-before-field-lookup",
+   "record": "`observemany` adds rows before it looks up later fields",
+   "inputs": "observemany where a later pointing's field is not defined.",
+   "casa": "observe adds every pointing's MAIN rows before looking up later fields, so an undefined field raises with the rows added and FIELD_ID, TIME and UVW unwritten, and returns False.",
+   "ours": "Looks up every field before planning, so the call returns False with the same message and leaves no rows.",
+   "rationale": "A refused call should leave the MeasurementSet unchanged.",
+   "impact": "CASA leaves junk rows in the MeasurementSet after the error; casa-rs does not.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "predict-wprojectft-no-planes-crash",
+   "record": "`sm.predict` through `WProjectFT` without planes crashes the simulator",
+   "inputs": "setoptions(ftmachine='wproject', wprojplanes=0 or -1) then sm.predict.",
+   "casa": "The simulator builds WProjectFT with no w statistics so the automatic branch gets a negative largest w and zero or negative planes; predict kills the Python process with a segmentation fault (exit 139, CASA 6.7.6).",
+   "ours": "Records the planes at setoptions as CASA does, and predict raises RuntimeError ('W projection needs at least two planes'); it follows CASA's other quirks of the machine.",
+   "rationale": "A segfault should be an error.",
+   "impact": "A bad plane count raises instead of killing the process.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "sdgrid-total-power-nonpositive-uvw",
+   "record": "`SDGrid` predicts total power into cross-correlations with no positive uvw",
+   "inputs": "sm.predict after setoptions(ftmachine='sd') with cross-correlation rows whose u, v and w are all zero or negative.",
+   "casa": "SDGrid::get leaves out rows with max(uvw)>0, meant to keep cross-correlations at zero, but a cross-correlation with all components zero or negative passes and gets total power (read from source; a two-antenna probe saw only positive-component rows).",
+   "ours": "Predicts total power into autocorrelations only.",
+   "rationale": "The test was meant to keep cross-correlations at zero.",
+   "impact": "Cross-correlations of a single-dish prediction stay zero regardless of uvw sign.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "evla-beam-no-11052-fit",
+   "record": "The EVLA's beam table has no 11052 MHz fit",
+   "inputs": "Simulated EVLA beam near 10.05 or 11.05 GHz (X band).",
+   "casa": "PBMath1DEVLA::init inserts 10948, then 10052, then 11180 MHz; the second 10052 (meant 11052) overwrites the first, so the map has no 11052 entry and coefficients differ by about 1% in the linear term (few 1e-3 at half power).",
+   "ours": "casa-rs's table (EvlaPowerPattern, shared with imaging) is CASA's map as built.",
+   "rationale": "Kept for parity with CASA's beam.",
+   "impact": "EVLA X-band beams match CASA's, including its typo.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it."
+  },
+  {
+   "id": "close-aborts-after-mosaic-predict",
+   "record": "`sm.close()` aborts the process after a mosaic predict",
+   "inputs": "setoptions(ftmachine='mosaic'), a successful predict, then sm.close() (simobserve's own sequence).",
+   "casa": "CASA 6.7.6 sm.close() kills the Python process with 'Pure virtual function called!' and SIGABRT (exit 134); DATA is already complete on disk.",
+   "ours": "Close returns normally; the CASA oracle runs these scenarios in a child process and records close as aborted.",
+   "rationale": "An abort at close is a defect, not behaviour to copy.",
+   "impact": "Scripts do not die at close in casa-rs.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "simulator-mosaic-machine-not-tclean",
+   "record": "The simulator's mosaic machine is not tclean's",
+   "inputs": "sm.predict with setoptions(ftmachine='mosaic') compared with tclean(gridder='mosaic').",
+   "casa": "The simulator degrids through the earlier HetArrayConvFunc/SimplePBConvFunc/MosaicFT, which differ from tclean's in support radius, screen size, frequency cells, support search and channel frequencies (4.5-5.6e-3 NRMS on the #875 probe).",
+   "ours": "casa-rs's mosaic set takes either machine's rules (MosaicRules): imaging follows tclean's, the simulator its own.",
+   "rationale": "Parity with each CASA machine.",
+   "impact": "Simulated and imaged mosaics each match CASA's own machine and differ from each other by up to about 5e-3 NRMS.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it."
+  },
+  {
+   "id": "predict-moved-pointing-phased-on-field",
+   "record": "`sm.predict` phases a moved `observemany` pointing on its field",
+   "inputs": "sm.predict over an observemany pointing moved off its field.",
+   "casa": "NewMSSimulator writes UVW at the moved direction but leaves FIELD unchanged, so predict (VisBuffer phase centre from FIELD) phases the pointing on its field; a source at the moved direction gets phases spread over +-180 deg (rms 101 deg).",
+   "ours": "Follows: UVW, elevation limit and POINTING at the moved direction, DATA phased on the field.",
+   "rationale": "FIELD is the only phase centre recorded, which every imager and calibrator assumes.",
+   "impact": "Moved-pointing DATA match CASA to 8.4e-6 NRMS or better.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it."
+  },
+  {
+   "id": "beam-moved-pointing-first-row",
+   "record": "The beam on a moved pointing stays where the field's first row points",
+   "inputs": "setvp beam over a model, component list, total power or mosaic machine on a pointing observemany moved off its field.",
+   "casa": "VPSkyJones updates only when BeamSkyJones::changed fires and the pointing-direction comparisons are commented out, so every row of a field is beamed where the field's first-visited row points (0.652 of peak kept in both pointings in the probe).",
+   "ours": "Refuses a primary beam over a model image, component list or total power, and the mosaic machine, on a moved pointing; it does not reproduce the cache.",
+   "rationale": "None of CASA's outcomes is the beam the moved pointing sees.",
+   "impact": "Such runs raise an error; simobserve gives each pointing its own field and never reaches this.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "predict-corrupt-scratch-columns",
+   "record": "`predict` and `corrupt` add scratch columns to a MeasurementSet without them",
+   "inputs": "sm.predict or sm.corrupt on a MeasurementSet without CORRECTED_DATA.",
+   "casa": "The VisSet constructor adds MODEL_DATA (1) and CORRECTED_DATA (DATA); predict sets CORRECTED_DATA to the new DATA and MODEL_DATA to 1, and corrupt sets CORRECTED_DATA to the corrupted DATA.",
+   "ours": "Writes DATA only, creates neither column after openfromms, and keeps existing ones in step with DATA.",
+   "rationale": "Plan decision 6: no scratch columns added as a side effect.",
+   "impact": "Output MeasurementSets lack MODEL_DATA and CORRECTED_DATA that CASA would add.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Owner decision 6 of the simulation plan, accepted 2026-10-20 (docs/simulation/simulation-plan-20261020.md): DATA only, unless a later step needs MODEL_DATA."
+  },
+  {
+   "id": "gain-screens-read-past-transform",
+   "record": "CASA's gain screens read past their transform",
+   "inputs": "setgain(mode='fbm') (and settrop(mode='individual')), corrupt.",
+   "casa": "fBM::initialize copies n values from a transform of length n-2 or n-3, reading the last two or three past the end, and the RMS normalisation includes them; amplitude scale varied 0.969, 0.966, 1.005 between runs and some antennas had unit gain throughout.",
+   "ours": "Transforms every slot, so screens have the documented scale; it refuses individual mode on fewer than six slots.",
+   "rationale": "Avoid reading out of bounds.",
+   "impact": "CASA gain scales vary from run to run; casa-rs screens are reproducible and at the documented scale.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "gain-screens-share-seed",
+   "record": "Gain screens of neighbouring antennas share a seed",
+   "inputs": "setgain(mode='fbm') on neighbouring antennas.",
+   "casa": "GJonesCorruptor::initialize seeds antenna a's receptor r screen with seed+a+r, so antenna a's second receptor and antenna a+1's first draw identical screens (measured identical amplitudes).",
+   "ours": "Keys each antenna's and receptor's screens apart.",
+   "rationale": "Independent errors should be independent draws.",
+   "impact": "CASA's neighbouring antennas have correlated gains; casa-rs's do not.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "setgain-random-about-zero",
+   "record": "`setgain(mode='random')` draws gains about zero",
+   "inputs": "setgain(mode='random', amplitude=[0.05]) on a 1 Jy point.",
+   "casa": "simPar returns camp.re*n1 + i*camp.im*n2 without adding one: mean gain modulus 0.065 and DATA mean modulus 0.0046 Jy, nearly erasing the data (CASA 6.7.6).",
+   "ours": "Draws 1 + camp.re*n1 + i*camp.im*n2.",
+   "rationale": "Gain errors are multiplicative and near unity; the owner said follow CASA only if there is a good reason, which there is not.",
+   "impact": "random gains perturb the data instead of destroying it.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Owner, 2026-10-24 (#841 Phase 3): follow CASA only if there is a good reason for its behaviour, which there is not."
+  },
+  {
+   "id": "autocorrelation-resets-term",
+   "record": "An autocorrelation row resets its antenna's simulated term",
+   "inputs": "setgain or setleakage with autocorrelations written (CASA's default).",
+   "casa": "setSimulate sets ANTENNA1's value at every row and 1 at an autocorrelation, so the last antenna (ANTENNA1 only of its autocorrelation) has unit gain and leakage 1 throughout (antenna 42 of 43 in corrupt-gain).",
+   "ours": "Simulates every antenna's term, including settrop's Tf term.",
+   "rationale": "Every antenna should be corrupted.",
+   "impact": "CASA leaves the last antenna uncorrupted; casa-rs does not.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "setleakage-first-two-spws",
+   "record": "`setleakage` simulates only the first two spectral windows",
+   "inputs": "setleakage(table=...) with three, four or eight spectral windows, then corrupt.",
+   "casa": "The table has solutions for windows 0 and 1 only; corrupt logs 'no (simulated) calibration' for later windows and leaves their rows uncorrupted (CASA 6.7.6; cause not traced).",
+   "ours": "Simulates a leakage for every window.",
+   "rationale": "All windows should be corrupted; setgain already does so.",
+   "impact": "Windows beyond the second are unchanged in CASA but corrupted in casa-rs.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "setleakage-one-per-window",
+   "record": "`setleakage` draws one leakage per window for the whole run",
+   "inputs": "setleakage followed by corrupt over several scans, or setgain with interval=.",
+   "casa": "setleakage simulates with an infinite solution interval (one solution per window and antenna spanning all scans) and corrupt applies it as the linearised JonesGenLin, which raises on two-correlation data; setgain's interval is not used.",
+   "ours": "Follows both, and does not read setgain's interval.",
+   "rationale": "Parity with CASA's documented and observed behaviour.",
+   "impact": "Leakage is constant across scans; two-correlation data are refused as in CASA.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it."
+  },
+  {
+   "id": "term-table-written-when-set",
+   "record": "A simulated term's table is written when the term is set",
+   "inputs": "setgain(table=...) or setleakage(table=...).",
+   "casa": "CASA writes the calibration table as soon as it simulates the term, replacing a table of that name, with subtables copied from the MeasurementSet as it then is.",
+   "ours": "Writes the table at close from the written MeasurementSet; rows are the same but subtables include what was observed after the call, and it refuses to replace anything but a table.",
+   "rationale": "casa-rs writes the MeasurementSet only at close.",
+   "impact": "The table appears later (at close) and its subtables include later observations.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Proposed"
+  },
+  {
+   "id": "tsys-manual-stale-or-borrowed",
+   "record": "`tsys-manual` noise takes stale or borrowed system temperatures",
+   "inputs": "setnoise(mode='tsys-manual') then corrupt, especially at low elevation, with rows observed after setnoise, changed integration time or shadowed antennas.",
+   "casa": "The airmass cache is up to 100 s stale (variance sawtooth 1.01 to 1.56), later scans take the nearest earlier integration's solution, every row takes the first row's EXPOSURE, and an antenna without an unflagged row applies as 1.",
+   "ours": "Computes each row's sigma from its own integration: airmass at the row's TIME, own EXPOSURE, window and dishes, regardless of flags; non-finite T keeps CASA's scale of 1.",
+   "rationale": "Each row's noise should follow its own conditions.",
+   "impact": "CASA's noise is wrong by up to 1.5x at low elevation or after changing the integration time; scenarios above 40 degrees agree.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "tsys-manual-scales-every-noise-term",
+   "record": "A `tsys-manual` term scales every noise term",
+   "inputs": "Two tsys-manual terms, or simplenoise plus tsys-manual, then corrupt.",
+   "casa": "collapseForSim adds every ANoise term then applies every NoiseScale T term to DATA, so each term's scale multiplies all noise: variance 4 sigma^4 for two terms, and a 0.5 Jy simplenoise comes out scaled by the system temperature.",
+   "ours": "Adds each term's noise with its own sigma, so simplenoise stays in Jy and terms of one seed still add coherently.",
+   "rationale": "Owner: follow CASA only if its product is the better simulation, which it is not; powers of uncorrelated noise add.",
+   "impact": "Combined noise terms add in quadrature rather than multiply.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Owner, 2026-10-24 (#841 Phase 3): follow CASA only if its product is the better simulation, which it is not."
+  },
+  {
+   "id": "refused-tsys-manual-leaves-noise",
+   "record": "A refused `tsys-manual` `setnoise` leaves a unit noise term",
+   "inputs": "setnoise(mode='tsys-manual', pwv='200mm') or a zenith Tsys that is not positive or above 1e6 K, then corrupt.",
+   "casa": "setnoise creates the unit ANoise term before checking parameters; the refused call returns False but the ANoise stays and the next corrupt adds 1 Jy of noise (tsys-atm takes the same path, read from source).",
+   "ours": "Refuses such a setnoise without adding a term.",
+   "rationale": "A refused call should have no effect.",
+   "impact": "A refused setnoise no longer adds unexpected 1 Jy noise.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "tsys-atm-half-band-below",
+   "record": "`tsys-atm` noise takes its atmosphere half a band below each channel",
+   "inputs": "setnoise(mode='tsys-atm') on windows spanning an atmospheric line (183 GHz) or a one-channel window after the first.",
+   "casa": "initAtm builds the ATM grid so channel c reads the atmosphere half a band below it (variance off by mean factor 6.1, up to 103 across 183 GHz), and a one-channel later window reads the channel map past its end, so its T was bad and applied as 1.",
+   "ours": "Evaluates ATM at each channel's CHAN_FREQ for every window, one-channel windows included; it also refuses a term whose zenith Tsys is not a number.",
+   "rationale": "A channel's noise should follow the sky it observes.",
+   "impact": "Noise across line features and for one-channel windows differs strongly from CASA's.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "settrop-dispersive-wet-delay",
+   "record": "`settrop` turns the phase by the dispersive wet delay alone",
+   "inputs": "sm.settrop with default pwv and deltapwv.",
+   "casa": "cphase takes the zenith wet phase delay from getDispersiveH2OPhaseDelay (the dispersive part alone), which is 940, 119, 36, 23 and 8.5 times smaller than the whole wet delay at 43, 100, 183, 230 and 345 GHz.",
+   "ours": "Takes the whole wet delay (dispersive plus non-dispersive), so deltapwv means the fluctuation of the water column it names.",
+   "rationale": "The path a water column adds is mostly non-dispersive (Thompson, Moran & Swenson eq. 13.19).",
+   "impact": "CASA phases are too small (3 deg rms at 100 GHz); casa-rs phases are fully scrambled with defaults at millimetre wavelengths.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "settrop-half-band-below",
+   "record": "`settrop` takes its atmosphere half a band below each channel",
+   "inputs": "sm.settrop on windows spanning an atmospheric line, or a one-channel window after the first.",
+   "casa": "cphase reads channel c of the same ATM grid as tsys-atm, so each channel's phase uses the atmosphere half a band below it, and a later one-channel window reads the map past its end.",
+   "ours": "Evaluates ATM at each channel's CHAN_FREQ.",
+   "rationale": "Same grid error as the tsys-atm noise.",
+   "impact": "Phases across the 183 GHz line spread by 2.5 of themselves in CASA relative to the channel's own frequency.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "settrop-screen-anisotropic",
+   "record": "`settrop`'s screen has an anisotropic spectrum",
+   "inputs": "settrop(mode='screen') on a screen long along the wind (e.g. 1359 by 271 pixels).",
+   "casa": "fBM::initialize uses index rather than wavenumber (stretching the spectrum along the wind), does not wrap the full axis, uses exponent -(beta+1/2)/2 (comment: 'still something not quite right'), and sets values past the half axis's end, copying the last two pixels from past the output.",
+   "ours": "Draws |k|^-(beta+1)/2 on wrapped wavenumbers in cycles per pixel with proper conjugate pairs and transforms every pixel, giving equal structure along and across the wind.",
+   "rationale": "Isotropic turbulence's phase spectrum depends only on spatial frequency size.",
+   "impact": "CASA structure functions differ by a factor of five between the axes; casa-rs's are the same.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "settrop-simint-stamp",
+   "record": "`settrop` with `simint` stamps a solution halfway to its interval's start",
+   "inputs": "settrop with simint longer than an integration (e.g. simint=6 on 2 s integrations).",
+   "casa": "setSimulate stamps each solution (t0+t)/2, so times are 0,1,2,6,7,8 s for integrations at 0,2,4,6,8,10 s, and corrupt gives later integrations a slot from earlier in the interval.",
+   "ours": "Stamps each solution with its integration's time, as CASA does when simint is unset.",
+   "rationale": "Each integration should use its own time.",
+   "impact": "Time-varying troposphere in later integrations of an interval lags in CASA.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "atm-hcn-106ghz-line",
+   "record": "ATM's HCN catalogue misplaces a line at 106 GHz",
+   "inputs": "Any ATM calculation near 106.3 GHz.",
+   "casa": "mkSpecificRefractivity_hcn lists the J=12-11 line as 106.298069519 GHz (decimal point moved from 1062.98), so ATM sums an HCN line there and none at 1063 GHz; zenith opacity 0.029368 against 0.028919 corrected, 1.5% high.",
+   "ours": "Moves the decimal point back (1062.98069519 GHz), one of four corrections in atm-corrections.patch.",
+   "rationale": "The catalogue (JPL c027001.cat) puts the line at 1062.98 GHz; owner decision.",
+   "impact": "Opacity near 106 GHz is about 1.5% lower than CASA's; elsewhere changes are below 3.5e-5.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Owner decision, 2026-10-24 (#841 Phase 4): ATM's data errors are corrected."
+  },
+  {
+   "id": "atm-air-density-sea-level",
+   "record": "ATM's reference air densities drop a digit at sea level",
+   "inputs": "ATM with mid-latitude, subarctic or US Standard atmospheres at sea level to 1 km.",
+   "casa": "st76's sea-level reference air densities lost their leading digit (.496E+19 etc., about 2.5e19 meant), so minor gases (O3, N2O, CO, NO2, SO2, HCl, HCN) are up to about four times too scarce in the lowest layers.",
+   "ours": "Restores the digit (2.496e19, 2.711e19, 2.549e19, 2.855e19, 2.548e19 cm^-3).",
+   "rationale": "Air density falls with height; US Standard gives 2.547e19 by the ideal gas law (owner decision).",
+   "impact": "Sites below 1 km see O3, CO, N2O line opacities up to 1.8%, 7.7%, 8.5% higher; sites at 1 km and above are unchanged.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Owner decision, 2026-10-24 (#841 Phase 4): ATM's data errors are corrected."
+  },
+  {
+   "id": "atm-h2-17o-abundance",
+   "record": "ATM weights H2(17)O by the (18)O abundance",
+   "inputs": "Any ATM wet opacity calculation.",
+   "casa": "ratiohh17o uses the (18)O abundance (0.0020439) where the (17)O abundance (0.000375) belongs, so H2(17)O lines are 5.45 times too strong.",
+   "ours": "Uses abun_17o, as ATM does for oxygen and ozone.",
+   "rationale": "The siblings use abun_17o (owner decision).",
+   "impact": "Wet opacity falls by up to 0.61% (990 GHz); at Chajnantor 230 GHz opacity moves by 2e-4.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Owner decision, 2026-10-24 (#841 Phase 4): ATM's data errors are corrected."
+  },
+  {
+   "id": "atm-hdo-weight",
+   "record": "ATM's HDO weight divides by three",
+   "inputs": "Any ATM wet opacity calculation.",
+   "casa": "ratiohdo reads 2-0*abun_d for 2.0*abun_d, so the denominator is 3.0024 instead of 1.0030 and HDO lines are about three times too weak.",
+   "ours": "Uses 2.0*abun_d.",
+   "rationale": "It is a typo; every sibling ratio uses 2.0*abun_d (owner decision).",
+   "impact": "At Chajnantor zenith opacity rises 0.32% at 230 GHz and 0.15% at 90 GHz; wet opacity up to 1.8%.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Owner decision, 2026-10-24 (#841 Phase 4): ATM's data errors are corrected."
+  },
+  {
+   "id": "atm-hcn-profile-100km",
+   "record": "ATM's HCN profile stops at 100 km",
+   "inputs": "ATM profiles topped above about 90 km.",
+   "casa": "hcn[50] is initialised with 45 values, so the last five levels (100 to 120 km) are zero and interpolated HCN falls to zero over them.",
+   "ours": "Follows it: there are no values to restore, and air above 90 km is about 2e-6 of the column.",
+   "rationale": "No data exist to replace the zeros.",
+   "impact": "Negligible effect, only on profiles topped above about 90 km.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it."
+  },
+  {
+   "id": "atm-profile-copy-bottom-pressures",
+   "record": "Copying an AtmProfile copies its top pressures as bottom pressures",
+   "inputs": "Copying an AtmProfile (via RefractiveIndexProfile or SkyStatus) then getLayerBottomPressure or setAltitude.",
+   "casa": "The copy constructor fills v_layerPressure0_ from a.v_layerPressure1_, so bottom pressures return the top pressures; no opacity, path or brightness calculation reads them.",
+   "ours": "Keeps one profile and never copies it through such a path.",
+   "rationale": "The defect cannot arise in what casa-rs ports.",
+   "impact": "No effect on results.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "atm-ozone-isotopologue-padding",
+   "record": "ATM leaves the ozone isotopologue layers unpadded",
+   "inputs": "An ATM user profile with a layer that has zero ozone.",
+   "casa": "mkRefractiveIndexProfile pushes a zero onto the total-ozone vector only, so the eight ozone state and isotopologue vectors become shorter than the layer count and later layers' values shift down one place.",
+   "ours": "The document records no casa-rs action; ATM's standard profiles have ozone in every layer so it does not arise.",
+   "rationale": "Latent ATM bug that does not arise with ATM's own profiles.",
+   "impact": "Only user profiles with zero-ozone layers would be affected.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "atm-omits-16o17o",
+   "record": "ATM omits (16)O(17)O",
+   "inputs": "ATM opacity near (16)O(17)O lines.",
+   "casa": "mkSpecificRefractivity_16o17o returns zero before its line loop; the comment says the isotope was removed in 2024 while its catalogue is reviewed because it gave lines that do not exist.",
+   "ours": "The port returns zero too and keeps the catalogue in its tables for the record.",
+   "rationale": "The omission is deliberate in ATM.",
+   "impact": "Results match ATM, without (16)O(17)O lines.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it."
+  },
+  {
+   "id": "atm-averaged-nondispersive-wet-phase",
+   "record": "RefractiveIndexProfile's averaged non-dispersive wet phase reads a channel as a water column",
+   "inputs": "RefractiveIndexProfile::getAverageNonDispersiveH2OPhaseDelay on a window (e.g. 22 GHz, 1.3 mm water).",
+   "casa": "The call getNonDispersiveH2OPhaseDelay(v_transfertId_[spwid]+i) converts the index to a Length in metres, returning channel 0's phase for a water column of 0, 1, 2 ... m, giving 306,132 degrees; CASA's at tool (SkyStatus) is unaffected.",
+   "ours": "casa-atmosphere takes the mean of the channels' phases.",
+   "rationale": "The overload resolution is an error.",
+   "impact": "The window-averaged phase is a few degrees, not hundreds of thousands.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  }
+ ],
+ "evidence": {
+  "signature": {
+   "kind": "Signature inventory",
+   "state": "recorded",
+   "scope": "CASA 6.7.6.14's 33 methods, names and defaults, and the object-surface bundle's; not behavior.",
+   "links": [
+    "crates/casars-python/python/tests/data/casa_simulator_signatures.json",
+    "crates/casars-python/python/tests/test_tools_simulator.py",
+    "crates/casars-python/src/tools/simulator/surface.rs"
+   ]
+  },
+  "refusals": {
+   "kind": "Refusal records and tests",
+   "state": "recorded",
+   "scope": "Every mode refused as not yet implemented names #1053; the Rust and Python tests check the refusals.",
+   "links": [
+    "crates/casa-simulation/tests/refusals_name_an_issue.rs",
+    "crates/casars-python/python/tests/test_tools_simulator.py"
+   ]
+  },
+  "binding-tests": {
+   "kind": "Python binding tests",
+   "state": "recorded",
+   "scope": "CASA's return values, logged errors, raised errors and state for each method, on CASA's messages.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_simulator.py"
+   ]
+  },
+  "observe": {
+   "kind": "CASA-paired MeasurementSets (PR-reported)",
+   "state": "measured",
+   "result": "10/10 agree with the 10 recorded descriptor differences; UVW within 3.4 um, 107 um on the 36 km VLA A. CASA 6.7.6 (6.7.6-14 per the reviews); records on the NAS (issue-841/evidence-2c-observemany-4cb59c6d3c). Not re-run at a current revision.",
+   "scope": "open, setconfig, setfeed, setspwindow, setfield, settimes, setlimits, setauto, observe and observemany: every subtable, row and cell of 10 scenarios.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/848",
+    "https://github.com/bglenden/casa-rs/pull/861",
+    "https://github.com/bglenden/casa-rs/pull/919",
+    "tools/simulation/sm_observe_scenarios.json",
+    "tools/simulation/casa_sm_observe_oracle.py",
+    "tools/simulation/compare_sm_ms.py"
+   ]
+  },
+  "scripts": {
+   "kind": "CASA sm scripts run unchanged (PR-reported)",
+   "state": "measured",
+   "result": "3/3 agree with the 10 known differences; UVW within 3.37 um. Not re-run.",
+   "scope": "Three CASA sm scripts (VLA D, ALMA dual and full polarization) run in CASA and casa-rs with only the import changed.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/851",
+    "tools/simulation/sm_scripts/run_sm_scripts.py"
+   ]
+  },
+  "predict-image": {
+   "kind": "CASA-paired predictions (PR-reported)",
+   "state": "measured",
+   "result": "21 predict scenarios agree; DATA NRMS 1.3e-7 to 1.35e-5 (limit 1e-3), mosaic 2.6e-7 to 6.6e-7 on CPU and Metal. CASA 6.7.6; records on the NAS (issue-841/evidence-855-d6ab21e2de, -2d-wproject-06737ef31a, -2e-vla-evla-16e61ae0c7). Not re-run at a current revision.",
+   "scope": "predict of image models through GridFT, WProjectFT and the mosaic machine, with and without setvp (ALMA, ACA, VLA, EVLA), padding, several fields, incremental predicts and cubes with autocorrelations.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/843",
+    "https://github.com/bglenden/casa-rs/pull/853",
+    "https://github.com/bglenden/casa-rs/pull/856",
+    "https://github.com/bglenden/casa-rs/pull/865",
+    "https://github.com/bglenden/casa-rs/pull/871",
+    "https://github.com/bglenden/casa-rs/pull/879",
+    "tools/simulation/sm_predict_scenarios.json",
+    "tools/simulation/casa_sm_predict_oracle.py",
+    "tools/simulation/compare_sm_ms.py"
+   ]
+  },
+  "predict-components": {
+   "kind": "CASA-paired component predictions (PR-reported)",
+   "state": "measured",
+   "result": "7/7 agree; NRMS 3.2e-7 to 1.0e-4, the beam cases' 7e-5 to 1e-4 attributed but not isolated. Tabular spectra not covered. NAS issue-841/evidence-2f-complist-b2971f1923.tar. Not re-run.",
+   "scope": "predict(complist=...) of point, Gaussian and disk components with polarization, spectra, a beam and incremental predicts.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/872",
+    "tools/simulation/sm_components_scenarios.json"
+   ]
+  },
+  "predict-sd": {
+   "kind": "CASA-paired total-power predictions (PR-reported)",
+   "state": "measured",
+   "result": "7/7 agree: six bit-identical, one at 6.3e-8 NRMS. NAS issue-841/evidence-2g-sd-c76220b9fa.tar. Not re-run.",
+   "scope": "setoptions(ftmachine='sd') with the PB, SF and BOX kernels, the beam twice, four correlations and incremental predicts.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/874",
+    "tools/simulation/sm_sd_scenarios.json"
+   ]
+  },
+  "openfromms": {
+   "kind": "CASA-paired openfromms runs (PR-reported)",
+   "state": "measured",
+   "result": "7/7 agree on CPU and Metal; NRMS up to 9.0e-6. Not re-run.",
+   "scope": "openfromms then predict, corrupt, a moved pointing and the mosaic machine, on CASA's MeasurementSet and on casa-rs's.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/886",
+    "tools/simulation/sm_openfromms_scenarios.json"
+   ]
+  },
+  "noise": {
+   "kind": "CASA-paired noise statistics (PR-reported)",
+   "state": "measured",
+   "result": "tsys-manual sigma within 1.9e-6 of CASA's T table; variances within 1 percent, KS p 0.11 to 0.84. tsys-predict UVW differs by 3.7 to 4.6 mm beyond +1 h, unexplained. After #902 the ATM corrections differ from CASA's at tool deliberately (decisions). Not re-run.",
+   "scope": "setnoise simplenoise, tsys-manual and tsys-atm (with pground, relhum, altitude, waterheight) then corrupt: per-row sigma and normalized variances.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/853",
+    "https://github.com/bglenden/casa-rs/pull/889",
+    "https://github.com/bglenden/casa-rs/pull/897",
+    "https://github.com/bglenden/casa-rs/pull/902",
+    "tools/simulation/sm_noise_scenarios.json",
+    "tools/simulation/sm_atm_scenarios.json",
+    "tools/simulation/corruption_stats.py"
+   ]
+  },
+  "corruptions": {
+   "kind": "CASA-paired corruption statistics and tables (PR-reported)",
+   "state": "measured",
+   "result": "Statistics agree (screen autocorrelation 0.386/0.226/0.086 against CASA's 0.366/0.223/0.086); the leakage scale test has low power. CASA's applycal of casa-rs's G and D tables corrects to 4.9e-7 and 4.6e-9; setapply NRMS 4.3e-8 to 5.8e-9. Not re-run.",
+   "scope": "setgain (fBM, random), setleakage, their tables, and setapply of CASA-written G and D tables.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/890",
+    "https://github.com/bglenden/casa-rs/pull/891",
+    "https://github.com/bglenden/casa-rs/pull/893",
+    "tools/simulation/sm_corrupt_scenarios.json",
+    "tools/simulation/corruption_stats.py"
+   ]
+  },
+  "troposphere": {
+   "kind": "CASA-paired tropospheric phase (PR-reported)",
+   "state": "measured",
+   "result": "DATA against its own table to 9e-8; CASA applies casa-rs's tables to 1.7e-7. CASA's predict of a component list segfaulted on a 12 m and 7 m mix, so the scenarios use 12 m dishes. Not re-run.",
+   "scope": "settrop individual and screen modes, and CASA applying casa-rs's tables.",
+   "links": [
+    "https://github.com/bglenden/casa-rs/pull/899",
+    "https://github.com/bglenden/casa-rs/pull/902",
+    "tools/simulation/sm_trop_scenarios.json",
+    "tools/simulation/troposphere_stats.py"
+   ]
+  },
+  "bugs-record": {
+   "kind": "Deviation record",
+   "state": "recorded",
+   "scope": "Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.",
+   "links": [
+    "docs/CASA (C++) bugs.md"
+   ]
+  }
+ }
+}

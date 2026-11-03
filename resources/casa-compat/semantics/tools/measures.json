@@ -1,0 +1,530 @@
+{
+ "schema_version": 1,
+ "tool": "measures",
+ "casa_version": "6.7.6.14",
+ "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "methods": {
+  "addxvalue": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "asbaseline": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "baseline": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "cometangdiam": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "cometdist": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "cometname": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "comettopo": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "comettype": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "direction": {
+   "status": "Implemented",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame).",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "dirshow": {
+   "status": "Implemented",
+   "scope": "Shows measures as CASA shows them.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "doframe": {
+   "status": "Implemented",
+   "scope": "Sets the frame's epoch, position and direction.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "done": {
+   "status": "Implemented",
+   "scope": "Queries measure records as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "doppler": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "earthmagnetic": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "epoch": {
+   "status": "Implemented",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame).",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "expand": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "framecomet": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "framenow": {
+   "status": "Implemented",
+   "scope": "Sets the frame's epoch, position and direction.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "frequency": {
+   "status": "Implemented",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame).",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "getoffset": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getref": {
+   "status": "Implemented",
+   "scope": "Queries measure records as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "gettype": {
+   "status": "Implemented",
+   "scope": "Queries measure records as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "getvalue": {
+   "status": "Implemented",
+   "scope": "Queries measure records as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "ismeasure": {
+   "status": "Implemented",
+   "scope": "Queries measure records as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "linelist": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "listcodes": {
+   "status": "Implemented",
+   "scope": "The measures data's observatories and sources, and casacore's reference codes.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "measure": {
+   "status": "Implemented",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame).",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "observatory": {
+   "status": "Implemented",
+   "scope": "The measures data's observatories and sources, and casacore's reference codes.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "obslist": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's readantenna, sensitivity and itrf2locname, and simobserve, call it; casa-rs ports readantenna and simobserve in Rust, so only a script calling it directly meets the refusal.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "posangle": {
+   "status": "Implemented",
+   "scope": "Angular separation and position angle, as casacore computes them.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "position": {
+   "status": "Implemented",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame).",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "radialvelocity": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "rise": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "riseset": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simutil.ephemeris calls it; ephemeris is not implemented either.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "separation": {
+   "status": "Implemented",
+   "scope": "Angular separation and position angle, as casacore computes them.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "shift": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "show": {
+   "status": "Implemented",
+   "scope": "Shows measures as CASA shows them.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "showframe": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "source": {
+   "status": "Implemented",
+   "scope": "The measures data's observatories and sources, and casacore's reference codes.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "sourcelist": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "spectralline": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "todoppler": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "tofrequency": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "toradialvelocity": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "torestfrequency": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "touvw": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "type": {
+   "status": "Implemented",
+   "scope": "Queries measure records as CASA does.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "uvw": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  }
+ },
+ "behaviors": [],
+ "decisions": [
+  {
+   "id": "measures-tool-default-frame",
+   "record": "The measures tool converts with a frame at MJD 0 and the geocentre",
+   "inputs": "me.measure(me.direction('J2000','12h00m00','45d00m00'),'AZEL') in a fresh measures tool, with no doframe call.",
+   "casa": "The tool starts with a default frame (MJD 0 UTC, zero-vector position, J2000 pole) and converts using it without a warning, returning AZEL for 1858-11-17 at the Earth's centre.",
+   "ours": "Starts with an empty frame, so the conversion fails with 'Cannot convert due to missing frame information' until doframe sets the element.",
+   "rationale": "A conversion should not silently use placeholder epoch and position.",
+   "impact": "A script that forgot doframe gets an error rather than a meaningless answer.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Proposed"
+  },
+  {
+   "id": "iau2000-keeps-iau1980-sidereal",
+   "record": "IAU 2000 keeps the IAU 1980 sidereal time and ecliptic obliquities",
+   "inputs": "Conversions to HADEC, AZEL, ITRF, MECLIPTIC or TECLIPTIC with measures.iau2000.b_use set.",
+   "casa": "casacore still forms GAST from IAU 1982 GMST and the IAU 1980 equation of the equinoxes, and uses IAU 1980 obliquities (fundArg T^2 term -0.0059 arcsec, 0.37 mas in MECLIPTIC by 2026).",
+   "ours": "Computes all of these as casacore does (casacore_sidereal, casacore_frames).",
+   "rationale": "Follows casacore for parity; it moved IAU 2000A J2000 to HADEC from 20.4 to 16.7 mas off casacore.",
+   "impact": "Results under IAU 2000 match casacore, including its remaining IAU 1980 pieces.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it."
+  },
+  {
+   "id": "direction-latitude-unnormalized",
+   "record": "Direction latitudes come from an unnormalized vector",
+   "inputs": "Direction conversions that use the galactic or FK4 matrices, e.g. B1950 to GALACTIC or J2000 to B1950 near a pole.",
+   "casa": "The 10-digit literal matrices are orthogonal only to about 7e-11 and doConvert does not renormalize, so getLat's asin(z) is off by (|v|-1)tan(b) and becomes NaN once z exceeds 1.",
+   "ours": "Converts with the same matrices, renormalizes and reports the latitude of the unit vector.",
+   "rationale": "asin(z) assumes a unit vector.",
+   "impact": "Reported angles differ by up to 51 microarcsec (1.6 mas at b=-89.77 deg) while directions agree to 0.01 microarcsec.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "iau2000-jmean-j2000-order",
+   "record": "IAU 2000 JMEAN to J2000 applies bias and precession in the wrong order",
+   "inputs": "MECLIPTIC or TECLIPTIC to J2000 conversion under IAU 2000.",
+   "casa": "deapplyPrecession applies B then P giving P*B*v', not the inverse B*P*v', so JMEAN to J2000 is not the inverse of J2000 to JMEAN (0.14 mas off in 2026, growing).",
+   "ours": "Inverts exactly.",
+   "rationale": "The reverse transform must invert the forward one.",
+   "impact": "Round trips through the IAU 2000 ecliptics differ from casacore by 0.14 mas in 2026.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "iau2000-gmst1-tt-fraction",
+   "record": "IAU 2000 GMST1 adds the TT day fraction",
+   "inputs": "UT1 to GMST1 (and so LMST) under IAU 2000.",
+   "casa": "UT1_GMST1 adds GMST00/(2pi), already a sidereal time of day, to the TT epoch, counting the TT day fraction twice: UT1 51544.5 gives GMST1 58258.280 against 58257.779, and GMST1_UT1 does not undo it.",
+   "ours": "Uses the IAU 1976 GMST1 under either model, as casacore's own GAST does.",
+   "rationale": "This keeps GMST1, LMST, GAST and LAST consistent with each other.",
+   "impact": "LMST differs from casacore's IAU 2000 value but agrees with casacore under IAU 1976.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  }
+ ],
+ "evidence": {
+  "signature": {
+   "kind": "Signature inventory",
+   "state": "recorded",
+   "scope": "CASA 6.7.6.14's methods, names and defaults, and the object-surface bundle's; not behavior.",
+   "links": [
+    "crates/casars-python/python/tests/data/casa_measures_signatures.json",
+    "crates/casars-python/python/tests/test_tools_measures.py",
+    "crates/casars-python/src/tools/measures/surface.rs"
+   ]
+  },
+  "refusals": {
+   "kind": "Refusal test",
+   "state": "recorded",
+   "scope": "Each method casa-rs does not implement raises NotImplementedError naming #1053.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_measures.py",
+    "crates/casars-python/src/tools/mod.rs"
+   ]
+  },
+  "casa-values": {
+   "kind": "CASA-probed values",
+   "state": "measured",
+   "result": "Values probed from the Mac mini's CASA on 2026-10-21 (the test file says CASA 6.7.6; the signatures recorded with them name casatools 6.7.6-14). Conversions without Earth orientation match to the last bit or stated tolerances; UT1, AZEL and HADEC are checked loosely. Re-probe on 6.7.6.14 with a receipt to pass.",
+   "scope": "Every implemented method, with CASA's messages.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_measures.py"
+   ]
+  },
+  "bugs-record": {
+   "kind": "Deviation record",
+   "state": "recorded",
+   "scope": "Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.",
+   "links": [
+    "docs/CASA (C++) bugs.md"
+   ]
+  }
+ }
+}

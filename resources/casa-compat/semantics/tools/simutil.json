@@ -1,0 +1,726 @@
+{
+ "schema_version": 1,
+ "tool": "simutil",
+ "casa_version": "6.7.6.14",
+ "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "methods": {
+  "applyRotate": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "approxBeam": {
+   "status": "Implemented",
+   "scope": "CASA's approximate synthesized beam of a configuration at a frequency.",
+   "evidence": [
+    "signature",
+    "simutil-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "average_direction": {
+   "status": "Implemented",
+   "scope": "CASA's mean of directions, as text at its precision.",
+   "evidence": [
+    "signature",
+    "simutil-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "bandname": {
+   "status": "Implemented",
+   "scope": "CASA's band names.",
+   "evidence": [
+    "signature",
+    "simutil-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "baselineLengths": {
+   "status": "Implemented",
+   "scope": "Baseline lengths of a configuration file, as CASA computes them.",
+   "evidence": [
+    "signature",
+    "simutil-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "calc_pointings2": {
+   "status": "Implemented",
+   "scope": "Hexagonal, square and ALMA tilings of a map about a direction or the object's own, CASA's pointing text exactly; kept as `pointings`. CASA's ALMA tiling without a beam raises; casa-rs uses simobserve's beam (decision below).",
+   "evidence": [
+    "signature",
+    "simutil-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "cellsize": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "closereport": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "convimage": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "dir_m2s": {
+   "status": "Implemented",
+   "scope": "Writes a direction measure as simutil's text.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "dir_s2m": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "direction_splitter": {
+   "status": "Implemented",
+   "scope": "Splits a direction into epoch and two quantities; a list of one is split at its rounded mean, as CASA does. A direction without an epoch, which CASA cannot split, is refused (decision below).",
+   "evidence": [
+    "signature",
+    "simutil-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "endfig": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "ephemeris": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "flatimage": {
+   "status": "Implemented",
+   "scope": "Collapses a model to CASA's flat image, adding a component list as CASA does.",
+   "evidence": [
+    "signature",
+    "skymodel-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "getBaseTriangularTiling": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getShiftTriangularTiling": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getTrianglePoints": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getTriangularTiling": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getdatum": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "imclean": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "imtclean": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "is4d": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "isEven": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "isdirection": {
+   "status": "Implemented",
+   "scope": "CASA's direction test, with its message when `halt`.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "ismstp": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "isquantity": {
+   "status": "Implemented",
+   "scope": "CASA's quantity test, with its message when `halt`.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "isreport": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "itrf2loc": {
+   "status": "Implemented",
+   "scope": "ITRF to local east, north and up about a centre, as NumPy arrays.",
+   "evidence": [
+    "signature",
+    "binding-tests"
+   ]
+  },
+  "itrf2locname": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "locxyz2itrf": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "long2xyz": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "median_direction": {
+   "status": "Implemented",
+   "scope": "CASA's median of directions, as text at its precision.",
+   "evidence": [
+    "signature",
+    "simutil-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "modifymodel": {
+   "status": "Implemented",
+   "scope": "Rewrites a sky model's brightness, direction, cell, centre and width as CASA does and returns CASA's tuple; the axis, Stokes and two-cell defects listed below are decisions.",
+   "evidence": [
+    "signature",
+    "skymodel-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "msg": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "needsFiller": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "newfig": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "nextfig": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "noisetemp": {
+   "status": "Implemented",
+   "scope": "CASA's receiver and atmosphere parameters for ALMA, ACA, total power, the (E)VLA, SMA and other telescopes; the band-edge lookups CASA gets wrong are decisions below.",
+   "evidence": [
+    "signature",
+    "simutil-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "openreport": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "plotants": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "polsettings": {
+   "status": "Implemented",
+   "scope": "CASA's feed and correlation settings per telescope.",
+   "evidence": [
+    "signature",
+    "simutil-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "read_pointings": {
+   "status": "Implemented",
+   "scope": "Reads CASA's pointing files; the text read is CASA's.",
+   "evidence": [
+    "signature",
+    "simutil-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "readantenna": {
+   "status": "Implemented",
+   "scope": "Reads CASA's antenna configuration files (XYZ, UTM, LOC and geodetic, with `observatory` and `COFA` headers) and returns CASA's tuple; keeps the telescope as `telescopename`. The two CASA reading bugs it does not follow are decisions below.",
+   "evidence": [
+    "signature",
+    "readantenna-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "sensitivity": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "setcfg": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "sfBeam1d": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "spectral": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "statim": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "tconpc": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "tmgeod": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "utm2long": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "utm2xyz": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "wrapang": {
+   "status": "Implemented",
+   "scope": "CASA's angle wrapping.",
+   "evidence": [
+    "signature",
+    "simutil-casa-fixture"
+   ]
+  },
+  "write_pointings": {
+   "status": "Implemented",
+   "scope": "Writes CASA's pointing file text.",
+   "evidence": [
+    "signature",
+    "simutil-casa-fixture",
+    "binding-tests"
+   ]
+  },
+  "xyz2long": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "xyz2long_old": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  }
+ },
+ "behaviors": [],
+ "decisions": [
+  {
+   "id": "readantenna-stale-loop-variable",
+   "record": "`simutil.readantenna` averages a stale loop variable",
+   "inputs": "readantenna on a configuration file with absolute coordinates, no known observatory and no COFA header.",
+   "casa": "readantenna averages the UTM branch's loop variables x, y, z instead of stnx, stny, stnz: UnboundLocalError for an XYZ file, the last antenna for a UTM file; it also swaps latitude and longitude from xyz2long.",
+   "ours": "Converts the mean antenna position, as the code's comment intends (casa_simulation::readantenna).",
+   "rationale": "The comment shows the observatory was meant to sit at the mean antenna position.",
+   "impact": "Such configuration files work in casa-rs instead of raising or placing the observatory wrongly.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "readantenna-blank-line-names",
+   "record": "`simutil.readantenna` names antennas after blank lines",
+   "inputs": "readantenna on a configuration file with blank lines, e.g. CASA's own WSRT.cfg (two blank lines).",
+   "casa": "A line with fewer than four values is skipped but still gets a default pad and antenna name, so readantenna returns 16 names for 14 WSRT antennas starting A00, A01, RT0.",
+   "ours": "Skips such lines entirely.",
+   "rationale": "Names must stay aligned with positions.",
+   "impact": "CASA misnames every dish in a WSRT simulation; casa-rs does not.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "calc-pointings2-undefined-pbcoeff",
+   "record": "`calc_pointings2`'s ALMA tiling reads an undefined `pbcoeff`",
+   "inputs": "calc_pointings2 with maptype='ALMA' (or alma, ALMA-OT) and no primary beam (beam <= 0), e.g. simobserve with an ALMA map and no antenna list.",
+   "casa": "The default spacing_asec*pbcoeff*sqrt(3) uses pbcoeff, a local of task_simobserve.py not defined in simutil.py, so the call raises NameError (CASA 6.7.6).",
+   "ours": "Uses simobserve's value 1.13 (PBCOEFF), so the beam is spacing x 1.13 x sqrt(3).",
+   "rationale": "The default clearly intends simobserve's value.",
+   "impact": "The call works instead of raising NameError.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "noisetemp-table-edges",
+   "record": "`noisetemp` reads the wrong receiver temperature at the edges of its tables",
+   "inputs": "noisetemp at exactly the first band edge (e.g. ALMA at 35 GHz, VLA 0.8-1 GHz, SMA 180 GHz) or above 900 GHz for an unknown telescope such as WSRT.",
+   "casa": "The lookup leaves z=0 at the first edge so t0[-1] (the last entry) is used (230 K instead of 28 K for ALMA at 35 GHz), and for unknown telescopes the test reads f0[2] before checking z and raises IndexError (CASA 6.7.6, WSRT at 950 GHz).",
+   "ours": "Takes the first temperature at the first edge and keeps the last temperature (200 K) above the last edge.",
+   "rationale": "The lookup was meant to return the band's own receiver temperature.",
+   "impact": "Receiver temperatures at band edges are right instead of wrapping around, and no IndexError.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "direction-splitter-no-epoch",
+   "record": "`direction_splitter` cannot split a direction without an epoch",
+   "inputs": "direction_splitter on a direction without an epoch, e.g. '18h00m00 -23d00m00'.",
+   "casa": "It reads the longitude from field 1 and the latitude from field 2 whatever the count, so a direction without an epoch raises IndexError and an unmatched latitude raises AttributeError (CASA 6.7.6).",
+   "ours": "Refuses both with \"can't interpret ... as a direction\" (the message isdirection gives); more than three fields split as CASA splits them.",
+   "rationale": "A clear error is better than a traceback.",
+   "impact": "simobserve stops with a clear message instead of a traceback.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "modifymodel-axis-swap",
+   "record": "`modifymodel` swaps axes into place and refuses a cyclic order",
+   "inputs": "modifymodel with a model whose axes are a cyclic order, e.g. [spectral, RA, Dec, Stokes].",
+   "casa": "The swapaxes loop orders only transpositions (e.g. the FITS order), leaving a cyclic order out of place so the check raises \"internal error: I'm confused about the shape if your model data cube\" with the new image already created and empty (CASA 6.7.6).",
+   "ours": "Permutes the axes, so any order of the four is written as [RA, Dec, Stokes, spectral].",
+   "rationale": "A model's axis order should not matter.",
+   "impact": "Models in any axis order work; CASA refuses cyclic orders.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "modifymodel-stokes-labels",
+   "record": "`modifymodel` labels the new image's Stokes planes by their count",
+   "inputs": "modifymodel on a model labelled I and V, or on three unlabelled planes.",
+   "casa": "The written image takes its Stokes axis from ia.fromshape's default, labelling planes by count (I, IQ, IQU, IQUV), so I and V comes out I and Q and the V data are read as Stokes Q; three unlabelled planes come out IQU though modifymodel returns 'IQV'.",
+   "ours": "Keeps the model's labels and labels unlabelled planes as modifymodel reports them; circular or linear bases keep their labels, so flatimage and adding components refuse them.",
+   "rationale": "modifymodel itself returns the model's Stokes labels.",
+   "impact": "CASA mislabels non-I Stokes planes; casa-rs preserves them but refuses polarisation bases CASA relabels.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "modifymodel-incell-map",
+   "record": "`modifymodel` indexes the map it makes of two cells",
+   "inputs": "modifymodel with incell given as a list of two cells.",
+   "casa": "incell = map(qa.convert, incell, ['arcsec','arcsec']) is then indexed as incell[0]; under Python 3 map returns an iterator, so it raises TypeError: 'map' object is not subscriptable (CASA 6.7.6).",
+   "ours": "Takes the two cells, converted to arcsec and used as given (signs included), as under Python 2; a single cell is unaffected.",
+   "rationale": "The code was written for Python 2.",
+   "impact": "A two-cell incell works instead of raising TypeError.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "ia-modify-default-measures-frame",
+   "record": "`ia.modify` converts a component spectrum through the image's default measures frame",
+   "inputs": "ia.modify adding a component list to an image from ia.fromshape (as modifymodel and simobserve make), with spectra in a different frame, e.g. TOPO spectrum on an LSRK image.",
+   "casa": "Each spectral model converts its reference frequency through the image's default measures frame (geocentre, epoch 0, J2000 pole), shifting frequencies by a velocity no observation has, about 1e-4 of the frequency in CASA 6.7.6.",
+   "ours": "Converts when the image's conversion layer carries a real frame (epoch and observatory position) and otherwise takes the frequencies as they are.",
+   "rationale": "A meaningful conversion needs the observation's epoch and position, which such a sky model does not carry.",
+   "impact": "Frequencies and spectral-index fluxes differ from CASA by about 1e-4 on frame-mismatched components; matched frames agree to 1e-6.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Proposed"
+  },
+  {
+   "id": "ismstp-any-zero-uvw",
+   "record": "`simutil.ismstp` takes any zero UVW value for total power",
+   "inputs": "simobserve corrupting an existing MeasurementSet (obsmode='') whose first antenna name lacks 'TP' and which has more than one antenna.",
+   "casa": "The test uvw.all() == 0. is true when any UVW value is zero, not all, so an interferometer MeasurementSet with one zero coordinate is corrupted as single dish with wrong file names and sensitivity constant.",
+   "ours": "Tests whether every value is zero.",
+   "rationale": "The test is meant to detect total power data.",
+   "impact": "Interferometric data with one zero UVW value are handled as interferometry.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  }
+ ],
+ "evidence": {
+  "signature": {
+   "kind": "Signature inventory",
+   "state": "recorded",
+   "scope": "CASA 6.7.6.14's 57 public methods, names and defaults; not behavior.",
+   "links": [
+    "crates/casars-python/python/tests/data/casa_simutil_signatures.json",
+    "crates/casars-python/python/tests/test_simutil.py"
+   ]
+  },
+  "refusals": {
+   "kind": "Refusal test",
+   "state": "recorded",
+   "scope": "Each method casa-rs does not implement raises NotImplementedError naming #1053.",
+   "links": [
+    "crates/casars-python/src/tools/simutil/stubs.rs",
+    "crates/casars-python/python/tests/test_simutil.py"
+   ]
+  },
+  "simutil-casa-fixture": {
+   "kind": "CASA fixture comparison",
+   "state": "measured",
+   "result": "Recorded from CASA 6.7.6-14 by simutil_oracle.py: 712 calc_pointings2 cases, pointing files, directions, 1,009 noisetemp cases, band names, feeds and beams. Strings exact, numbers to 1e-12 (beams 1e-9), apart from the documented departures. Passes in CI; a receipt at a pinned revision makes this a pass.",
+   "scope": "The pointing, direction, receiver and beam helpers.",
+   "links": [
+    "crates/casa-simulation/tests/simutil_casa.rs",
+    "crates/casa-simulation/tests/data/simutil_casa.json",
+    "tools/simulation/simutil_oracle.py"
+   ]
+  },
+  "readantenna-casa-fixture": {
+   "kind": "CASA fixture comparison",
+   "state": "measured",
+   "result": "Recorded from CASA 6.7.6.14: positions agree to 1e-6 m, and CASA's observatory table to casa-rs's. Passes in CI; a receipt at a pinned revision makes this a pass.",
+   "scope": "readantenna on CASA's configuration files and observatories.",
+   "links": [
+    "crates/casa-simulation/tests/readantenna_casa.rs",
+    "crates/casa-simulation/tests/data/readantenna_casa.json"
+   ]
+  },
+  "skymodel-casa-fixture": {
+   "kind": "CASA fixture comparison",
+   "state": "measured",
+   "result": "Recorded from CASA 6.7.6-14 by skymodel_oracle.py: 68 cases, strings exact, numbers 1e-12, pixels 1e-6 of peak. Passes in CI; a receipt at a pinned revision makes this a pass.",
+   "scope": "modifymodel and flatimage, and components added to models.",
+   "links": [
+    "crates/casa-simulation/tests/skymodel_casa.rs",
+    "crates/casa-simulation/tests/data/skymodel_casa.json.gz",
+    "tools/simulation/skymodel_oracle.py"
+   ]
+  },
+  "binding-tests": {
+   "kind": "Python binding tests",
+   "state": "recorded",
+   "scope": "Arguments, results, state and messages of the binding, on a sample of CASA's fixture values and on CASA's source.",
+   "links": [
+    "crates/casars-python/python/tests/test_simutil.py"
+   ]
+  },
+  "bugs-record": {
+   "kind": "Deviation record",
+   "state": "recorded",
+   "scope": "Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.",
+   "links": [
+    "docs/CASA (C++) bugs.md"
+   ]
+  }
+ }
+}

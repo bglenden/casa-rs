@@ -1,0 +1,680 @@
+{
+ "schema_version": 1,
+ "tool": "componentlist",
+ "casa_version": "6.7.6.14",
+ "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
+ "methods": {
+  "add": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "addcomponent": {
+   "status": "Implemented",
+   "scope": "Adds point, Gaussian and disk components with constant or spectral-index spectra, call by call as CASA 6.7.6.14 does (`casa_componentlist_tool.json`); shapes CASA cannot construct raise and add nothing.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "asciitocomponentlist": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "close": {
+   "status": "Implemented",
+   "scope": "Writes the list to its table and empties the tool.",
+   "evidence": [
+    "signature",
+    "casa-values",
+    "table-fixtures"
+   ]
+  },
+  "concatenate": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "convertfluxpol": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "convertfluxunit": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "convertfrequnit": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "convertrefdir": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "convertshape": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "deselect": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "done": {
+   "status": "Implemented",
+   "scope": "As close, and frees the tool.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "edit": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "fromrecord": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getcomponent": {
+   "status": "Implemented",
+   "scope": "CASA's record of one component, with CASA's index errors.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "getfluxerror": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getfluxpol": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getfluxunit": {
+   "status": "Implemented",
+   "scope": "A component's flux unit.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "getfluxvalue": {
+   "status": "Implemented",
+   "scope": "A component's flux values.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "getfreq": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getfreqframe": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getfrequnit": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getfreqvalue": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getkeyword": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getlabel": {
+   "status": "Implemented",
+   "scope": "A component's label.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "getrefdir": {
+   "status": "Implemented",
+   "scope": "A component's reference direction as a measure record.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "getrefdirdec": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getrefdirframe": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getrefdirra": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getshape": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "getspectrum": {
+   "status": "Implemented",
+   "scope": "A component's spectrum record.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "haskeyword": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "indices": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "iscomponentlist": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "isphysical": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "length": {
+   "status": "Implemented",
+   "scope": "The number of components.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "open": {
+   "status": "Implemented",
+   "scope": "Opens a component-list table, writing a list it replaces first; refuses what is not a component list.",
+   "evidence": [
+    "signature",
+    "casa-values",
+    "table-fixtures"
+   ]
+  },
+  "purge": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "putkeyword": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "recover": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "remove": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "rename": {
+   "status": "Implemented",
+   "scope": "Names the table the list is written to, writing at once.",
+   "evidence": [
+    "signature",
+    "casa-values",
+    "table-fixtures"
+   ]
+  },
+  "replace": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "sample": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "select": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "selected": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "setflux": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "setfreq": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "setfreqframe": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "setlabel": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "setrefdir": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "setrefdirframe": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "setshape": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "setspectrum": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "setstokesspectrum": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "shapetype": {
+   "status": "Implemented",
+   "scope": "A component's shape name.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "simulate": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "sort": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "spectrumtype": {
+   "status": "Implemented",
+   "scope": "A component's spectrum name.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  },
+  "summarize": {
+   "status": "Not implemented",
+   "issue": 1053,
+   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "evidence": [
+    "signature",
+    "refusals"
+   ]
+  },
+  "torecord": {
+   "status": "Implemented",
+   "scope": "CASA's record of the list.",
+   "evidence": [
+    "signature",
+    "casa-values"
+   ]
+  }
+ },
+ "behaviors": [],
+ "decisions": [
+  {
+   "id": "limb-darkened-disk-no-exponent",
+   "record": "Writing a limb-darkened disk without an exponent aborts CASA",
+   "inputs": "cl.fromrecord for a limb-darkened disk without optionalParameters, then cl.close.",
+   "casa": "writeTable stores an empty optional-parameter vector and throws casacore::indexError from the ComponentList destructor, terminating the process (CASA 6.7.6: close aborts); readTable would read out of bounds.",
+   "ours": "Leaves the cell undefined, read as the shape's default exponent 0.05.",
+   "rationale": "The default exponent is what every undescribed row already reads as.",
+   "impact": "Such lists save and reload instead of aborting the process.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "single-spectral-index-read-past-end",
+   "record": "A single spectral index is read past its end",
+   "inputs": "cl.addcomponent(spectrumtype='spectral index', index=alpha) on a polarised component, then predict.",
+   "casa": "The matrix sampleStokes used by every component prediction has no one-index branch and reads indices 1 to 3 out of bounds; the per-frequency version scales only I (read from source, not probed).",
+   "ours": "Reads a single index as [alpha,0,0,0], so fractional polarisation is constant.",
+   "rationale": "This is what the matrix sampler's comments describe.",
+   "impact": "Polarised components with one index predict Q, U, V reliably instead of scaled by whatever follows the vector.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA crashes, aborts, reads out of bounds, loses or corrupts data, or contradicts its documentation or evident intent, casa-rs corrects it."
+  },
+  {
+   "id": "addcomponent-four-flux-as-stokes",
+   "record": "`cl.addcomponent` stores four flux values as Stokes",
+   "inputs": "cl.addcomponent(flux=[1,0.1,0.2,0.9], polarization='circular').",
+   "casa": "setflux stores four values with FluxRep::setValue(Vector<Double>), which resets the representation to Stokes, so the values become I,Q,U,V rather than RR,RL,LR,LL (probed with CASA 6.7.6).",
+   "ours": "Does the same (owner decision 2026-10-23), including raising for an unknown name or a non-Stokes representation with one value.",
+   "rationale": "Scripts get the list CASA would give them.",
+   "impact": "A circular or linear four-value flux is silently read as Stokes in both implementations.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Owner decision, 2026-10-23 (#841), recorded in docs/CASA (C++) bugs.md."
+  },
+  {
+   "id": "addcomponent-flux-single-precision",
+   "record": "`cl.addcomponent` stores the flux in single precision",
+   "inputs": "cl.addcomponent(flux=0.1).",
+   "casa": "setflux reads values into a Vector<Complex> (single precision), so flux=0.1 is stored as 0.10000000149011612 (CASA 6.7.6).",
+   "ours": "Keeps the values given.",
+   "rationale": "Avoids a needless single-precision rounding.",
+   "impact": "Fluxes differ from CASA's by at most 6e-8 relative.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Proposed"
+  },
+  {
+   "id": "shape-axes-recorded-units",
+   "record": "The `cl` tool records a shape's axes in the units it was given",
+   "inputs": "cl.addcomponent(majoraxis='1arcsec', ...) then reading the shape record.",
+   "casa": "TwoSidedShape remembers the units its axes were set in and records them so ({'unit':'arcsec','value':1.0}); a shape read from a table records arcmin axes and degree position angle.",
+   "ours": "Holds radians and records every shape as CASA records one read from a table (arcmin, 0.016666666666666666).",
+   "rationale": "The quantities are the same, and the table is the same either way.",
+   "impact": "The record's unit and value differ from the input's but denote the same quantity.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Proposed"
+  },
+  {
+   "id": "addcomponent-point-for-bad-shape",
+   "record": "`cl.addcomponent` keeps a point for a shape it cannot make",
+   "inputs": "cl.addcomponent with a misspelled shape name, a limb-darkened disk, or an axis that is not an angle.",
+   "casa": "addcomponent ignores setshape's False return, so the component stays a point and addcomponent returns True (CASA 6.7.6).",
+   "ours": "Does the same and logs at ERROR; what setshape raises, addcomponent raises too after removing the component.",
+   "rationale": "Scripts that misspell a shape get points, as in CASA.",
+   "impact": "A misspelled shape yields a point source instead of an error.",
+   "evidence": [
+    "bugs-record"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it."
+  }
+ ],
+ "evidence": {
+  "signature": {
+   "kind": "Signature inventory",
+   "state": "recorded",
+   "scope": "CASA 6.7.6.14's methods, names and defaults, and the object-surface bundle's; not behavior.",
+   "links": [
+    "crates/casars-python/python/tests/data/casa_componentlist_signatures.json",
+    "crates/casars-python/python/tests/test_tools_componentlist.py",
+    "crates/casars-python/src/tools/componentlist/surface.rs"
+   ]
+  },
+  "refusals": {
+   "kind": "Refusal test",
+   "state": "recorded",
+   "scope": "Each method casa-rs does not implement raises NotImplementedError naming #1053.",
+   "links": [
+    "crates/casars-python/python/tests/test_tools_componentlist.py",
+    "crates/casars-python/src/tools/mod.rs"
+   ]
+  },
+  "table-fixtures": {
+   "kind": "CASA fixture comparison",
+   "state": "measured",
+   "result": "CASA-written component-list tables read cell for cell and casa-rs-written ones read back as CASA would (getcomponent fields to 1e-13); fixtures recorded from CASA 6.7.6-14. A receipt at a pinned revision makes this a pass.",
+   "scope": "The component-list tables open reads and close and rename write.",
+   "links": [
+    "crates/casa-components/tests/casa_fixture.rs",
+    "crates/casa-components/tests/data/casa-6.7.6",
+    "tools/simulation/componentlist_oracle.py"
+   ]
+  },
+  "casa-values": {
+   "kind": "CASA-recorded call sequences",
+   "state": "measured",
+   "result": "The tests replay CASA 6.7.6-14's recorded calls and compare every value; a receipt at a pinned revision makes this a pass.",
+   "scope": "addcomponent and the accessors on 20 components and 36 recorded calls, with CASA's edge cases.",
+   "links": [
+    "crates/casars-python/python/tests/data/casa_componentlist_tool.json",
+    "crates/casars-python/python/tests/test_tools_componentlist.py"
+   ]
+  },
+  "bugs-record": {
+   "kind": "Deviation record",
+   "state": "recorded",
+   "scope": "Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.",
+   "links": [
+    "docs/CASA (C++) bugs.md"
+   ]
+  }
+ }
+}
