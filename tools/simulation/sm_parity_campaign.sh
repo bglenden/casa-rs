@@ -74,10 +74,11 @@ for set in "${sets[@]}"; do
   "$casapy" tools/simulation/casa_sm_observe_oracle.py \
     --scenarios "$scenarios" --model-root "$models" --out "$out/$set/casa"
   "$replay" "$out/$set/casa/manifest.json" "$out/$set/casa-rs" --backend "$backend"
+  # macOS's bash 3.2 calls an empty array unbound under `set -u`.
   extra=()
   case "$set" in atm | trop) extra=(--atmosphere-model "$atmosphere") ;; esac
   if ! "$casapy" tools/simulation/compare_sm_ms.py --casa "$out/$set/casa" --casars "$out/$set/casa-rs" \
-    "${extra[@]}" --json "$out/$set/report.json" > "$out/$set/compare.log" 2>&1; then
+    ${extra[@]+"${extra[@]}"} --json "$out/$set/report.json" > "$out/$set/compare.log" 2>&1; then
     status=1
   fi
   tail -n 30 "$out/$set/compare.log" >&2
