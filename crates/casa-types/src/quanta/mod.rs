@@ -58,7 +58,9 @@ pub use angle::MvAngle;
 pub use dim::{Dimension, UnitDim};
 pub use error::UnitError;
 pub use quantity::Quantity;
-pub use read::{QuantityReadError, casacore_unit_name, unique_prefix_index};
+pub use read::{
+    QuantityReadError, casacore_unit_name, unique_prefix_index, unique_prefix_position,
+};
 pub use time::MvTime;
 pub use unit::Unit;
 pub use unit_val::UnitVal;

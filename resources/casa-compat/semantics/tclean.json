@@ -185,10 +185,12 @@
     },
     "stokes": {
       "status": "Partial",
-      "scope": "Native Stokes/correlation coordinates; full-Stokes and basis-dependent combinations require their own acceptance, not an I-plane inference.",
+      "scope": "Native Stokes/correlation coordinates; full-Stokes and basis-dependent combinations require their own acceptance, not an I-plane inference. With mtmfs every Stokes plane is a Taylor family of its own, cleaned and restored with its own beam (one beam under restoringbeam='common' or a given beam), and the spectral index is written only for Stokes I alone (issue 1065); Stokes planes other than I alone take the standard gridder only, the mosaic, W- and AW-projection gridders refused (issue 1112), and a Taylor run whose first gridded correlation has no weight is refused (issue 1109).",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "mtmfs-nterms1-polarized-20261103",
+        "mtmfs-polarized-review-20261103"
       ],
       "behaviors": [
         "returns"
@@ -516,10 +518,12 @@
     },
     "deconvolver": {
       "status": "Partial",
-      "scope": "hogbom/clark/multiscale/mtmfs pass; asp refused with issue 223; other CASA algorithms refused with issue 823.",
+      "scope": "hogbom/clark/multiscale/mtmfs pass; asp refused with issue 223; other CASA algorithms refused with issue 823. mtmfs with specmode cube or cubedata is refused, as CASA's tclean warns and images nothing.",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "mtmfs-nterms1-polarized-20261103",
+        "mtmfs-polarized-review-20261103"
       ],
       "behaviors": [
         "deconvolution"
@@ -538,10 +542,11 @@
     },
     "nterms": {
       "status": "Partial",
-      "scope": "Used only by mtmfs; other deconvolvers force one. mtmfs nterms=1 refused (issue 980); request enforces >1 exactly for mtmfs.",
+      "scope": "Used only by mtmfs; other deconvolvers force one. mtmfs takes nterms >= 1: one term images a Taylor family of one (.tt0 products, no spectral index), as CASA does (issue 1065); request refuses more than one term without mtmfs.",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "mtmfs-nterms1-polarized-20261103"
       ],
       "behaviors": [
         "deconvolution"
@@ -596,7 +601,8 @@
       "scope": "As SynthesisParamsDeconv::fromRecord: empty -> each plane's fitted beam; common -> one enclosing beam; one, two or three quantities -> a circular beam, an ellipse at angle 0 or an ellipse at an angle, which restores every plane and is the image's one beam, the residual rescaled from the fitted beam as rescaleResolution does (left as it is, with a warning, when the fitted beam does not deconvolve); any other count or a zero axis -> fitted beams; non-angular, negative or inverted axes refused as CASA refuses them.",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "mtmfs-polarized-review-20261103"
       ],
       "behaviors": [
         "deconvolution"
@@ -1849,6 +1855,40 @@
         "crates/casa-imaging-application/tests/data/projections-casa-6.7.6.14.json",
         "crates/casa-imaging-model/src/sky_projection.rs",
         "crates/casars-imager/tests/t1/projection.rs"
+      ]
+    },
+    "mtmfs-nterms1-polarized-20261103": {
+      "kind": "CASA tclean test-case matrix and T1 imaging laws",
+      "state": "passed",
+      "source_revision": "79e72c040612a599e89fcb9810b3bc0d611fbbc5",
+      "revision": "356aa9bba082223dcf6dc8df0d6b357333cc3708",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-casa-test-cases.json --backend cpu --precision f64 --include-skipped --case <each case of the receipt>",
+      "receipt": "resources/casa-compat/evidence/tclean-mtmfs-nterms1-polarized-20261103.json",
+      "scope": "tclean deconvolver='mtmfs' with nterms=1 and Taylor families of every Stokes plane (#1065). 13 of 14 cases pass every product within 5.3e-6 NRMS with exact counts: test_onefield_mtmfs_nterms1.1, test_onefield_mtmfs_smallscalebias.1, test_stokes_mtmfs_Q.1, test_stokes_weighting.8 (IQUV, Briggs), seven MT-MFS regression cases, and the CASA-skipped test_cube_mtmfs_nterms1.1 and test_cubedata_mtmfs_nterms1.1, which CASA declines and casa-rs refuses. test_stokes_mtmfs_IQUV.1+2 stays refused by usemask='pb' (#1061). Every Stokes plane's .sumwt.ttN is the first correlation's, as MultiTermFTNew writes it; multi-Stokes images record one beam per plane; a spectral index is written for Stokes I alone.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-mtmfs-nterms1-polarized-20261103.json",
+        "crates/casa-imaging-products/src/taylor.rs",
+        "crates/casa-imaging-runtime/src/minor.rs",
+        "crates/casa-imaging-operator/src/operator.rs",
+        "crates/casars-imager/tests/t1/mtmfs.rs"
+      ]
+    },
+    "mtmfs-polarized-review-20261103": {
+      "kind": "CASA tclean test-case matrix, casa-rs's own polarized MT-MFS cases, T1 imaging laws",
+      "state": "passed",
+      "source_revision": "2c0aa26bca18b4b8301e0eee2540ba9273bf8770",
+      "revision": "f051e3b71b2d8e890a33ea4607cea5ca1c01b683",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with tclean-casa-test-cases.json (#1065's 14 cases, --include-skipped) and tclean-mtmfs-polarized-cases.json",
+      "receipt": "resources/casa-compat/evidence/tclean-mtmfs-polarized-review-20261103.json",
+      "scope": "tclean deconvolver='mtmfs' of polarized Taylor families after #1104's review (#1065). #1065's 14 cases pass as before (13 of 14, worst NRMS 5.3e-6; test_stokes_mtmfs_IQUV.1+2 refused by usemask='pb', #1061). Of casa-rs's own cases, refim_point_linRL's polarized point in IQUV, and in IQUV with restoringbeam='common' (one beam recorded, as CASA records it), passes every product; in IV every product but a tt1 model that is rounding in both. The refim_mawproject mosaic in IQUV failed (zero Q and U PSF moments), so Stokes planes other than I alone are refused beyond the standard gridder (issue 1112). The T1 law a_polarized_taylor_family_is_imaged_on_its_own_stokes_plane puts a circularly polarized point's V on V's plane of each term.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-mtmfs-polarized-review-20261103.json",
+        "resources/casa-compat/tclean-mtmfs-polarized-cases.json",
+        "crates/casars-imager/tests/t1/mtmfs.rs",
+        "crates/casa-imaging-products/src/generation.rs",
+        "crates/casa-imaging-application/src/availability.rs"
       ]
     }
   }

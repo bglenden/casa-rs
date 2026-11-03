@@ -164,15 +164,17 @@ impl Run<'_> {
         let mut physical = Vec::with_capacity(apparent.len());
         // Canonical order: spectral plane, polarization, y, x (x fastest);
         // the normal state's planes are x-major (x · ny + y). Every Taylor
-        // term divides by term 0's weights
+        // term divides by term 0's weights of its polarization
         // (`SIImageStoreMultiTerm::divideModelByWeight`).
         let taylor = (normal.basis() == casa_imaging_deconvolution::NormalBasis::Taylor)
             .then(|| normal.read_window(normal.slab().core_range()))
             .transpose()?;
-        let principal = taylor
-            .as_ref()
-            .map(|window| window.normal_moment(0).expect("the zeroth normal moment"));
         for (plane, samples) in apparent.chunks(nx * ny).enumerate() {
+            let principal = taylor.as_ref().map(|window| {
+                window
+                    .normal_moment(0, plane % polarizations)
+                    .expect("the zeroth normal moment")
+            });
             let (sensitivity, sum_weight) = match principal {
                 Some(moment) => (
                     std::borrow::Cow::Borrowed(moment.sensitivity()),

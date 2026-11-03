@@ -284,6 +284,39 @@ fn taylor_recovers_two_components_with_their_spectra() {
     );
 }
 
+/// One Taylor term on the point scale (CASA's `mtmfs` with `nterms=1`) is
+/// Högbom: its one-by-one Hessian is the PSF's unit peak, so each step
+/// takes the residual's peak at full strength and subtracts the gain-scaled
+/// PSF there, and the PSF vanishes inside the cleaner's patch. The two place
+/// the same components in the same order, to rounding, and stop alike.
+#[test]
+fn one_taylor_term_on_the_point_scale_is_hogbom() {
+    let point = psf(2.0, 1.0);
+    let plane = Plane::new(vec![convolve(&point, &two_points())], vec![point]);
+    let cycle = cycle(5000, 0.01);
+    let hogbom = plane
+        .run_traced(&Hogbom::new(false), &cycle, usize::MAX)
+        .unwrap();
+    let taylor = plane
+        .run_traced(&Taylor::new(1, vec![0.0], 0.0), &cycle, usize::MAX)
+        .unwrap();
+    assert_eq!(hogbom.stop, PlaneStop::CycleThreshold);
+    assert_eq!(
+        (taylor.stop, taylor.iterations, taylor.components),
+        (hogbom.stop, hogbom.iterations, hogbom.components)
+    );
+    assert!((taylor.peak - hogbom.peak).abs() < 1e-12, "stop peak");
+    assert_eq!(taylor.trace.len(), hogbom.trace.len());
+    for (one_term, point) in taylor.trace.iter().zip(&hogbom.trace) {
+        assert_eq!((one_term.index, one_term.term), (point.index, point.term));
+        assert!(
+            (one_term.flux - point.flux).abs() < 1e-12,
+            "{one_term:?} vs {point:?}"
+        );
+    }
+    assert!((taylor.model_flux - hogbom.model_flux).abs() < 1e-12);
+}
+
 /// #449: the scale solvers' transforms on several FFTW threads clean as on
 /// one, apart from rounding. Multiscale and two-term CLEAN place as many
 /// components, each update entry at the same cell with the same flux to a

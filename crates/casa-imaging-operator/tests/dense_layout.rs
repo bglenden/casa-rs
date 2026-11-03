@@ -559,9 +559,13 @@ fn weight_mode_places_the_weight_taps_at_the_origin() {
 /// A Taylor weight mode forms one weight image per PSF term, the moment
 /// Σ W·s^m of the weight kernel (`MultiTermFTNew`, #704), for each
 /// polarization. XX and YY carry unequal weights over an asymmetric band,
-/// so the odd moments do not cancel: each term's `sumwt` is the moment of
-/// that polarization's weights, and, the weight taps all sitting at the
-/// origin, its image is moment-0's scaled by the ratio of the two.
+/// so the odd moments do not cancel: the weight taps all sitting at the
+/// origin, each polarization's image is its moment-0 image scaled by the
+/// ratio of its own moments. Each term's `sumwt` is the first gridded
+/// correlation's moment on every plane, as `MultiTermFTNew` forms it with
+/// `ToStokesSumWt`'s form without coordinates (#1065; CASA 6.7.6.14's
+/// `test_stokes_weighting` call 8 writes one sum on all four Stokes
+/// planes).
 #[test]
 fn taylor_weight_images_are_the_weight_moments_of_each_polarization() {
     const OFFSETS: [f32; 4] = [-0.12, 0.03, 0.18, 0.31];
@@ -613,27 +617,28 @@ fn taylor_weight_images_are_the_weight_moments_of_each_polarization() {
             .expect("grid");
         let normal = operator.finish(acc).expect("finish");
         let moments = 2 * terms as usize - 1;
+        let moment = |pol: usize, order: usize| -> (f64, f64) {
+            placed
+                .iter()
+                .enumerate()
+                .fold((0.0, 0.0), |(sum, scale), (index, p)| {
+                    let weight = f64::from(weights[index * 2 + pol] as f32);
+                    let power = f64::from(p.spectral).powi(order as i32);
+                    (sum + weight * power, scale + (weight * power).abs())
+                })
+        };
         for pol in 0..2 {
-            let moment = |order: usize| -> (f64, f64) {
-                placed
-                    .iter()
-                    .enumerate()
-                    .fold((0.0, 0.0), |(sum, scale), (index, p)| {
-                        let weight = f64::from(weights[index * 2 + pol] as f32);
-                        let power = f64::from(p.spectral).powi(order as i32);
-                        (sum + weight * power, scale + (weight * power).abs())
-                    })
-            };
-            let (zeroth, _) = moment(0);
+            let (zeroth, _) = moment(pol, 0);
             let base = normal.weight(0, 0, pol).expect("weight term 0");
             let peak = max_abs(base.iter().copied());
             for order in 0..moments {
-                let (expected, scale) = moment(order);
+                let (first, first_scale) = moment(0, order);
                 let sumwt = normal.weight_sumwt(0, order, pol);
                 assert!(
-                    (sumwt - expected).abs() <= 1.0e-6 * scale,
-                    "{terms} terms, pol {pol}, moment {order}: sumwt {sumwt}, expected {expected}"
+                    (sumwt - first).abs() <= 1.0e-6 * first_scale,
+                    "{terms} terms, pol {pol}, moment {order}: sumwt {sumwt}, XX's {first}"
                 );
+                let (expected, scale) = moment(pol, order);
                 let image = normal.weight(0, order, pol).expect("weight term");
                 let ratio = expected / zeroth;
                 for (actual, base) in image.iter().zip(base) {

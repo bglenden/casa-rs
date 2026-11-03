@@ -277,9 +277,15 @@ fn casa_values_become_the_request_casa_rs_runs() {
         (bare.threshold, bare.cell, bare.imsize),
         (0.002, [0.5, 0.5], [64, 32])
     );
-    // nterms is read with mtmfs.
-    let terms = request(json!({ "deconvolver": "mtmfs", "nterms": 3 }));
-    assert_eq!((terms.deconvolver, terms.nterms), (Deconvolver::Mtmfs, 3));
+    // nterms is read with mtmfs, one term included (CASA's
+    // `test_onefield_mtmfs_nterms1`).
+    for nterms in [1, 3] {
+        let terms = request(json!({ "deconvolver": "mtmfs", "nterms": nterms }));
+        assert_eq!(
+            (terms.deconvolver, terms.nterms),
+            (Deconvolver::Mtmfs, nterms)
+        );
+    }
     // projection names casacore's projection as casacore spells it.
     for (text, projection) in [
         ("SIN", Projection::Sin),
@@ -379,11 +385,6 @@ fn values_casa_rs_cannot_honour_are_refused() {
             "#980",
         ),
         (
-            json!({ "deconvolver": "mtmfs", "nterms": 1 }),
-            "nterms",
-            "#1065",
-        ),
-        (
             json!({ "gridder": "awproject", "conjbeams": true, "cfcache": "cf",
                     "wprojplanes": 32, "facets": 2 }),
             "facets",
@@ -426,6 +427,15 @@ fn values_casa_rs_cannot_honour_are_refused() {
         (json!({ "projection": "XYZ" }), "projection"),
         (json!({ "projection": "ncp" }), "projection"),
         (json!({ "projection": "tan" }), "projection"),
+        // `test_cube_mtmfs_nterms1`, `test_cubedata_mtmfs_nterms1`.
+        (
+            json!({ "specmode": "cube", "deconvolver": "mtmfs", "nterms": 1 }),
+            "deconvolver",
+        ),
+        (
+            json!({ "specmode": "cubedata", "deconvolver": "mtmfs", "nterms": 1 }),
+            "deconvolver",
+        ),
         (
             json!({ "gridder": "wproject", "wprojplanes": 0 }),
             "wprojplanes",

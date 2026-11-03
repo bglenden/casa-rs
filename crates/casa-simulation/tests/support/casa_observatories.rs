@@ -6,10 +6,11 @@
 use std::path::Path;
 
 use casa_types::measures::{MeasuresProvider, ObservatoryPosition};
+use casa_types::quanta::unique_prefix_position;
 use serde_json::Value;
 
-/// CASA's observatory table, looked up as casa-measures-data looks names up
-/// (trimmed, case-insensitive, first match).
+/// CASA's observatory table, looked up as casa-measures-data and casacore
+/// look names up (`unique_prefix_position`).
 #[derive(Debug)]
 pub struct CasaObservatories(Vec<(String, ObservatoryPosition)>);
 
@@ -58,11 +59,9 @@ impl CasaObservatories {
 
 impl MeasuresProvider for CasaObservatories {
     fn observatory(&self, name: &str) -> Result<Option<ObservatoryPosition>, String> {
-        let name = name.trim();
-        Ok(self
-            .0
-            .iter()
-            .find(|(entry, _)| entry.eq_ignore_ascii_case(name))
-            .map(|(_, position)| position.clone()))
+        Ok(
+            unique_prefix_position(name, &self.0, |(entry, _)| entry.as_str())
+                .map(|at| self.0[at].1.clone()),
+        )
     }
 }

@@ -347,6 +347,17 @@ impl<'a> Tclean<'a> {
                 issue,
             ));
         }
+        // CASA's tclean images nothing for this pair, whatever `nterms`
+        // (`task_tclean.py` warns and returns before imaging).
+        if deconvolver == "mtmfs" && matches!(specmode, "cube" | "cubedata") {
+            return Err(TcleanRefusal::new(
+                "deconvolver",
+                format!(
+                    "deconvolver='mtmfs' with specmode='{specmode}' is not supported: CASA's \
+                     tclean images nothing for it, and so does casa-rs"
+                ),
+            ));
+        }
         self.set("deconvolver", deconvolver);
         let weighting = self.text("weighting")?;
         if !matches!(
@@ -879,13 +890,6 @@ impl<'a> Tclean<'a> {
             },
         );
         let nterms = self.integer("nterms")?;
-        if modes.deconvolver == "mtmfs" && nterms == 1 {
-            return Err(TcleanRefusal::not_yet(
-                "nterms",
-                "1 with deconvolver='mtmfs'",
-                1065,
-            ));
-        }
         self.set(
             "nterms",
             if modes.deconvolver == "mtmfs" {
