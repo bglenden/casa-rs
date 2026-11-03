@@ -253,3 +253,111 @@ fn a_start_models_model_data_is_the_deep_runs() {
     );
     assert!(worst <= 1.0e-5 * peak, "MODEL_DATA: {worst} of {peak}");
 }
+
+/// `controls` extended by `extra`.
+fn with(controls: &Value, extra: Value) -> Value {
+    let mut controls = controls.clone();
+    controls
+        .as_object_mut()
+        .expect("controls")
+        .extend(extra.as_object().expect("extra").clone());
+    controls
+}
+
+/// An MT-MFS start model is one image per Taylor term (#1067,
+/// `SIImageStoreMultiTerm::setModelImage`): started from a deep run's
+/// `.model.tt0` and `.model.tt1` with no minor cycle, the run is the deep
+/// run's last major cycle again, every term's residual included; an empty
+/// entry leaves its term zero (CASA's `test_startmodel_mtmfs_restart`
+/// passes `['', 'tst1.model.tt1']`).
+#[test]
+fn an_mtmfs_start_model_is_one_image_per_taylor_term() {
+    let steep = Component {
+        spectral_index: -1.0,
+        ..POINT
+    };
+    let observation = Observation::synthesise_band(8, &[("point", steep)]);
+    let controls = json!({
+        "weighting": "natural",
+        "deconvolver": "mtmfs",
+        "nterms": 2,
+        "niter": 500,
+        "threshold": "0.005Jy",
+    });
+    let (_, deep) = observation.image("mtmfs-deep", controls.clone());
+    let terms = [
+        observation.scratch("mtmfs-deep.model.tt0"),
+        observation.scratch("mtmfs-deep.model.tt1"),
+    ];
+    let (_, started) = observation.image(
+        "mtmfs-started",
+        with(&controls, json!({ "niter": 0, "startmodel": terms })),
+    );
+    for product in [".model.tt0", ".model.tt1", ".residual.tt0", ".residual.tt1"] {
+        let worst = difference(&deep, &started, product);
+        eprintln!("T1 mtmfs startmodel: {product} differs by {worst:.2e} of its peak");
+        assert!(worst < 1.0e-5, "{product}: {worst:e}");
+    }
+    let (_, second) = observation.image(
+        "mtmfs-second-term",
+        with(
+            &controls,
+            json!({ "niter": 0, "startmodel": ["", terms[1]] }),
+        ),
+    );
+    assert!(
+        second
+            .get(".model.tt0")
+            .values()
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+    assert!(difference(&deep, &second, ".model.tt1") < 1.0e-5);
+}
+
+/// A start model on another spectral grid is regridded along frequency
+/// (#1067, `SIImageStore::regridToModelImage`'s `ImageRegrid` over the
+/// direction and spectral axes, linear): an eight-channel model of
+/// channels 4 to 11 seeds a sixteen-channel cube with those channels'
+/// planes, and the channels beyond it with its end planes, as casacore's
+/// linear interpolation writes them (CASA's `test_modelvis_7` regrids such
+/// a model onto its whole window).
+#[test]
+fn a_start_model_on_another_spectral_grid_is_regridded_along_frequency() {
+    let steep = Component {
+        spectral_index: -2.0,
+        ..POINT
+    };
+    let observation = Observation::synthesise_band(16, &[("point", steep)]);
+    let controls = json!({
+        "specmode": "cube",
+        "nchan": -1,
+        "weighting": "natural",
+        "deconvolver": "hogbom",
+        "niter": 300,
+        "threshold": "0.01Jy",
+    });
+    let (_, part) = observation.image("regrid-part", with(&controls, json!({ "spw": "0:4~11" })));
+    let (_, whole) = observation.image(
+        "regrid-whole",
+        with(
+            &controls,
+            json!({ "niter": 0, "startmodel": observation.scratch("regrid-part.model") }),
+        ),
+    );
+    let (part, whole) = (part.get(".model"), whole.get(".model"));
+    assert_eq!((part.channels(), whole.channels()), (8, 16));
+    for channel in 0..16 {
+        let source = part.plane(channel.clamp(4, 11) - 4);
+        let seeded = whole.plane(channel);
+        let peak = source.iter().fold(0.0_f32, |m, v| m.max(v.abs()));
+        let worst = source
+            .iter()
+            .zip(&seeded)
+            .fold(0.0_f32, |m, (a, b)| m.max((a - b).abs()));
+        assert!(
+            worst <= 1.0e-5 * peak,
+            "channel {channel}: {worst} of the model plane's peak {peak}"
+        );
+    }
+}
