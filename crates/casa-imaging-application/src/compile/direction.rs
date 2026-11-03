@@ -133,6 +133,7 @@ pub(super) fn resolve_centre(
         ephemeris.is_some(),
     )?;
     let (longitude, latitude) = image_centre.as_angles();
+    refuse_ncp_at_equator(request.projection, latitude)?;
     Ok(Centre {
         law,
         ephemeris,
@@ -484,6 +485,18 @@ pub(super) fn observation_info(
         .with_pointing_center(pointing_longitude, centre.image_centre.as_angles().1))
 }
 
+/// Refuse `projection='NCP'` for an image centred on the celestial
+/// equator, where its slant `cot δ₀` is infinite.
+pub(super) fn refuse_ncp_at_equator(
+    projection: Projection,
+    latitude_rad: f64,
+) -> Result<(), PrepareError> {
+    if projection == Projection::Ncp && !(1.0 / latitude_rad.tan()).is_finite() {
+        return Err(PrepareError::NcpAtEquator);
+    }
+    Ok(())
+}
+
 /// The direction coordinate of `image_size` (x, y) cells of `cell_arcsec`
 /// (x, y) in `projection`, centred on `[longitude, latitude]` in `frame`,
 /// as CASA's `buildCoordinateSystem` makes it. Its poles are WCSLIB's
@@ -501,7 +514,7 @@ pub(super) fn direction_spec(
 ) -> DirectionCoordinateSpec {
     let [cell_x, cell_y] = cell_arcsec.map(|cell| cell * std::f64::consts::PI / (180.0 * 3600.0));
     let poles = if projection.zenithal() {
-        [180.0, 0.0]
+        [180.0, 90.0]
     } else if latitude >= 0.0 {
         [0.0, 90.0]
     } else {
@@ -545,15 +558,11 @@ pub(super) fn image_coordinates(
     let reference = direction.reference_direction();
     let mut coordinates = CoordinateSystem::new();
     // casacore's defaults for the poles, as `direction_spec` states them.
-    coordinates.add_coordinate(DirectionCoordinate::new(
-        reference.frame().direction_ref(),
-        direction
-            .projection()
-            .coordinate_projection(reference.latitude_rad()),
-        [reference.longitude_rad(), reference.latitude_rad()],
-        direction.increment_rad(),
-        image_reference_pixel(image_size),
-    ));
+    debug_assert_eq!(
+        direction.reference_pixel(),
+        image_reference_pixel(image_size)
+    );
+    coordinates.add_coordinate(direction.coordinate());
     coordinates.add_coordinate(StokesCoordinate::new(
         polarizations.iter().copied().map(stokes_type).collect(),
     ));
@@ -828,9 +837,24 @@ mod tests {
     /// (`tests/data/projections-casa-6.7.6.14.json`, written by
     /// `tools/casa-compat/probe_tclean_projections.py`), and of the same
     /// images centred at declination −40.7°, where a projection whose
-    /// reference is on its native equator takes the native pole at 180°.
+    /// reference is on its native equator takes the native pole at 180°,
+    /// and at 0°, where that native pole is the celestial north pole.
     /// CASA writes every projection with the parameters `[0, 0]` and NCP as
     /// a slanted SIN.
+    /// NCP is undefined for an image centred on the celestial equator,
+    /// where its slant `cot δ₀` is infinite: casa-rs refuses it where CASA
+    /// writes `[0, inf]` and places every pixel at NaN.
+    #[test]
+    fn ncp_on_the_celestial_equator_is_refused() {
+        assert!(matches!(
+            refuse_ncp_at_equator(Projection::Ncp, 0.0),
+            Err(PrepareError::NcpAtEquator)
+        ));
+        assert!(refuse_ncp_at_equator(Projection::Ncp, 1e-6).is_ok());
+        assert!(refuse_ncp_at_equator(Projection::Sin, 0.0).is_ok());
+        assert!(refuse_ncp_at_equator(Projection::Car, 0.0).is_ok());
+    }
+
     #[test]
     fn each_projection_places_pixels_as_casa_does() {
         let casa: serde_json::Value = serde_json::from_str(include_str!(
@@ -866,6 +890,14 @@ mod tests {
             ("AIT", Projection::Ait),
             ("MER", Projection::Mer),
         ];
+        let equator = [
+            ("SIN", Projection::Sin),
+            ("TAN", Projection::Tan),
+            ("CAR", Projection::Car),
+            ("SFL", Projection::Sfl),
+            ("AIT", Projection::Ait),
+            ("MER", Projection::Mer),
+        ];
         let cases = north
             .into_iter()
             .map(|case| (&casa["projections"], case))
@@ -873,6 +905,11 @@ mod tests {
                 south
                     .into_iter()
                     .map(|case| (&casa["south"]["projections"], case)),
+            )
+            .chain(
+                equator
+                    .into_iter()
+                    .map(|case| (&casa["equator"]["projections"], case)),
             );
         for (images, (name, projection)) in cases {
             let entry = &images[name];

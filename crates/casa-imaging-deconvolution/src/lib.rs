@@ -55,7 +55,7 @@ pub use mask::{
     AUTO_MULTITHRESH_BYTES_PER_CELL, AutoMaskBeam, AutoMaskCycle, AutoMaskEvidence, AutoMaskPlane,
     AutoMaskPsf, AutoMaskRead, AutoMaskSource, AutoMaskThreshold, AutoMultithreshControls,
     AutoMultithreshEvidence, ImageDomainMaskMaterialization, ImageDomainReconstructionMaskPlans,
-    ImageDomainReconstructionMasks, MaskBox, MaskError, MaskPlaneKey, MaskPlanes,
+    ImageDomainReconstructionMasks, MaskBox, MaskError, MaskPlaneKey, MaskPlanes, MaskReprojection,
     NoiseMaskExclusion, ReconstructionMask, ReconstructionMaskPlan, ReconstructionMaskSet,
     auto_multithresh, auto_multithresh_bytes, reproject_mask_support,
 };

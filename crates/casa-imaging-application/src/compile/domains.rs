@@ -133,6 +133,7 @@ pub(super) fn prepare_domains(
     if let Some(path) = request.outlierfile.as_deref() {
         for outlier in read_outlier_domains(path, request.imsize, request.cell)? {
             let centre = parse_phase_center_direction(&outlier.phase_center)?;
+            super::direction::refuse_ncp_at_equator(request.projection, centre.latitude_rad())?;
             // An outlier field projects as the main image: CASA's outlier
             // records start from the main image's parameters.
             let direction = direction_spec(

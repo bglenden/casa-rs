@@ -46,26 +46,91 @@ pub fn reproject_mask_support(
     target_coordinate: DirectionCoordinateSpec,
     target_shape: [usize; 2],
 ) -> Result<Box<[bool]>, MaskError> {
-    validate_shape(source_shape)?;
-    validate_shape(target_shape)?;
-    if source_support.len() != source_shape[0] * source_shape[1] {
-        return Err(MaskError::ShapeMismatch);
-    }
-    let (source, target) = (
-        source_coordinate.coordinate(),
-        target_coordinate.coordinate(),
-    );
-    let mut target_support = vec![false; target_shape[0] * target_shape[1]];
-    for x in 0..target_shape[0] {
-        for y in 0..target_shape[1] {
-            if reprojected_pixel(&source, source_shape, &target, [x, y])?
-                .is_some_and(|[sx, sy]| source_support[sx * source_shape[1] + sy])
-            {
-                target_support[x * target_shape[1] + y] = true;
+    MaskReprojection::new(
+        source_coordinate,
+        source_shape,
+        target_coordinate,
+        target_shape,
+    )?
+    .apply(source_support)
+}
+
+/// The nearest-pixel map from a target direction grid to a source grid,
+/// which every plane of a mask image shares: built once, it reprojects
+/// each plane's support without converting a direction again.
+#[derive(Debug, Clone)]
+pub struct MaskReprojection {
+    source_shape: [usize; 2],
+    target_shape: [usize; 2],
+    /// Per target cell, x-major: the source cell's x-major index plus one,
+    /// or 0 off the source grid.
+    map: Box<[u32]>,
+}
+
+impl MaskReprojection {
+    /// The map of `target_coordinate`'s `target_shape` grid onto
+    /// `source_coordinate`'s `source_shape` grid, each coordinate in its
+    /// own projection.
+    ///
+    /// # Errors
+    ///
+    /// An empty or oversized shape, a source grid of more cells than the map
+    /// indexes, or a direction one coordinate cannot convert.
+    pub fn new(
+        source_coordinate: DirectionCoordinateSpec,
+        source_shape: [usize; 2],
+        target_coordinate: DirectionCoordinateSpec,
+        target_shape: [usize; 2],
+    ) -> Result<Self, MaskError> {
+        validate_shape(source_shape)?;
+        validate_shape(target_shape)?;
+        if source_shape[0] * source_shape[1] >= u32::MAX as usize {
+            return Err(MaskError::InvalidShape);
+        }
+        let (source, target) = (
+            source_coordinate.coordinate(),
+            target_coordinate.coordinate(),
+        );
+        let mut map = vec![0_u32; target_shape[0] * target_shape[1]];
+        for x in 0..target_shape[0] {
+            for y in 0..target_shape[1] {
+                if let Some([sx, sy]) = reprojected_pixel(&source, source_shape, &target, [x, y])? {
+                    map[x * target_shape[1] + y] = (sx * source_shape[1] + sy) as u32 + 1;
+                }
             }
         }
+        Ok(Self {
+            source_shape,
+            target_shape,
+            map: map.into_boxed_slice(),
+        })
     }
-    Ok(target_support.into_boxed_slice())
+
+    /// Heap bytes the map of a `target_shape` grid holds.
+    #[must_use]
+    pub fn bytes(target_shape: [usize; 2]) -> u64 {
+        (target_shape[0] as u64)
+            .saturating_mul(target_shape[1] as u64)
+            .saturating_mul(size_of::<u32>() as u64)
+    }
+
+    /// `source_support`, x-major on the source grid, on the target grid:
+    /// true where the nearest source pixel is.
+    ///
+    /// # Errors
+    ///
+    /// A support that is not the source grid's size.
+    pub fn apply(&self, source_support: &[bool]) -> Result<Box<[bool]>, MaskError> {
+        if source_support.len() != self.source_shape[0] * self.source_shape[1] {
+            return Err(MaskError::ShapeMismatch);
+        }
+        debug_assert_eq!(self.map.len(), self.target_shape[0] * self.target_shape[1]);
+        Ok(self
+            .map
+            .iter()
+            .map(|&source| source != 0 && source_support[source as usize - 1])
+            .collect())
+    }
 }
 
 /// The pixel of `source`, a grid of `source_shape`, nearest the direction

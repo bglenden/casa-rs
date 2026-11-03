@@ -37,7 +37,8 @@ CASA behaviours casa-rs does not follow:
 [`tb.addrows` with a negative count](#tbaddrows-with-a-negative-count-removes-rows),
 [`tb.removerows` and `tb.addcols` that fail part way](#tbremoverows-and-tbaddcols-do-part-of-a-call-that-fails),
 [`MSIter`'s receptor angles for a window without its own `FEED` row](#msiter-keeps-the-previous-windows-receptor-angles-for-a-window-without-its-own-feed-row),
-[a projection name with spaces](#tclean-refuses-a-projection-name-with-spaces-round-it).
+[a projection name with spaces](#tclean-refuses-a-projection-name-with-spaces-round-it),
+[NCP on the celestial equator](#ncp-on-the-celestial-equator-places-every-pixel-at-nan).
 Simulator behaviours casa-rs does not follow:
 [TIME as TAI](#the-simulator-stores-tai-as-utc),
 [shadowing the front antenna](#the-simulator-charges-shadowing-to-the-antenna-in-front),
@@ -3430,3 +3431,19 @@ one string parameter the catalog does not trim. Evidence: CASA's refusals in
 `crates/casa-imaging-application/tests/data/projections-casa-6.7.6.14.json`,
 and the `tclean_tests` rows `casa_values_become_the_request_casa_rs_runs`
 and `values_casa_rs_cannot_honour_are_refused`.
+
+## NCP on the celestial equator places every pixel at NaN
+
+- Date noted: 2026-11-03
+- Status: CASA defect casa-rs corrects by refusing (#1064)
+- Affected code: casatools `synthesis/ImagerObjects/SynthesisUtilMethods.cc`
+  (`SynthesisParamsImage::buildCoordinateSystem`)
+
+CASA writes `projection='NCP'` as SIN slanted by `[0, cot δ₀]`, with no
+guard for an image centred on the celestial equator, where `cot δ₀` is
+infinite: the image records `[0, inf]` and every pixel's world direction is
+NaN, so no pointing, beam or mask can be placed on it. casa-rs refuses
+such a run before imaging, with an error that says why
+(`PrepareError::NcpAtEquator`, the law
+`ncp_on_the_celestial_equator_is_refused`). Any other declination, however
+close to 0, is imaged as CASA images it.

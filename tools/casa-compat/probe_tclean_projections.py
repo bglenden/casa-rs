@@ -10,7 +10,7 @@ unittest/tclean). tclean images MS dirty in each projection, 100 × 100 cells
 of 8 arcsec as test_onefield_projections does; OUTDIR/projections.json
 records each image's direction coordinate and the world directions, in
 radians, casatools gives a set of its pixels, or the refusal for a name CASA
-does not take, and again for images centred south of the equator. It is crates/casa-imaging-application/tests/data/
+does not take, and again for images centred south of the equator and on it. It is crates/casa-imaging-application/tests/data/
 projections-casa-6.7.6.14.json.
 """
 
@@ -28,6 +28,11 @@ NAMES = ["SIN", "NCP", "TAN", "ARC", "STG", "ZEA", "CAR", "SFL", "AIT", "MER", "
 # whose reference is on its native equator takes the native pole at 180°.
 SOUTH = "J2000 19:59:28.500 -40.44.01.50"
 SOUTH_NAMES = ["SIN", "NCP", "TAN", "CAR", "SFL", "AIT", "MER"]
+# And on the celestial equator, where the native pole of a projection whose
+# reference is on its native equator is the celestial north pole. NCP is
+# undefined there (its slant cot(dec) is infinite).
+EQUATOR = "J2000 19:59:28.500 +00.00.00.00"
+EQUATOR_NAMES = ["SIN", "TAN", "CAR", "SFL", "AIT", "MER"]
 
 
 def plain(value):
@@ -36,7 +41,7 @@ def plain(value):
 
 def probe(ms, out, name, phasecenter=""):
     suffix = ("lc" if name.islower() else "") + ("sp" if name != name.strip() else "")
-    suffix += "south" if phasecenter else ""
+    suffix += {"": "", SOUTH: "south", EQUATOR: "equator"}[phasecenter]
     image = out / f"tst{name.strip()}{suffix}"
     try:
         casatasks.tclean(vis=ms, imagename=str(image), imsize=100, cell="8.0arcsec",
@@ -80,6 +85,10 @@ def main():
         "south": {
             "phasecenter": SOUTH,
             "projections": {name: probe(ms, out, name, SOUTH) for name in SOUTH_NAMES},
+        },
+        "equator": {
+            "phasecenter": EQUATOR,
+            "projections": {name: probe(ms, out, name, EQUATOR) for name in EQUATOR_NAMES},
         },
     }
     (out / "projections.json").write_text(json.dumps(result, indent=1) + "\n")

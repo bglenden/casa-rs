@@ -90,15 +90,15 @@ impl Projection {
 
     /// The projection a direction coordinate of reference latitude
     /// `latitude_rad` states with the parameters CASA writes for it
-    /// ([`Self::coordinate_projection`]; none stands for `[0, 0]`, as
-    /// casa-rs wrote `SIN` before), or `None` for one casa-rs does not
-    /// image in.
+    /// ([`Self::coordinate_projection`]), or `None` for one casa-rs does not
+    /// image in. Missing parameters are zero, as casacore pads them (casa-rs
+    /// wrote `SIN` with none before).
     #[must_use]
     pub fn of_coordinate(projection: &CoordinateProjection, latitude_rad: f64) -> Option<Self> {
-        let parameters = match projection.parameters() {
-            [] => &[0.0, 0.0][..],
-            parameters => parameters,
-        };
+        let mut parameters = projection.parameters().to_vec();
+        if parameters.len() < 2 {
+            parameters.resize(2, 0.0);
+        }
         [
             Self::Sin,
             Self::Ncp,
@@ -119,7 +119,7 @@ impl Projection {
                 && expected
                     .parameters()
                     .iter()
-                    .zip(parameters)
+                    .zip(&parameters)
                     .all(|(expected, stated)| (expected - stated).abs() <= 1e-9)
         })
     }
@@ -220,6 +220,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Parameters a mask image does not state are zero, as casacore pads
+    /// them: SIN with none or one is SIN.
+    #[test]
+    fn missing_parameters_are_zero() {
+        use casa_coordinates::{Projection as CoordinateProjection, ProjectionType};
+        for parameters in [vec![], vec![0.0]] {
+            let stated = CoordinateProjection::with_parameters(ProjectionType::SIN, parameters);
+            assert_eq!(
+                Projection::of_coordinate(&stated, 0.7),
+                Some(Projection::Sin)
+            );
+        }
+        let slanted = CoordinateProjection::with_parameters(ProjectionType::SIN, vec![0.0, 0.5]);
+        assert_eq!(Projection::of_coordinate(&slanted, 0.7), None);
     }
 
     /// tclean names the projections exactly as casacore spells them.

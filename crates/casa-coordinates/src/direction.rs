@@ -104,7 +104,10 @@ fn compute_native_pole(
     //   v = acos(sin(delta_0) / sqrt(sin^2(theta_0) + cos^2(theta_0) cos^2(phi_p))).
     // Of two valid solutions, the one nearest theta_p (LATPOLE) is taken.
     let (sin_t0, cos_t0) = theta_0.sin_cos();
-    let x = cos_t0 * phi_p.cos();
+    // WCSLIB's `sind`/`cosd`: exact at multiples of 90°, so a native pole
+    // at 180° leaks no 1.2e-16 into alpha_p.
+    let (sin_pp, cos_pp) = wcslib_sin_cos_degrees(phi_p.to_degrees());
+    let x = cos_t0 * cos_pp;
     let z = x.hypot(sin_t0);
     let delta_p = if z == 0.0 {
         theta_p
@@ -134,27 +137,27 @@ fn compute_native_pole(
     let cos_d0 = delta_0.cos();
     let sin_d0 = delta_0.sin();
 
-    // Compute alpha_p
-    let sin_dp2 = delta_p.sin();
-    let cos_dp2 = delta_p.cos();
-
-    if cos_dp2.abs() < 1e-12 {
-        // Native pole is at celestial pole
-        return [alpha_0, delta_p];
-    }
-
-    // alpha_p from eq. (2.6.4):
-    //   sin(alpha_p - alpha_0) = -cos(theta_0) * sin(phi_p) / cos(delta_p)
-    //   cos(alpha_p - alpha_0) = [sin(theta_0) - sin(delta_p)*sin(delta_0)] / [cos(delta_p)*cos(delta_0)]
-    let sin_da = -cos_t0 * phi_p.sin() / cos_dp2;
-    let cos_da = if cos_d0.abs() < 1e-12 {
-        // Fiducial point at celestial pole
-        0.0
+    // alpha_p, as WCSLIB's `celset` forms it (Calabretta & Greisen eq. 10):
+    // where the native pole is a celestial pole, from the fiducial point and
+    // phi_p alone.
+    let (sin_dp, cos_dp) = delta_p.sin_cos();
+    let z = cos_dp * cos_d0;
+    let alpha_p = if z.abs() < 1.0e-10 {
+        if cos_d0.abs() < 1.0e-10 {
+            // The celestial pole is the fiducial point.
+            alpha_0
+        } else if delta_p > 0.0 {
+            // The celestial north pole is the native pole.
+            alpha_0 + phi_p - PI
+        } else {
+            // The celestial south pole is the native pole.
+            alpha_0 - phi_p
+        }
     } else {
-        (sin_t0 - sin_dp2 * sin_d0) / (cos_dp2 * cos_d0)
+        let x = (sin_t0 - sin_dp * sin_d0) / z;
+        let y = sin_pp * cos_t0 / cos_d0;
+        alpha_0 - y.atan2(x)
     };
-
-    let alpha_p = alpha_0 + sin_da.atan2(cos_da);
 
     [alpha_p, delta_p]
 }
@@ -856,7 +859,7 @@ mod tests {
             ProjectionType::MER,
             ProjectionType::AIT,
         ] {
-            for latitude in [-1.2, -0.4, -0.05, 0.05, 0.4, 1.2] {
+            for latitude in [-1.2, -0.4, -0.05, -1e-9, 0.0, 1e-9, 0.05, 0.4, 1.2] {
                 let coord = DirectionCoordinate::new(
                     DirectionRef::J2000,
                     Projection::new(kind),
