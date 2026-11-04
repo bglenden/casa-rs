@@ -4458,6 +4458,55 @@ mask, where a fresh call and a restart of a cube of several channels have
 5e-5 NRMS. <code>aw_restart_one_window</code> in
 <code>resources/casa-compat/tclean-aw-cube-cases.json</code> shows it and fails on the
 mask alone.</p>
+<h2 id="a-flat-noise-cube-predicts-its-start-model-without-dividing-it-by-the-pb">A flat-noise cube predicts its start model without dividing it by the PB<a class="headerlink" href="#a-flat-noise-cube-predicts-its-start-model-without-dividing-it-by-the-pb" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-04</li>
+<li>Status: CASA bug; casa-rs does not follow it (#1127)</li>
+<li>Affected code: <code>CubeMajorCycleAlgorithm::subImageStore</code> (by reading; not
+  instrumented)</li>
+</ul>
+<p><code>.model</code> of a flat-noise image is the physical model times the PB, so a run must
+divide a start model by the PB before it predicts, as
+<code>imager_base.runMajorCycle</code> does through <code>dividemodelbyweight</code> for an MFS image.
+The cube path divides the sub-image's model, then, in <code>subImageStore</code>,
+<code>setModelImage</code> copies the raw start model over it, so the prediction uses
+apparent units.</p>
+<p>Two calls on <code>refim_oneshiftpoint.mosaic.ms</code> with <code>gridder='mosaic',
+specmode='cube', imsize=256, cell='10.0arcsec', spw='0', phasecenter=0, gain=0.2,
+pblimit=0.1</code>, the first with <code>niter=20</code>, the second continuing with
+<code>niter=10, startmodel=&lt;first&gt;.model</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Peak residual</th>
+<th>CASA 6.7.6.14</th>
+<th>casa-rs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>The first call's last</td>
+<td>0.0139643</td>
+<td>0.0139643</td>
+</tr>
+<tr>
+<td>The second call's first</td>
+<td>0.0196765</td>
+<td>0.0139643</td>
+</tr>
+<tr>
+<td>The second call's first, the same two calls as MFS</td>
+<td>0.0139643</td>
+<td>0.0139643</td>
+</tr>
+</tbody>
+</table>
+<p>A run that continues from its own model should start from the residual it ended
+with. CASA's cube doesn't: the gap, 0.0057, is about the 1.1 Jy component times
+<code>1/PB - 1</code> at its pixel, where the PB is 0.9947. casa-rs divides the model, as
+CASA's MFS does. <code>tools/casa-compat/tclean_summary_matrix.py --case
+mosaic-seed-cube --case mosaic-seed-cube-no-cut</code> shows it, and those two cases
+differ for this reason.</p>
 
 
 
