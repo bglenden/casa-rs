@@ -800,3 +800,65 @@ fn joint_clark_uses_the_blank_first_polarizations_psf() {
     assert!((outcome.summary.peak - 3.0).abs() < 1e-6);
     assert!((outcome.summary.model_flux - 5.1).abs() < 1e-6);
 }
+
+/// CASA measures masks over both Stokes planes, but Clark reads the first
+/// plane's component mask, even when only the second mask is nonempty (#1140).
+#[test]
+fn joint_clark_counts_all_masks_but_uses_the_first_for_components() {
+    use casa_imaging_deconvolution::{MaskPlanes, PlaneStop};
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    use std::sync::Arc;
+    let width = 64;
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [width, width],
+        1,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 1 },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(1, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = width * width;
+        images.polarizations = 2;
+        let psf = images.psf.take().unwrap();
+        images.psf = Some(psf.repeat(2));
+        images.sum_weights = vec![1.0; 2];
+        images.published_sum_weights = images.sum_weights.clone();
+        images.residual = vec![0.0; 2 * cells];
+        images.residual[cells + 40 * width + 40] = 3.0;
+    });
+    let cells = width * width;
+    let mut support = vec![false; cells];
+    support.extend(vec![true; cells]);
+    let masks = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::Reprojected {
+        coordinate: problem.geometry().domains()[0].direction(),
+        planes: MaskPlanes::new(1, 2).unwrap(),
+        support: Arc::from(support),
+    }])
+    .unwrap();
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    let configured = setup(&problem, None);
+    let prepared =
+        prepare_minor_cycle(&completion, &masks, &configured, &mut cache, &team).unwrap();
+    let outcome = run_minor_cycle(
+        prepared,
+        &completion,
+        &configured,
+        &controls(1, 0.17),
+        &mut cache,
+        &team,
+        (&HOST, &POLICY),
+    )
+    .unwrap();
+    assert_eq!(outcome.summary.iterations, 0);
+    assert!(outcome.terms.is_empty());
+    assert_eq!(outcome.summary.planes.len(), 1);
+    let row = outcome.summary.planes[0];
+    assert_eq!(row.mask_sum, cells);
+    assert!((row.start_peak - 3.0).abs() < 1e-6);
+    assert_eq!(row.stop, PlaneStop::ZeroIterations);
+}

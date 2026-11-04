@@ -136,7 +136,10 @@ pub fn run_plane<S: Solver>(
         end_residual: Vec::new(),
     };
     let mut stop = control.stop(start_peak);
-    if view.support.is_empty() || stop.is_some() {
+    if stop.is_some()
+        || (view.support.is_empty()
+            && !(statistics.mask_sum > 0 && solver.runs_with_empty_support()))
+    {
         outcome.stop = stop.unwrap_or(PlaneStop::ZeroMask);
         return Ok(outcome);
     }

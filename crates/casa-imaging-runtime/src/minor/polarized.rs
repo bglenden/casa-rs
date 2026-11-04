@@ -48,11 +48,7 @@ pub(super) fn solve<const N: usize>(
         summary,
         support: &first.support,
     };
-    let mut combined = statistics[0];
-    for stats in &statistics[1..] {
-        combined.peak_in_mask = combined.peak_in_mask.max(stats.peak_in_mask);
-        combined.peak_no_mask = combined.peak_no_mask.max(stats.peak_no_mask);
-    }
+    let combined = combine_statistics(statistics.iter());
     let mut outcome = clean(&ClarkPolarized::<N>::new(None), &view, controls, &combined)?;
     let end = std::mem::take(&mut outcome.end_residual);
     let mut peak_no_mask = 0.0_f64;
@@ -114,6 +110,21 @@ pub(super) fn solve<const N: usize>(
         trace,
         charge,
     })
+}
+
+/// CASA measures the mask and entry peaks over the whole polarization group;
+/// Clark's component support remains the first polarization's mask.
+fn combine_statistics<'a>(
+    statistics: impl IntoIterator<Item = &'a PlaneStatistics>,
+) -> PlaneStatistics {
+    let mut statistics = statistics.into_iter();
+    let mut combined = *statistics.next().expect("a polarization group is nonempty");
+    for other in statistics {
+        combined.mask_sum = combined.mask_sum.saturating_add(other.mask_sum);
+        combined.peak_in_mask = combined.peak_in_mask.max(other.peak_in_mask);
+        combined.peak_no_mask = combined.peak_no_mask.max(other.peak_no_mask);
+    }
+    combined
 }
 
 /// The zero-valued residual and PSF of a polarization with no data. CASA's
@@ -182,6 +193,7 @@ pub(super) fn solve_groups(
     ordered.extend_from_slice(blank);
     ordered.sort_unstable_by_key(|(key, _)| (key.domain, key.channel, key.polarization));
     let mut groups = Vec::with_capacity(ordered.len() / n_pol);
+    blank.clear();
     for chunk in ordered.chunks_exact(n_pol) {
         if chunk
             .iter()
@@ -192,23 +204,13 @@ pub(super) fn solve_groups(
                 stats: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].1),
                 solved: None,
             });
+        } else {
+            blank.push((
+                chunk[0].0,
+                combine_statistics(chunk.iter().map(|(_, stats)| stats)),
+            ));
         }
     }
-    // A partially blank channel is one joint solve, and has one row.
-    // A channel whose every polarization is blank reports one row.
-    blank.retain(|(key, _)| {
-        key.polarization == 0
-            && !(0..n_pol).any(|polarization| {
-                holds_data(
-                    inputs.normal,
-                    false,
-                    PlaneKey {
-                        polarization,
-                        ..*key
-                    },
-                )
-            })
-    });
     team.for_each_mut(&mut groups, |_, group| {
         let summary = cache
             .summaries
@@ -248,11 +250,7 @@ pub(super) fn solve_groups(
         Ok::<_, MinorCycleRunError>(())
     })?;
     results.extend(groups.into_iter().map(|mut group| {
-        let mut stats = group.stats[0];
-        for other in &group.stats[1..n_pol] {
-            stats.peak_in_mask = stats.peak_in_mask.max(other.peak_in_mask);
-            stats.peak_no_mask = stats.peak_no_mask.max(other.peak_no_mask);
-        }
+        let stats = combine_statistics(group.stats[..n_pol].iter());
         (
             group.keys[0],
             stats,

@@ -138,6 +138,8 @@ pub struct ClarkState<const N: usize = 1> {
     cycles: usize,
     step_components: usize,
     active: Vec<Active<N>>,
+    /// Values of the component selected by `next`.
+    selected: [f64; N],
     /// The largest magnitude of each [`BLOCK`] of `active`.
     blocks: Vec<f64>,
     refresh: Vec<LinearRefresh>,
@@ -145,6 +147,10 @@ pub struct ClarkState<const N: usize = 1> {
 
 impl<const N: usize> Solver for ClarkPolarized<N> {
     type State = ClarkState<N>;
+
+    fn runs_with_empty_support(&self) -> bool {
+        N > 1
+    }
 
     fn initialize(
         &self,
@@ -198,6 +204,7 @@ impl<const N: usize> Solver for ClarkPolarized<N> {
             cycles: 0,
             step_components: 0,
             active: Vec::new(),
+            selected: [0.0; N],
             blocks: Vec::new(),
             refresh,
         };
@@ -229,12 +236,14 @@ impl<const N: usize> Solver for ClarkPolarized<N> {
                 if pixel.value.iter().any(|value| !value.is_finite()) {
                     return Err(Error::NonFinite);
                 }
+                let index = state
+                    .shape
+                    .index(pixel.pixel[0] as usize, pixel.pixel[1] as usize);
+                state.selected = pixel.value;
                 return Ok(Next::Clean(Candidate::Pixel {
-                    index: state
-                        .shape
-                        .index(pixel.pixel[0] as usize, pixel.pixel[1] as usize),
+                    index,
                     scale: 0,
-                    strength: pixel.value[0],
+                    strength: state.selected[0],
                 }));
             }
             if state.cycle_iterations == 0 {
@@ -255,9 +264,7 @@ impl<const N: usize> Solver for ClarkPolarized<N> {
         gain: f64,
         fluxes: &mut Vec<f64>,
     ) {
-        if let Some(pixel) = first_largest(&state.active, &state.blocks) {
-            fluxes.extend(pixel.value.iter().map(|value| gain * value));
-        }
+        fluxes.extend(state.selected.iter().map(|value| gain * value));
     }
 
     fn reported_flux(&self, fluxes: &[f64]) -> f64 {
@@ -274,10 +281,7 @@ impl<const N: usize> Solver for ClarkPolarized<N> {
         delta: &mut Delta,
     ) -> Result<(), Error> {
         let Candidate::Pixel { index, .. } = candidate;
-        let values = first_largest(&state.active, &state.blocks)
-            .expect("candidate has an active pixel")
-            .value;
-        let fluxes = values.map(|value| gain * value);
+        let fluxes = state.selected.map(|value| gain * value);
         for (p, &flux) in fluxes.iter().enumerate() {
             delta.add(p, index, flux);
             state.refresh[p].add(index, flux);
