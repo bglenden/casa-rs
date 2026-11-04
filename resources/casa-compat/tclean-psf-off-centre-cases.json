@@ -34,6 +34,20 @@
     "niter": 20
    },
    "note": "The cycle sequence, from the sidelobe level"
+  },
+  "off_centre_clean_no_tie": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.17,
+    "stokes": "IV",
+    "specmode": "cube",
+    "nchan": 2,
+    "niter": 20
+   },
+   "note": "The cycle sequence with no near-tie of the peak and the cycle threshold: at gain 0.2, one iteration leaves exactly the peak fraction 0.8 the cycle threshold clamps to"
   }
  }
 }
