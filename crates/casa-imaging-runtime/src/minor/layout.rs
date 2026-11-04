@@ -356,8 +356,40 @@ pub fn run_bytes_for(
     // until it merges them.
     let records =
         layout.planes * (size_of::<Slot>() + size_of::<Solved>() + size_of::<PlaneStop>());
-    layout.concurrent(workers) * (layout.load_bytes(setup.response.is_some()) + solve)
-        + records as u64
+    let ordinary = layout.concurrent(workers)
+        * (layout.load_bytes(setup.response.is_some()) + solve)
+        + records as u64;
+    let n_pol = layout.channels_and_polarizations.1;
+    if matches!(setup.algorithm, ReconstructionAlgorithm::Clark) && matches!(n_pol, 2 | 4) {
+        let polarized_solve = match n_pol {
+            2 => casa_imaging_deconvolution::solve_bytes(
+                &casa_imaging_deconvolution::ClarkPolarized::<2>::new(None),
+                layout.shape,
+                2,
+                iterations + 1,
+                TRACE,
+            ),
+            4 => casa_imaging_deconvolution::solve_bytes(
+                &casa_imaging_deconvolution::ClarkPolarized::<4>::new(None),
+                layout.shape,
+                4,
+                iterations + 1,
+                TRACE,
+            ),
+            _ => unreachable!(),
+        };
+        let groups = layout.planes.div_ceil(n_pol);
+        let concurrent = workers.min(groups).max(1) as u64;
+        let provisional_group_overhead = (layout.planes as u64) * 1024 + concurrent * 4096;
+        ordinary.max(
+            concurrent
+                * (n_pol as u64 * layout.load_bytes(setup.response.is_some()) + polarized_solve)
+                + records as u64
+                + provisional_group_overhead,
+        )
+    } else {
+        ordinary
+    }
 }
 
 /// What `setup`'s solver holds for one plane of `layout`, cleaning at most

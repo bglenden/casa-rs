@@ -42,6 +42,7 @@ use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit
 mod beams;
 mod layout;
 mod pixels;
+mod polarized;
 mod rows;
 pub use layout::{
     MinorLayout, mask_bytes, prepare_bytes, prepare_bytes_for, psf_cache_bytes, run_bytes,
@@ -551,12 +552,73 @@ pub fn run_minor_cycle(
     let admission = (host, policy);
     let fft_threads = scale_fft_threads(planes.len(), team.workers());
     let mut results = Vec::with_capacity(planes.len());
-    if let [(key, statistics)] = planes.as_slice() {
+    let n_pol = normal.polarization_count();
+    // Temporary experiment: groups with blank planes need an explicit CASA
+    // comparison before this path can be considered complete.
+    let joint = matches!(setup.algorithm, ReconstructionAlgorithm::Clark)
+        && !inputs.taylor
+        && matches!(n_pol, 2 | 4)
+        && blank.is_empty();
+    if joint {
+        struct Group {
+            keys: Vec<PlaneKey>,
+            stats: Vec<PlaneStatistics>,
+            solved: Option<Solved>,
+        }
+        let mut groups = BTreeMap::<(usize, usize), Group>::new();
+        for (key, stats) in &planes {
+            let group = groups
+                .entry((key.domain, key.channel))
+                .or_insert_with(|| Group {
+                    keys: Vec::new(),
+                    stats: Vec::new(),
+                    solved: None,
+                });
+            group.keys.push(*key);
+            group.stats.push(*stats);
+        }
+        let mut groups = groups.into_values().collect::<Vec<_>>();
+        team.for_each_mut(&mut groups, |_, group| {
+            let summary = cache.summaries[&group.keys[0]];
+            group.solved = Some(match n_pol {
+                2 => polarized::solve::<2>(
+                    &inputs,
+                    admission,
+                    &group.keys,
+                    &group.stats,
+                    &summary,
+                    controls,
+                )?,
+                4 => polarized::solve::<4>(
+                    &inputs,
+                    admission,
+                    &group.keys,
+                    &group.stats,
+                    &summary,
+                    controls,
+                )?,
+                _ => unreachable!(),
+            });
+            Ok::<_, MinorCycleRunError>(())
+        })?;
+        results.extend(groups.into_iter().map(|mut group| {
+            let mut stats = group.stats[0];
+            for other in &group.stats[1..] {
+                stats.peak_in_mask = stats.peak_in_mask.max(other.peak_in_mask);
+                stats.peak_no_mask = stats.peak_no_mask.max(other.peak_no_mask);
+            }
+            (
+                group.keys[0],
+                stats,
+                group.solved.take().expect("every group solved"),
+            )
+        }));
+    } else if let [(key, statistics)] = planes.as_slice() {
         let summary = cache.summaries[key];
         let clark = &mut cache.clark;
         // A lone plane has the team to itself: Clark spreads its refresh
         // across it, and the scale solvers transform on its threads.
-        results.push(team.install(|| {
+        let solved = team.install(|| {
             solve(
                 &inputs,
                 admission,
@@ -566,7 +628,8 @@ pub fn run_minor_cycle(
                 controls,
                 (clark, fft_threads),
             )
-        })?);
+        })?;
+        results.push((*key, *statistics, solved));
     } else {
         let mut slots = planes
             .iter()
@@ -590,11 +653,13 @@ pub fn run_minor_cycle(
             )?);
             Ok::<_, MinorCycleRunError>(())
         })?;
-        results.extend(
-            slots
-                .into_iter()
-                .map(|slot| slot.solved.expect("every plane slot ran")),
-        );
+        results.extend(slots.into_iter().map(|slot| {
+            (
+                slot.key,
+                slot.statistics,
+                slot.solved.expect("every plane slot ran"),
+            )
+        }));
     }
     let mut summary = MinorCycleSummary {
         iterations: 0,
@@ -610,9 +675,14 @@ pub fn run_minor_cycle(
         planes: Vec::with_capacity(results.len() + blank.len()),
     };
     // Each plane's charge covers its terms' copy here.
-    let mut terms = Vec::with_capacity(results.iter().map(|solved| solved.terms.len()).sum());
+    let mut terms = Vec::with_capacity(
+        results
+            .iter()
+            .map(|(_, _, solved)| solved.terms.len())
+            .sum(),
+    );
     let mut charge = Reservation::none();
-    for ((key, statistics), solved) in planes.iter().zip(results) {
+    for (key, statistics, solved) in results {
         charge.join(solved.charge);
         let outcome = &solved.outcome;
         summary.iterations += outcome.iterations;
@@ -633,8 +703,8 @@ pub fn run_minor_cycle(
         summary.stops.push(outcome.stop);
         summary.refreshes += outcome.refreshes;
         summary.planes.push(rows::cycle_row(
-            *key,
-            statistics,
+            key,
+            &statistics,
             outcome,
             solved.peak_no_mask,
             controls,
