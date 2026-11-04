@@ -1766,6 +1766,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#two-ms-band-20261104" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        two-ms-band-20261104
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5121,6 +5132,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#two-ms-band-20261104" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        two-ms-band-20261104
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -8005,8 +8027,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>vis</code> → <code>vis</code></td>
 <td>Partial</td>
-<td>Contract 38: a list of MeasurementSets images as one, as CASA's tclean images its vis list. Each is opened and surveyed with its own selectors (one per MeasurementSet, or one or a list of one for all; another length is refused with CASA's message), ordered stably by its earliest MAIN TIME and visited as CASA visits its ms0, ms1, ... keys, as text (input_parameters.checkAndFixSelectionPars, mslisthelper.sort_mslist, imager_base.selectData); one selecting no sample is left out unless it is the first (SynthesisImagerVi2::selectData). The image's coordinates (obs date, telescope, phase centre, rest frequency, a cube's axis) come from CASA's msobj (buildCoordinateSystem): the first MeasurementSet, or for a cube or cubedata whose start is a frequency or velocity the last one whose selected band holds it (CAS-12877); a continuum band, and so the MFS and MT-MFS reference frequency, spans every one. A cube reads each other MeasurementSet's window where it reaches the cube, and one that does not reach it is read so its MODEL_DATA holds the zero prediction, as CASA writes it. Weighting density spans every MeasurementSet; datacolumn falls back to DATA per MeasurementSet; savemodel writes each one's MODEL_DATA (or virtual model). CASA's addwtspec, which adds WEIGHT_SPECTRUM to a listed MeasurementSet lacking it as a Vi/VB2 workaround, is not done: casa-rs reads each MeasurementSet's own weights, which that column copies, and never modifies its inputs. A row's spectral window and field are keyed among every MeasurementSet's, as if they were concatenated, so the mosaic keeps each one's beams (CASA's msId_spw, SimplePBConvFunc::convIndex) and a mosweight density each one's fields (VisImagingWeight's msId_field) apart; its dishes are every MeasurementSet's aperture classes (HetArrayConvFunc::findAntennaSizes). Refused with several MeasurementSets (#980): the awproject gridder (its catalog keys cells on the first MeasurementSet's frequencies), a moving phase centre, specmode cubesource, fitspw and a cube's per-channel density weighting. <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: list[<code>path</code> (measurement_set)], length 0..many; scalar allowed</td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-vis-list-20261102">vis-list-20261102</a></td>
+<td>Contract 38: a list of MeasurementSets images as one, as CASA's tclean images its vis list. Each is opened and surveyed with its own selectors (one per MeasurementSet, or one or a list of one for all; another length is refused with CASA's message), ordered stably by its earliest MAIN TIME and visited as CASA visits its ms0, ms1, ... keys, as text (input_parameters.checkAndFixSelectionPars, mslisthelper.sort_mslist, imager_base.selectData); one selecting no sample is left out unless it is the first (SynthesisImagerVi2::selectData). The image's coordinates (obs date, telescope, phase centre, rest frequency, a cube's axis) come from CASA's msobj (buildCoordinateSystem): the first MeasurementSet, or for a cube or cubedata whose start is a frequency or velocity the last one whose selected band holds it (CAS-12877); a continuum band, and so the MFS and MT-MFS reference frequency, spans every one. A cube reads each other MeasurementSet's window where it reaches the cube, and one that does not reach it is read so its MODEL_DATA holds the zero prediction, as CASA writes it. Weighting density spans every MeasurementSet; datacolumn falls back to DATA per MeasurementSet; savemodel writes each one's MODEL_DATA (or virtual model). CASA's addwtspec, which adds WEIGHT_SPECTRUM to a listed MeasurementSet lacking it as a Vi/VB2 workaround, is not done: casa-rs reads each MeasurementSet's own weights, which that column copies, and never modifies its inputs. A row's spectral window and field are keyed among every MeasurementSet's, as if they were concatenated, so the mosaic keeps each one's beams (CASA's msId_spw, SimplePBConvFunc::convIndex) and a mosweight density each one's fields (VisImagingWeight's msId_field) apart; its dishes are every MeasurementSet's aperture classes (HetArrayConvFunc::findAntennaSizes). Refused with several MeasurementSets (#980): the awproject gridder (its catalog keys cells on the first MeasurementSet's frequencies), a moving phase centre, specmode cubesource, fitspw and a cube's per-channel density weighting. A cube with an unset start reads the band selected over every MeasurementSet, on the first one's channels (SynthesisParamsImage::buildCoordinateSystem). <a href="#tclean-behavior-selection">selection</a><br>Catalog domain: list[<code>path</code> (measurement_set)], length 0..many; scalar allowed</td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-vis-list-20261102">vis-list-20261102</a>, <a href="#tclean-evidence-two-ms-band-20261104">two-ms-band-20261104</a></td>
 </tr>
 <tr>
 <td><code>selectdata</code></td>
@@ -8437,7 +8459,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>''</code></td>
 <td><code>''</code>; <code>outlierfile</code> → <code>outlierfile</code></td>
 <td>Partial</td>
-<td>Native outlier fields, natural weighting, dirty or Hogbom; each outlier currently has standard single-term MFS defaults. Per-field differing modes, start models and spectral controls are restricted by the existing parser. <a href="#tclean-behavior-restart">restart</a><br>Catalog domain: <code>path</code> (image)</td>
+<td>Native outlier fields, natural weighting, dirty or Hogbom; each outlier currently has standard single-term MFS defaults. Per-field differing modes, start models and spectral controls are restricted by the existing parser. A relative imagename in the file reads from the working directory, wherever the file is, as tclean's imagename does. <a href="#tclean-behavior-restart">restart</a><br>Catalog domain: <code>path</code> (image)</td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
 </tr>
 <tr>
@@ -9388,6 +9410,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>c6858c25606f2807b6e80fbdf15fc75a16d27819</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
 <li>Command: <code>tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-psf-off-centre-cases.json --backend cpu --precision f64</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-psf-off-centre-20261104.json</code>.</li>
+</ul>
+<p><a id="tclean-evidence-two-ms-band-20261104"></a></p>
+<h5 id="two-ms-band-20261104">two-ms-band-20261104<a class="headerlink" href="#two-ms-band-20261104" title="Permanent link">&para;</a></h5>
+<p><strong>casa-rs's own two-MeasurementSet cube cases and CASA's against CASA, with a T1 law — measured: 14 of 14, and CASA's 5 of 5.</strong> Dirty cubes over two MeasurementSets, in both orders, with a selection above, below and overlapping the other's, and one MeasurementSet's selections, with the rest frequency over both stores. Stores of differing frames are refused.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/20cdfce4876217301b0463c3d72cd209f53b29f7/resources/casa-compat/evidence/tclean-two-ms-band-20261104.json">resources/casa-compat/evidence/tclean-two-ms-band-20261104.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/20cdfce4876217301b0463c3d72cd209f53b29f7/resources/casa-compat/tclean-two-ms-band-cases.json">resources/casa-compat/tclean-two-ms-band-cases.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/20cdfce4876217301b0463c3d72cd209f53b29f7/crates/casa-imaging-application/src/compile/spectral.rs">crates/casa-imaging-application/src/compile/spectral.rs</a></li>
+<li>Revision: <code>8866d7b6f2febdd6076ef29737afa3d5c46ec9c5</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-two-ms-band-cases.json --backend cpu --precision f64, and with tclean-casa-test-cases.json --case-prefix test_cube.test_cube_twoMS --case-prefix test_modelvis.test_modelvis_29</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-two-ms-band-20261104.json</code>.</li>
 </ul>
 <h2 id="tools">Tools<a class="headerlink" href="#tools" title="Permanent link">&para;</a></h2>
 <p>Each CASA class casa-rs presents in Python, against the signatures recorded from CASA 6.7.6.14 (<code>crates/casars-python/python/tests/data/casa_&lt;class&gt;_signatures.json</code>), which the Python tests hold the classes to. A reviewed class has a file under <code>resources/casa-compat/semantics/tools/</code> giving each method's status, scope and evidence; the others are not reviewed yet. The simulation classes (<code>simulator</code>, <code>componentlist</code>, <code>measures</code>, <code>quanta</code> and <code>simutil</code>) are reviewed in #1053, and <code>image</code>, <code>coordsys</code>, <code>table</code>, <code>msmetadata</code> and <code>ms</code> in #1025.</p>
