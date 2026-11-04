@@ -9662,9 +9662,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.simutil</code></td>
 <td style="text-align: right;">57</td>
 <td>yes</td>
-<td style="text-align: right;">41</td>
+<td style="text-align: right;">43</td>
 <td style="text-align: right;">2</td>
-<td style="text-align: right;">14</td>
+<td style="text-align: right;">12</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -12138,7 +12138,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="simutil">simutil<a class="headerlink" href="#simutil" title="Permanent link">&para;</a></h3>
 <h4 id="simutil-method-implementation">simutil method implementation<a class="headerlink" href="#simutil-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 41, Partial: 2, Not implemented: 14, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 43, Partial: 2, Not implemented: 12, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -12258,9 +12258,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>getBaseTriangularTiling</code></td>
 <td><code>width, height, angle, spacing, pb</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Returns the two coordinate lists for the CASA triangular pointing pattern; zero spacing raises ZeroDivisionError.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-tiling-casa">tiling-casa</a></td>
 </tr>
 <tr>
 <td><code>getdatum</code></td>
@@ -12272,9 +12272,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>getShiftTriangularTiling</code></td>
 <td><code>width, height, angle, spacing, pb</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053, which classifies it.</td>
-<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Returns the two coordinate lists for the CASA triangular pointing pattern; zero spacing raises ZeroDivisionError.</td>
+<td><a href="#simutil-evidence-signature">signature</a>, <a href="#simutil-evidence-tiling-casa">tiling-casa</a></td>
 </tr>
 <tr>
 <td><code>getTrianglePoints</code></td>
@@ -12788,11 +12788,11 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <p><a id="simutil-evidence-tiling-casa"></a></p>
 <h5 id="tiling-casa">tiling-casa<a class="headerlink" href="#tiling-casa" title="Permanent link">&para;</a></h5>
-<p><strong>CASA-recorded values — measured.</strong> Nine patterns and two zero-spacing errors recorded on CASA 6.7.6.14; direct Python binding results agree to 1e-13. getTrianglePoints and getTriangularTiling, including rotation, landscape, portrait, square, base and shifted patterns.</p>
+<p><strong>CASA-recorded values — measured.</strong> Fifteen patterns and four zero-spacing errors recorded on CASA 6.7.6.14; direct Python binding results agree to 1e-13. getTrianglePoints, getTriangularTiling and the direct base and shifted patterns, including rotation, landscape, portrait and square maps.</p>
 <ul>
-<li><a href="https://github.com/bglenden/casa-rs/blob/b2107e82633ff9553dfb56473cca5b2106d7a2e7/tools/simulation/simutil_tiling_oracle.py">tools/simulation/simutil_tiling_oracle.py</a></li>
-<li><a href="https://github.com/bglenden/casa-rs/blob/b2107e82633ff9553dfb56473cca5b2106d7a2e7/crates/casars-python/python/tests/data/casa_simutil_tiling.json">crates/casars-python/python/tests/data/casa_simutil_tiling.json</a></li>
-<li><a href="https://github.com/bglenden/casa-rs/blob/b2107e82633ff9553dfb56473cca5b2106d7a2e7/crates/casars-python/python/tests/test_simutil.py">crates/casars-python/python/tests/test_simutil.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/50789c6def3dcf1b55dda2bcbe7d2ef39470f02a/tools/simulation/simutil_tiling_oracle.py">tools/simulation/simutil_tiling_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/50789c6def3dcf1b55dda2bcbe7d2ef39470f02a/crates/casars-python/python/tests/data/casa_simutil_tiling.json">crates/casars-python/python/tests/data/casa_simutil_tiling.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/50789c6def3dcf1b55dda2bcbe7d2ef39470f02a/crates/casars-python/python/tests/test_simutil.py">crates/casars-python/python/tests/test_simutil.py</a></li>
 </ul>
 
 

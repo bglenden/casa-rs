@@ -59,42 +59,42 @@
 <a href=#59 id=59 data-nosnippet>59</a>    }
 <a href=#60 id=60 data-nosnippet>60</a>
 <a href=#61 id=61 data-nosnippet>61</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#62 id=62 data-nosnippet>62</a>    </span><span class="attr">#[pyo3(signature = (width, height, angle, spacing, pb), text_signature = <span class="string">"($self, width, height, angle, spacing, pb)"</span>)]
-<a href=#63 id=63 data-nosnippet>63</a>    </span><span class="kw">fn </span>getBaseTriangularTiling(
+<a href=#62 id=62 data-nosnippet>62</a>    </span><span class="attr">#[pyo3(signature = (mstoimage, imagename, cleanmode, psfmode, cell, imsize, imcenter, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, sourcefieldlist = <span class="prelude-val">None</span>, modelimage = <span class="prelude-val">None</span>, mask = <span class="prelude-val">None</span>, dryrun = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, mstoimage, imagename, cleanmode, psfmode, cell, imsize, imcenter, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, sourcefieldlist='', modelimage='', mask=[], dryrun=False)"</span>)]
+<a href=#63 id=63 data-nosnippet>63</a>    </span><span class="kw">fn </span>imclean(
 <a href=#64 id=64 data-nosnippet>64</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#65 id=65 data-nosnippet>65</a>        width: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#66 id=66 data-nosnippet>66</a>        height: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#67 id=67 data-nosnippet>67</a>        angle: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#68 id=68 data-nosnippet>68</a>        spacing: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#69 id=69 data-nosnippet>69</a>        pb: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#70 id=70 data-nosnippet>70</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#71 id=71 data-nosnippet>71</a>        stub(<span class="string">"getBaseTriangularTiling"</span>)
-<a href=#72 id=72 data-nosnippet>72</a>    }
-<a href=#73 id=73 data-nosnippet>73</a>
-<a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="attr">#[pyo3(signature = (width, height, angle, spacing, pb), text_signature = <span class="string">"($self, width, height, angle, spacing, pb)"</span>)]
-<a href=#76 id=76 data-nosnippet>76</a>    </span><span class="kw">fn </span>getShiftTriangularTiling(
-<a href=#77 id=77 data-nosnippet>77</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#78 id=78 data-nosnippet>78</a>        width: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#79 id=79 data-nosnippet>79</a>        height: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#80 id=80 data-nosnippet>80</a>        angle: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#81 id=81 data-nosnippet>81</a>        spacing: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#82 id=82 data-nosnippet>82</a>        pb: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#65 id=65 data-nosnippet>65</a>        mstoimage: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#66 id=66 data-nosnippet>66</a>        imagename: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#67 id=67 data-nosnippet>67</a>        cleanmode: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#68 id=68 data-nosnippet>68</a>        psfmode: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#69 id=69 data-nosnippet>69</a>        cell: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#70 id=70 data-nosnippet>70</a>        imsize: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#71 id=71 data-nosnippet>71</a>        imcenter: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#72 id=72 data-nosnippet>72</a>        interactive: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#73 id=73 data-nosnippet>73</a>        niter: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#74 id=74 data-nosnippet>74</a>        threshold: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#75 id=75 data-nosnippet>75</a>        weighting: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#76 id=76 data-nosnippet>76</a>        outertaper: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#77 id=77 data-nosnippet>77</a>        pbcor: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#78 id=78 data-nosnippet>78</a>        stokes: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#79 id=79 data-nosnippet>79</a>        sourcefieldlist: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#80 id=80 data-nosnippet>80</a>        modelimage: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#81 id=81 data-nosnippet>81</a>        mask: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#82 id=82 data-nosnippet>82</a>        dryrun: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
 <a href=#83 id=83 data-nosnippet>83</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#84 id=84 data-nosnippet>84</a>        stub(<span class="string">"getShiftTriangularTiling"</span>)
+<a href=#84 id=84 data-nosnippet>84</a>        stub(<span class="string">"imclean"</span>)
 <a href=#85 id=85 data-nosnippet>85</a>    }
 <a href=#86 id=86 data-nosnippet>86</a>
 <a href=#87 id=87 data-nosnippet>87</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#88 id=88 data-nosnippet>88</a>    </span><span class="attr">#[pyo3(signature = (mstoimage, imagename, cleanmode, psfmode, cell, imsize, imcenter, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, sourcefieldlist = <span class="prelude-val">None</span>, modelimage = <span class="prelude-val">None</span>, mask = <span class="prelude-val">None</span>, dryrun = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, mstoimage, imagename, cleanmode, psfmode, cell, imsize, imcenter, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, sourcefieldlist='', modelimage='', mask=[], dryrun=False)"</span>)]
-<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">fn </span>imclean(
+<a href=#88 id=88 data-nosnippet>88</a>    </span><span class="attr">#[pyo3(signature = (mstoimage, imagename, gridder, deconvolver, cell, imsize, imdirection, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, modelimage = <span class="prelude-val">None</span>, mask = <span class="prelude-val">None</span>, dryrun = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, mstoimage, imagename, gridder, deconvolver, cell, imsize, imdirection, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, modelimage='', mask=[], dryrun=False)"</span>)]
+<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">fn </span>imtclean(
 <a href=#90 id=90 data-nosnippet>90</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#91 id=91 data-nosnippet>91</a>        mstoimage: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
 <a href=#92 id=92 data-nosnippet>92</a>        imagename: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#93 id=93 data-nosnippet>93</a>        cleanmode: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#94 id=94 data-nosnippet>94</a>        psfmode: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#93 id=93 data-nosnippet>93</a>        gridder: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#94 id=94 data-nosnippet>94</a>        deconvolver: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
 <a href=#95 id=95 data-nosnippet>95</a>        cell: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
 <a href=#96 id=96 data-nosnippet>96</a>        imsize: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#97 id=97 data-nosnippet>97</a>        imcenter: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#97 id=97 data-nosnippet>97</a>        imdirection: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
 <a href=#98 id=98 data-nosnippet>98</a>        interactive: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
 <a href=#99 id=99 data-nosnippet>99</a>        niter: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
 <a href=#100 id=100 data-nosnippet>100</a>        threshold: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
@@ -102,119 +102,93 @@
 <a href=#102 id=102 data-nosnippet>102</a>        outertaper: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
 <a href=#103 id=103 data-nosnippet>103</a>        pbcor: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
 <a href=#104 id=104 data-nosnippet>104</a>        stokes: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#105 id=105 data-nosnippet>105</a>        sourcefieldlist: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#106 id=106 data-nosnippet>106</a>        modelimage: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#107 id=107 data-nosnippet>107</a>        mask: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#108 id=108 data-nosnippet>108</a>        dryrun: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#109 id=109 data-nosnippet>109</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#110 id=110 data-nosnippet>110</a>        stub(<span class="string">"imclean"</span>)
-<a href=#111 id=111 data-nosnippet>111</a>    }
-<a href=#112 id=112 data-nosnippet>112</a>
-<a href=#113 id=113 data-nosnippet>113</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#114 id=114 data-nosnippet>114</a>    </span><span class="attr">#[pyo3(signature = (mstoimage, imagename, gridder, deconvolver, cell, imsize, imdirection, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, modelimage = <span class="prelude-val">None</span>, mask = <span class="prelude-val">None</span>, dryrun = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, mstoimage, imagename, gridder, deconvolver, cell, imsize, imdirection, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, modelimage='', mask=[], dryrun=False)"</span>)]
-<a href=#115 id=115 data-nosnippet>115</a>    </span><span class="kw">fn </span>imtclean(
-<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#117 id=117 data-nosnippet>117</a>        mstoimage: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#118 id=118 data-nosnippet>118</a>        imagename: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#119 id=119 data-nosnippet>119</a>        gridder: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#120 id=120 data-nosnippet>120</a>        deconvolver: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#121 id=121 data-nosnippet>121</a>        cell: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#122 id=122 data-nosnippet>122</a>        imsize: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#123 id=123 data-nosnippet>123</a>        imdirection: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#124 id=124 data-nosnippet>124</a>        interactive: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#125 id=125 data-nosnippet>125</a>        niter: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#126 id=126 data-nosnippet>126</a>        threshold: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#127 id=127 data-nosnippet>127</a>        weighting: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#128 id=128 data-nosnippet>128</a>        outertaper: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#129 id=129 data-nosnippet>129</a>        pbcor: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#130 id=130 data-nosnippet>130</a>        stokes: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#131 id=131 data-nosnippet>131</a>        modelimage: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#132 id=132 data-nosnippet>132</a>        mask: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#133 id=133 data-nosnippet>133</a>        dryrun: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#134 id=134 data-nosnippet>134</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#135 id=135 data-nosnippet>135</a>        stub(<span class="string">"imtclean"</span>)
-<a href=#136 id=136 data-nosnippet>136</a>    }
-<a href=#137 id=137 data-nosnippet>137</a>
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#139 id=139 data-nosnippet>139</a>    </span><span class="attr">#[pyo3(signature = (num), text_signature = <span class="string">"($self, num)"</span>)]
-<a href=#140 id=140 data-nosnippet>140</a>    </span><span class="kw">fn </span>isEven(<span class="kw-2">&amp;</span><span class="self">self</span>, num: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#141 id=141 data-nosnippet>141</a>        stub(<span class="string">"isEven"</span>)
-<a href=#142 id=142 data-nosnippet>142</a>    }
-<a href=#143 id=143 data-nosnippet>143</a>
-<a href=#144 id=144 data-nosnippet>144</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#145 id=145 data-nosnippet>145</a>    </span><span class="attr">#[pyo3(signature = (length, spacing, bs, npoints), text_signature = <span class="string">"($self, length, spacing, bs, npoints)"</span>)]
-<a href=#146 id=146 data-nosnippet>146</a>    </span><span class="kw">fn </span>needsFiller(
-<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#148 id=148 data-nosnippet>148</a>        length: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#149 id=149 data-nosnippet>149</a>        spacing: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#150 id=150 data-nosnippet>150</a>        bs: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#151 id=151 data-nosnippet>151</a>        npoints: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#152 id=152 data-nosnippet>152</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#153 id=153 data-nosnippet>153</a>        stub(<span class="string">"needsFiller"</span>)
-<a href=#154 id=154 data-nosnippet>154</a>    }
-<a href=#155 id=155 data-nosnippet>155</a>
-<a href=#156 id=156 data-nosnippet>156</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#157 id=157 data-nosnippet>157</a>    </span><span class="attr">#[pyo3(signature = (multi = <span class="prelude-val">None</span>, show = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, multi=0, show=True)"</span>)]
-<a href=#158 id=158 data-nosnippet>158</a>    </span><span class="kw">fn </span>newfig(
-<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#160 id=160 data-nosnippet>160</a>        multi: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#161 id=161 data-nosnippet>161</a>        show: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#162 id=162 data-nosnippet>162</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#163 id=163 data-nosnippet>163</a>        stub(<span class="string">"newfig"</span>)
-<a href=#164 id=164 data-nosnippet>164</a>    }
-<a href=#165 id=165 data-nosnippet>165</a>
-<a href=#166 id=166 data-nosnippet>166</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#167 id=167 data-nosnippet>167</a>    </span><span class="attr">#[pyo3(signature = (), text_signature = <span class="string">"($self)"</span>)]
-<a href=#168 id=168 data-nosnippet>168</a>    </span><span class="kw">fn </span>nextfig(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#169 id=169 data-nosnippet>169</a>        stub(<span class="string">"nextfig"</span>)
-<a href=#170 id=170 data-nosnippet>170</a>    }
-<a href=#171 id=171 data-nosnippet>171</a>
-<a href=#172 id=172 data-nosnippet>172</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#173 id=173 data-nosnippet>173</a>    </span><span class="attr">#[pyo3(signature = (x, y, z, d, name), text_signature = <span class="string">"($self, x, y, z, d, name)"</span>)]
-<a href=#174 id=174 data-nosnippet>174</a>    </span><span class="kw">fn </span>plotants(
-<a href=#175 id=175 data-nosnippet>175</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#176 id=176 data-nosnippet>176</a>        x: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#177 id=177 data-nosnippet>177</a>        y: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#178 id=178 data-nosnippet>178</a>        z: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#179 id=179 data-nosnippet>179</a>        d: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#180 id=180 data-nosnippet>180</a>        name: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#181 id=181 data-nosnippet>181</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#182 id=182 data-nosnippet>182</a>        stub(<span class="string">"plotants"</span>)
-<a href=#183 id=183 data-nosnippet>183</a>    }
-<a href=#184 id=184 data-nosnippet>184</a>
-<a href=#185 id=185 data-nosnippet>185</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#186 id=186 data-nosnippet>186</a>    </span><span class="attr">#[pyo3(signature = (freq, bandwidth, etime, elevation, pwv = <span class="prelude-val">None</span>, telescope = <span class="prelude-val">None</span>, diam = <span class="prelude-val">None</span>, nant = <span class="prelude-val">None</span>, antennalist = <span class="prelude-val">None</span>, doimnoise = <span class="prelude-val">None</span>, integration = <span class="prelude-val">None</span>, debug = <span class="prelude-val">None</span>, method = <span class="prelude-val">None</span>, tau0 = <span class="prelude-val">None</span>, t_sky = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, freq, bandwidth, etime, elevation, pwv=None, telescope=None, diam=None, nant=None, antennalist=None, doimnoise=None, integration=None, debug=None, method='tsys-atm', tau0=None, t_sky=None)"</span>)]
-<a href=#187 id=187 data-nosnippet>187</a>    </span><span class="kw">fn </span>sensitivity(
-<a href=#188 id=188 data-nosnippet>188</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#189 id=189 data-nosnippet>189</a>        freq: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#190 id=190 data-nosnippet>190</a>        bandwidth: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#191 id=191 data-nosnippet>191</a>        etime: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#192 id=192 data-nosnippet>192</a>        elevation: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#193 id=193 data-nosnippet>193</a>        pwv: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#194 id=194 data-nosnippet>194</a>        telescope: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#195 id=195 data-nosnippet>195</a>        diam: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#196 id=196 data-nosnippet>196</a>        nant: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#197 id=197 data-nosnippet>197</a>        antennalist: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#198 id=198 data-nosnippet>198</a>        doimnoise: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#199 id=199 data-nosnippet>199</a>        integration: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#200 id=200 data-nosnippet>200</a>        debug: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#201 id=201 data-nosnippet>201</a>        method: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#202 id=202 data-nosnippet>202</a>        tau0: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#203 id=203 data-nosnippet>203</a>        t_sky: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#204 id=204 data-nosnippet>204</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#205 id=205 data-nosnippet>205</a>        stub(<span class="string">"sensitivity"</span>)
-<a href=#206 id=206 data-nosnippet>206</a>    }
-<a href=#207 id=207 data-nosnippet>207</a>
-<a href=#208 id=208 data-nosnippet>208</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#209 id=209 data-nosnippet>209</a>    </span><span class="attr">#[pyo3(signature = (beam = <span class="prelude-val">None</span>, cell = <span class="prelude-val">None</span>, convsupport = <span class="prelude-val">None</span>, sampling = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, beam='', cell='', convsupport=-1, sampling='')"</span>)]
-<a href=#210 id=210 data-nosnippet>210</a>    </span><span class="kw">fn </span>sfBeam1d(
-<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#212 id=212 data-nosnippet>212</a>        beam: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#213 id=213 data-nosnippet>213</a>        cell: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#214 id=214 data-nosnippet>214</a>        convsupport: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#215 id=215 data-nosnippet>215</a>        sampling: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#216 id=216 data-nosnippet>216</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#217 id=217 data-nosnippet>217</a>        stub(<span class="string">"sfBeam1d"</span>)
-<a href=#218 id=218 data-nosnippet>218</a>    }
-<a href=#219 id=219 data-nosnippet>219</a>}
+<a href=#105 id=105 data-nosnippet>105</a>        modelimage: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#106 id=106 data-nosnippet>106</a>        mask: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#107 id=107 data-nosnippet>107</a>        dryrun: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#108 id=108 data-nosnippet>108</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#109 id=109 data-nosnippet>109</a>        stub(<span class="string">"imtclean"</span>)
+<a href=#110 id=110 data-nosnippet>110</a>    }
+<a href=#111 id=111 data-nosnippet>111</a>
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#113 id=113 data-nosnippet>113</a>    </span><span class="attr">#[pyo3(signature = (num), text_signature = <span class="string">"($self, num)"</span>)]
+<a href=#114 id=114 data-nosnippet>114</a>    </span><span class="kw">fn </span>isEven(<span class="kw-2">&amp;</span><span class="self">self</span>, num: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#115 id=115 data-nosnippet>115</a>        stub(<span class="string">"isEven"</span>)
+<a href=#116 id=116 data-nosnippet>116</a>    }
+<a href=#117 id=117 data-nosnippet>117</a>
+<a href=#118 id=118 data-nosnippet>118</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#119 id=119 data-nosnippet>119</a>    </span><span class="attr">#[pyo3(signature = (length, spacing, bs, npoints), text_signature = <span class="string">"($self, length, spacing, bs, npoints)"</span>)]
+<a href=#120 id=120 data-nosnippet>120</a>    </span><span class="kw">fn </span>needsFiller(
+<a href=#121 id=121 data-nosnippet>121</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#122 id=122 data-nosnippet>122</a>        length: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#123 id=123 data-nosnippet>123</a>        spacing: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#124 id=124 data-nosnippet>124</a>        bs: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#125 id=125 data-nosnippet>125</a>        npoints: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#126 id=126 data-nosnippet>126</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#127 id=127 data-nosnippet>127</a>        stub(<span class="string">"needsFiller"</span>)
+<a href=#128 id=128 data-nosnippet>128</a>    }
+<a href=#129 id=129 data-nosnippet>129</a>
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#131 id=131 data-nosnippet>131</a>    </span><span class="attr">#[pyo3(signature = (multi = <span class="prelude-val">None</span>, show = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, multi=0, show=True)"</span>)]
+<a href=#132 id=132 data-nosnippet>132</a>    </span><span class="kw">fn </span>newfig(
+<a href=#133 id=133 data-nosnippet>133</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#134 id=134 data-nosnippet>134</a>        multi: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#135 id=135 data-nosnippet>135</a>        show: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#136 id=136 data-nosnippet>136</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#137 id=137 data-nosnippet>137</a>        stub(<span class="string">"newfig"</span>)
+<a href=#138 id=138 data-nosnippet>138</a>    }
+<a href=#139 id=139 data-nosnippet>139</a>
+<a href=#140 id=140 data-nosnippet>140</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#141 id=141 data-nosnippet>141</a>    </span><span class="attr">#[pyo3(signature = (), text_signature = <span class="string">"($self)"</span>)]
+<a href=#142 id=142 data-nosnippet>142</a>    </span><span class="kw">fn </span>nextfig(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#143 id=143 data-nosnippet>143</a>        stub(<span class="string">"nextfig"</span>)
+<a href=#144 id=144 data-nosnippet>144</a>    }
+<a href=#145 id=145 data-nosnippet>145</a>
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#147 id=147 data-nosnippet>147</a>    </span><span class="attr">#[pyo3(signature = (x, y, z, d, name), text_signature = <span class="string">"($self, x, y, z, d, name)"</span>)]
+<a href=#148 id=148 data-nosnippet>148</a>    </span><span class="kw">fn </span>plotants(
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#150 id=150 data-nosnippet>150</a>        x: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#151 id=151 data-nosnippet>151</a>        y: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#152 id=152 data-nosnippet>152</a>        z: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#153 id=153 data-nosnippet>153</a>        d: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#154 id=154 data-nosnippet>154</a>        name: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#155 id=155 data-nosnippet>155</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#156 id=156 data-nosnippet>156</a>        stub(<span class="string">"plotants"</span>)
+<a href=#157 id=157 data-nosnippet>157</a>    }
+<a href=#158 id=158 data-nosnippet>158</a>
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#160 id=160 data-nosnippet>160</a>    </span><span class="attr">#[pyo3(signature = (freq, bandwidth, etime, elevation, pwv = <span class="prelude-val">None</span>, telescope = <span class="prelude-val">None</span>, diam = <span class="prelude-val">None</span>, nant = <span class="prelude-val">None</span>, antennalist = <span class="prelude-val">None</span>, doimnoise = <span class="prelude-val">None</span>, integration = <span class="prelude-val">None</span>, debug = <span class="prelude-val">None</span>, method = <span class="prelude-val">None</span>, tau0 = <span class="prelude-val">None</span>, t_sky = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, freq, bandwidth, etime, elevation, pwv=None, telescope=None, diam=None, nant=None, antennalist=None, doimnoise=None, integration=None, debug=None, method='tsys-atm', tau0=None, t_sky=None)"</span>)]
+<a href=#161 id=161 data-nosnippet>161</a>    </span><span class="kw">fn </span>sensitivity(
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#163 id=163 data-nosnippet>163</a>        freq: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#164 id=164 data-nosnippet>164</a>        bandwidth: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#165 id=165 data-nosnippet>165</a>        etime: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#166 id=166 data-nosnippet>166</a>        elevation: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#167 id=167 data-nosnippet>167</a>        pwv: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#168 id=168 data-nosnippet>168</a>        telescope: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#169 id=169 data-nosnippet>169</a>        diam: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#170 id=170 data-nosnippet>170</a>        nant: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#171 id=171 data-nosnippet>171</a>        antennalist: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#172 id=172 data-nosnippet>172</a>        doimnoise: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#173 id=173 data-nosnippet>173</a>        integration: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#174 id=174 data-nosnippet>174</a>        debug: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#175 id=175 data-nosnippet>175</a>        method: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#176 id=176 data-nosnippet>176</a>        tau0: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#177 id=177 data-nosnippet>177</a>        t_sky: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#178 id=178 data-nosnippet>178</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#179 id=179 data-nosnippet>179</a>        stub(<span class="string">"sensitivity"</span>)
+<a href=#180 id=180 data-nosnippet>180</a>    }
+<a href=#181 id=181 data-nosnippet>181</a>
+<a href=#182 id=182 data-nosnippet>182</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#183 id=183 data-nosnippet>183</a>    </span><span class="attr">#[pyo3(signature = (beam = <span class="prelude-val">None</span>, cell = <span class="prelude-val">None</span>, convsupport = <span class="prelude-val">None</span>, sampling = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, beam='', cell='', convsupport=-1, sampling='')"</span>)]
+<a href=#184 id=184 data-nosnippet>184</a>    </span><span class="kw">fn </span>sfBeam1d(
+<a href=#185 id=185 data-nosnippet>185</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#186 id=186 data-nosnippet>186</a>        beam: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#187 id=187 data-nosnippet>187</a>        cell: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#188 id=188 data-nosnippet>188</a>        convsupport: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#189 id=189 data-nosnippet>189</a>        sampling: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#190 id=190 data-nosnippet>190</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#191 id=191 data-nosnippet>191</a>        stub(<span class="string">"sfBeam1d"</span>)
+<a href=#192 id=192 data-nosnippet>192</a>    }
+<a href=#193 id=193 data-nosnippet>193</a>}
 </code></pre></div></section></main></body></html>
