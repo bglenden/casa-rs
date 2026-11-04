@@ -1,0 +1,469 @@
+{
+ "schema": "tclean-evidence-receipt/1",
+ "title": "tclean cubes with a density over the whole selection",
+ "work_issue": 1137,
+ "date": "2026-11-04",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "native_revision": "70b803349f382be4026d45d8bba324e8700eb185",
+ "imager_binary_sha256": "127259bb3dd5a6d99766ed2642d75099914c8ee301210b26eb97ad70d31c3c98",
+ "builds": "release casars-imager and casars wheel of the committed revision in a private target directory, on the laptop, with the NEON FFTW",
+ "backend": "cpu",
+ "precision": "f64",
+ "driver": "tools/casa-compat/tclean_case_matrix.py with resources/casa-compat/tclean-density-channels-cases.json, and tclean-casa-test-cases.json --case-prefix test_onefield.test_onefield_pcwdT_and_pcwdF --case-prefix test_cube.test_cube_perchanweight_briggs; on a data root staged from the NAS casatestdata with its XSym links resolved, plus drift.ms, which is the T1 fixture drifting_track saved",
+ "limits": "exact image-product inventory and masks; NRMS <= 1e-3; the scalars and counts as the driver states them",
+ "outcome": "Of 27 own cases, .psf and .residual agree at 2.1e-4 or better in all; at 3e-6 or better in all but the TOPO and BARY ones, and at 2e-7 or better on the .psf in those. The driver passes 2 of 27 because the other 25 differ by .gridwt, which casa-rs doesn't write (docs/CASA (C++) bugs.md); one of those, briggs-bary-part, also has .pb at 1.5e-2 from issue 1138, on main too with natural weighting. CASA's own 6 cases: 5 pass and test_onefield_pcwdT_and_pcwdF.2 differs by .gridwt alone. Before this change a uniform cube of 5 of 20 channels had a PSF 0.2-0.4 NRMS away from CASA's.",
+ "own_cases": {
+  "uniform-lsrk-part": {
+   "passed": false,
+   "nrms": {
+    "image": 7.588726941195632e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 1.0533811868868583e-07,
+    "residual": 7.588726941195632e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "uniform-topo-part": {
+   "passed": false,
+   "nrms": {
+    "image": 0.00020162517282316597,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 0.00020882945237846214,
+    "residual": 0.00020162517282316597,
+    "sumwt": 2.6750831199010167e-05
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "uniform-lsrk-middle": {
+   "passed": false,
+   "nrms": {
+    "image": 6.935382056629488e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 8.205482082978043e-08,
+    "residual": 6.935382056629488e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "uniform-lsrk-one": {
+   "passed": false,
+   "nrms": {
+    "image": 8.224483651958566e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 7.406264897409926e-08,
+    "residual": 8.224483651958566e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "uniform-lsrk-whole": {
+   "passed": false,
+   "nrms": {
+    "image": 7.575899830931257e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 9.66653317661386e-08,
+    "residual": 7.575899830931257e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "uniform-named-part": {
+   "passed": false,
+   "nrms": {
+    "image": 8.430921412189834e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 7.591193683263503e-08,
+    "residual": 8.430921412189834e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "uniform-gapped-part": {
+   "passed": false,
+   "nrms": {
+    "image": 7.743737328918185e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 6.546333737670767e-08,
+    "residual": 7.743737328918185e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "briggs-lsrk-part": {
+   "passed": false,
+   "nrms": {
+    "image": 7.445638035368045e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 9.039725542543479e-08,
+    "residual": 7.445638035368045e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "briggs-bary-part": {
+   "passed": false,
+   "nrms": {
+    "image": 0.0001470621091911639,
+    "model": 0.0,
+    "pb": 0.015161345478086181,
+    "psf": 0.00014728886552597503,
+    "residual": 0.0001470621091911639,
+    "sumwt": 7.104083042299501e-06
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "briggs-clean": {
+   "passed": false,
+   "nrms": {
+    "image": 2.1196346041604313e-07,
+    "mask": 0.0,
+    "model": 1.4182176671479288e-07,
+    "pb": 0.0,
+    "psf": 9.039725542543479e-08,
+    "residual": 2.900773799960443e-06,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "briggs-model": {
+   "passed": false,
+   "nrms": {
+    "image": 2.1196346050514814e-07,
+    "mask": 0.0,
+    "model": 1.4182176671479288e-07,
+    "pb": 0.0,
+    "psf": 9.039725542543479e-08,
+    "residual": 2.900773799959605e-06,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "superuniform-perchan": {
+   "passed": false,
+   "nrms": {
+    "image": 6.884383092198125e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 8.957025375360432e-08,
+    "residual": 6.884383092198125e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "natural-part": {
+   "passed": true,
+   "nrms": {
+    "image": 6.682705181754723e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 1.0338500469539644e-07,
+    "residual": 6.682705181754723e-08,
+    "sumwt": 0.0
+   }
+  },
+  "perchan-part": {
+   "passed": true,
+   "nrms": {
+    "image": 7.747130062133829e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 1.2014794521421028e-07,
+    "residual": 7.747130062133829e-08,
+    "sumwt": 0.0
+   }
+  },
+  "stride-uniform": {
+   "passed": false,
+   "nrms": {
+    "image": 9.02096696426793e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 9.383475329079795e-08,
+    "residual": 9.02096696426793e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "stride-briggs": {
+   "passed": false,
+   "nrms": {
+    "image": 9.877922019343877e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 1.1792993623847963e-07,
+    "residual": 9.877922019343877e-08,
+    "sumwt": 4.0335997273136633e-08
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "stride-cubedata": {
+   "passed": false,
+   "nrms": {
+    "image": 6.984520300957258e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 9.084919310162964e-08,
+    "residual": 6.984520300957258e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "two-ms-uniform": {
+   "passed": false,
+   "nrms": {
+    "image": 1.279603449837757e-07,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 1.2959298247097886e-07,
+    "residual": 1.279603449837757e-07,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "two-ms-named": {
+   "passed": false,
+   "nrms": {
+    "image": 1.305172258948197e-07,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 1.7586208053701385e-07,
+    "residual": 1.305172258948197e-07,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "cubedata-uniform": {
+   "passed": false,
+   "nrms": {
+    "image": 7.219680688014505e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 9.959830454618571e-08,
+    "residual": 7.219680688014505e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "drift-named-whole": {
+   "passed": false,
+   "nrms": {
+    "image": 8.650505818273496e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 1.1313521930052933e-07,
+    "residual": 8.650505818273496e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "drift-named-part": {
+   "passed": false,
+   "nrms": {
+    "image": 8.632163950140543e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 7.4792986752081e-08,
+    "residual": 8.632163950140543e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "drift-few-whole": {
+   "passed": false,
+   "nrms": {
+    "image": 8.332035818835991e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 6.950145786754381e-08,
+    "residual": 8.332035818835991e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "drift-few-superuniform": {
+   "passed": false,
+   "nrms": {
+    "image": 8.134546859424635e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 7.195222275598242e-08,
+    "residual": 8.134546859424635e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "drift-few-briggs": {
+   "passed": false,
+   "nrms": {
+    "image": 9.490893124526087e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 1.0778655251511205e-07,
+    "residual": 9.490893124526087e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "drift-whole-window": {
+   "passed": false,
+   "nrms": {
+    "image": 8.213384937731913e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 8.390315061545461e-08,
+    "residual": 8.213384937731913e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "drift-cubedata": {
+   "passed": false,
+   "nrms": {
+    "image": 8.427865623237229e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 7.434274724686646e-08,
+    "residual": 8.427865623237229e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  }
+ },
+ "casa_cases": {
+  "test_onefield.test_onefield_pcwdT_and_pcwdF.1": {
+   "passed": true,
+   "nrms": {
+    "image": 6.625301794619096e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 4.390815604041149e-08,
+    "residual": 6.625301794619096e-08,
+    "sumwt": 0.0
+   }
+  },
+  "test_onefield.test_onefield_pcwdT_and_pcwdF.2": {
+   "passed": false,
+   "nrms": {
+    "image": 9.10462356950142e-08,
+    "model": 0.0,
+    "pb": 0.0,
+    "psf": 1.264194915793263e-07,
+    "residual": 9.10462356950142e-08,
+    "sumwt": 0.0
+   },
+   "inventory_differs_by": [
+    "gridwt"
+   ]
+  },
+  "test_cube.test_cube_perchanweight_briggs.1": {
+   "passed": true,
+   "nrms": {
+    "image": 8.156943869793417e-08,
+    "mask": 0.0,
+    "model": 7.044290130319318e-08,
+    "pb": 0.0,
+    "psf": 1.014539925687666e-07,
+    "residual": 7.145546211676359e-08,
+    "sumwt": 0.0
+   }
+  },
+  "test_cube.test_cube_perchanweight_briggs.2": {
+   "passed": true,
+   "nrms": {
+    "image": 9.670275266935077e-08,
+    "mask": 0.0,
+    "model": 1.0956882376165285e-07,
+    "pb": 0.0,
+    "psf": 1.1435055264769776e-07,
+    "residual": 8.399759240915754e-08,
+    "sumwt": 2.54499120774985e-08
+   }
+  },
+  "test_cube.test_cube_perchanweight_briggs.3": {
+   "passed": true,
+   "nrms": {
+    "image": 1.0247501119632098e-07,
+    "mask": 0.0,
+    "model": 9.297223283670408e-08,
+    "pb": 0.0,
+    "psf": 9.331489441765682e-08,
+    "residual": 9.704573929430013e-08,
+    "sumwt": 3.426355640138037e-08
+   }
+  },
+  "test_cube.test_cube_perchanweight_briggs.4": {
+   "passed": true,
+   "nrms": {
+    "image": 7.954822829643408e-08,
+    "mask": 0.0,
+    "model": 1.3087245510112924e-07,
+    "pb": 0.0,
+    "psf": 9.673351392988773e-08,
+    "residual": 7.720253160438798e-08,
+    "sumwt": 3.7936065406630846e-08
+   }
+  }
+ }
+}
