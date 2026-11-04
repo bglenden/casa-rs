@@ -32,7 +32,9 @@ mod imaging;
 
 #[path = "common/synthetic_observation.rs"]
 mod synthetic_observation;
-use synthetic_observation::{CELL_ARCSEC, observation, pointed_observation_as};
+use synthetic_observation::{
+    CELL_ARCSEC, observation, pointed_observation_as, two_window_observation,
+};
 
 #[global_allocator]
 static HEAP: CountingHeap = CountingHeap;
@@ -352,6 +354,45 @@ fn the_batch_source_holds_at_most_its_charge() {
         }
     }
     assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+/// A window no channel of which reaches the cube's axis is read for the
+/// density and for a write, and by no other pass (#1081): a cube on the first
+/// of two windows reads the second's flags and weights, and not its
+/// visibilities until it writes.
+#[test]
+fn a_window_the_axis_misses_is_read_by_the_density_and_a_write_alone() {
+    const TIMES: usize = 10;
+    let root = tempfile::tempdir().expect("test root");
+    let two = two_window_observation(root.path(), 16);
+    let cube = |name: &str, spw: &str, write: bool| {
+        let mut controls = json!({
+            "specmode": "cube",
+            "outframe": "LSRK",
+            "spw": spw,
+            "start": "0",
+            "width": "1",
+            "channel_count": 8,
+        });
+        if write {
+            controls["savemodel"] = json!("modelcolumn");
+            controls["niter"] = json!(10);
+        }
+        let image = root.path().join(name);
+        measure(&request(&[&two], &image, 256, controls), 8, 4 << 30).0
+    };
+    let batches = TIMES.div_ceil(TIMES.div_ceil(OVERLAPPED_BLOCKS));
+    let first = cube("first", "0", false);
+    assert_eq!(first.blocks, 2 * batches, "{first:?}");
+    let both = cube("both", "*", false);
+    assert_eq!(both.blocks, 3 * batches, "{both:?}");
+    let writes_first = cube("writes-first", "0", true);
+    let writes_both = cube("writes-both", "*", true);
+    assert_eq!(
+        writes_both.blocks,
+        2 * writes_first.blocks,
+        "{writes_first:?} {writes_both:?}"
+    );
 }
 
 /// With memory to spare, a traversal still streams in several batches (one

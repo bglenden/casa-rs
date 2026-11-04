@@ -19,6 +19,7 @@ use casa_observation::{Catalogue, StateId};
 use casa_types::measures::frequency::FrequencyRef;
 
 use super::opening::OpenedStore;
+use super::spectral::WindowTimes;
 use super::survey::Survey;
 use super::{PrepareError, intents};
 use crate::{DataColumn, ImagingRequest, MeasurementSetSelection};
@@ -563,7 +564,8 @@ pub(super) fn observation_selection(
             .with_coordinate_catalog(catalog)
             .with_first_buffer_lsrk_factor(factor)
             .map(|selection| match bands.get(spw_id) {
-                Some(bands) => selection.with_frequency_bands(bands.clone()),
+                Some(WindowTimes::Bands(bands)) => selection.with_frequency_bands(bands.clone()),
+                Some(WindowTimes::DensityOnly) => selection.with_density_only(),
                 None => selection,
             })
             .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: *spw_id })

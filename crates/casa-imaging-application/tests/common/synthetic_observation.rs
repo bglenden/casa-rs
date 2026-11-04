@@ -23,7 +23,7 @@ pub fn observation(root: &Path, channels: usize) -> PathBuf {
 /// [`observation`] recorded as `telescope`'s, the ALMA one with 12 m dishes
 /// on the VLA-A pads: the mosaic gridder's beams are ALMA's.
 pub fn observation_as(root: &Path, channels: usize, telescope: &str) -> PathBuf {
-    synthesise(root, channels, telescope, false)
+    synthesise(root, channels, telescope, false, 1)
 }
 
 /// [`observation_as`] with a `POINTING` row per antenna and integration,
@@ -34,10 +34,26 @@ pub fn observation_as(root: &Path, channels: usize, telescope: &str) -> PathBuf 
     reason = "not every law that shares this fixture reads pointing"
 )]
 pub fn pointed_observation_as(root: &Path, channels: usize, telescope: &str) -> PathBuf {
-    synthesise(root, channels, telescope, true)
+    synthesise(root, channels, telescope, true, 1)
 }
 
-fn synthesise(root: &Path, channels: usize, telescope: &str, pointed: bool) -> PathBuf {
+/// [`observation`] with a second window of as many channels, starting where
+/// the first ends.
+#[allow(
+    dead_code,
+    reason = "not every law that shares this fixture reads two windows"
+)]
+pub fn two_window_observation(root: &Path, channels: usize) -> PathBuf {
+    synthesise(root, channels, "VLA", false, 2)
+}
+
+fn synthesise(
+    root: &Path,
+    channels: usize,
+    telescope: &str,
+    pointed: bool,
+    windows: usize,
+) -> PathBuf {
     let measurement_set = root.join(format!("admission-{telescope}.ms"));
     let mut antennas = tutorial_vla_a_antennas();
     if telescope == "ALMA" {
@@ -59,12 +75,14 @@ fn synthesise(root: &Path, channels: usize, telescope: &str, pointed: bool) -> P
     }
     request.duration_seconds = 600.0;
     request.integration_seconds = 60.0;
-    request.spectral_windows = vec![SyntheticSpectralSetup {
-        name: "admission".to_string(),
-        start_frequency_hz: 44.0e9,
-        channel_width_hz: 128.0e6,
-        channel_count: channels,
-    }];
+    request.spectral_windows = (0..windows)
+        .map(|window| SyntheticSpectralSetup {
+            name: format!("admission-{window}"),
+            start_frequency_hz: 44.0e9 + (window * channels) as f64 * 128.0e6,
+            channel_width_hz: 128.0e6,
+            channel_count: channels,
+        })
+        .collect();
     let cell_rad = (CELL_ARCSEC / 3_600.0_f64).to_radians();
     let spectrum = |flux_jy: f64, spectral_index: f64| SyntheticAnalyticSpectrum {
         flux_jy,

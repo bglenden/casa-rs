@@ -359,6 +359,47 @@ impl<'a> ObservationSource<'a> {
             .collect())
     }
 
+    /// Leave out of a traversal that images each partition compile marked
+    /// density-only and whose selected channels reach no plane, under the
+    /// conversion factors of its selected (field, time)s. Compile's mark is
+    /// a test at a few epochs of the whole window's channels, which a row's
+    /// own conversion or a pair of selected channels across a gap can beat,
+    /// so it only spares a run with no such window this survey.
+    fn skip_density_only(&mut self, windows: &mut [PartitionWindow]) -> Result<(), SourceError> {
+        let route: &'a BatchRoute = self.route;
+        let marked = |key: PartitionKey| {
+            route.stores[key.store].selection.partitions[key.partition].density_only
+        };
+        if !windows.iter().any(|(key, _)| marked(*key)) {
+            return Ok(());
+        }
+        let Some(bounds) = self
+            .bounds
+            .as_ref()
+            .map(|bounds| bounds(PlaneRange::new(0, self.planes)))
+        else {
+            return Ok(());
+        };
+        let surveys = self.surveyed(true)?;
+        for (key, window) in windows.iter_mut().filter(|(key, _)| marked(*key)) {
+            let store = &route.stores[key.store];
+            let partition = &store.selection.partitions[key.partition];
+            let factors = surveys[key.store][key.partition]
+                .factors
+                .expect("factors surveyed");
+            let entry = store.observation().catalogue().partition(partition.id);
+            let native = partition
+                .channels
+                .iter()
+                .map(|channel| entry.frequencies_hz[*channel as usize])
+                .collect::<Vec<_>>();
+            if factors.is_empty() || wave_window(&native, factors, bounds).is_none() {
+                *window = None;
+            }
+        }
+        Ok(())
+    }
+
     /// Each store's partitions surveyed, with their conversion factors
     /// when `factors`: surveyed again only when factors are first needed.
     fn surveyed(&mut self, factors: bool) -> Result<&[Vec<PartitionSurvey>], SourceError> {
@@ -521,12 +562,15 @@ impl BoundedSource for ObservationSource<'_> {
             return Err("a traversal began before the previous one finished".into());
         }
         self.state = State::Failed;
-        let windows = self.windows(planes, restrict)?;
+        let mut windows = self.windows(planes, restrict)?;
         let values = content == SampleContent::Visibilities;
         let writing = match self.route.write_back() {
             Some(write_back) if values => write_back.writing()?,
             _ => false,
         };
+        if values && !writing {
+            self.skip_density_only(&mut windows)?;
+        }
         self.state = State::Streaming(Box::new(Stream {
             values,
             writing,
