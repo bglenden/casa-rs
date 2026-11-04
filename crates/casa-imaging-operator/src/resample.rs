@@ -1120,7 +1120,7 @@ impl SpectralResampler {
             });
         }
         // `mosweight` grids each field's samples on its own planes alone; a
-        // field outside the span grids nothing.
+        // field without planes grids nothing.
         if shape.density_plane(0, row.context.field).is_none() {
             return Ok(());
         }

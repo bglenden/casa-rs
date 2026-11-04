@@ -829,7 +829,7 @@ fn the_density_pass_holds_at_most_its_charge_on_every_npixels_grid() {
 /// exceeded.
 #[test]
 fn the_density_pass_holds_at_most_its_charge_with_every_fields_cube() {
-    use casa_imaging_operator::{DensityCellRule, DensityFields, DensityGridShape};
+    use casa_imaging_operator::{DensityCellRule, DensityFieldKeys, DensityGridShape};
     use casa_imaging_runtime::pass::{density_pass_bytes, run_density_pass};
     if !alone("the_density_pass_holds_at_most_its_charge_with_every_fields_cube") {
         return;
@@ -851,10 +851,11 @@ fn the_density_pass_holds_at_most_its_charge_with_every_fields_cube() {
         rule: DensityCellRule::Cube,
         fields,
     };
-    let per_field = shape(Some(DensityFields {
-        first: 0,
-        count: std::num::NonZeroU32::new(3).expect("three fields"),
-    }));
+    let per_field = shape(Some(
+        // Far apart, as a sparse selection is: three fields' planes, whatever
+        // lies between them (#1072). Every row here is field 0.
+        DensityFieldKeys::new([0, 1000, 5000]).expect("three fields"),
+    ));
     assert_eq!(per_field.bytes(), 3 * shape(None).bytes());
     let teams = [1, 3].map(|workers| WorkerTeam::new(workers).expect("team"));
     for team in &teams {
@@ -872,7 +873,7 @@ fn the_density_pass_holds_at_most_its_charge_with_every_fields_cube() {
         let result = run_density_pass(
             &operator,
             &resampler,
-            per_field,
+            per_field.clone(),
             &mut rows,
             team,
             &Cancel::new(),

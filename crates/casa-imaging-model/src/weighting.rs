@@ -11,7 +11,7 @@
 //! and Briggs's two robustness modes choose `f²` and `d²`. What CASA's
 //! `npixels` changes is the grid `D` lives on ([`DensityCells`]).
 
-use std::num::{NonZeroU32, NonZeroUsize};
+use std::num::NonZeroUsize;
 
 /// Visibility-weighting formula.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -53,8 +53,46 @@ impl WeightingScheme {
     }
 }
 
+/// The field keys of a per-field density (tclean's `mosweight`), ascending
+/// and distinct: each selected field with data, as `VisImagingWeight`'s
+/// `multiFieldMap_p` holds a density for each field its traversal meets,
+/// however far apart their FIELD_IDs lie.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DensityFieldKeys(std::sync::Arc<[u32]>);
+
+impl DensityFieldKeys {
+    /// The keys `keys`, sorted and made distinct; `None` without one.
+    pub fn new(keys: impl IntoIterator<Item = u32>) -> Option<Self> {
+        let mut keys = keys.into_iter().collect::<Vec<_>>();
+        keys.sort_unstable();
+        keys.dedup();
+        (!keys.is_empty()).then(|| Self(keys.into()))
+    }
+
+    /// How many fields have a density.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.0.len()
+    }
+
+    /// The keys, ascending.
+    #[must_use]
+    pub fn keys(&self) -> &[u32] {
+        &self.0
+    }
+
+    /// Which density key `key` has; `None` for a field without one.
+    #[must_use]
+    pub fn index_of(&self, key: u32) -> Option<u32> {
+        self.0
+            .binary_search(&key)
+            .ok()
+            .map(|index| u32::try_from(index).expect("field keys fit u32"))
+    }
+}
+
 /// Domain over which visibility-density weights are derived.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WeightDensityScope {
     /// The weighting formula does not use a density generation.
     NotApplicable,
@@ -65,25 +103,18 @@ pub enum WeightDensityScope {
     /// One density per field over all its selected data, each with its own
     /// Briggs factors: tclean's `mosweight` (`VisImagingWeight`'s
     /// `multiField`, which keys a density by MeasurementSet and FIELD_ID).
-    /// The densities are those of FIELD_IDs `first_field` to
-    /// `first_field + fields − 1`; a field in the span with no data keeps an
-    /// empty density.
     PerField {
-        /// The first FIELD_ID with a density.
-        first_field: u32,
-        /// The FIELD_IDs the densities span.
-        fields: NonZeroU32,
+        /// The fields with a density.
+        fields: DensityFieldKeys,
     },
     /// One density per field and output channel: tclean's `mosweight` on a
     /// cube's per-channel density (`BriggsCubeWeightor`'s `multiField`).
     /// Each field's densities are the [`Self::PerOutputChannel`] densities
     /// of that field's samples alone, each channel with its own Briggs
-    /// factors, over the fields [`Self::PerField`] spans.
+    /// factors.
     PerFieldAndOutputChannel {
-        /// The first FIELD_ID with densities.
-        first_field: u32,
-        /// The FIELD_IDs the densities span.
-        fields: NonZeroU32,
+        /// The fields with densities.
+        fields: DensityFieldKeys,
     },
 }
 
@@ -92,33 +123,26 @@ impl WeightDensityScope {
     /// the whole selection, rather than one output channel: the continuum
     /// density of CASA's `VisImagingWeight`.
     #[must_use]
-    pub const fn is_continuum(self) -> bool {
+    pub const fn is_continuum(&self) -> bool {
         matches!(self, Self::GlobalSelection | Self::PerField { .. })
     }
 
     /// Whether each output channel has its own density: CASA's
     /// `BriggsCubeWeightor`.
     #[must_use]
-    pub const fn is_per_channel(self) -> bool {
+    pub const fn is_per_channel(&self) -> bool {
         matches!(
             self,
             Self::PerOutputChannel | Self::PerFieldAndOutputChannel { .. }
         )
     }
 
-    /// The first FIELD_ID and the FIELD_IDs spanned by a density per field
-    /// (`mosweight`); `None` when one density covers every field.
+    /// The fields with a density of their own (`mosweight`); `None` when
+    /// one density covers every field.
     #[must_use]
-    pub const fn fields(self) -> Option<(u32, NonZeroU32)> {
+    pub const fn fields(&self) -> Option<&DensityFieldKeys> {
         match self {
-            Self::PerField {
-                first_field,
-                fields,
-            }
-            | Self::PerFieldAndOutputChannel {
-                first_field,
-                fields,
-            } => Some((first_field, fields)),
+            Self::PerField { fields } | Self::PerFieldAndOutputChannel { fields } => Some(fields),
             Self::NotApplicable | Self::GlobalSelection | Self::PerOutputChannel => None,
         }
     }
@@ -184,7 +208,7 @@ impl UvTaper {
 }
 
 /// Complete logical visibility-weighting requirements.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WeightingContract {
     scheme: WeightingScheme,
     density_scope: WeightDensityScope,
@@ -231,36 +255,36 @@ impl WeightingContract {
 
     /// Return the bound CASA cube law's symmetric density-axis padding.
     #[must_use]
-    pub const fn casa_cube_density_padding(self) -> Option<usize> {
+    pub const fn casa_cube_density_padding(&self) -> Option<usize> {
         self.casa_cube_density_padding
     }
 
     /// Return the weighting formula.
     #[must_use]
-    pub const fn scheme(self) -> WeightingScheme {
+    pub const fn scheme(&self) -> WeightingScheme {
         self.scheme
     }
 
     /// Return the density-generation scope.
     #[must_use]
-    pub const fn density_scope(self) -> WeightDensityScope {
-        self.density_scope
+    pub const fn density_scope(&self) -> &WeightDensityScope {
+        &self.density_scope
     }
 
     /// Return the cells the density is gridded on.
     #[must_use]
-    pub const fn density_cells(self) -> DensityCells {
+    pub const fn density_cells(&self) -> DensityCells {
         self.density_cells
     }
 
     /// Return the optional Gaussian UV taper.
     #[must_use]
-    pub const fn uv_taper(self) -> Option<UvTaper> {
+    pub const fn uv_taper(&self) -> Option<UvTaper> {
         self.uv_taper
     }
 
     /// Why the requirements are outside the logical domain, if they are.
-    pub(crate) fn validate(self) -> Result<(), &'static str> {
+    pub(crate) fn validate(&self) -> Result<(), &'static str> {
         if self.casa_cube_density_padding.is_some() && !self.density_scope.is_per_channel() {
             return Err("CASA cube density requires per-output-channel weighting");
         }
@@ -331,19 +355,23 @@ mod tests {
             robust: 1.0,
             noise_jy: 0.1,
         };
+        let keys = DensityFieldKeys::new([1000, 2, 2, 7]).expect("keys");
+        assert_eq!(keys.keys(), [2, 7, 1000]);
+        assert_eq!(keys.count(), 3);
+        assert_eq!(
+            [2, 7, 1000, 3].map(|key| keys.index_of(key)),
+            [Some(0), Some(1), Some(2), None]
+        );
+        assert_eq!(DensityFieldKeys::new([]), None);
         let per_field = WeightDensityScope::PerField {
-            first_field: 2,
-            fields: NonZeroU32::new(3).expect("non-zero"),
+            fields: keys.clone(),
         };
-        let per_field_channel = WeightDensityScope::PerFieldAndOutputChannel {
-            first_field: 2,
-            fields: NonZeroU32::new(3).expect("non-zero"),
-        };
+        let per_field_channel = WeightDensityScope::PerFieldAndOutputChannel { fields: keys };
         for valid in [
             contract(WeightingScheme::Radial, NotApplicable),
             // `mosweight`'s densities are continuum densities.
-            contract(briggs, per_field).with_density_cells(DensityCells::Square(cells(7))),
-            contract(WeightingScheme::Uniform, per_field)
+            contract(briggs, per_field.clone()).with_density_cells(DensityCells::Square(cells(7))),
+            contract(WeightingScheme::Uniform, per_field.clone())
                 .with_density_cells(DensityCells::Box(cells(3))),
             contract(WeightingScheme::Uniform, GlobalSelection)
                 .with_density_cells(DensityCells::Square(cells(32))),
@@ -356,7 +384,7 @@ mod tests {
                 .with_density_cells(DensityCells::Box(cells(2)))
                 .with_casa_cube_density_padding(4),
             // `mosweight` on a cube: `BriggsCubeWeightor`'s `multiField`.
-            contract(briggs, per_field_channel)
+            contract(briggs, per_field_channel.clone())
                 .with_density_cells(DensityCells::Box(cells(2)))
                 .with_casa_cube_density_padding(2),
         ] {
@@ -364,9 +392,9 @@ mod tests {
         }
         for invalid in [
             contract(WeightingScheme::Radial, GlobalSelection),
-            contract(WeightingScheme::Natural, per_field),
-            contract(briggs, per_field).with_casa_cube_density_padding(1),
-            contract(briggs, per_field_channel)
+            contract(WeightingScheme::Natural, per_field.clone()),
+            contract(briggs, per_field.clone()).with_casa_cube_density_padding(1),
+            contract(briggs, per_field_channel.clone())
                 .with_density_cells(DensityCells::Square(cells(8)))
                 .with_casa_cube_density_padding(2),
             contract(WeightingScheme::Natural, NotApplicable)
@@ -402,7 +430,6 @@ mod tests {
             assert!(invalid.validate().is_err(), "{invalid:?}");
         }
         assert_eq!(per_field.fields(), per_field_channel.fields());
-        assert_eq!(per_field.fields().map(|(first, _)| first), Some(2));
         assert!(per_field_channel.is_per_channel() && !per_field_channel.is_continuum());
         assert!(per_field.is_continuum() && !per_field.is_per_channel());
         assert_eq!(PerOutputChannel.fields(), None);

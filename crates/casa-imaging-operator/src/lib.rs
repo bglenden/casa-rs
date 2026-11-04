@@ -94,7 +94,7 @@ pub use resample::{
 pub use sample::{CfKey, Placement, SampleBlock, SampleBuffer};
 pub use spheroidal::{SPHEROIDAL_OVERSAMPLING, SPHEROIDAL_SUPPORT, Spheroidal, grdsf};
 pub use weighting::{
-    BandwidthTaper, DensityCellRule, DensityFields, DensityGrid, DensityGridShape, DensityUv,
+    BandwidthTaper, DensityCellRule, DensityFieldKeys, DensityGrid, DensityGridShape, DensityUv,
     RobustFactors, Taper, WeightingGeneration, build_density_grid,
 };
 pub use wplanes::{MAX_W_PLANES, WPlaneCount, WPlanes, WScreens};

@@ -906,13 +906,13 @@ fn streamed_density_grid_equals_the_one_shot_build() {
             .place_density(&operator, &rows.native(0, index), &shape, &mut buffer)
             .expect("density");
     }
-    let expected = build_density_grid(std::iter::once(buffer.block()), shape);
+    let expected = build_density_grid(std::iter::once(buffer.block()), shape.clone());
     for workers in [1, 3] {
         let team = WorkerTeam::new(workers).expect("team");
         let streamed = run_density_pass(
             &operator,
             &resampler,
-            shape,
+            shape.clone(),
             &mut rows,
             &team,
             &Cancel::new(),

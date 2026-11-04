@@ -8,9 +8,9 @@ use casa_imaging_model::{
 };
 use casa_imaging_operator::{
     AiryDish, AwCatalog, Basis, CacheBound, CacheCharge, ConvolutionFunctionSet, DensityCellRule,
-    DensityFields, DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent,
-    MeasurementOperator, MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting,
-    PrimaryBeam, SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
+    DensityGridShape, GridGeometry, GridPadding, GridPrecision, ImageExtent, MeasurementOperator,
+    MosaicPb, MosaicRules, MosaicWindow, PaddingFactor, PolarizationRouting, PrimaryBeam,
+    SpectralAxis, SpectralResampler, Spheroidal, WPlaneCount, WPlanes,
 };
 use casa_imaging_runtime::pass::{BackendChoice, RowSamples};
 use casa_imaging_runtime::{
@@ -608,7 +608,7 @@ pub(crate) fn native_spacing_hz(problem: &CompiledProblem) -> f64 {
 /// Shape of the weight-density grid of `domain`: one global plane on CASA's
 /// `VisImagingWeight` cells, or one plane per output channel plus the
 /// compiled padding planes on each side on `BriggsCubeWeightor` cells;
-/// under `mosweight` those planes for each field the density spans.
+/// under `mosweight` those planes for each of its fields.
 pub(crate) fn density_shape(
     problem: &CompiledProblem,
     domain: &CompiledImageDomain,
@@ -621,9 +621,7 @@ pub(crate) fn density_shape(
     } else {
         (1, 0, DensityCellRule::Standard)
     };
-    let fields = scope
-        .fields()
-        .map(|(first, count)| DensityFields { first, count });
+    let fields = scope.fields().cloned();
     let increment = domain.direction().increment_rad();
     let cells = problem.weighting().density_cells();
     let ([width, height], increment_rad, box_half_width) =
@@ -631,9 +629,8 @@ pub(crate) fn density_shape(
     // The grid is charged by its bytes ([`DensityGridShape::bytes`]): every
     // field's planes, each numbered in `u32`.
     fields
-        .map_or(Some(planes), |fields| {
-            planes.checked_mul(fields.count.get() as usize)
-        })
+        .as_ref()
+        .map_or(Some(planes), |fields| planes.checked_mul(fields.count()))
         .filter(|planes| u32::try_from(*planes).is_ok())
         .and_then(|planes| {
             width

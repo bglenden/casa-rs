@@ -319,7 +319,15 @@ class Refusals:
         if deconvolver == "mtmfs" and specmode in ("cube", "cubedata"):
             self.add("deconvolver='mtmfs' with specmode='cube' or 'cubedata'", PARITY)
         weighting = self.text("weighting")
-        if weighting not in ("natural", "uniform", "briggs", "briggsbwtaper"):
+        if weighting not in (
+            "natural",
+            "uniform",
+            "superuniform",
+            "radial",
+            "briggs",
+            "briggsabs",
+            "briggsbwtaper",
+        ):
             self.add(f"weighting={weighting!r}", NOT_YET, 980)
         if weighting == "briggsbwtaper" and not cube:
             self.add("weighting='briggsbwtaper' with specmode='mfs'", PARITY)
@@ -480,10 +488,8 @@ class Refusals:
             )
 
     def deconvolution(self):
-        """`Tclean::deconvolution`."""
-        beam = self.texts("restoringbeam")
-        if beam not in ([], ["common"]):
-            self.add("restoringbeam: a beam given by its axes", NOT_YET, 980)
+        """`Tclean::deconvolution`: a beam given by its axes is read, and CASA
+        reads any other number of entries as no beam (`restoring_beam`)."""
 
     def iteration(self):
         """`Tclean::iteration`."""

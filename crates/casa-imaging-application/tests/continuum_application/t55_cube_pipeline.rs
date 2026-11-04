@@ -144,7 +144,7 @@ fn t55_shifted_cube_density_retains_native_endpoint_weights() {
     let weighting = outcome.problem.weighting();
     assert_eq!(weighting.casa_cube_density_padding(), Some(1));
     assert_eq!(
-        weighting.density_scope(),
+        *weighting.density_scope(),
         WeightDensityScope::PerOutputChannel
     );
 }
@@ -183,8 +183,7 @@ fn t55_a_mosweight_cube_mosaic_pads_its_density_by_two_planes() {
             (
                 2,
                 WeightDensityScope::PerFieldAndOutputChannel {
-                    first_field: 0,
-                    fields: std::num::NonZeroU32::MIN,
+                    fields: casa_imaging_model::DensityFieldKeys::new([0]).expect("one field"),
                 },
             )
         } else {
@@ -193,7 +192,7 @@ fn t55_a_mosweight_cube_mosaic_pads_its_density_by_two_planes() {
         assert_eq!(
             (
                 weighting.casa_cube_density_padding(),
-                weighting.density_scope()
+                weighting.density_scope().clone()
             ),
             (Some(padding), scope),
             "mosweight={mosweight}"
@@ -234,7 +233,7 @@ fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
                     WeightDensityScope::GlobalSelection
                 };
                 assert_eq!(
-                    outcome.problem.weighting().density_scope(),
+                    *outcome.problem.weighting().density_scope(),
                     expected,
                     "cube={cube} per_channel={per_channel} weighting={weighting}",
                 );
