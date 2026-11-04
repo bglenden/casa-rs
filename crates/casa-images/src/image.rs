@@ -22,7 +22,7 @@ use casa_lattices::{
 };
 use casa_tables::{
     ColumnSchema, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerKind, Table, TableInfo, TableOptions,
-    TableSchema, TilePixel, TiledArrayStorage, TiledFileIoStats,
+    TableSchema, TableWriteLock, TilePixel, TiledArrayStorage, TiledFileIoStats,
 };
 use casa_types::{
     ArrayD, ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue,
@@ -1954,35 +1954,55 @@ impl<T: ImagePixel> PagedImage<T> {
     }
 
     fn append_logtable_row(path: &Path, message: &str) -> Result<(), ImageError> {
+        Self::append_logtable_rows(
+            path,
+            "casa-images",
+            std::slice::from_ref(&message.to_string()),
+        )
+    }
+
+    /// Appends `messages` in one save, each at `location`, with `TIME` in
+    /// MJD seconds, as casacore's `TableLogSink` writes it.
+    fn append_logtable_rows(
+        path: &Path,
+        location: &str,
+        messages: &[String],
+    ) -> Result<(), ImageError> {
+        const UNIX_EPOCH_MJD_SECONDS: f64 = 40_587.0 * 86_400.0;
+        let time = UNIX_EPOCH_MJD_SECONDS
+            + std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| ImageError::Io(e.to_string()))?
+                .as_secs_f64();
+        // casacore takes a reopened table's row count from the sync data in
+        // `table.lock`, which this lock publishes: a save alone leaves a
+        // `logtable` CASA wrote unreadable to it.
+        let mut lock = TableWriteLock::acquire(path, 1)?;
         let mut table = Table::open(TableOptions::new(path))?;
-        table.add_row(RecordValue::new(vec![
-            RecordField::new(
-                "TIME",
-                Value::Scalar(ScalarValue::Float64(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_err(|e| ImageError::Io(e.to_string()))?
-                        .as_secs_f64(),
-                )),
-            ),
-            RecordField::new(
-                "PRIORITY",
-                Value::Scalar(ScalarValue::String("INFO".into())),
-            ),
-            RecordField::new(
-                "MESSAGE",
-                Value::Scalar(ScalarValue::String(message.to_string())),
-            ),
-            RecordField::new(
-                "LOCATION",
-                Value::Scalar(ScalarValue::String("casa-images".into())),
-            ),
-            RecordField::new(
-                "OBJECT_ID",
-                Value::Scalar(ScalarValue::String(String::new())),
-            ),
-        ]))?;
+        for message in messages {
+            table.add_row(RecordValue::new(vec![
+                RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
+                RecordField::new(
+                    "PRIORITY",
+                    Value::Scalar(ScalarValue::String("INFO".into())),
+                ),
+                RecordField::new(
+                    "MESSAGE",
+                    Value::Scalar(ScalarValue::String(message.clone())),
+                ),
+                RecordField::new(
+                    "LOCATION",
+                    Value::Scalar(ScalarValue::String(location.to_string())),
+                ),
+                RecordField::new(
+                    "OBJECT_ID",
+                    Value::Scalar(ScalarValue::String(String::new())),
+                ),
+            ]))?;
+        }
         table.save(TableOptions::new(path))?;
+        lock.record_write();
+        lock.release()?;
         Ok(())
     }
 
@@ -2095,6 +2115,25 @@ impl<T: ImagePixel> ImageInterface<T> for PagedImage<T> {
             None => Ok(None),
         }
     }
+}
+
+/// Appends `messages` from `origin` to the `logtable` of the image at `image`,
+/// whatever its pixel type, as `image.sethistory` does: its `LogOrigin` gives
+/// each the location `::origin`.
+///
+/// # Errors
+///
+/// When the `logtable` can't be opened or saved.
+pub fn add_image_history(
+    image: &Path,
+    origin: &str,
+    messages: &[String],
+) -> Result<(), ImageError> {
+    PagedImage::<f32>::append_logtable_rows(
+        &image.join(LOGTABLE_NAME),
+        &format!("::{origin}"),
+        messages,
+    )
 }
 
 impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {
@@ -2668,6 +2707,53 @@ mod tests {
 
     fn make_coords() -> CoordinateSystem {
         CoordinateSystem::new()
+    }
+
+    /// Rows from an origin keep their order, with casacore's `LogOrigin`
+    /// location and `TIME` in MJD seconds, and any pixel type can take them.
+    #[test]
+    fn history_from_an_origin_is_appended_as_casacore_logs_it() {
+        let directory = tempfile::tempdir().expect("scratch");
+        let path = directory.path().join("image");
+        PagedImage::<Complex32>::create(vec![2, 2], make_coords(), &path)
+            .and_then(|mut image| {
+                image.add_history("first")?;
+                image.save()
+            })
+            .expect("an image");
+        add_image_history(&path, "tclean", &["a".to_owned(), "b".to_owned()]).expect("add");
+        let image = PagedImage::<Complex32>::open(&path).expect("open");
+        assert_eq!(image.history().expect("history"), ["first", "a", "b"]);
+        let table = Table::open(TableOptions::new(path.join(LOGTABLE_NAME))).expect("logtable");
+        let cell = |row, name| {
+            table
+                .cell_accessor(row, name)
+                .and_then(|cell| cell.value().map(|value| value.cloned()))
+                .expect("a cell")
+        };
+        assert_eq!(
+            cell(2, "LOCATION"),
+            Some(Value::Scalar(ScalarValue::String("::tclean".to_owned())))
+        );
+        assert_eq!(
+            cell(0, "LOCATION"),
+            Some(Value::Scalar(ScalarValue::String("casa-images".to_owned())))
+        );
+        for row in 0..3 {
+            let Some(Value::Scalar(ScalarValue::Float64(time))) = cell(row, "TIME") else {
+                panic!("TIME");
+            };
+            assert!((4.5e9..6.0e9).contains(&time), "row {row}: {time}");
+        }
+        // The append reaches `table.lock`, where casacore reads the row count.
+        let published = || {
+            TableWriteLock::acquire(path.join(LOGTABLE_NAME), 1)
+                .and_then(|lock| lock.modify_counter())
+                .expect("the lock's counter")
+        };
+        let before = published();
+        add_image_history(&path, "tclean", &["c".to_owned()]).expect("add");
+        assert_ne!(published(), before);
     }
 
     struct BareImage<T: ImagePixel> {

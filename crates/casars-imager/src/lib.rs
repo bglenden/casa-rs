@@ -14,6 +14,7 @@
 //! ([`tclean_record`]).
 
 mod casa_return;
+mod history;
 pub mod interrupt;
 mod schema;
 mod task_contract;
@@ -194,5 +195,6 @@ pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         result.run.clean_stop_reason,
     );
     let value = tclean_record(&request, &result.run, &values, &held);
+    history::write_tclean_history(&request.imagename, task);
     Ok(TaskSuccess::new(value, &result)?.with_text(text))
 }
