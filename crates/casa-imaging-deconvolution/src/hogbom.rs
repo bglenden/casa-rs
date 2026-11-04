@@ -80,11 +80,13 @@ impl Solver for Hogbom {
         } = candidate;
         let flux = gain * strength;
         delta.add(0, index, flux);
+        // `hclean` takes the PSF at the plane's centre, whatever its peak.
+        let [x, y] = view.shape.centre();
         subtract_shifted(
             &mut residual[0],
             &view.psf[0],
             view.shape,
-            view.summary.peak(),
+            view.shape.index(x, y),
             index,
             flux,
         )
