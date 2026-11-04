@@ -252,7 +252,7 @@ fn tclean_returns_casas_summary_record() {
     assert_eq!(describe(&full), casa("tclean fullsummary"));
 
     // A cube has an entry for each channel, as CASA's has (Astra's #1015
-    // F3); each holds nan where the report sums the planes.
+    // F3).
     let cube = run(
         "cube",
         json!({ "niter": 30, "specmode": "cube", "nchan": 3 }),
@@ -536,8 +536,14 @@ fn a_cubes_summary_holds_each_planes_own_rows() {
             "channel {channel}: {flux} against its model's {image}"
         );
         last_fluxes.push(flux);
-        for peak in ["startPeakResNM", "peakResNM"] {
-            assert!(plane_row(&cleaned, key, peak).iter().all(|v| v.is_finite()));
+        // With no mask, the peak over the plane's pixels is the peak inside
+        // the mask.
+        for (inside, over) in [("startPeakRes", "startPeakResNM"), ("peakRes", "peakResNM")] {
+            let peaks = plane_row(&cleaned, key, over);
+            assert!(peaks.iter().all(|peak| *peak > 0.0));
+            for (a, b) in plane_row(&cleaned, key, inside).iter().zip(&peaks) {
+                assert!((a - b).abs() <= 1e-3 * b, "{inside}: {a} against {b}");
+            }
         }
     }
     // The steep spectrum makes the planes differ; none holds the others'.

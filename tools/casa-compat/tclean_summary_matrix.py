@@ -11,9 +11,9 @@ any `XSym` links resolved (`tclean_case_matrix.py` says why):
         --imager-binary <binary> --output <new dir> [--case NAME ...]
 
 It writes `<output>/summary.json`, with each case's return on both sides under
-`<output>/casa` and `<output>/native`. A value agrees within 2e-3 of CASA's, or
-of 1e-3 where CASA's is smaller: the rows are peaks and fluxes of a few
-iterations, and those carry the runs' ordinary differences.
+`<output>/casa` and `<output>/native`. A count agrees exactly. A peak or flux
+agrees within 2e-3 of CASA's, or of 1e-3 where CASA's is smaller: these carry
+the runs' ordinary differences. Native runs at `gridprecision='f64'`.
 """
 import argparse
 import json
@@ -27,6 +27,7 @@ from tclean_compare import run_native  # noqa: E402
 
 LIMIT = 2e-3
 FLOOR = 1e-3
+COUNTS = {"iterDone", "startIterDone", "cycleStartIters", "masksum", "mpiServer", "stopCode"}
 LINE = "refim_point_withline.ms"
 TWO = "refim_twopoints_twochan.ms"
 POL = "refim_point_linRL.ms"
@@ -36,6 +37,8 @@ OUTLIER = "imagename={name}/outlier\nimsize=[60,60]\ncell=[8.0arcsec,8.0arcsec]\
 BAND = {"vis": LINE, "spw": "0:0~7"}
 CUBE = {"vis": LINE, "specmode": "cube", "start": 8, "width": 1}
 BOX = "box[[40pix,40pix],[60pix,60pix]]"
+MOSAIC = {"vis": "refim_oneshiftpoint.mosaic.ms", "gridder": "mosaic", "imsize": 256,
+          "cell": "10.0arcsec", "spw": "0", "phasecenter": 0}
 # A case is its calls in order; each call's image name defaults to "im". CASA's
 # own tests of these rows join them in `main`.
 CASES = {
@@ -45,6 +48,21 @@ CASES = {
         dict(BAND, niter=10, imagename="b", startmodel="{case}/a.model"),
     ],
     "mtmfs": [dict(BAND, niter=30, deconvolver="mtmfs")],
+    "mtmfs-seed": [
+        dict(BAND, niter=10, deconvolver="mtmfs", imagename="a"),
+        dict(BAND, niter=10, deconvolver="mtmfs", imagename="b",
+             startmodel=["{case}/a.model.tt0", "{case}/a.model.tt1"]),
+    ],
+    "mosaic-seed": [
+        dict(MOSAIC, niter=20, pblimit=0.1, imagename="a"),
+        dict(MOSAIC, niter=10, pblimit=0.9, imagename="b", startmodel="{case}/a.model"),
+    ],
+    "mosaic-seed-cube": [
+        dict(MOSAIC, specmode="cube", niter=20, pblimit=0.1, imagename="a"),
+        dict(MOSAIC, specmode="cube", niter=10, pblimit=0.9, imagename="b",
+             startmodel="{case}/a.model"),
+    ],
+    "clark-stokes": [{"vis": POL, "stokes": "IV", "niter": 20, "deconvolver": "clark"}],
     "clark": [dict(BAND, niter=30, deconvolver="clark")],
     "multiscale": [dict(BAND, niter=20, deconvolver="multiscale", scales=[0, 3])],
     "threshold": [dict(BAND, niter=40, threshold="0.05Jy")],
@@ -52,6 +70,10 @@ CASES = {
     "outlier": [dict(BAND, niter=20, outlierfile="{case}/outliers.txt")],
     "dirty": [dict(BAND, niter=0)],
     "dirty-mtmfs": [dict(BAND, niter=0, deconvolver="mtmfs")],
+    "dirty-seed": [
+        dict(BAND, niter=10, imagename="a"),
+        dict(BAND, niter=0, imagename="b", startmodel="{case}/a.model"),
+    ],
     "dirty-mask": [
         dict(BAND, niter=5, usemask="user", mask=BOX, imagename="a"),
         dict(BAND, niter=0, usemask="user", mask="{case}/a.mask", imagename="b"),
@@ -59,6 +81,8 @@ CASES = {
     "cube": [dict(CUBE, nchan=5, niter=40, deconvolver="hogbom")],
     "cube-mask": [dict(CUBE, nchan=3, niter=30, usemask="user", mask=BOX)],
     "cube-short": [dict(CUBE, nchan=3, niter=4)],
+    "cube-empty-plane": [dict(CUBE, nchan=3, niter=20, usemask="user",
+                              mask="box[[40pix,40pix],[60pix,60pix]], range=[1chan,1chan]")],
     "cube-dirty": [dict(CUBE, nchan=3, niter=0)],
     "cube-offband": [dict(CUBE, nchan=4, start=18, niter=20)],
     "threshold-cube": [dict(CUBE, nchan=3, niter=60, threshold="0.2Jy")],
@@ -101,8 +125,10 @@ def expand(case, call, root):
     values["vis"] = str(root / "unittest/tclean" / values["vis"])
     values["imagename"] = f"{case}/{values.get('imagename', 'im')}"
     for key in ("startmodel", "mask", "outlierfile"):
-        if key in values:
+        if isinstance(values.get(key), str):
             values[key] = values[key].replace("{case}", case)
+        elif key in values:
+            values[key] = [name.replace("{case}", case) for name in values[key]]
     return values
 
 
@@ -142,8 +168,12 @@ def differences(casa, native):
                 found.append(f"{plane} {name}: {len(expected)} against {len(got)} cycles")
                 continue
             for theirs, ours in zip(expected, got):
-                gap = math.inf if ours is None or math.isnan(ours) else \
-                    abs(theirs - ours) / max(abs(theirs), FLOOR)
+                if math.isnan(theirs) or math.isnan(ours):
+                    gap = 0.0 if math.isnan(theirs) and math.isnan(ours) else math.inf
+                elif name in COUNTS:
+                    gap = math.inf if theirs != ours else 0.0
+                else:
+                    gap = abs(theirs - ours) / max(abs(theirs), FLOOR)
                 if gap > LIMIT:
                     found.append(f"{plane} {name}: {expected} against {got}")
                     break

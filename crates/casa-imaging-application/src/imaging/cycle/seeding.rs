@@ -53,24 +53,27 @@ pub(super) fn plane_fluxes(
     start: &StartModel,
     samples: &[f32],
 ) -> Vec<([usize; 3], f64)> {
-    let cube = matches!(
-        problem.reconstruction().basis(),
-        ReconstructionBasis::ChannelLocal { .. }
-    );
     let polarizations = start.polarizations();
     let [width, height] = start.image_size();
     samples
         .chunks_exact(width * height)
         .enumerate()
         .filter_map(|(index, plane)| {
-            let (coefficient, polarization) = (index / polarizations, index % polarizations);
-            (cube || coefficient == 0).then(|| {
-                let channel = if cube { coefficient } else { 0 };
-                let flux = plane.iter().map(|value| f64::from(*value)).sum();
-                ([0, channel, polarization], flux)
-            })
+            plane_key(problem, polarizations, index)
+                .map(|key| (key, plane.iter().map(|value| f64::from(*value)).sum()))
         })
         .collect()
+}
+
+/// The `[domain, channel, polarization]` of a start model's plane `index`;
+/// `None` for a Taylor term after the first.
+fn plane_key(problem: &CompiledProblem, polarizations: usize, index: usize) -> Option<[usize; 3]> {
+    let cube = matches!(
+        problem.reconstruction().basis(),
+        ReconstructionBasis::ChannelLocal { .. }
+    );
+    let (coefficient, polarization) = (index / polarizations, index % polarizations);
+    (cube || coefficient == 0).then_some([0, if cube { coefficient } else { 0 }, polarization])
 }
 
 impl Run<'_> {
@@ -190,9 +193,9 @@ impl Run<'_> {
         let [nx, ny] = start.image_size();
         let polarizations = start.polarizations();
         let apparent = start.main_samples().map_err(ImagingError::StartModel)?;
-        self.start_model_flux = plane_fluxes(self.problem, start, &apparent);
         let units = ImagingError::StartModelUnits;
         let mut physical = Vec::with_capacity(apparent.len());
+        let mut fluxes = Vec::new();
         // Canonical order: spectral plane, polarization, y, x (x fastest);
         // the normal state's planes are x-major (x · ny + y). Every Taylor
         // term divides by term 0's weights of its polarization
@@ -221,12 +224,17 @@ impl Run<'_> {
             // peak is zero: no sample reached it, or its rows all miss the
             // grid (an AW weight image with no sum, which
             // `divideImageByWeightVal` zeroes). Its model stays as it is.
+            let key = plane_key(self.problem, polarizations, plane);
             let bound = MosaicSensitivity::try_new(&sensitivity).map_err(units)?;
             let Some(bound) = bound.filter(|_| sum_weight > 0.0) else {
                 physical.extend_from_slice(samples);
+                fluxes.extend(
+                    key.map(|key| (key, samples.iter().map(|value| f64::from(*value)).sum())),
+                );
                 continue;
             };
             let bound = bound.with_normal_sum_weight(sum_weight).map_err(units)?;
+            let mut flux = 0.0;
             for y in 0..ny {
                 for x in 0..nx {
                     let value = bound
@@ -238,9 +246,16 @@ impl Run<'_> {
                         )
                         .map_err(units)?;
                     physical.push(value as f32);
+                    // `.model` keeps what `divideModelByWeight` cuts: its
+                    // multiplication back can't restore it.
+                    if value != 0.0 {
+                        flux += f64::from(samples[y * nx + x]);
+                    }
                 }
             }
+            fluxes.extend(key.map(|key| (key, flux)));
         }
+        self.start_model_flux = fluxes;
         Ok(self.lifecycle.initial_from_start_model(&physical)?)
     }
 

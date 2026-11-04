@@ -12,6 +12,7 @@ publish = false
 workspace = true
 
 [dependencies]
+ndarray.workspace = true
 casa-images = { path = "../casa-images" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
@@ -37,7 +38,6 @@ casa-simulation-synthesis = { path = "../casa-simulation-synthesis" }
 casa-tables = { path = "../casa-tables" }
 casa-test-support = { path = "../casa-test-support" }
 casa-types = { path = "../casa-types" }
-ndarray.workspace = true
 tempfile = "3"
 tracing-subscriber.workspace = true
 

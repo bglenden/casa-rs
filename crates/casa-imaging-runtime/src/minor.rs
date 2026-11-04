@@ -616,6 +616,7 @@ pub fn run_minor_cycle(
             statistics,
             outcome,
             solved.peak_no_mask,
+            controls,
         ));
         let room = TRACE - summary.trace.len();
         summary.trace.extend(solved.trace.into_iter().take(room));
@@ -1326,10 +1327,11 @@ fn solve(
     // it skipped.
     let end_residual = std::mem::take(&mut outcome.end_residual);
     let peak_no_mask = match end_residual.first() {
-        Some(residual) => {
+        Some(residual) if setup.residual_pixel_mask => {
             let pixels = plane_pixels(inputs, key, &plane)?;
-            peak_magnitude(residual, pixels.residual_mask(setup.residual_pixel_mask))
+            peak_magnitude(residual, pixels.residual_mask(true))
         }
+        Some(residual) => peak_magnitude(residual, &plane.valid),
         None => statistics.peak_no_mask,
     };
     drop(end_residual);
