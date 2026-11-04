@@ -640,3 +640,62 @@ fn clark_solves_a_channels_polarizations_as_one_component() {
     assert!((trace[0].flux - 0.17).abs() < 1e-6);
     assert!((trace[1].flux - 0.51).abs() < 1e-6);
 }
+
+/// A channel with no samples does not disable joint Clark on a healthy
+/// channel in the same slab (#1140).
+#[test]
+fn an_empty_channel_does_not_split_another_channels_clark_polarizations() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    let width = 64;
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [width, width],
+        2,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(1, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = width * width;
+        images.polarizations = 2;
+        let unit = scene
+            .unit_psf()
+            .into_iter()
+            .map(|v| v as f32)
+            .collect::<Vec<_>>();
+        images.psf = Some(
+            [
+                unit.as_slice(),
+                unit.as_slice(),
+                &vec![0.0; cells],
+                &vec![0.0; cells],
+            ]
+            .concat(),
+        );
+        images.sum_weights = vec![1.0, 1.0, 0.0, 0.0];
+        images.published_sum_weights = images.sum_weights.clone();
+        images.residual = vec![0.0; 4 * cells];
+        images.residual[20 * width + 20] = 3.0;
+        images.residual[40 * width + 40] = 1.0;
+        images.residual[cells + 40 * width + 40] = 3.0;
+    });
+    let (_, outcome) = minor_cycle(
+        &problem,
+        &completion,
+        &setup(&problem, None),
+        &controls(1, 0.17),
+        1,
+    );
+    assert_eq!(outcome.summary.iterations, 1);
+    assert_eq!(outcome.summary.trace.len(), 2);
+    assert!(
+        outcome
+            .summary
+            .trace
+            .iter()
+            .all(|c| c.cell.pixel() == [40, 40])
+    );
+}

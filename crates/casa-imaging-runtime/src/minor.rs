@@ -565,18 +565,28 @@ pub fn run_minor_cycle(
     let joint = matches!(setup.algorithm, ReconstructionAlgorithm::Clark)
         && !inputs.taylor
         && matches!(n_pol, 2 | 4)
-        && blank.is_empty();
+        && planes.len() >= n_pol;
     if joint {
         let mut ordered = planes.clone();
         ordered.sort_unstable_by_key(|(key, _)| (key.domain, key.channel, key.polarization));
-        let mut groups = ordered
-            .chunks_exact(n_pol)
-            .map(|chunk| PolarizedSlot {
-                keys: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].0),
-                stats: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].1),
-                solved: None,
-            })
-            .collect::<Vec<_>>();
+        let mut groups = Vec::with_capacity(ordered.len() / n_pol);
+        let mut singles = Vec::with_capacity(ordered.len());
+        for chunk in ordered.chunk_by(|a, b| a.0.domain == b.0.domain && a.0.channel == b.0.channel)
+        {
+            if chunk.len() == n_pol {
+                groups.push(PolarizedSlot {
+                    keys: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].0),
+                    stats: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].1),
+                    solved: None,
+                });
+            } else {
+                singles.extend(chunk.iter().map(|(key, statistics)| Slot {
+                    key: *key,
+                    statistics: *statistics,
+                    solved: None,
+                }));
+            }
+        }
         team.for_each_mut(&mut groups, |_, group| {
             let summary = cache.summaries[&group.keys[0]];
             group.solved = Some(match n_pol {
@@ -600,6 +610,26 @@ pub fn run_minor_cycle(
             });
             Ok::<_, MinorCycleRunError>(())
         })?;
+        team.for_each_mut(&mut singles, |_, slot| {
+            let summary = cache.summaries[&slot.key];
+            slot.solved = Some(solve(
+                &inputs,
+                admission,
+                (slot.key, None),
+                &summary,
+                &slot.statistics,
+                controls,
+                (&mut None, fft_threads),
+            )?);
+            Ok::<_, MinorCycleRunError>(())
+        })?;
+        results.extend(singles.into_iter().map(|slot| {
+            (
+                slot.key,
+                slot.statistics,
+                slot.solved.expect("every plane solved"),
+            )
+        }));
         results.extend(groups.into_iter().map(|mut group| {
             let mut stats = group.stats[0];
             for other in &group.stats[1..n_pol] {
