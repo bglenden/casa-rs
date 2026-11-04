@@ -470,7 +470,7 @@ fn each_image_holds_tcleans_history_and_its_source() {
         assert!(history[1].starts_with("version: casa-rs "), "{suffix}");
         assert!(history.contains(&"niter       = 5".to_owned()), "{suffix}");
         assert!(
-            history.contains(&"spw         = ['0']".to_owned()),
+            history.contains(&"spw         = \"0\"".to_owned()),
             "{suffix}"
         );
         let info = image.image_info().expect("image info");
@@ -536,6 +536,8 @@ fn each_image_holds_tcleans_history_and_its_source() {
         assert_eq!(&rows[..first.len()], &first[..], "{suffix}");
         assert_eq!(rows[first.len()].1, rows[0].1, "{suffix}");
         assert_ne!(rows[first.len()].0, rows[0].0, "{suffix}");
+    }
+}
 
 /// `name`'s row of the plane at `[field, channel, stokes]`, as numbers.
 fn plane_row(value: &CasaValue, key: [i64; 3], name: &str) -> Vec<f64> {

@@ -2703,6 +2703,44 @@ mod tests {
         CoordinateSystem::new()
     }
 
+    /// Rows from an origin keep their order, with casacore's `LogOrigin`
+    /// location and `TIME` in MJD seconds, and any pixel type can take them.
+    #[test]
+    fn history_from_an_origin_is_appended_as_casacore_logs_it() {
+        let directory = tempfile::tempdir().expect("scratch");
+        let path = directory.path().join("image");
+        PagedImage::<Complex32>::create(vec![2, 2], make_coords(), &path)
+            .and_then(|mut image| {
+                image.add_history("first")?;
+                image.save()
+            })
+            .expect("an image");
+        add_image_history(&path, "tclean", &["a".to_owned(), "b".to_owned()]).expect("add");
+        let image = PagedImage::<Complex32>::open(&path).expect("open");
+        assert_eq!(image.history().expect("history"), ["first", "a", "b"]);
+        let table = Table::open(TableOptions::new(path.join(LOGTABLE_NAME))).expect("logtable");
+        let cell = |row, name| {
+            table
+                .cell_accessor(row, name)
+                .and_then(|cell| cell.value().map(|value| value.cloned()))
+                .expect("a cell")
+        };
+        assert_eq!(
+            cell(2, "LOCATION"),
+            Some(Value::Scalar(ScalarValue::String("::tclean".to_owned())))
+        );
+        assert_eq!(
+            cell(0, "LOCATION"),
+            Some(Value::Scalar(ScalarValue::String("casa-images".to_owned())))
+        );
+        for row in 0..3 {
+            let Some(Value::Scalar(ScalarValue::Float64(time))) = cell(row, "TIME") else {
+                panic!("TIME");
+            };
+            assert!((4.5e9..6.0e9).contains(&time), "row {row}: {time}");
+        }
+    }
+
     struct BareImage<T: ImagePixel> {
         data: ArrayD<T>,
     }
