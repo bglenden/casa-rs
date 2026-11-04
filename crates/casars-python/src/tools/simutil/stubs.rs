@@ -85,31 +85,6 @@ impl PySimutil {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (width, height, angle, spacing), text_signature = "($self, width, height, angle, spacing)")]
-    fn getTrianglePoints(
-        &self,
-        width: &Bound<'_, PyAny>,
-        height: &Bound<'_, PyAny>,
-        angle: &Bound<'_, PyAny>,
-        spacing: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getTrianglePoints")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (longlength, latlength, angle, spacing, pb), text_signature = "($self, longlength, latlength, angle, spacing, pb)")]
-    fn getTriangularTiling(
-        &self,
-        longlength: &Bound<'_, PyAny>,
-        latlength: &Bound<'_, PyAny>,
-        angle: &Bound<'_, PyAny>,
-        spacing: &Bound<'_, PyAny>,
-        pb: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getTriangularTiling")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (mstoimage, imagename, cleanmode, psfmode, cell, imsize, imcenter, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, sourcefieldlist = None, modelimage = None, mask = None, dryrun = None), text_signature = "($self, mstoimage, imagename, cleanmode, psfmode, cell, imsize, imcenter, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, sourcefieldlist='', modelimage='', mask=[], dryrun=False)")]
     fn imclean(
         &self,

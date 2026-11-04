@@ -38,6 +38,7 @@ CASA = casa_signatures("simutil")
 IMPLEMENTED = {
     "approxBeam", "average_direction", "bandname", "baselineLengths", "calc_pointings2", "cellsize",
     "closereport", "convimage", "dir_m2s", "dir_s2m", "direction_splitter", "flatimage", "getdatum",
+    "getTrianglePoints", "getTriangularTiling",
     "is4d", "isdirection", "ismstp", "isquantity", "isreport", "itrf2loc", "itrf2locname",
     "locxyz2itrf", "long2xyz", "median_direction", "modifymodel", "msg", "noisetemp", "openreport",
     "polsettings", "read_pointings", "readantenna", "setcfg", "spectral", "statim", "tconpc",
@@ -89,6 +90,20 @@ def test_casas_whole_class_is_recorded() -> None:
     assert len(CASA["methods"]) == 57
     assert IMPLEMENTED < set(CASA["methods"])
 
+
+def test_direct_tilings_match_casa() -> None:
+    cases = json.loads((Path(__file__).resolve().parent / "data" / "casa_simutil_tiling.json").read_text())
+    u = simutil.simutil()
+    for case in cases:
+        if "error" in case:
+            assert case["error"]["type"] == "ZeroDivisionError"
+            with pytest.raises(ZeroDivisionError, match=case["error"]["message"]):
+                getattr(u, case["method"])(*case["args"])
+            continue
+        actual = getattr(u, case["method"])(*case["args"])
+        assert isinstance(actual, tuple)
+        assert all(isinstance(axis, list) for axis in actual)
+        np.testing.assert_allclose(actual, case["result"], rtol=1e-13, atol=1e-13)
 
 @pytest.mark.parametrize("method", sorted(set(CASA["methods"]) - IMPLEMENTED))
 def test_methods_casa_rs_does_not_implement_yet_refuse_naming_the_issue(method: str) -> None:
