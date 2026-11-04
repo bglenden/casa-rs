@@ -347,7 +347,11 @@ fn needs_filler(length: f64, spacing: f64, beam: f64, points: i64) -> i64 {
 }
 
 /// `simutil.getBaseTriangularTiling` (`y` negated, as in CASA).
-fn base_tiling(
+///
+/// # Errors
+///
+/// As [`triangle_points`].
+pub fn base_tiling(
     width: f64,
     height: f64,
     angle: f64,
@@ -381,7 +385,11 @@ fn base_tiling(
 }
 
 /// `simutil.getShiftTriangularTiling` (`y` negated, as in CASA).
-fn shifted_tiling(
+///
+/// # Errors
+///
+/// As [`triangle_points`].
+pub fn shifted_tiling(
     width: f64,
     height: f64,
     angle: f64,

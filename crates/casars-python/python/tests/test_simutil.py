@@ -38,7 +38,7 @@ CASA = casa_signatures("simutil")
 IMPLEMENTED = {
     "approxBeam", "average_direction", "bandname", "baselineLengths", "calc_pointings2", "cellsize",
     "closereport", "convimage", "dir_m2s", "dir_s2m", "direction_splitter", "flatimage", "getdatum",
-    "getTrianglePoints", "getTriangularTiling",
+    "getBaseTriangularTiling", "getShiftTriangularTiling", "getTrianglePoints", "getTriangularTiling",
     "is4d", "isdirection", "ismstp", "isquantity", "isreport", "itrf2loc", "itrf2locname",
     "locxyz2itrf", "long2xyz", "median_direction", "modifymodel", "msg", "noisetemp", "openreport",
     "polsettings", "read_pointings", "readantenna", "setcfg", "spectral", "statim", "tconpc",
