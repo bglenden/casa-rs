@@ -31,9 +31,10 @@
 //! conversion is evaluated: compile at each surveyed epoch of the window,
 //! towards its field ([`epoch_frame`]), the packer at each row's time and
 //! field through the run's geometry. A channel a time's bands miss is read
-//! as flagged: no sample of it, or interpolated from it, is imaged, but the
-//! density pass still counts it, as CASA's density reads the untuned
-//! selection. A final pass on CASA's tuned selection leaves its
+//! as flagged: no sample of it, or interpolated from it, is imaged. A
+//! density over the whole selection selects by the same bands untuned, as
+//! CASA forms it before it tunes the selection; a density per plane counts
+//! every selected channel. A final pass on CASA's tuned selection leaves its
 //! `MODEL_DATA` as it is; `predictModel` writes it (`observation_source`'s
 //! write-back says which).
 //!

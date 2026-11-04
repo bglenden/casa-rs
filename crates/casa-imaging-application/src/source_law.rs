@@ -171,6 +171,7 @@ fn read(
     planes_per_wave: u32,
 ) -> Result<(usize, u64), ApplicationDispatchError> {
     let mut block = NativeBlock::with_capacity(source.maximum_block());
+    let capacity = block.capacity_bytes();
     let mut blocks = 0;
     let mut traverse = |range: PlaneRange, restrict: bool, content: SampleContent| {
         source.begin(range, restrict, content)?;
@@ -196,7 +197,12 @@ fn read(
                 })
         })
         .map_err(|error| ApplicationDispatchError::Native(error.to_string().into()))?;
-    Ok((blocks, block.capacity_bytes()))
+    if block.capacity_bytes() > capacity {
+        return Err(ApplicationDispatchError::Native(
+            "a traversal outgrew the source's maximum block".into(),
+        ));
+    }
+    Ok((blocks, capacity))
 }
 
 /// The planes of `problem`'s basis a wave divides: a cube's channels, or
