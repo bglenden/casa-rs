@@ -177,39 +177,35 @@
    ]
   },
   "getfreq": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency.",
    "evidence": [
     "signature",
-    "refusals"
+    "frequency-placeholders-casa"
    ]
   },
   "getfreqframe": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency.",
    "evidence": [
     "signature",
-    "refusals"
+    "frequency-placeholders-casa"
    ]
   },
   "getfrequnit": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency.",
    "evidence": [
     "signature",
-    "refusals"
+    "frequency-placeholders-casa"
    ]
   },
   "getfreqvalue": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency.",
    "evidence": [
     "signature",
-    "refusals"
+    "frequency-placeholders-casa"
    ]
   },
   "getkeyword": {
@@ -711,6 +707,18 @@
    "revision": "49c810c57210127fc4bc4f66289cadec90f49947",
    "command": "CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool componentlist (bg-mac-mini)",
    "receipt": "resources/casa-compat/evidence/cl-on-casa-20261103.json"
+  },
+  "frequency-placeholders-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Thirty-six calls on CASA 6.7.6-14 cover all four placeholders, index types and errors; CASA logs 24 not-implemented warnings. Additional populated-list probes returned the same sentinels.",
+   "scope": "componentlist.getfreq, getfreqframe, getfrequnit and getfreqvalue.",
+   "links": [
+    "tools/simulation/componentlist_frequency_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_frequency.json",
+    "crates/casars-python/python/tests/test_tools_componentlist.py"
+   ],
+   "source_revision": "dc3b03557db594b85c1745440a648f3419d01c50"
   }
  }
 }

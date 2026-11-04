@@ -1541,7 +1541,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 15 | 0 | 46 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 19 | 0 | 42 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1558,7 +1558,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 15, Partial: 0, Not implemented: 46, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 19, Partial: 0, Not implemented: 42, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1581,10 +1581,10 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `getfluxpol` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `getfluxunit` | `which` | Implemented | A component's flux unit. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getfluxvalue` | `which` | Implemented | A component's flux values. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `getfreq` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `getfreqframe` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `getfrequnit` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `getfreqvalue` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getfreq` | `which` | Implemented | Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency. | [signature](#componentlist-evidence-signature), [frequency-placeholders-casa](#componentlist-evidence-frequency-placeholders-casa) |
+| `getfreqframe` | `which` | Implemented | Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency. | [signature](#componentlist-evidence-signature), [frequency-placeholders-casa](#componentlist-evidence-frequency-placeholders-casa) |
+| `getfrequnit` | `which` | Implemented | Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency. | [signature](#componentlist-evidence-signature), [frequency-placeholders-casa](#componentlist-evidence-frequency-placeholders-casa) |
+| `getfreqvalue` | `which` | Implemented | Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency. | [signature](#componentlist-evidence-signature), [frequency-placeholders-casa](#componentlist-evidence-frequency-placeholders-casa) |
 | `getkeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `getlabel` | `which` | Implemented | A component's label. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getrefdir` | `which` | Implemented | A component's reference direction as a measure record. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
@@ -1754,6 +1754,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `49c810c57210127fc4bc4f66289cadec90f49947`; CASA: `casatools 6.7.6-14, casatasks 6.7.6.14`.
 - Command: `CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool componentlist (bg-mac-mini)`.
 - Receipt: `resources/casa-compat/evidence/cl-on-casa-20261103.json`.
+
+<a id="componentlist-evidence-frequency-placeholders-casa"></a>
+##### frequency-placeholders-casa
+
+**CASA-recorded values — measured.** Thirty-six calls on CASA 6.7.6-14 cover all four placeholders, index types and errors; CASA logs 24 not-implemented warnings. Additional populated-list probes returned the same sentinels. componentlist.getfreq, getfreqframe, getfrequnit and getfreqvalue.
+
+- [tools/simulation/componentlist_frequency_oracle.py](https://github.com/bglenden/casa-rs/blob/dc3b03557db594b85c1745440a648f3419d01c50/tools/simulation/componentlist_frequency_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_frequency.json](https://github.com/bglenden/casa-rs/blob/dc3b03557db594b85c1745440a648f3419d01c50/crates/casars-python/python/tests/data/casa_componentlist_frequency.json)
+- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/dc3b03557db594b85c1745440a648f3419d01c50/crates/casars-python/python/tests/test_tools_componentlist.py)
 
 ### measures
 
