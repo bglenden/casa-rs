@@ -705,6 +705,7 @@ where
             }
             overrides.values.insert(name.clone(), value);
         }
+        drop(text);
         let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let session = match open_named_session(OpenSessionRequest {
             bundle: bundle.clone(),
