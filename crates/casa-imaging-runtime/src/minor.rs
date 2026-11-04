@@ -566,85 +566,15 @@ pub fn run_minor_cycle(
         && !inputs.taylor
         && matches!(n_pol, 2 | 4);
     if joint {
-        let mut ordered = Vec::with_capacity(planes.len() + blank.len());
-        ordered.extend_from_slice(&planes);
-        ordered.extend_from_slice(&blank);
-        ordered.sort_unstable_by_key(|(key, _)| (key.domain, key.channel, key.polarization));
-        let mut groups = Vec::with_capacity(ordered.len() / n_pol);
-        for chunk in ordered.chunks_exact(n_pol) {
-            if chunk.iter().any(|(key, _)| holds_data(normal, false, *key)) {
-                groups.push(PolarizedSlot {
-                    keys: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].0),
-                    stats: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].1),
-                    solved: None,
-                });
-            }
-        }
-        // A partially blank channel is one joint solve, and has one row.
-        // A channel whose every polarization is blank reports one row.
-        blank.retain(|(key, _)| {
-            key.polarization == 0
-                && !(0..n_pol).any(|polarization| {
-                    holds_data(
-                        normal,
-                        false,
-                        PlaneKey {
-                            polarization,
-                            ..*key
-                        },
-                    )
-                })
-        });
-        team.for_each_mut(&mut groups, |_, group| {
-            let summary = cache
-                .summaries
-                .get(&group.keys[0])
-                .copied()
-                .unwrap_or_else(|| {
-                    cache
-                        .summaries
-                        .iter()
-                        .filter(|(key, _)| key.domain == group.keys[0].domain)
-                        .map(|(_, summary)| *summary)
-                        .max_by(|a, b| {
-                            (a.beam().major_fwhm_rad() * a.beam().minor_fwhm_rad())
-                                .total_cmp(&(b.beam().major_fwhm_rad() * b.beam().minor_fwhm_rad()))
-                        })
-                        .expect("a group with data has a measured PSF")
-                });
-            group.solved = Some(match n_pol {
-                2 => polarized::solve::<2>(
-                    &inputs,
-                    admission,
-                    &group.keys[..n_pol],
-                    &group.stats[..n_pol],
-                    &summary,
-                    controls,
-                )?,
-                4 => polarized::solve::<4>(
-                    &inputs,
-                    admission,
-                    &group.keys[..n_pol],
-                    &group.stats[..n_pol],
-                    &summary,
-                    controls,
-                )?,
-                _ => unreachable!(),
-            });
-            Ok::<_, MinorCycleRunError>(())
-        })?;
-        results.extend(groups.into_iter().map(|mut group| {
-            let mut stats = group.stats[0];
-            for other in &group.stats[1..n_pol] {
-                stats.peak_in_mask = stats.peak_in_mask.max(other.peak_in_mask);
-                stats.peak_no_mask = stats.peak_no_mask.max(other.peak_no_mask);
-            }
-            (
-                group.keys[0],
-                stats,
-                group.solved.take().expect("every group solved"),
-            )
-        }));
+        polarized::solve_groups(
+            &inputs,
+            admission,
+            (&planes, &mut blank),
+            cache,
+            controls,
+            team,
+            &mut results,
+        )?;
     } else if let [(key, statistics)] = planes.as_slice() {
         let summary = cache.summaries[key];
         let clark = &mut cache.clark;
