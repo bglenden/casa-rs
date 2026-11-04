@@ -207,7 +207,7 @@ fn run_step<S: Solver>(
                 solver.accept(&mut state, view, residual, candidate, gain, &mut delta)?;
                 let Candidate::Pixel { index, scale, .. } = candidate;
                 outcome.absolute_flux += fluxes.iter().map(|flux| flux.abs()).sum::<f64>();
-                outcome.model_flux += fluxes.first().copied().unwrap_or(0.0);
+                outcome.model_flux += solver.reported_flux(&fluxes);
                 for (term, &flux) in fluxes.iter().enumerate() {
                     if outcome.trace.len() < trace {
                         outcome.trace.push(Component {

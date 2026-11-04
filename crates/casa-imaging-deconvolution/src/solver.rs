@@ -114,6 +114,11 @@ pub trait Solver {
         fluxes.push(gain * strength);
     }
 
+    /// Signed model flux to report for a component.
+    fn reported_flux(&self, fluxes: &[f64]) -> f64 {
+        fluxes.first().copied().unwrap_or(0.0)
+    }
+
     /// Clean `candidate` with loop gain `gain`, adding the model update to
     /// `delta`.
     ///
