@@ -3,8 +3,8 @@
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a></span><span class="kw">use </span><span class="kw">crate</span>::Error;
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span><span class="kw">crate</span>::beam::{
-<a href=#6 id=6 data-nosnippet>6</a>    DEFAULT_PSF_FIT_CUTOFF, RestoringBeam, fit_restoring_beam,
-<a href=#7 id=7 data-nosnippet>7</a>    fitted_psf_sidelobe_fraction_with_beam,
+<a href=#6 id=6 data-nosnippet>6</a>    DEFAULT_PSF_FIT_CUTOFF, RestoringBeam, fit_main_lobe, fitted_psf_sidelobe_fraction_with_beam,
+<a href=#7 id=7 data-nosnippet>7</a>    peak_outside_inner_quarter,
 <a href=#8 id=8 data-nosnippet>8</a>};
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::plane::{PlaneShape, psf_peak};
 <a href=#10 id=10 data-nosnippet>10</a>
@@ -51,75 +51,128 @@
 <a href=#51 id=51 data-nosnippet>51</a>        }
 <a href=#52 id=52 data-nosnippet>52</a>        <span class="kw">let </span>single = psf.iter().map(|value| <span class="kw-2">*</span>value <span class="kw">as </span>f32).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 <a href=#53 id=53 data-nosnippet>53</a>        <span class="kw">let </span>axes = [shape.nx, shape.ny];
-<a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">let </span>beam = fit_restoring_beam(<span class="kw-2">&amp;</span>single, axes, [<span class="number">1.0</span>, <span class="number">1.0</span>], DEFAULT_PSF_FIT_CUTOFF)<span class="question-mark">?</span>;
-<a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">let </span>sidelobe = fitted_psf_sidelobe_fraction_with_beam(<span class="kw-2">&amp;</span>single, axes, beam)<span class="question-mark">?</span>;
-<a href=#56 id=56 data-nosnippet>56</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#57 id=57 data-nosnippet>57</a>            peak,
-<a href=#58 id=58 data-nosnippet>58</a>            beam,
-<a href=#59 id=59 data-nosnippet>59</a>            sidelobe,
-<a href=#60 id=60 data-nosnippet>60</a>            clark: ClarkPatch::new(psf, shape, beam),
-<a href=#61 id=61 data-nosnippet>61</a>        })
-<a href=#62 id=62 data-nosnippet>62</a>    }
-<a href=#63 id=63 data-nosnippet>63</a>
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// Storage index of the PSF peak.
-<a href=#65 id=65 data-nosnippet>65</a>    </span><span class="attr">#[must_use]
-<a href=#66 id=66 data-nosnippet>66</a>    </span><span class="kw">pub const fn </span>peak(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#67 id=67 data-nosnippet>67</a>        <span class="self">self</span>.peak
-<a href=#68 id=68 data-nosnippet>68</a>    }
-<a href=#69 id=69 data-nosnippet>69</a>
-<a href=#70 id=70 data-nosnippet>70</a>    <span class="doccomment">/// The fitted main lobe, in pixels.
-<a href=#71 id=71 data-nosnippet>71</a>    </span><span class="attr">#[must_use]
-<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="kw">pub const fn </span>beam(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RestoringBeam {
-<a href=#73 id=73 data-nosnippet>73</a>        <span class="self">self</span>.beam
-<a href=#74 id=74 data-nosnippet>74</a>    }
-<a href=#75 id=75 data-nosnippet>75</a>
-<a href=#76 id=76 data-nosnippet>76</a>    <span class="doccomment">/// The fitted sidelobe level the cycle threshold scales by.
-<a href=#77 id=77 data-nosnippet>77</a>    </span><span class="attr">#[must_use]
-<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="kw">pub const fn </span>sidelobe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
-<a href=#79 id=79 data-nosnippet>79</a>        <span class="self">self</span>.sidelobe
-<a href=#80 id=80 data-nosnippet>80</a>    }
-<a href=#81 id=81 data-nosnippet>81</a>
-<a href=#82 id=82 data-nosnippet>82</a>    <span class="doccomment">/// Clark's patch.
-<a href=#83 id=83 data-nosnippet>83</a>    </span><span class="attr">#[must_use]
-<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="kw">pub const fn </span>clark(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ClarkPatch {
-<a href=#85 id=85 data-nosnippet>85</a>        <span class="self">self</span>.clark
-<a href=#86 id=86 data-nosnippet>86</a>    }
-<a href=#87 id=87 data-nosnippet>87</a>}
+<a href=#54 id=54 data-nosnippet>54</a>        <span class="comment">// A plane peaking away from its centre has no beam of its own in CASA,
+<a href=#55 id=55 data-nosnippet>55</a>        // which takes another plane's and subtracts a Gaussian at the centre,
+<a href=#56 id=56 data-nosnippet>56</a>        // far from that peak, which so stays the sidelobe. Its beam here serves
+<a href=#57 id=57 data-nosnippet>57</a>        // the Clark patch and the automatic mask's smoothing, at a pixel: nothing
+<a href=#58 id=58 data-nosnippet>58</a>        // here knows the other planes (#1130).
+<a href=#59 id=59 data-nosnippet>59</a>        </span><span class="kw">let </span>(beam, sidelobe) = <span class="kw">if </span>peak_outside_inner_quarter(<span class="kw-2">&amp;</span>single, axes)<span class="question-mark">? </span>{
+<a href=#60 id=60 data-nosnippet>60</a>            <span class="kw">let </span>level = psf
+<a href=#61 id=61 data-nosnippet>61</a>                .iter()
+<a href=#62 id=62 data-nosnippet>62</a>                .fold(<span class="number">0.0_f64</span>, |level, value| level.max(value.abs()));
+<a href=#63 id=63 data-nosnippet>63</a>            (RestoringBeam::new(<span class="number">1.0</span>, <span class="number">1.0</span>, <span class="number">0.0</span>)<span class="question-mark">?</span>, level)
+<a href=#64 id=64 data-nosnippet>64</a>        } <span class="kw">else </span>{
+<a href=#65 id=65 data-nosnippet>65</a>            <span class="kw">let </span>beam = fit_main_lobe(<span class="kw-2">&amp;</span>single, axes, [<span class="number">1.0</span>, <span class="number">1.0</span>], DEFAULT_PSF_FIT_CUTOFF)<span class="question-mark">?</span>;
+<a href=#66 id=66 data-nosnippet>66</a>            <span class="kw">let </span>sidelobe = fitted_psf_sidelobe_fraction_with_beam(<span class="kw-2">&amp;</span>single, axes, beam)<span class="question-mark">?</span>;
+<a href=#67 id=67 data-nosnippet>67</a>            (beam, sidelobe)
+<a href=#68 id=68 data-nosnippet>68</a>        };
+<a href=#69 id=69 data-nosnippet>69</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#70 id=70 data-nosnippet>70</a>            peak,
+<a href=#71 id=71 data-nosnippet>71</a>            beam,
+<a href=#72 id=72 data-nosnippet>72</a>            sidelobe,
+<a href=#73 id=73 data-nosnippet>73</a>            clark: ClarkPatch::new(psf, shape, beam),
+<a href=#74 id=74 data-nosnippet>74</a>        })
+<a href=#75 id=75 data-nosnippet>75</a>    }
+<a href=#76 id=76 data-nosnippet>76</a>
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// Storage index of the PSF peak.
+<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="attr">#[must_use]
+<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="kw">pub const fn </span>peak(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#80 id=80 data-nosnippet>80</a>        <span class="self">self</span>.peak
+<a href=#81 id=81 data-nosnippet>81</a>    }
+<a href=#82 id=82 data-nosnippet>82</a>
+<a href=#83 id=83 data-nosnippet>83</a>    <span class="doccomment">/// The fitted main lobe, in pixels.
+<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="attr">#[must_use]
+<a href=#85 id=85 data-nosnippet>85</a>    </span><span class="kw">pub const fn </span>beam(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RestoringBeam {
+<a href=#86 id=86 data-nosnippet>86</a>        <span class="self">self</span>.beam
+<a href=#87 id=87 data-nosnippet>87</a>    }
 <a href=#88 id=88 data-nosnippet>88</a>
-<a href=#89 id=89 data-nosnippet>89</a><span class="kw">impl </span>ClarkPatch {
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// At least four pixels, otherwise the ceiling of the fitted widths;
-<a href=#91 id=91 data-nosnippet>91</a>    /// a `3·ncent + 1` square capped by the plane.
-<a href=#92 id=92 data-nosnippet>92</a>    </span><span class="kw">fn </span>new(psf: <span class="kw-2">&amp;</span>[f64], shape: PlaneShape, beam: RestoringBeam) -&gt; <span class="self">Self </span>{
-<a href=#93 id=93 data-nosnippet>93</a>        <span class="kw">let </span>central = <span class="number">4_usize
-<a href=#94 id=94 data-nosnippet>94</a>            </span>.max(beam.major_fwhm_rad().ceil() <span class="kw">as </span>usize)
-<a href=#95 id=95 data-nosnippet>95</a>            .max(beam.minor_fwhm_rad().ceil() <span class="kw">as </span>usize);
-<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">let </span>requested = <span class="number">3 </span>* central + <span class="number">1</span>;
-<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">let </span>size = [requested.min(shape.nx), requested.min(shape.ny)];
-<a href=#98 id=98 data-nosnippet>98</a>        <span class="kw">let </span>radius = [size[<span class="number">0</span>] / <span class="number">2</span>, size[<span class="number">1</span>] / <span class="number">2</span>];
-<a href=#99 id=99 data-nosnippet>99</a>        <span class="comment">// ClarkCleanLatModel::absMaxBeyondDist about the PSF origin
-<a href=#100 id=100 data-nosnippet>100</a>        // (psfShape/2): rows beyond ±d, and in the other rows the columns
-<a href=#101 id=101 data-nosnippet>101</a>        // left of −d and from +d on. A patch as large as the plane leaves no
-<a href=#102 id=102 data-nosnippet>102</a>        // exterior (getPsfPatch's user value, 0).
-<a href=#103 id=103 data-nosnippet>103</a>        </span><span class="kw">let </span>[cx, cy] = shape.centre();
-<a href=#104 id=104 data-nosnippet>104</a>        <span class="kw">let </span>exterior_sidelobe = <span class="kw">if </span>size == [shape.nx, shape.ny] {
-<a href=#105 id=105 data-nosnippet>105</a>            <span class="number">0.0
-<a href=#106 id=106 data-nosnippet>106</a>        </span>} <span class="kw">else </span>{
-<a href=#107 id=107 data-nosnippet>107</a>            psf.iter()
-<a href=#108 id=108 data-nosnippet>108</a>                .enumerate()
-<a href=#109 id=109 data-nosnippet>109</a>                .filter(|(index, <span class="kw">_</span>)| {
-<a href=#110 id=110 data-nosnippet>110</a>                    <span class="kw">let </span>[x, y] = shape.pixel(<span class="kw-2">*</span>index);
-<a href=#111 id=111 data-nosnippet>111</a>                    y + radius[<span class="number">1</span>] &lt; cy
-<a href=#112 id=112 data-nosnippet>112</a>                        || y &gt; cy + radius[<span class="number">1</span>]
-<a href=#113 id=113 data-nosnippet>113</a>                        || x + radius[<span class="number">0</span>] &lt; cx
-<a href=#114 id=114 data-nosnippet>114</a>                        || x &gt;= cx + radius[<span class="number">0</span>]
-<a href=#115 id=115 data-nosnippet>115</a>                })
-<a href=#116 id=116 data-nosnippet>116</a>                .fold(<span class="number">0.0_f64</span>, |maximum, (<span class="kw">_</span>, value)| maximum.max(value.abs()))
-<a href=#117 id=117 data-nosnippet>117</a>        };
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="self">Self </span>{
-<a href=#119 id=119 data-nosnippet>119</a>            radius,
-<a href=#120 id=120 data-nosnippet>120</a>            size,
-<a href=#121 id=121 data-nosnippet>121</a>            exterior_sidelobe,
-<a href=#122 id=122 data-nosnippet>122</a>        }
-<a href=#123 id=123 data-nosnippet>123</a>    }
-<a href=#124 id=124 data-nosnippet>124</a>}
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="doccomment">/// The fitted sidelobe level the cycle threshold scales by.
+<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="attr">#[must_use]
+<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="kw">pub const fn </span>sidelobe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; f64 {
+<a href=#92 id=92 data-nosnippet>92</a>        <span class="self">self</span>.sidelobe
+<a href=#93 id=93 data-nosnippet>93</a>    }
+<a href=#94 id=94 data-nosnippet>94</a>
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// Clark's patch.
+<a href=#96 id=96 data-nosnippet>96</a>    </span><span class="attr">#[must_use]
+<a href=#97 id=97 data-nosnippet>97</a>    </span><span class="kw">pub const fn </span>clark(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; ClarkPatch {
+<a href=#98 id=98 data-nosnippet>98</a>        <span class="self">self</span>.clark
+<a href=#99 id=99 data-nosnippet>99</a>    }
+<a href=#100 id=100 data-nosnippet>100</a>}
+<a href=#101 id=101 data-nosnippet>101</a>
+<a href=#102 id=102 data-nosnippet>102</a><span class="kw">impl </span>ClarkPatch {
+<a href=#103 id=103 data-nosnippet>103</a>    <span class="doccomment">/// At least four pixels, otherwise the ceiling of the fitted widths;
+<a href=#104 id=104 data-nosnippet>104</a>    /// a `3·ncent + 1` square capped by the plane.
+<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="kw">fn </span>new(psf: <span class="kw-2">&amp;</span>[f64], shape: PlaneShape, beam: RestoringBeam) -&gt; <span class="self">Self </span>{
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="kw">let </span>central = <span class="number">4_usize
+<a href=#107 id=107 data-nosnippet>107</a>            </span>.max(beam.major_fwhm_rad().ceil() <span class="kw">as </span>usize)
+<a href=#108 id=108 data-nosnippet>108</a>            .max(beam.minor_fwhm_rad().ceil() <span class="kw">as </span>usize);
+<a href=#109 id=109 data-nosnippet>109</a>        <span class="kw">let </span>requested = <span class="number">3 </span>* central + <span class="number">1</span>;
+<a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">let </span>size = [requested.min(shape.nx), requested.min(shape.ny)];
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">let </span>radius = [size[<span class="number">0</span>] / <span class="number">2</span>, size[<span class="number">1</span>] / <span class="number">2</span>];
+<a href=#112 id=112 data-nosnippet>112</a>        <span class="comment">// ClarkCleanLatModel::absMaxBeyondDist about the PSF origin
+<a href=#113 id=113 data-nosnippet>113</a>        // (psfShape/2): rows beyond ±d, and in the other rows the columns
+<a href=#114 id=114 data-nosnippet>114</a>        // left of −d and from +d on. A patch as large as the plane leaves no
+<a href=#115 id=115 data-nosnippet>115</a>        // exterior (getPsfPatch's user value, 0).
+<a href=#116 id=116 data-nosnippet>116</a>        </span><span class="kw">let </span>[cx, cy] = shape.centre();
+<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">let </span>exterior_sidelobe = <span class="kw">if </span>size == [shape.nx, shape.ny] {
+<a href=#118 id=118 data-nosnippet>118</a>            <span class="number">0.0
+<a href=#119 id=119 data-nosnippet>119</a>        </span>} <span class="kw">else </span>{
+<a href=#120 id=120 data-nosnippet>120</a>            psf.iter()
+<a href=#121 id=121 data-nosnippet>121</a>                .enumerate()
+<a href=#122 id=122 data-nosnippet>122</a>                .filter(|(index, <span class="kw">_</span>)| {
+<a href=#123 id=123 data-nosnippet>123</a>                    <span class="kw">let </span>[x, y] = shape.pixel(<span class="kw-2">*</span>index);
+<a href=#124 id=124 data-nosnippet>124</a>                    y + radius[<span class="number">1</span>] &lt; cy
+<a href=#125 id=125 data-nosnippet>125</a>                        || y &gt; cy + radius[<span class="number">1</span>]
+<a href=#126 id=126 data-nosnippet>126</a>                        || x + radius[<span class="number">0</span>] &lt; cx
+<a href=#127 id=127 data-nosnippet>127</a>                        || x &gt;= cx + radius[<span class="number">0</span>]
+<a href=#128 id=128 data-nosnippet>128</a>                })
+<a href=#129 id=129 data-nosnippet>129</a>                .fold(<span class="number">0.0_f64</span>, |maximum, (<span class="kw">_</span>, value)| maximum.max(value.abs()))
+<a href=#130 id=130 data-nosnippet>130</a>        };
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="self">Self </span>{
+<a href=#132 id=132 data-nosnippet>132</a>            radius,
+<a href=#133 id=133 data-nosnippet>133</a>            size,
+<a href=#134 id=134 data-nosnippet>134</a>            exterior_sidelobe,
+<a href=#135 id=135 data-nosnippet>135</a>        }
+<a href=#136 id=136 data-nosnippet>136</a>    }
+<a href=#137 id=137 data-nosnippet>137</a>}
+<a href=#138 id=138 data-nosnippet>138</a>
+<a href=#139 id=139 data-nosnippet>139</a><span class="attr">#[cfg(test)]
+<a href=#140 id=140 data-nosnippet>140</a></span><span class="kw">mod </span>tests {
+<a href=#141 id=141 data-nosnippet>141</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#142 id=142 data-nosnippet>142</a>
+<a href=#143 id=143 data-nosnippet>143</a>    <span class="doccomment">/// A smooth main lobe at `centre` of a 64-pixel plane, x-major.
+<a href=#144 id=144 data-nosnippet>144</a>    </span><span class="kw">fn </span>lobe(centre: [usize; <span class="number">2</span>]) -&gt; Vec&lt;f64&gt; {
+<a href=#145 id=145 data-nosnippet>145</a>        <span class="kw">let </span><span class="kw-2">mut </span>psf = <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">64 </span>* <span class="number">64</span>];
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..<span class="number">64 </span>{
+<a href=#147 id=147 data-nosnippet>147</a>            <span class="kw">for </span>y <span class="kw">in </span><span class="number">0</span>..<span class="number">64 </span>{
+<a href=#148 id=148 data-nosnippet>148</a>                <span class="kw">let </span>dx = x <span class="kw">as </span>f64 - centre[<span class="number">0</span>] <span class="kw">as </span>f64;
+<a href=#149 id=149 data-nosnippet>149</a>                <span class="kw">let </span>dy = y <span class="kw">as </span>f64 - centre[<span class="number">1</span>] <span class="kw">as </span>f64;
+<a href=#150 id=150 data-nosnippet>150</a>                psf[x * <span class="number">64 </span>+ y] = (-(dx * dx + dy * dy) / <span class="number">8.0</span>).exp();
+<a href=#151 id=151 data-nosnippet>151</a>            }
+<a href=#152 id=152 data-nosnippet>152</a>        }
+<a href=#153 id=153 data-nosnippet>153</a>        psf
+<a href=#154 id=154 data-nosnippet>154</a>    }
+<a href=#155 id=155 data-nosnippet>155</a>
+<a href=#156 id=156 data-nosnippet>156</a>    <span class="doccomment">/// `getPSFSidelobeLevel` subtracts a Gaussian at the image's centre, so a
+<a href=#157 id=157 data-nosnippet>157</a>    /// plane peaking far from it keeps that peak as its sidelobe, where one
+<a href=#158 id=158 data-nosnippet>158</a>    /// peaking at the centre subtracts its main lobe.
+<a href=#159 id=159 data-nosnippet>159</a>    </span><span class="attr">#[test]
+<a href=#160 id=160 data-nosnippet>160</a>    </span><span class="kw">fn </span>a_plane_peaking_off_centre_has_its_peak_as_its_sidelobe() {
+<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">let </span>shape = PlaneShape::new(<span class="number">64</span>, <span class="number">64</span>);
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">let </span>centred = PsfSummary::new(<span class="kw-2">&amp;</span>lobe([<span class="number">32</span>, <span class="number">32</span>]), shape).expect(<span class="string">"a summary"</span>);
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="macro">assert!</span>(centred.sidelobe() &lt; <span class="number">0.2</span>, <span class="string">"{}"</span>, centred.sidelobe());
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">let </span>off = PsfSummary::new(<span class="kw-2">&amp;</span>lobe([<span class="number">8</span>, <span class="number">40</span>]), shape).expect(<span class="string">"a summary"</span>);
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="macro">assert_eq!</span>(off.sidelobe(), <span class="number">1.0</span>);
+<a href=#166 id=166 data-nosnippet>166</a>        <span class="comment">// No fit, so a spike too narrow for one is no failure.
+<a href=#167 id=167 data-nosnippet>167</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>spike = <span class="macro">vec!</span>[<span class="number">0.0</span>; <span class="number">64 </span>* <span class="number">64</span>];
+<a href=#168 id=168 data-nosnippet>168</a>        spike[<span class="number">32 </span>* <span class="number">64 </span>+ <span class="number">32</span>] = <span class="number">0.99</span>;
+<a href=#169 id=169 data-nosnippet>169</a>        spike[<span class="number">8 </span>* <span class="number">64 </span>+ <span class="number">40</span>] = <span class="number">1.0</span>;
+<a href=#170 id=170 data-nosnippet>170</a>        <span class="macro">assert_eq!</span>(
+<a href=#171 id=171 data-nosnippet>171</a>            PsfSummary::new(<span class="kw-2">&amp;</span>spike, shape)
+<a href=#172 id=172 data-nosnippet>172</a>                .expect(<span class="string">"a summary"</span>)
+<a href=#173 id=173 data-nosnippet>173</a>                .sidelobe(),
+<a href=#174 id=174 data-nosnippet>174</a>            <span class="number">1.0
+<a href=#175 id=175 data-nosnippet>175</a>        </span>);
+<a href=#176 id=176 data-nosnippet>176</a>    }
+<a href=#177 id=177 data-nosnippet>177</a>}
 </code></pre></div></section></main></body></html>

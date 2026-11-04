@@ -1755,6 +1755,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#psf-off-centre-20261104" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        psf-off-centre-20261104
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5093,6 +5104,17 @@
     <span class="md-ellipsis">
       
         image-history-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#psf-off-centre-20261104" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        psf-off-centre-20261104
       
     </span>
   </a>
@@ -8703,8 +8725,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>0.35</code></td>
 <td><code>0.35</code>; <code>psfcutoff</code> → <code>psfcutoff</code></td>
 <td>Implemented</td>
-<td>Copied; request requires positive value. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>float</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
+<td>Copied; request requires positive value. A plane whose PSF peaks outside its inner quarter is not fitted, as StokesImageUtil::FitGaussianPSF refuses it, and takes its domain's largest beam, or a tiny one where no plane has a beam (SIImageStore::makeImageBeamSet). Its peak is its sidelobe level. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>float</code></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-psf-off-centre-20261104">psf-off-centre-20261104</a></td>
 </tr>
 <tr>
 <td><code>parallel</code></td>
@@ -9355,6 +9377,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>1bab93d56585c19decdd66ad6a60913e960da6fe</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
 <li>Command: <code>tools/casa-compat/tclean_history_compare.py --data-root &lt;staged root&gt; --casars-python &lt;venv&gt; --imager-binary &lt;binary&gt; --output &lt;new dir&gt;</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-image-history-20261103.json</code>.</li>
+</ul>
+<p><a id="tclean-evidence-psf-off-centre-20261104"></a></p>
+<h5 id="psf-off-centre-20261104">psf-off-centre-20261104<a class="headerlink" href="#psf-off-centre-20261104" title="Permanent link">&para;</a></h5>
+<p><strong>CASA's off-centre PSF case against casa-rs, with T0 laws — measured: 6 of 9 cases pass every product; one near-tie and two left to issue 1130.</strong> Channel 0 of refim_point_linRL.ms peaks at pixel (13,64). Dirty, Hogbom, every plane refused, a fixed and a common beam, and a Taylor family agree. deconvolver='clark' and 'multiscale' on that plane don't yet (issue 1130). A fit that fails to converge stays an error, where CASA stores a beam of 2.5 cells.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/ea691fd1337819eadc3e15ccb57081285cce84b0/resources/casa-compat/evidence/tclean-psf-off-centre-20261104.json">resources/casa-compat/evidence/tclean-psf-off-centre-20261104.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/ea691fd1337819eadc3e15ccb57081285cce84b0/resources/casa-compat/tclean-psf-off-centre-cases.json">resources/casa-compat/tclean-psf-off-centre-cases.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/ea691fd1337819eadc3e15ccb57081285cce84b0/crates/casa-imaging-products/src/beam.rs">crates/casa-imaging-products/src/beam.rs</a></li>
+<li>Revision: <code>c6858c25606f2807b6e80fbdf15fc75a16d27819</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-psf-off-centre-cases.json --backend cpu --precision f64</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-psf-off-centre-20261104.json</code>.</li>
 </ul>
 <h2 id="tools">Tools<a class="headerlink" href="#tools" title="Permanent link">&para;</a></h2>
 <p>Each CASA class casa-rs presents in Python, against the signatures recorded from CASA 6.7.6.14 (<code>crates/casars-python/python/tests/data/casa_&lt;class&gt;_signatures.json</code>), which the Python tests hold the classes to. A reviewed class has a file under <code>resources/casa-compat/semantics/tools/</code> giving each method's status, scope and evidence; the others are not reviewed yet. The simulation classes (<code>simulator</code>, <code>componentlist</code>, <code>measures</code>, <code>quanta</code> and <code>simutil</code>) are reviewed in #1053, and <code>image</code>, <code>coordsys</code>, <code>table</code>, <code>msmetadata</code> and <code>ms</code> in #1025.</p>
