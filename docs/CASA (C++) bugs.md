@@ -3662,3 +3662,35 @@ mask, where a fresh call and a restart of a cube of several channels have
 5e-5 NRMS. `aw_restart_one_window` in
 `resources/casa-compat/tclean-aw-cube-cases.json` shows it and fails on the
 mask alone.
+
+## A flat-noise cube predicts its start model without dividing it by the PB
+
+- Date noted: 2026-11-04
+- Status: CASA bug; casa-rs does not follow it (#1127)
+- Affected code: `CubeMajorCycleAlgorithm::subImageStore` (by reading; not
+  instrumented)
+
+`.model` of a flat-noise image is the physical model times the PB, so a run must
+divide a start model by the PB before it predicts, as
+`imager_base.runMajorCycle` does through `dividemodelbyweight` for an MFS image.
+The cube path divides the sub-image's model, then, in `subImageStore`,
+`setModelImage` copies the raw start model over it, so the prediction uses
+apparent units.
+
+Two calls on `refim_oneshiftpoint.mosaic.ms` with `gridder='mosaic',
+specmode='cube', imsize=256, cell='10.0arcsec', spw='0', phasecenter=0, gain=0.2,
+pblimit=0.1`, the first with `niter=20`, the second continuing with
+`niter=10, startmodel=<first>.model`:
+
+| Peak residual | CASA 6.7.6.14 | casa-rs |
+|---|---|---|
+| The first call's last | 0.0139643 | 0.0139643 |
+| The second call's first | 0.0196765 | 0.0139643 |
+| The second call's first, the same two calls as MFS | 0.0139643 | 0.0139643 |
+
+A run that continues from its own model should start from the residual it ended
+with. CASA's cube doesn't: the gap, 0.0057, is about the 1.1 Jy component times
+`1/PB - 1` at its pixel, where the PB is 0.9947. casa-rs divides the model, as
+CASA's MFS does. `tools/casa-compat/tclean_summary_matrix.py --case
+mosaic-seed-cube --case mosaic-seed-cube-no-cut` shows it, and those two cases
+differ for this reason.
