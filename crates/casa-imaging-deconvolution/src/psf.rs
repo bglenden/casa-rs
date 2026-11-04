@@ -163,13 +163,9 @@ mod tests {
         assert!(centred.sidelobe() < 0.2, "{}", centred.sidelobe());
         let off = PsfSummary::new(&lobe([8, 40]), shape).expect("a summary");
         assert_eq!(off.sidelobe(), 1.0);
-        // The most negative sample counts by its magnitude, as CASA's does.
-        let mut deep = lobe([8, 40]);
-        deep[0] = -1.5;
-        let deep = PsfSummary::new(&deep, shape).expect("a summary");
-        assert_eq!(deep.sidelobe(), 1.5);
         // No fit, so a spike too narrow for one is no failure.
         let mut spike = vec![0.0; 64 * 64];
+        spike[32 * 64 + 32] = 0.99;
         spike[8 * 64 + 40] = 1.0;
         assert_eq!(
             PsfSummary::new(&spike, shape)

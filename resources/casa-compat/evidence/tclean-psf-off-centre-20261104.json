@@ -1,0 +1,57 @@
+{
+ "schema": "tclean-evidence-receipt/1",
+ "title": "tclean on a plane whose PSF peaks off-centre",
+ "work_issue": 1124,
+ "date": "2026-11-04",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "native_revision": "c6858c25606f2807b6e80fbdf15fc75a16d27819",
+ "imager_binary_sha256": "cf0112db5279d240660d29e4da89e63bf80f198aed719b16be7917e865f848ab",
+ "builds": "release casars-imager and casars wheel of the committed revision in a private target directory, on the laptop, with the NEON FFTW",
+ "backend": "cpu",
+ "precision": "f64",
+ "driver": "tools/casa-compat/tclean_case_matrix.py with resources/casa-compat/tclean-psf-off-centre-cases.json, and tools/casa-compat/tclean_summary_matrix.py --case stokes-cube-off-centre --case stokes-cube-off-centre-no-tie",
+ "limits": "exact image-product inventory and masks; NRMS <= 1e-3; the scalars and counts as the driver states them; rows as tclean_summary_matrix.py states them",
+ "outcome": "6 of 9 cases pass every product: dirty, Hogbom with no near-tie, a domain with every plane refused, a fixed and a common restoring beam, and a Taylor family. off_centre_clean, at gain 0.2, differs through a near-tie on channel 1, whose PSF peaks at its centre: one iteration leaves the peak exactly at 0.8, the fraction the cycle threshold clamps to with a sidelobe of 1.0, and hclean's strict comparison goes the other way in float32 against float64. The first cycle agrees, and the same run at gain 0.17 agrees in every product and row (3e-7). off_centre_clark and off_centre_multiscale differ, and are left to issue 1130.",
+ "cases": {
+  "off_centre_dirty": {
+   "passed": true
+  },
+  "off_centre_clean": {
+   "passed": false
+  },
+  "off_centre_clean_no_tie": {
+   "passed": true
+  },
+  "off_centre_only_plane": {
+   "passed": true
+  },
+  "off_centre_fixed_beam": {
+   "passed": true
+  },
+  "off_centre_common_beam": {
+   "passed": true
+  },
+  "off_centre_clark": {
+   "passed": false
+  },
+  "off_centre_multiscale": {
+   "passed": false
+  },
+  "off_centre_mtmfs_one_channel": {
+   "passed": true
+  }
+ },
+ "rows": {
+  "stokes-cube-off-centre": {
+   "passed": false,
+   "worst": 0.0
+  },
+  "stokes-cube-off-centre-no-tie": {
+   "passed": true,
+   "worst": 2.9972592778525316e-07
+  }
+ }
+}
