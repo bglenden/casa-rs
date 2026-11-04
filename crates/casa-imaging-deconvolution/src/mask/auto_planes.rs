@@ -14,8 +14,8 @@
 //! * the beam its masks are smoothed and pruned by: the common beam of the
 //!   block's PSF beams (`CasaImageBeamSet::getCommonBeam`), each CASA's fit
 //!   of its plane's PSF. A plane with no data holds the largest beam of
-//!   the set (`SIImageStore::makeImageBeamSet`), which leaves the common
-//!   beam as it is;
+//!   the whole image domain (`SIImageStore::makeImageBeamSet`), even when that
+//!   beam belongs to a different channel block;
 //! * whether its robust noise ignores the mask: when the inherited mask
 //!   covers the block's whole first plane, every plane of the block takes
 //!   Chauvenet statistics (`calcRobustImageStatistics`).
@@ -306,18 +306,14 @@ where
     let mut rows = vec![UNMASKED; planes.count()];
     let slots = Arc::get_mut(&mut support).expect("a support no one else holds yet");
     let per_channel = polarizations * cells;
-    for block in channel_blocks(planes.channels(), shape) {
+    for (block, beam) in block_beams(&psfs, polarizations, shape, sidelobe, state.coordinate) {
         let masking = Block {
             state,
             source,
             domain,
             shape,
             polarizations,
-            beam: block_beam(
-                &psfs[block.start * polarizations..block.end * polarizations],
-                sidelobe,
-                state.coordinate,
-            )?,
+            beam: beam?,
             first_plane_full: state
                 .previous
                 .and_then(|mask| mask.plane(block.start, 0))
@@ -389,22 +385,55 @@ pub(super) fn channel_blocks(channels: usize, shape: [usize; 2]) -> Vec<Range<us
         .collect()
 }
 
-/// The beam a block's masks are smoothed and pruned by, with the image's
-/// sidelobe level: the common beam of its planes' PSF beams; `None` when no
-/// plane of the block has data. CASA converts the beam to pixels by the
-/// first direction axis's increment; the common beam is found in radians,
-/// as for restoration.
+/// Plan each channel block's beam from the complete image domain's beam set.
+fn block_beams(
+    psfs: &[Option<PsfSummary>],
+    polarizations: usize,
+    shape: [usize; 2],
+    sidelobe: f64,
+    coordinate: DirectionCoordinateSpec,
+) -> impl Iterator<Item = (Range<usize>, Result<Option<AutoMaskBeam>, MaskError>)> + '_ {
+    let largest = largest_beam(psfs);
+    channel_blocks(psfs.len() / polarizations, shape)
+        .into_iter()
+        .map(move |block| {
+            let beam = block_beam(
+                &psfs[block.start * polarizations..block.end * polarizations],
+                largest,
+                sidelobe,
+                coordinate,
+            );
+            (block, beam)
+        })
+}
+
+/// The largest fitted beam of the image domain, which CASA puts into each
+/// blank plane before it forms channel-block image stores.
+fn largest_beam(psfs: &[Option<PsfSummary>]) -> Option<RestoringBeam> {
+    psfs.iter().flatten().map(PsfSummary::beam).fold(
+        None,
+        |largest: Option<RestoringBeam>, beam| match largest {
+            Some(current) if current.area_sr() >= beam.area_sr() => Some(current),
+            _ => Some(beam),
+        },
+    )
+}
+
+/// The beam a block's masks are smoothed and pruned by: the common beam of
+/// its PSF beams, with blank planes holding the domain's largest. `None`
+/// means the whole domain has no fitted beam. CASA converts by the first
+/// direction axis's increment; the common beam is found in radians.
 fn block_beam(
     psfs: &[Option<PsfSummary>],
+    largest: Option<RestoringBeam>,
     sidelobe: f64,
     coordinate: DirectionCoordinateSpec,
 ) -> Result<Option<AutoMaskBeam>, MaskError> {
     let cell = coordinate.increment_rad()[0].abs();
     let beams = psfs
         .iter()
-        .flatten()
-        .map(|summary| {
-            let beam = summary.beam();
+        .filter_map(|summary| summary.map(|summary| summary.beam()).or(largest))
+        .map(|beam| {
             RestoringBeam::new(
                 beam.major_fwhm_rad() * cell,
                 beam.minor_fwhm_rad() * cell,
@@ -539,6 +568,59 @@ fn log_summary(first_channel: usize, rows: &[AutoMultithreshEvidence], polarizat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A blank plane inherits the largest beam in the image, even when that
+    /// beam is in another channel block (`SIImageStore::makeImageBeamSet`).
+    #[test]
+    fn a_blank_plane_uses_the_image_domains_largest_beam_in_its_block() {
+        use crate::plane::PlaneShape;
+        use casa_imaging_model::{DirectionFrame, Projection, SkyDirection};
+
+        let shape = PlaneShape::new(64, 64);
+        let psf = (0..shape.len())
+            .map(|index| {
+                let [x, y] = shape.pixel(index);
+                let r2 = (x as f64 - 32.0).powi(2) + (y as f64 - 32.0).powi(2);
+                (-r2 / 8.0).exp()
+            })
+            .collect::<Vec<_>>();
+        let narrow = PsfSummary::new(&psf, shape).expect("narrow beam");
+        let broad = narrow.with_domain_beam(
+            &psf,
+            shape,
+            RestoringBeam::new(10.0, 8.0, 0.0).expect("broad beam"),
+        );
+        let coordinate = DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(DirectionFrame::J2000, 1.0, 0.5),
+            [1.0, 1.0],
+            [-1.0e-4, 1.0e-4],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 90.0],
+        );
+        let mut psfs = vec![Some(narrow); 11];
+        psfs[1] = None;
+        psfs[10] = Some(broad);
+        let largest = largest_beam(&psfs);
+        assert_eq!(largest, Some(broad.beam()));
+        let mut blocks = block_beams(&psfs, 1, [900, 900], 0.1, coordinate);
+        let (first, with_blank) = blocks.next().expect("first block");
+        let (second, _) = blocks.next().expect("second block");
+        assert_eq!((first, second), (0..10, 10..11));
+        assert!(blocks.next().is_none());
+        let with_blank = with_blank.unwrap();
+        let mut filled = psfs[..10].to_vec();
+        filled[1] = Some(broad);
+        let with_explicit_broad = block_beam(&filled, largest, 0.1, coordinate).unwrap();
+        let without_blank = block_beam(&psfs[2..10], largest, 0.1, coordinate).unwrap();
+        assert_eq!(with_blank, with_explicit_broad);
+        assert_ne!(with_blank, without_blank);
+        assert!(
+            block_beam(&[None], None, 0.1, coordinate)
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[test]
     fn a_cube_is_masked_in_casa_channel_blocks() {
