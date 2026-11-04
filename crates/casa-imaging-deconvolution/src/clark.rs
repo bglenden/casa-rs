@@ -578,4 +578,60 @@ mod tests {
         assert_eq!(result.delta.term(1).collect::<Vec<_>>(), vec![(b, 0.51)]);
         assert!((result.model_flux - 0.68).abs() < 1e-12);
     }
+    /// Four-Stokes Clark uses CASA's signed I plus polarized magnitude,
+    /// including when I is negative.
+    #[test]
+    fn four_stokes_clark_uses_casas_signed_intensity_selection() {
+        use super::ClarkPolarized;
+        use crate::{
+            CycleControls, MinorCycleView, PlaneShape, PlaneStatistics, PsfSummary, Support,
+            run_plane,
+        };
+        let shape = PlaneShape::new(64, 64);
+        let [cx, cy] = shape.centre();
+        let psf = (0..shape.len())
+            .map(|i| {
+                let [x, y] = shape.pixel(i);
+                let r2 = (x as f64 - cx as f64).powi(2) + (y as f64 - cy as f64).powi(2);
+                (-r2 / 8.0).exp()
+            })
+            .collect::<Vec<_>>();
+        let summary = PsfSummary::new(&psf, shape).unwrap();
+        let support = Support::full(shape);
+        let a = shape.index(20, 20);
+        let b = shape.index(40, 40);
+        let mut residual = vec![vec![0.0; shape.len()]; 4];
+        residual[0][a] = -4.0;
+        residual[0][b] = -2.0;
+        residual[1][b] = 3.0;
+        let statistics = PlaneStatistics::measure(&residual[0], &support, &support, 0.0, false);
+        let psfs = vec![psf];
+        let view = MinorCycleView {
+            shape,
+            residual: &residual,
+            psf: &psfs,
+            summary: &summary,
+            support: &support,
+        };
+        let cycle = CycleControls {
+            iterations: 1,
+            threshold: 0.0,
+            threshold_reached: true,
+            gain: 0.17,
+            nsigma: 0.0,
+        };
+        let result = run_plane(
+            &ClarkPolarized::<4>::new(None),
+            &view,
+            &cycle,
+            &statistics,
+            8,
+        )
+        .unwrap();
+        assert_eq!(result.iterations, 1);
+        assert_eq!(result.delta.term(0).collect::<Vec<_>>(), vec![(a, -0.68)]);
+        assert_eq!(result.delta.term(1).count(), 0);
+        assert_eq!(result.delta.term(2).count(), 0);
+        assert_eq!(result.delta.term(3).count(), 0);
+    }
 }
