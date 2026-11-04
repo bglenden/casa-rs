@@ -41,15 +41,14 @@ pub(super) struct Layout {
 }
 
 impl Layout {
-    /// The layout of `partition`'s selected channels `ordinals` (indices
-    /// into its selected channels), read as the native channels from the
-    /// first of them.
+    /// The layout of `partition`'s native channels `channels`, read as the
+    /// native channels from the first of them.
     pub(super) fn new(
         partition: &SelectedPartition,
         entry: &PartitionEntry,
-        ordinals: std::ops::Range<usize>,
+        channels: &[u32],
     ) -> Result<Self, SourceError> {
-        let channel_indices = partition.channels[ordinals].to_vec();
+        let channel_indices = channels.to_vec();
         let first = channel_indices[0] as usize;
         let correlation_indices = partition
             .correlations
@@ -262,9 +261,15 @@ impl Packer<'_> {
         let per_time = batch.samples_per_time();
         let origin = MjdHighPrec::new(0.0, 0.0);
         let uvw = batch.group.uvw.ok_or("the batch carries no UVW")?;
-        // An imaging pass reads a time's channels as CASA's frequency
-        // selection does; the density pass reads every selected channel.
-        let bands = partition.frequency_bands.as_ref().filter(|_| values);
+        // A pass reads a time's channels as CASA's frequency selection does:
+        // tuned to the image for one that images, and for a density over the
+        // whole selection its untuned bands. A density per plane reads every
+        // selected channel.
+        let bands = if values {
+            partition.frequency_bands.as_ref()
+        } else {
+            partition.density_bands.as_ref()
+        };
         scratch.in_band_by_time.clear();
         if keep_in_band && bands.is_some() {
             let cells = batch.samples() / per_time * layout.channels.len();

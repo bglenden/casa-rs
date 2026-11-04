@@ -878,14 +878,74 @@ fn a_cube_reads_at_each_time_the_channels_its_band_selects_then() {
     );
 }
 
-/// Over a track where the LSRK drift is several channels wide, the rows in
-/// which each of 40 channels holds a written model, in row order, which is
-/// time order: a cube on channels 5 to 34 with `controls` added.
-fn model_written_over_a_drift(label: &str, controls: serde_json::Value) -> Vec<Vec<bool>> {
+/// A cube's density without `perchanweightdensity` counts every channel `spw`
+/// selects, whatever the axis reaches: `SynthesisImagerVi2::weight` forms
+/// `VisImagingWeight` on the parent imager's iterator (#1137). CASA 6.7.6.14
+/// on `refim_point.ms` gives a uniform cube of 5 of its 20 channels the same
+/// sums of weights as those planes of a cube of all 20, where counting only
+/// the channels reached gave 61.3 against 26.4. So do these, of a window
+/// read whole and of what `spw` names, and a range with a stride counts
+/// whole, as CASA gives `0:0~10^2` the sums of `0:0~10`.
+#[test]
+fn a_whole_selection_density_counts_channels_the_axis_misses() {
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
+    let sumwt = |name: &str, controls: serde_json::Value| {
+        let mut values = json!({
+            "specmode": "cube", "weighting": "uniform", "perchanweightdensity": false,
+            "interpolation": "linear", "niter": 0,
+        });
+        values
+            .as_object_mut()
+            .unwrap()
+            .extend(controls.as_object().unwrap().clone());
+        observation
+            .image(name, values)
+            .1
+            .get(".sumwt")
+            .channel_values()
+    };
+    let assert_close = |part: &[f32], whole: &[f32], label: &str| {
+        for (plane, (part, whole)) in part.iter().zip(whole).enumerate() {
+            assert!(
+                (part - whole).abs() <= 1.0e-3 * whole.abs(),
+                "{label}, plane {plane}: {part} against {whole}"
+            );
+        }
+    };
+    let whole = sumwt(
+        "whole",
+        json!({ "start": 0, "width": 1, "nchan": CHANNELS }),
+    );
+    let part = sumwt("part", json!({ "start": 4, "width": 1, "nchan": 4 }));
+    assert_close(&part, &whole[4..8], "a part of the window");
+    let one = sumwt("one", json!({ "start": 6, "width": 1, "nchan": 1 }));
+    assert_close(&one, &whole[6..7], "one channel of the window");
+    let named = sumwt(
+        "named",
+        json!({ "spw": "0:2~13", "start": 2, "width": 1, "nchan": 12 }),
+    );
+    let named_part = sumwt(
+        "named-part",
+        json!({ "spw": "0:2~13", "start": 4, "width": 1, "nchan": 4 }),
+    );
+    assert_close(&named_part, &named[2..6], "a part of what spw names");
+    let strided = sumwt(
+        "strided",
+        json!({ "spw": "0:0~10^2", "start": 0, "width": 1, "nchan": 11 }),
+    );
+    let contiguous = sumwt(
+        "contiguous",
+        json!({ "spw": "0:0~10", "start": 0, "width": 1, "nchan": 11 }),
+    );
+    assert_close(&strided, &contiguous, "a range with a stride");
+}
+
+/// A track of 40 TOPO channels of 2 kHz at 44 GHz, where the LSRK drift is
+/// several channels wide.
+fn drifting_track() -> Observation {
     use casa_ms::MeasurementSet;
     use casa_types::measures::frequency::FrequencyRef;
-    const NAMED: usize = 30;
-    let mut setup = super::fixture::Setup::vla_q_band(NAMED + 10);
+    let mut setup = super::fixture::Setup::vla_q_band(40);
     setup.spectral_windows[0].channel_width_hz = 2.0e3;
     let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
@@ -895,6 +955,70 @@ fn model_written_over_a_drift(label: &str, controls: serde_json::Value) -> Vec<V
         .unwrap();
     ms.save().unwrap();
     drop(ms);
+    observation
+}
+
+/// A whole-selection density selects each time's channels by the untuned
+/// bands of `spw`, so they move with the time's Doppler shift, and it counts
+/// channels `spw` doesn't name at the times they come into its band. These
+/// sums of weights are CASA 6.7.6.14's on this track, saved
+/// (`tclean-density-channels-cases.json`). Counting the named channels at
+/// every time gave 2.3 times these on the short range.
+#[test]
+fn a_whole_selection_density_follows_each_times_bands() {
+    let observation = drifting_track();
+    for (label, weighting, spw, start, nchan, casa) in [
+        (
+            "short",
+            "uniform",
+            "0:18~21",
+            18,
+            4,
+            &[64.2052, 143.746, 143.744, 143.744][..],
+        ),
+        (
+            "superuniform",
+            "superuniform",
+            "0:18~21",
+            18,
+            4,
+            &[1.99163, 4.21554, 4.21554, 4.21554][..],
+        ),
+        (
+            "part",
+            "uniform",
+            "0:5~34",
+            5,
+            4,
+            &[17.3309, 37.4347, 37.4347, 37.4347][..],
+        ),
+    ] {
+        let (_, products) = observation.image(
+            label,
+            json!({
+                "specmode": "cube", "weighting": weighting, "perchanweightdensity": false,
+                "spw": spw, "start": start, "width": 1, "nchan": nchan,
+                "interpolation": "linear", "niter": 0, "imsize": 128, "cell": "0.012arcsec",
+            }),
+        );
+        let sumwt = products.get(".sumwt").channel_values();
+        assert_eq!(sumwt.len(), casa.len(), "{label}");
+        for (plane, (ours, theirs)) in sumwt.iter().zip(casa).enumerate() {
+            let (ours, theirs) = (f64::from(*ours), *theirs);
+            assert!(
+                (ours - theirs).abs() <= 1.0e-4 * theirs,
+                "{label}, plane {plane}: {ours} against CASA's {theirs}"
+            );
+        }
+    }
+}
+
+/// Over `drifting_track`, the rows in which each of its channels holds a
+/// written model, in row order, which is time order: a cube on channels 5 to
+/// 34 with `controls` added.
+fn model_written_over_a_drift(label: &str, controls: serde_json::Value) -> Vec<Vec<bool>> {
+    const NAMED: usize = 30;
+    let observation = drifting_track();
     let mut values = json!({
         "specmode": "cube", "spw": format!("0:5~{}", 4 + NAMED), "start": 5, "width": 1,
         "nchan": NAMED, "niter": 5, "savemodel": "modelcolumn",

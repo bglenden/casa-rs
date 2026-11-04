@@ -27,6 +27,13 @@ pub(crate) struct SelectedPartition {
     /// ([`casa_imaging_model::SpectralWindowSelection::density_only`]), so a
     /// pass that images tests whether to skip it.
     pub(crate) density_only: bool,
+    /// The native channels a density over the whole selection counts,
+    /// ascending, where that isn't `channels`
+    /// ([`casa_imaging_model::SpectralWindowSelection::density_channels`]).
+    pub(crate) density_channels: Option<Vec<u32>>,
+    /// The bands that select them at each time, unless every time reads them
+    /// all.
+    pub(crate) density_bands: Option<casa_imaging_model::FrequencyBands>,
     /// The correlation products the operator routes, in its order.
     pub(crate) correlations: Vec<Correlation>,
     /// The window's reference wavelength, when a UV-distance interval is

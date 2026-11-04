@@ -251,7 +251,19 @@ fn the_batch_source_holds_at_most_its_charge() {
     });
     let ample = 4 << 30;
     let pointed_mosaic = json!({ "gridder": "mosaic", "usepointing": true });
-    let cases: [(&str, Vec<&Path>, Value, u32, u64); 13] = [
+    // A density over the whole selection of a cube on part of a window: its
+    // pass reads the rest in runs as wide as the cube's.
+    let part = json!({
+        "specmode": "cube",
+        "outframe": "LSRK",
+        "spw": "0",
+        "start": "0",
+        "width": "1",
+        "channel_count": 4,
+        "weighting": "uniform",
+        "perchanweightdensity": false,
+    });
+    let cases: [(&str, Vec<&Path>, Value, u32, u64); 14] = [
         ("continuum", vec![&narrow], json!({}), 1, ample),
         ("cube resident", vec![&narrow], cube.clone(), 16, ample),
         ("cube in waves", vec![&narrow], cube, 3, ample),
@@ -282,6 +294,13 @@ fn the_batch_source_holds_at_most_its_charge() {
             vec![&wide],
             gapped_write,
             10,
+            ample,
+        ),
+        (
+            "cube on part of a window with a whole-selection density",
+            vec![&wide],
+            part,
+            4,
             ample,
         ),
         (
