@@ -179,7 +179,7 @@ pub(super) fn prepare_domains(
         }
     }
     // Distinct outputs give distinct roles: an outlier's output is its name
-    // resolved beside the outlier file.
+    // resolved from the working directory.
     let mut outputs = BTreeSet::new();
     for domain in &domains {
         if !outputs.insert(domain.output.as_path()) {
