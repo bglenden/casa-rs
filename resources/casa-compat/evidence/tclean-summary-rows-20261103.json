@@ -1,0 +1,198 @@
+{
+ "schema": "tclean-evidence-receipt/1",
+ "title": "tclean's summaryminor row by row: each plane's own rows",
+ "work_issue": 1068,
+ "date": "2026-11-03",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "native_revision": "0662d8215e0c178e0c46a3628d12b19b8c9cec89",
+ "imager_binary_sha256": "f8609294c20b4d6f6e98092ff2f32785516d822c8a037f839c951d3e0d65b3f4",
+ "builds": "release casars-imager and casars wheel of the committed revision in a private target directory, on the laptop, with the NEON FFTW",
+ "backend": "cpu",
+ "precision": "f64",
+ "driver": "tools/casa-compat/tclean_summary_matrix.py, in one CASA process, on a data root staged from the NAS casatestdata with its XSym links resolved",
+ "limits": "counts exact; a peak or flux within 2e-3 of CASA's, or of 1e-3 where CASA's is smaller; iterdone, nmajordone and stopcode exact",
+ "outcome": "29 of 35 cases pass, the worst value within 6.3e-6. The 6 that differ: test_iterbot_fullstokes_cube_fullsummary_true and _false, through the recorded full-Stokes cube channel-0 near-tie (CASA's channel 0 has sumwt 0, casa-rs's 10); clark-stokes, through issue 1126 (CASA cleans several Stokes planes jointly); mosaic-seed-cube and mosaic-seed-cube-no-cut, through issue 1127 (the first residual of a seeded mosaic cube); nsigma, in one stopCode on a plane with no data, where CASA's checkStop reads an n-sigma threshold left by an earlier plane or cycle. An outlier's own mask on a dirty run isn't read, and no case has one.",
+ "cases": {
+  "mfs": {
+   "passed": true,
+   "worst": 1.127813823462251e-06,
+   "differences": 0
+  },
+  "mfs-seed": {
+   "passed": true,
+   "worst": 2.3108129048485005e-07,
+   "differences": 0
+  },
+  "mtmfs": {
+   "passed": true,
+   "worst": 6.3483590996822715e-06,
+   "differences": 0
+  },
+  "mtmfs-seed": {
+   "passed": true,
+   "worst": 2.8835065632608415e-06,
+   "differences": 0
+  },
+  "mosaic-seed": {
+   "passed": true,
+   "worst": 2.80110456890167e-06,
+   "differences": 0
+  },
+  "mosaic-seed-cube": {
+   "passed": false,
+   "worst": 0.0,
+   "differences": 14
+  },
+  "mosaic-seed-cube-no-cut": {
+   "passed": false,
+   "worst": 0.0,
+   "differences": 14
+  },
+  "clark-stokes": {
+   "passed": false,
+   "worst": 0.0,
+   "differences": 16
+  },
+  "clark": {
+   "passed": true,
+   "worst": 1.2093256930422114e-06,
+   "differences": 0
+  },
+  "multiscale": {
+   "passed": true,
+   "worst": 4.740035527188986e-06,
+   "differences": 0
+  },
+  "threshold": {
+   "passed": true,
+   "worst": 1.5788313526914496e-07,
+   "differences": 0
+  },
+  "mask-empty": {
+   "passed": true,
+   "worst": 6.912270198309316e-08,
+   "differences": 0
+  },
+  "outlier": {
+   "passed": true,
+   "worst": 2.878513309645959e-07,
+   "differences": 0
+  },
+  "dirty": {
+   "passed": true,
+   "worst": 0.0,
+   "differences": 0
+  },
+  "dirty-mtmfs": {
+   "passed": true,
+   "worst": 0.0,
+   "differences": 0
+  },
+  "dirty-seed": {
+   "passed": true,
+   "worst": 1.6222322386050556e-07,
+   "differences": 0
+  },
+  "dirty-mask": {
+   "passed": true,
+   "worst": 0.0,
+   "differences": 0
+  },
+  "cube": {
+   "passed": true,
+   "worst": 1.1367257811069388e-06,
+   "differences": 0
+  },
+  "cube-mask": {
+   "passed": true,
+   "worst": 1.1367257811069388e-06,
+   "differences": 0
+  },
+  "cube-short": {
+   "passed": true,
+   "worst": 2.043553012187537e-07,
+   "differences": 0
+  },
+  "cube-empty-plane": {
+   "passed": true,
+   "worst": 2.0728295561426856e-06,
+   "differences": 0
+  },
+  "cube-dirty": {
+   "passed": true,
+   "worst": 1.1920768374582967e-07,
+   "differences": 0
+  },
+  "cube-offband": {
+   "passed": true,
+   "worst": 1.919648148889723e-07,
+   "differences": 0
+  },
+  "threshold-cube": {
+   "passed": true,
+   "worst": 1.1367257811069388e-06,
+   "differences": 0
+  },
+  "restart-cube": {
+   "passed": true,
+   "worst": 7.438683064563504e-07,
+   "differences": 0
+  },
+  "stokes": {
+   "passed": true,
+   "worst": 4.583323463737795e-07,
+   "differences": 0
+  },
+  "stokes-cube": {
+   "passed": true,
+   "worst": 5.278350783074403e-07,
+   "differences": 0
+  },
+  "nsigma": {
+   "passed": false,
+   "worst": 3.411419046330261e-07,
+   "differences": 1
+  },
+  "nsigma-one-plane": {
+   "passed": true,
+   "worst": 1.861554644079518e-07,
+   "differences": 0
+  },
+  "test_iterbot.test_iterbot_mfs_fullsummary_true.1": {
+   "passed": true,
+   "worst": 2.909474872586752e-07,
+   "differences": 0
+  },
+  "test_iterbot.test_iterbot_mfs_fullsummary_false.1": {
+   "passed": true,
+   "worst": 2.909474872586752e-07,
+   "differences": 0
+  },
+  "test_iterbot.test_iterbot_cube_fullsummary_true.1": {
+   "passed": true,
+   "worst": 2.6594931502980584e-07,
+   "differences": 0
+  },
+  "test_iterbot.test_iterbot_cube_fullsummary_false.1": {
+   "passed": true,
+   "worst": 2.6594931502980584e-07,
+   "differences": 0
+  },
+  "test_iterbot.test_iterbot_fullstokes_cube_fullsummary_true.1": {
+   "passed": false,
+   "worst": 1.4117114772814178e-07,
+   "differences": 69
+  },
+  "test_iterbot.test_iterbot_fullstokes_cube_fullsummary_false.1": {
+   "passed": false,
+   "worst": 1.4117114772814178e-07,
+   "differences": 37
+  }
+ },
+ "nsigma_difference": [
+  "('0', '0', '0') stopCode: [2.0, 3.0] against [2.0, 2.0]"
+ ]
+}
