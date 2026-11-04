@@ -1,0 +1,48 @@
+{
+ "schema": "tclean-evidence-receipt/1",
+ "title": "tclean's image history and metadata against CASA",
+ "work_issue": 1068,
+ "date": "2026-11-03",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "native_revision": "1bab93d56585c19decdd66ad6a60913e960da6fe",
+ "imager_binary_sha256": "11bcee65a7bc560b6a92284c2a19f6b12fd4f60dfec53b8fe26f70e992dd5790",
+ "builds": "release casars-imager and casars wheel of the committed revision in a private target directory, on the laptop, with the NEON FFTW",
+ "backend": "cpu",
+ "precision": "f64",
+ "driver": "tools/casa-compat/tclean_history_compare.py, on a data root staged from the NAS casatestdata with its XSym links resolved",
+ "limits": "object name, image type and miscinfo INSTRUME, distance, mpiprocs, chnchnks exact; each history line of a parameter by what it means and in CASA's order; each logtable row's PRIORITY and LOCATION exact, TIME ascending MJD seconds; the same products on both sides",
+ "outcome": "7 of 7 cases pass on every product: mfs, mtmfs, cube, dirty, restart, mask and casa-then-native, where casa-rs restarts on an image CASA wrote, keeps CASA's rows and CASA's table and image tools read the result. Parameter values differ in form only: the contract gives a scalar spw or imsize as a list of one, start as text, and threshold in Jy; the driver compares what they mean.",
+ "cases": {
+  "mfs": {
+   "passed": true,
+   "differences": []
+  },
+  "mtmfs": {
+   "passed": true,
+   "differences": []
+  },
+  "cube": {
+   "passed": true,
+   "differences": []
+  },
+  "dirty": {
+   "passed": true,
+   "differences": []
+  },
+  "restart": {
+   "passed": true,
+   "differences": []
+  },
+  "mask": {
+   "passed": true,
+   "differences": []
+  },
+  "casa-then-native": {
+   "passed": true,
+   "differences": []
+  }
+ }
+}

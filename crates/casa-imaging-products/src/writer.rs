@@ -54,6 +54,10 @@ pub struct CasaImageDomainOutput {
     role: ImageDomainRole,
     base: PathBuf,
     coordinates: CoordinateSystem,
+    /// The name the images give their object.
+    object_name: String,
+    /// The telescope in their `miscinfo`'s `INSTRUME`.
+    telescope: String,
 }
 
 impl CasaImageDomainOutput {
@@ -64,7 +68,17 @@ impl CasaImageDomainOutput {
             role,
             base,
             coordinates,
+            object_name: String::new(),
+            telescope: String::new(),
         }
+    }
+
+    /// Name the observed source and telescope in these images.
+    #[must_use]
+    pub fn observing(mut self, object_name: &str, telescope: &str) -> Self {
+        self.object_name = object_name.to_owned();
+        self.telescope = telescope.to_owned();
+        self
     }
 }
 
@@ -72,6 +86,33 @@ struct StagedImage {
     _directory: tempfile::TempDir,
     staging: PathBuf,
     target: PathBuf,
+}
+
+/// Keep the `logtable` of the image at `target` in the image about to replace
+/// it: a run on an existing image appends to its history, as CASA's does,
+/// which updates the image in place.
+fn carry_history(target: &Path, staging: &Path) -> std::io::Result<()> {
+    let earlier = target.join("logtable");
+    if !earlier.is_dir() {
+        return Ok(());
+    }
+    let staged = staging.join("logtable");
+    fs::remove_dir_all(&staged)?;
+    copy_directory(&earlier, &staged)
+}
+
+fn copy_directory(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_directory(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }
 
 impl CasaImageWriter {
@@ -215,13 +256,13 @@ impl CasaImageWriter {
         let staged =
             std::mem::take(&mut *self.staged.lock().unwrap_or_else(PoisonError::into_inner));
         for image in staged {
-            promote_atomically(&image.staging, &image.target).map_err(|source| {
-                ProductsError::Io {
-                    operation: "replacing",
-                    path: image.target.clone(),
-                    source,
-                }
-            })?;
+            let failed = |source| ProductsError::Io {
+                operation: "replacing",
+                path: image.target.clone(),
+                source,
+            };
+            carry_history(&image.target, &image.staging).map_err(failed)?;
+            promote_atomically(&image.staging, &image.target).map_err(failed)?;
             published(&image.target);
         }
         Ok(())
@@ -285,18 +326,26 @@ impl CasaImageWriter {
                 } else {
                     ImageBeamSet::default()
                 },
-                image_type: match role {
-                    "psf" => ImageType::Beam,
-                    "sumwt" => ImageType::Undefined,
-                    _ => ImageType::Intensity,
-                },
-                object_name: role.to_string(),
+                // CASA's tclean leaves every product the default type.
+                image_type: ImageType::Intensity,
+                object_name: output.object_name.clone(),
             })
             .map_err(image_error)?;
-        let mut miscinfo = vec![RecordField::new(
-            "casars_imager_role",
-            Value::Scalar(ScalarValue::String(role.to_string())),
-        )];
+        // `SynthesisImager::createIMStore`'s, but its `memreq` and `memavail`,
+        // which describe CASA's run: one process, one chunk.
+        let mut miscinfo = vec![
+            RecordField::new(
+                "casars_imager_role",
+                Value::Scalar(ScalarValue::String(role.to_string())),
+            ),
+            RecordField::new(
+                "INSTRUME",
+                Value::Scalar(ScalarValue::String(output.telescope.clone())),
+            ),
+            RecordField::new("distance", Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new("mpiprocs", Value::Scalar(ScalarValue::Int32(1))),
+            RecordField::new("chnchnks", Value::Scalar(ScalarValue::Int32(1))),
+        ];
         // CASA tools read `.sumwt`'s `useweightimage` to learn whether the
         // residual was divided by a weight image (`SIImageStore`
         // `getUseWeightImage`).

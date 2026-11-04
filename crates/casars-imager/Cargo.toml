@@ -12,6 +12,7 @@ publish = false
 workspace = true
 
 [dependencies]
+tracing.workspace = true
 ndarray.workspace = true
 casa-images = { path = "../casa-images" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
@@ -29,7 +30,6 @@ serde_path_to_error = "0.1"
 # T1's store law converts a track to MSv4 and reads it back.
 casa-ms = { path = "../casa-ms", features = ["msv4"] }
 casa-logging = { path = "../casa-logging" }
-tracing.workspace = true
 casa-coordinates = { path = "../casa-coordinates" }
 # T1's cube law measures each PSF plane's sidelobe as the minor cycle does.
 casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }

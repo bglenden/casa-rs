@@ -74,6 +74,10 @@ pub(super) struct PreparedImageDomain {
     pub(super) image_size: [usize; 2],
     pub(super) direction: DirectionCoordinateSpec,
     pub(super) coordinates: CoordinateSystem,
+    /// The first selected field's name (`SynthesisImager::createIMStore`).
+    pub(super) object_name: String,
+    /// The telescope of the selected observations.
+    pub(super) telescope: String,
     pub(super) mask: DomainMask,
     /// CASA facets the first image field only (`SynthesisImager`'s
     /// `createFacetImageStoreList`); outliers are single.
@@ -105,6 +109,7 @@ impl PreparedImageDomain {
             self.output.clone(),
             self.coordinates.clone(),
         )
+        .observing(&self.object_name, &self.telescope)
     }
 }
 
@@ -114,7 +119,7 @@ pub(super) fn prepare_domains(
     request: &ImagingRequest,
     centre: &Centre,
     (spectral, channels): (&ImageSpectralCoordinate, usize),
-    observation: &ObsInfo,
+    (observation, object_name): (&ObsInfo, &str),
 ) -> Result<Vec<PreparedImageDomain>, PrepareError> {
     let polarizations = &request.stokes;
     let facets = match request.gridder {
@@ -126,6 +131,8 @@ pub(super) fn prepare_domains(
     };
     let mut domains = vec![PreparedImageDomain {
         role: ImageDomainRole::Main,
+        object_name: object_name.to_owned(),
+        telescope: observation.telescope.clone(),
         output: request.imagename.clone(),
         image_size: request.imsize,
         direction: centre.direction,
@@ -164,6 +171,8 @@ pub(super) fn prepare_domains(
                     spectral,
                     observation,
                 ),
+                object_name: object_name.to_owned(),
+                telescope: observation.telescope.clone(),
                 mask: outlier.mask,
                 facets: FacetLayout::Single,
             });
