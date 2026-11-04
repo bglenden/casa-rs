@@ -332,10 +332,11 @@
     },
     "perchanweightdensity": {
       "status": "Implemented",
-      "scope": "Copied as per-channel density-weighting flag.",
+      "scope": "Copied as per-channel density-weighting flag. Without it, and for superuniform always, a cube's one density reads what the untuned bands of spw select at each time, whatever the axis reaches, as VisImagingWeight reads the parent imager's iterator.",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "density-channels-20261104"
       ],
       "behaviors": [
         "spectral"
@@ -2050,6 +2051,21 @@
         "resources/casa-compat/evidence/tclean-model-column-bands-20261104.json",
         "tools/casa-compat/tclean_model_column_compare.py",
         "crates/casa-imaging-application/src/imaging/observation_source/write.rs"
+      ]
+    },
+    "density-channels-20261104": {
+      "kind": "casa-rs's own cube cases with a density over the whole selection against CASA, with T1 laws",
+      "state": "measured: .psf and .residual at 2.1e-4 or better in all 27; the driver's pass is 2 of 27 because the others' inventories differ by .gridwt, which casa-rs doesn't write; one .pb differs by issue 1138",
+      "source_revision": "dedd0ce85aa894915ce18e1bf7764c25263e12db",
+      "revision": "70b803349f382be4026d45d8bba324e8700eb185",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-density-channels-cases.json --backend cpu --precision f64",
+      "receipt": "resources/casa-compat/evidence/tclean-density-channels-20261104.json",
+      "scope": "Cubes with uniform, Briggs or superuniform density over the whole selection, on part of a window, with a stride, a gap and named channels, over two MeasurementSets, in cubedata, and on a track where a time's channels move with its Doppler shift.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-density-channels-20261104.json",
+        "resources/casa-compat/tclean-density-channels-cases.json",
+        "crates/casa-imaging-application/src/compile/spectral.rs"
       ]
     }
   }
