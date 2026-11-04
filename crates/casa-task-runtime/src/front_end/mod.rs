@@ -49,7 +49,8 @@ use casa_provider_contracts::{
     SurfaceContractBundle, TaskFailureKind, TaskFrontEndSchemas, TaskProviderContract, TaskReply,
     TaskRunRequest,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 
 pub use inspect::{
@@ -621,8 +622,10 @@ where
                 message,
                 parameter,
             };
-        let request = match read_task_request(source).and_then(|text| {
-            serde_json::from_str::<TaskRunRequest>(&text).map_err(crate::TaskCliError::ParseRequest)
+        let (request, text) = match read_task_request(source).and_then(|text| {
+            serde_json::from_str::<TaskRunRequest>(&text)
+                .map(|request| (request, text))
+                .map_err(crate::TaskCliError::ParseRequest)
         }) {
             Ok(request) => request,
             Err(error) => return refuse(default.surface.id(), error.to_string(), None),
@@ -650,6 +653,33 @@ where
         };
         let mut overrides = ResolutionPatch::default();
         for (name, value) in &request.values {
+            // serde_json represents an out-of-range JSON integer as a float.
+            // Inspect its original spelling only on this error path: CASA
+            // accepts the integer, so it must not get a CASA cInt type error.
+            if value
+                .as_f64()
+                .is_some_and(|number| number.abs() >= 9_223_372_036_854_775_808.0)
+                && crate::casa_type_diagnostics::integer_parameter(&request.surface, name)
+            {
+                #[derive(Deserialize)]
+                struct RawValues<'a> {
+                    #[serde(borrow, default)]
+                    values: BTreeMap<String, &'a RawValue>,
+                }
+                if let Ok(raw) = serde_json::from_str::<RawValues<'_>>(&text)
+                    && raw.values.get(name).is_some_and(|raw| {
+                        crate::casa_type_diagnostics::integer_literal_outside_i64(raw.get())
+                    })
+                {
+                    return refuse(
+                        &request.surface,
+                        format!(
+                            "parameter {name:?}: integer is outside casa-rs's signed 64-bit range"
+                        ),
+                        Some(name.clone()),
+                    );
+                }
+            }
             let Some(value) = ParameterValue::from_plain_json(value) else {
                 return refuse(
                     &request.surface,
