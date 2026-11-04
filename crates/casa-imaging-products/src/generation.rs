@@ -10,7 +10,7 @@ use casa_imaging_model::{
     ProductPixelMask, ProductRole, ProductTerm, ProductValidityRule, RestoringBeamPolicy,
 };
 
-use crate::beam::{RestoringBeam, fit_restoring_beam, fixed_restoring_beam};
+use crate::beam::{RestoringBeam, fit_plane_beam, fixed_restoring_beam};
 use crate::error::ProductsError;
 use crate::normalization::psf_peak;
 use crate::plan::{
@@ -129,13 +129,12 @@ fn fit_beams(
             if !psf_normalizes(psf_peak(psf.iter().copied())?) {
                 return Ok(None);
             }
-            fit_restoring_beam(
+            Ok(fit_plane_beam(
                 &psf,
                 plane.shape(),
                 inputs.cell_size_rad_for_domain(domain.role()),
                 planned.psf_cutoff(),
-            )
-            .map(Some)
+            ))
         })?;
         fitted.extend(
             slots
@@ -149,7 +148,7 @@ fn fit_beams(
 /// The beams each plane is restored with, by the problem's restoring-beam
 /// policy: none, each plane's fitted beam, one beam enclosing a domain's
 /// fitted beams, or the beam the request gives. A plane with no fitted beam
-/// (a blank PSF) restores with its domain's largest restoring beam, as
+/// (a blank PSF, or a fit CASA's would refuse) restores with its domain's largest restoring beam, as
 /// `SIImageStore::makeImageBeamSet` replaces a null beam by the beam set's
 /// largest (`getMaxAreaBeam`) before `restore` restores every plane: a
 /// start model regridded onto a channel no sample reaches is restored

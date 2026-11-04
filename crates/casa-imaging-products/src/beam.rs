@@ -23,6 +23,24 @@ pub fn fit_restoring_beam(
         .map_err(|error| ProductsError::BeamFitFailed(error.to_string()))
 }
 
+/// A plane's own beam, or `None` when its fit fails, as
+/// `SIImageStore::makeImageBeamSet` warns and leaves it to its domain's largest
+/// beam ([`crate::generation`]).
+pub(crate) fn fit_plane_beam(
+    psf: &[f32],
+    shape: [usize; 2],
+    cell_size_rad: [f64; 2],
+    cutoff: f32,
+) -> Option<RestoringBeam> {
+    fit_restoring_beam(psf, shape, cell_size_rad, cutoff)
+        .inspect_err(|error| {
+            tracing::warn!(
+                "Error Gaussian fit to PSF : {error} : Setting restoring beam to largest valid beam."
+            );
+        })
+        .ok()
+}
+
 /// The restoring beam a request fixed, as the products restore with it and
 /// record it.
 ///

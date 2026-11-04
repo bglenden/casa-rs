@@ -3,8 +3,8 @@
 
 use crate::Error;
 use crate::beam::{
-    DEFAULT_PSF_FIT_CUTOFF, RestoringBeam, fit_restoring_beam,
-    fitted_psf_sidelobe_fraction_with_beam,
+    DEFAULT_PSF_FIT_CUTOFF, RestoringBeam, fit_main_lobe, fitted_psf_sidelobe_fraction_with_beam,
+    peak_outside_inner_quarter,
 };
 use crate::plane::{PlaneShape, psf_peak};
 
@@ -51,8 +51,17 @@ impl PsfSummary {
         }
         let single = psf.iter().map(|value| *value as f32).collect::<Vec<_>>();
         let axes = [shape.nx, shape.ny];
-        let beam = fit_restoring_beam(&single, axes, [1.0, 1.0], DEFAULT_PSF_FIT_CUTOFF)?;
-        let sidelobe = fitted_psf_sidelobe_fraction_with_beam(&single, axes, beam)?;
+        // A plane peaking away from its centre has no beam of its own in CASA.
+        // `getPSFSidelobeLevel` subtracts a Gaussian at the centre, far from
+        // that peak, which so stays the sidelobe. The fit here serves the
+        // Clark patch and the automatic mask's smoothing only.
+        let beam = fit_main_lobe(&single, axes, [1.0, 1.0], DEFAULT_PSF_FIT_CUTOFF)?;
+        let sidelobe = if peak_outside_inner_quarter(&single, axes)? {
+            psf.iter()
+                .fold(0.0_f64, |level, value| level.max(value.abs()))
+        } else {
+            fitted_psf_sidelobe_fraction_with_beam(&single, axes, beam)?
+        };
         Ok(Self {
             peak,
             beam,
@@ -120,5 +129,35 @@ impl ClarkPatch {
             size,
             exterior_sidelobe,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A smooth main lobe at `centre` of a 64-pixel plane, x-major.
+    fn lobe(centre: [usize; 2]) -> Vec<f64> {
+        let mut psf = vec![0.0; 64 * 64];
+        for x in 0..64 {
+            for y in 0..64 {
+                let dx = x as f64 - centre[0] as f64;
+                let dy = y as f64 - centre[1] as f64;
+                psf[x * 64 + y] = (-(dx * dx + dy * dy) / 8.0).exp();
+            }
+        }
+        psf
+    }
+
+    /// `getPSFSidelobeLevel` subtracts a Gaussian at the image's centre, so a
+    /// plane peaking far from it keeps that peak as its sidelobe, where one
+    /// peaking at the centre subtracts its main lobe.
+    #[test]
+    fn a_plane_peaking_off_centre_has_its_peak_as_its_sidelobe() {
+        let shape = PlaneShape::new(64, 64);
+        let centred = PsfSummary::new(&lobe([32, 32]), shape).expect("a summary");
+        assert!(centred.sidelobe() < 0.2, "{}", centred.sidelobe());
+        let off = PsfSummary::new(&lobe([8, 40]), shape).expect("a summary");
+        assert_eq!(off.sidelobe(), 1.0);
     }
 }

@@ -46,6 +46,10 @@ pub enum PsfBeamFitError {
         /// The peak sample.
         peak: f32,
     },
+    /// The peak lies outside the plane's inner quarter, where
+    /// `StokesImageUtil::FitGaussianPSF` refuses to fit it.
+    #[error("Peak of psf is outside the inner quarter of defined image")]
+    PeakOutsideInnerQuarter,
     /// No attempt, from `cutoff` down by factors of 1.5, fitted the main
     /// lobe (`StokesImageUtil::FitGaussianPSF`).
     #[error(
@@ -253,8 +257,37 @@ fn restoring_beam(beam: EllipticalGaussian) -> RestoringBeam {
 ///
 /// Returns [`PsfBeamFitError::EmptyPsf`] or
 /// [`PsfBeamFitError::PeakNotPositive`] for a PSF without a positive peak,
-/// and [`PsfBeamFitError::NotFitted`] when no attempt converges.
+/// [`PsfBeamFitError::PeakOutsideInnerQuarter`] for one peaking away from the
+/// plane's centre, and [`PsfBeamFitError::NotFitted`] when no attempt
+/// converges.
 pub fn fit_restoring_beam(
+    psf: &[f32],
+    shape: [usize; 2],
+    cell_size_rad: [f64; 2],
+    cutoff: f32,
+) -> Result<RestoringBeam, PsfBeamFitError> {
+    if peak_outside_inner_quarter(psf, shape)? {
+        return Err(PsfBeamFitError::PeakOutsideInnerQuarter);
+    }
+    fit_main_lobe(psf, shape, cell_size_rad, cutoff)
+}
+
+/// Whether `psf`'s peak lies outside the plane's inner quarter
+/// (`StokesImageUtil::FitGaussianPSF`).
+pub(crate) fn peak_outside_inner_quarter(
+    psf: &[f32],
+    shape: [usize; 2],
+) -> Result<bool, PsfBeamFitError> {
+    let (peak_index, _) = positive_peak(psf)?;
+    let pixel = [peak_index / shape[1], peak_index % shape[1]];
+    Ok(pixel.iter().zip(shape).any(|(&at, extent)| {
+        let (at, extent) = (at as f64, extent as f64);
+        at < extent / 4.0 || at > 3.0 * extent / 4.0
+    }))
+}
+
+/// [`fit_restoring_beam`] around the peak, wherever it lies.
+pub(crate) fn fit_main_lobe(
     psf: &[f32],
     shape: [usize; 2],
     cell_size_rad: [f64; 2],
@@ -1016,6 +1049,30 @@ fn casa_wrap_beam_position_angle(mut angle: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A plane of `[20, 20]` with a unit point at `pixel`, x-major.
+    fn point_at(pixel: [usize; 2]) -> Vec<f32> {
+        let mut psf = vec![0.0; 400];
+        psf[pixel[0] * 20 + pixel[1]] = 1.0;
+        psf
+    }
+
+    /// `StokesImageUtil::FitGaussianPSF` compares the peak's pixel with a
+    /// quarter of the plane and three quarters, those limits inside.
+    #[test]
+    fn a_peak_outside_the_inner_quarter_is_refused_as_casa_refuses_it() {
+        for inside in [[5, 5], [15, 15], [10, 10]] {
+            assert!(!peak_outside_inner_quarter(&point_at(inside), [20, 20]).unwrap());
+        }
+        for outside in [[4, 10], [16, 10], [10, 4], [10, 16]] {
+            let psf = point_at(outside);
+            assert!(peak_outside_inner_quarter(&psf, [20, 20]).unwrap());
+            assert!(matches!(
+                fit_restoring_beam(&psf, [20, 20], [1.0, 1.0], 0.35),
+                Err(PsfBeamFitError::PeakOutsideInnerQuarter)
+            ));
+        }
+    }
 
     /// On a 1024 × 512 plane the PSF peaks at (512, 256); a lobe filling the
     /// 41-pixel search patch spans x 492‥532 and y 236‥276. Squared by

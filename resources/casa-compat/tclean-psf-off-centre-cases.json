@@ -1,0 +1,39 @@
+{
+ "source": {
+  "purpose": "tclean on a plane whose PSF peaks off-centre (issue 1124). Channel 0 of refim_point_linRL.ms holds few samples: its PSF peaks at pixel (13,64). The format is tools/casa-compat/tclean_case_matrix.py's."
+ },
+ "inputs": {
+  "refim_point_linRL.ms": "unittest/tclean/refim_point_linRL.ms"
+ },
+ "common": {},
+ "cases": {
+  "off_centre_dirty": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.2,
+    "stokes": "IV",
+    "specmode": "cube",
+    "nchan": 2,
+    "niter": 0
+   },
+   "note": "The beams of a dirty cube"
+  },
+  "off_centre_clean": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.2,
+    "stokes": "IV",
+    "specmode": "cube",
+    "nchan": 2,
+    "niter": 20
+   },
+   "note": "The cycle sequence, from the sidelobe level"
+  }
+ }
+}
