@@ -1789,6 +1789,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#psf-off-centre-1130-20261104" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        psf-off-centre-1130-20261104
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#density-channels-20261104" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5170,6 +5181,17 @@
     <span class="md-ellipsis">
       
         model-column-bands-20261104
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#psf-off-centre-1130-20261104" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        psf-off-centre-1130-20261104
       
     </span>
   </a>
@@ -8792,7 +8814,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>0.35</code>; <code>psfcutoff</code> → <code>psfcutoff</code></td>
 <td>Implemented</td>
 <td>Copied; request requires positive value. A plane whose PSF peaks outside its inner quarter is not fitted, as StokesImageUtil::FitGaussianPSF refuses it, and takes its domain's largest beam, or a tiny one where no plane has a beam (SIImageStore::makeImageBeamSet). Its peak is its sidelobe level. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>float</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-psf-off-centre-20261104">psf-off-centre-20261104</a></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-psf-off-centre-20261104">psf-off-centre-20261104</a>, <a href="#tclean-evidence-psf-off-centre-1130-20261104">psf-off-centre-1130-20261104</a></td>
 </tr>
 <tr>
 <td><code>parallel</code></td>
@@ -9476,6 +9498,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>8418b9b1e03a9d1742fabe0b2272b165ae781c83</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
 <li>Command: <code>tools/casa-compat/tclean_model_column_compare.py</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-model-column-bands-20261104.json</code>.</li>
+</ul>
+<p><a id="tclean-evidence-psf-off-centre-1130-20261104"></a></p>
+<h5 id="psf-off-centre-1130-20261104">psf-off-centre-1130-20261104<a class="headerlink" href="#psf-off-centre-1130-20261104" title="Permanent link">&para;</a></h5>
+<p><strong>CASA off-centre PSF minor-cycle cases against casa-rs, with a T0 law — measured: 10 of 12 cases pass; one near-tie and one documented CASA bug.</strong> An off-centre plane takes its domain’s largest beam in the minor cycle; Clark and low automask agree. Hogbom at gain 0.2 differs through a near-tie and multiscale through a documented CASA bug. Sub-cubes can choose a different domain beam; the fit-failure fallback remains open in issue 1140.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/80c1b8091fa16545eaa7b97ffac3882ca05192e0/resources/casa-compat/evidence/tclean-psf-off-centre-1130-20261104.json">resources/casa-compat/evidence/tclean-psf-off-centre-1130-20261104.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/80c1b8091fa16545eaa7b97ffac3882ca05192e0/resources/casa-compat/tclean-psf-off-centre-cases.json">resources/casa-compat/tclean-psf-off-centre-cases.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/80c1b8091fa16545eaa7b97ffac3882ca05192e0/crates/casa-imaging-runtime/src/minor/beams.rs">crates/casa-imaging-runtime/src/minor/beams.rs</a></li>
+<li>Revision: <code>4359654c25a918333ddf1f7fe9c9710af388594a</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-psf-off-centre-cases.json --backend cpu --precision f64</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-psf-off-centre-1130-20261104.json</code>.</li>
 </ul>
 <p><a id="tclean-evidence-density-channels-20261104"></a></p>
 <h5 id="density-channels-20261104">density-channels-20261104<a class="headerlink" href="#density-channels-20261104" title="Permanent link">&para;</a></h5>
