@@ -392,6 +392,7 @@ pub(crate) fn run(
     Ok(move |summary| ImagingOutcome {
         problem,
         minor_cycles: outcome.minor_cycles,
+        plane_rows: outcome.plane_rows,
         final_residual_statistics: outcome.final_residual_statistics,
         stop: outcome.stop,
         major_cycle_count: outcome.major_cycle_count,

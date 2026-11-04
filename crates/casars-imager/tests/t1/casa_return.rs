@@ -253,7 +253,7 @@ fn tclean_returns_casas_summary_record() {
     assert_eq!(describe(&full), casa("tclean fullsummary"));
 
     // A cube has an entry for each channel, as CASA's has (Astra's #1015
-    // F3); each holds nan where the report sums the planes.
+    // F3).
     let cube = run(
         "cube",
         json!({ "niter": 30, "specmode": "cube", "nchan": 3 }),
@@ -536,5 +536,144 @@ fn each_image_holds_tcleans_history_and_its_source() {
         assert_eq!(&rows[..first.len()], &first[..], "{suffix}");
         assert_eq!(rows[first.len()].1, rows[0].1, "{suffix}");
         assert_ne!(rows[first.len()].0, rows[0].0, "{suffix}");
+
+/// `name`'s row of the plane at `[field, channel, stokes]`, as numbers.
+fn plane_row(value: &CasaValue, key: [i64; 3], name: &str) -> Vec<f64> {
+    let mut plane = entry(value, "summaryminor");
+    for index in key {
+        let CasaValue::Dict { entries } = plane else {
+            panic!("a dictionary at {key:?}");
+        };
+        plane = &entries
+            .iter()
+            .find(|entry| entry.key == CasaKey::Int(index))
+            .unwrap_or_else(|| panic!("no plane {key:?}"))
+            .value;
+    }
+    let CasaValue::List { items } = entry(plane, name) else {
+        panic!("{name} is a list");
+    };
+    items
+        .iter()
+        .map(|item| match item {
+            CasaValue::Float { value } => value.0,
+            CasaValue::Int { value } => *value as f64,
+            other => panic!("{name}: {other:?}"),
+        })
+        .collect()
+}
+
+/// One channel of a four-axis image.
+fn channel_pixels(path: &Path, channel: usize) -> Vec<f32> {
+    let image = casa_images::PagedImage::<f32>::open(path).expect("open the image");
+    let shape = image.shape().to_vec();
+    image
+        .get_slice(&[0, 0, 0, channel], &[shape[0], shape[1], shape[2], 1])
+        .expect("read the channel")
+        .iter()
+        .copied()
+        .collect()
+}
+
+/// `summaryminor` holds each plane's own rows (#1068): the iterations of the
+/// planes run in sequence and sum to the run's, each plane's flux is that of
+/// its own `.model`, a dirty cube's peaks are those of its own `.residual`
+/// planes, and a start model's flux is each plane's starting point.
+#[test]
+fn a_cubes_summary_holds_each_planes_own_rows() {
+    const CHANNELS: usize = 4;
+    let steep = Component {
+        spectral_index: -8.0,
+        ..POINT
+    };
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", steep)]);
+    let directory = observation.scratch("plane-rows");
+    std::fs::create_dir_all(&directory).expect("run directory");
+    let geometry = observation.geometry();
+    let run = |name: &str, controls: Value| {
+        let mut values = json!({
+            "vis": observation.measurement_set(),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend": "cpu",
+            "specmode": "cube",
+            "fullsummary": true,
+            "imagename": directory.join(name),
+        });
+        for (key, value) in controls.as_object().expect("controls") {
+            values[key] = value.clone();
+        }
+        match json_run(&directory, values) {
+            TaskReply::Succeeded { value, .. } => value,
+            other => panic!("{name}: {other:?}"),
+        }
+    };
+    let flux_of = |path: &Path, channel: usize| -> f64 {
+        channel_pixels(path, channel)
+            .iter()
+            .map(|value| f64::from(*value))
+            .sum()
+    };
+
+    let cleaned = run("cleaned", json!({"niter": 30, "gain": 0.2}));
+    let CasaValue::Int { value: iterations } = entry(&cleaned, "iterdone") else {
+        panic!("iterdone is an integer");
+    };
+    let mut done = 0.0;
+    let mut last_fluxes = Vec::new();
+    for channel in 0..CHANNELS {
+        let key = [0, channel as i64, 0];
+        let iterated = plane_row(&cleaned, key, "iterDone");
+        // Before this plane's first cycle only the earlier planes have run.
+        assert_eq!(plane_row(&cleaned, key, "startIterDone")[0], done);
+        assert_eq!(plane_row(&cleaned, key, "cycleStartIters")[0], 0.0);
+        done += iterated[0];
+        let flux = *plane_row(&cleaned, key, "modelFlux")
+            .last()
+            .expect("a cycle");
+        let image = flux_of(&directory.join("cleaned.model"), channel);
+        assert!(
+            (flux - image).abs() <= 1e-5 * image.abs().max(1e-3),
+            "channel {channel}: {flux} against its model's {image}"
+        );
+        last_fluxes.push(flux);
+        // With no mask, the peak over the plane's pixels is the peak inside
+        // the mask.
+        for (inside, over) in [("startPeakRes", "startPeakResNM"), ("peakRes", "peakResNM")] {
+            let peaks = plane_row(&cleaned, key, over);
+            assert!(peaks.iter().all(|peak| *peak > 0.0));
+            for (a, b) in plane_row(&cleaned, key, inside).iter().zip(&peaks) {
+                assert!((a - b).abs() <= 1e-3 * b, "{inside}: {a} against {b}");
+            }
+        }
+    }
+    // The steep spectrum makes the planes differ; none holds the others'.
+    let spread = (last_fluxes[0] - last_fluxes[CHANNELS - 1]).abs();
+    assert!(spread > 1e-3 * last_fluxes[0].abs(), "{last_fluxes:?}");
+    let total: f64 = (0..CHANNELS)
+        .flat_map(|channel| plane_row(&cleaned, [0, channel as i64, 0], "iterDone"))
+        .sum();
+    assert_eq!(total as i64, *iterations);
+
+    let dirty = run("dirty", json!({"niter": 0}));
+    for channel in 0..CHANNELS {
+        let key = [0, channel as i64, 0];
+        let peak = channel_pixels(&directory.join("dirty.residual"), channel)
+            .into_iter()
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert_eq!(plane_row(&dirty, key, "peakRes"), [f64::from(peak)]);
+        assert_eq!(plane_row(&dirty, key, "peakResNM"), [f64::from(peak)]);
+    }
+
+    let seeded = run(
+        "seeded",
+        json!({"niter": 5, "gain": 0.2, "startmodel": directory.join("cleaned.model")}),
+    );
+    for (channel, flux) in last_fluxes.iter().enumerate() {
+        let start = plane_row(&seeded, [0, channel as i64, 0], "startModelFlux")[0];
+        assert!(
+            (start - flux).abs() <= 1e-5 * flux.abs().max(1e-3),
+            "channel {channel}: {start} against {flux}"
+        );
     }
 }
