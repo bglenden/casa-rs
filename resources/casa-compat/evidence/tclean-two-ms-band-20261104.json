@@ -1,0 +1,18 @@
+{
+ "schema": "tclean-evidence-receipt/1",
+ "title": "tclean cube axes on selections over one and two MeasurementSets",
+ "work_issue": 1081,
+ "date": "2026-11-04",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "native_revision": "c43f29ecc318f5e5647122daa7f2d25208ff0f41",
+ "imager_binary_sha256": "044b01980d5b48b2a14f03a08ed620c9712708b52238e1430d6dcc3c922a685b",
+ "builds": "release casars-imager and casars wheel of the committed revision in a private target directory, on the laptop, with the NEON FFTW",
+ "backend": "cpu",
+ "precision": "f64",
+ "driver": "tools/casa-compat/tclean_case_matrix.py, on a data root staged from the NAS casatestdata with its XSym links resolved",
+ "limits": "exact image-product inventory and masks; NRMS <= 1e-3; the scalars and counts as the driver states them",
+ "outcome": "10 of 10 cases of tclean-two-ms-band-cases.json pass every product, and 5 of 5 of CASA's test_cube_twoMS and test_modelvis_29. Before this, two_ms_channel_selection failed: 4 channels against CASA's 18. CASA reads the band over every MeasurementSet, and lays the axis on the first one's channels from the first selected to the last, so channels 2 to 5 of the first and 8 to 12 of the second give channels 2 to 19 of the first's axis."
+}
