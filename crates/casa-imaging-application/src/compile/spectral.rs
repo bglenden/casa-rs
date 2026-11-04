@@ -85,8 +85,8 @@ impl PreparedSpectralAxis {
 pub(super) enum WindowTimes {
     /// By its per-time frequency selection.
     Bands(FrequencyBands),
-    /// Only to count its samples in the density and to write them: no
-    /// channel reaches the axis.
+    /// Only to count its samples in the density and to write them, if the
+    /// source's test over its rows agrees that no channel reaches the axis.
     DensityOnly,
 }
 
@@ -553,7 +553,9 @@ struct StoreReads {
 /// counts them, since CASA forms it over the untuned selection of the imager
 /// that defines the cube, and a final pass writes the cube model's
 /// prediction there, zero, into its `MODEL_DATA` (test_modelvis_29). The
-/// other passes skip it ([`WindowTimes::DensityOnly`]).
+/// other passes skip it where their source confirms this test, at a few
+/// epochs and over the whole window's channels, for its rows
+/// ([`WindowTimes::DensityOnly`]).
 fn store_reads(
     request: &ImagingRequest,
     ((catalogue, engine), survey, field): ((&Catalogue, &MsCalEngine), &Survey, usize),

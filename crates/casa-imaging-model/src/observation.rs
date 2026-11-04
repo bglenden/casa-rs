@@ -627,9 +627,10 @@ impl SpectralWindowSelection {
         self.frequency_bands.as_ref()
     }
 
-    /// Mark a window no channel of which reaches the image's axis: its
-    /// samples count in the imaging weights' density and fall on no plane, so
-    /// a pass that images reads nothing of it.
+    /// Mark a window compile finds no channel of reaching the image's axis:
+    /// its samples count in the imaging weights' density and should fall on
+    /// no plane. A pass that images skips it once its selected channels
+    /// under each row's conversion confirm that.
     #[must_use]
     pub const fn with_density_only(mut self) -> Self {
         self.density_only = true;

@@ -23,9 +23,9 @@ pub(crate) struct SelectedPartition {
     /// The window's per-time frequency selection, when a time reads only
     /// some of `channels` ([`casa_imaging_model::FrequencyBands`]).
     pub(crate) frequency_bands: Option<casa_imaging_model::FrequencyBands>,
-    /// Whether only the density pass and a write read it: no channel reaches
-    /// the image's axis
-    /// ([`casa_imaging_model::SpectralWindowSelection::density_only`]).
+    /// Whether compile found no channel of it reaching the image's axis
+    /// ([`casa_imaging_model::SpectralWindowSelection::density_only`]), so a
+    /// pass that images tests whether to skip it.
     pub(crate) density_only: bool,
     /// The correlation products the operator routes, in its order.
     pub(crate) correlations: Vec<Correlation>,

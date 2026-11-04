@@ -440,3 +440,125 @@ fn a_mosweight_density_keeps_each_measurement_sets_fields_apart() {
         "sumwt {twice} over the copies, {once} over one"
     );
 }
+
+/// A cube's passes skip a window compile finds no channel of reaching the
+/// axis only if its rows confirm it (#1081), so what a pass places is what a
+/// write places, which reads every window: a run saving the model refuses a
+/// refresh that places a different number of samples. Compile's test looks
+/// over the whole window's channels at a few epochs, so a window can pass it
+/// and still place samples.
+fn assert_passes_place_what_a_write_places(
+    observation: &Observation,
+    stores: &[&Path],
+    label: &str,
+    controls: &Value,
+) {
+    let (read, read_products) = observation.image_stores(stores, label, controls.clone());
+    let mut saving = controls.clone();
+    saving["savemodel"] = json!("modelcolumn");
+    let (write, write_products) =
+        observation.image_stores(stores, &format!("{label}-write"), saving);
+    assert_eq!(read.gridded_samples, write.gridded_samples, "{label}");
+    assert_eq!(
+        read_products.get(".sumwt").channel_values(),
+        write_products.get(".sumwt").channel_values(),
+        "{label}"
+    );
+}
+
+/// Linear interpolation pairs the channels on either side of a selection's
+/// gap, so a window whose gap holds the axis has no selected channel in it
+/// and places every sample there.
+#[test]
+fn a_selections_gap_over_the_axis_is_read_by_every_pass() {
+    let (gapped, whole) = (track(0, 16), track(0, 16));
+    let stores = [gapped.measurement_set(), whole.measurement_set()];
+    let controls = json!({
+        "specmode": "cubedata",
+        "spw": ["0:0~1;14~15", "0"],
+        "start": "44.896GHz",
+        "width": "128MHz",
+        "nchan": 2,
+        "interpolation": "linear",
+        "deconvolver": "hogbom",
+        "niter": 5,
+    });
+    assert_passes_place_what_a_write_places(&whole, &stores, "gap", &controls);
+    let (run, _) = whole.image_stores(&stores, "gap-counted", controls);
+    let (alone, _) = whole.image_stores(
+        &stores[1..],
+        "gap-alone",
+        json!({
+            "specmode": "cubedata", "spw": "0", "start": "44.896GHz", "width": "128MHz",
+            "nchan": 2, "interpolation": "linear", "deconvolver": "hogbom", "niter": 5,
+        }),
+    );
+    assert_eq!(run.gridded_samples, 2 * alone.gridded_samples);
+}
+
+/// A TOPO window `first_hz` above 44 GHz, of `channels` channels of 2 kHz,
+/// where an hour's Doppler shift is several channels; over two fields half
+/// a degree apart when `fields`, whose LSRK shifts differ.
+fn drifting(first_hz: f64, channels: usize, fields: bool) -> Observation {
+    use casa_types::measures::frequency::FrequencyRef;
+    let mut setup = Setup::vla_q_band(channels);
+    setup.noise_jy = 0.0;
+    if fields {
+        setup.fields = vec![Setup::pointing([0.0, 0.0]), Setup::pointing([0.0087, 0.0])];
+    }
+    setup.spectral_windows = vec![SyntheticSpectralSetup {
+        name: "narrow".to_string(),
+        start_frequency_hz: 44.0e9 + first_hz,
+        channel_width_hz: 2.0e3,
+        channel_count: channels,
+    }];
+    let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    observation
+}
+
+/// The conversion a row takes moves a neighbouring window's channels onto
+/// the planes at some times, where compile's test at a few epochs and one
+/// field, or with no conversion between equal frames, finds none there.
+#[test]
+fn a_window_a_rows_conversion_moves_onto_the_axis_is_read_by_every_pass() {
+    const CHANNEL: f64 = 2.0e3;
+    for (label, fields, frame, gap, interpolation) in [
+        ("topo-4", false, "TOPO", 4.0, "linear"),
+        ("topo-5", false, "TOPO", 5.0, "linear"),
+        ("topo-5-nearest", false, "TOPO", 5.0, "nearest"),
+        ("lsrk-17", true, "LSRK", 17.0, "linear"),
+        ("lsrk-20", true, "LSRK", 20.0, "linear"),
+        ("lsrk-20-nearest", true, "LSRK", 20.0, "nearest"),
+    ] {
+        let cube = drifting(0.0, 16, fields);
+        let above = drifting((7.0 + gap) * CHANNEL, 4, fields);
+        let below = drifting((6.0 - gap - 3.0) * CHANNEL, 4, fields);
+        let stores = [
+            cube.measurement_set(),
+            above.measurement_set(),
+            below.measurement_set(),
+        ];
+        let start = if frame == "TOPO" {
+            json!(format!("{}Hz", 44.0e9 + 6.0 * CHANNEL))
+        } else {
+            json!(6)
+        };
+        let width = if frame == "TOPO" {
+            json!(format!("{CHANNEL}Hz"))
+        } else {
+            json!(1)
+        };
+        let controls = json!({
+            "specmode": "cube", "outframe": frame, "start": start, "width": width, "nchan": 2,
+            "interpolation": interpolation, "deconvolver": "hogbom", "niter": 5,
+        });
+        assert_passes_place_what_a_write_places(&cube, &stores, label, &controls);
+    }
+}
