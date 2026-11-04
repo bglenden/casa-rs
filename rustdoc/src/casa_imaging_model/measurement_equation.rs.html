@@ -298,8 +298,8 @@
 <a href=#298 id=298 data-nosnippet>298</a>
 <a href=#299 id=299 data-nosnippet>299</a>    <span class="doccomment">/// Return the complete-selection density scope. No chunk-local scope exists.
 <a href=#300 id=300 data-nosnippet>300</a>    </span><span class="attr">#[must_use]
-<a href=#301 id=301 data-nosnippet>301</a>    </span><span class="kw">pub const fn </span>density_scope(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; WeightDensityScope {
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="self">self</span>.density_scope
+<a href=#301 id=301 data-nosnippet>301</a>    </span><span class="kw">pub const fn </span>density_scope(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>WeightDensityScope {
+<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.density_scope
 <a href=#303 id=303 data-nosnippet>303</a>    }
 <a href=#304 id=304 data-nosnippet>304</a>
 <a href=#305 id=305 data-nosnippet>305</a>    <span class="doccomment">/// Return the cells the density is gridded on (CASA's `npixels`).
@@ -558,7 +558,7 @@
 <a href=#558 id=558 data-nosnippet>558</a>    WeightingOperatorContract {
 <a href=#559 id=559 data-nosnippet>559</a>        visibility_inner_product,
 <a href=#560 id=560 data-nosnippet>560</a>        scheme: weighting.scheme(),
-<a href=#561 id=561 data-nosnippet>561</a>        density_scope: weighting.density_scope(),
+<a href=#561 id=561 data-nosnippet>561</a>        density_scope: weighting.density_scope().clone(),
 <a href=#562 id=562 data-nosnippet>562</a>        density_cells: weighting.density_cells(),
 <a href=#563 id=563 data-nosnippet>563</a>        casa_cube_density_padding: weighting.casa_cube_density_padding(),
 <a href=#564 id=564 data-nosnippet>564</a>        uv_taper: weighting.uv_taper(),
