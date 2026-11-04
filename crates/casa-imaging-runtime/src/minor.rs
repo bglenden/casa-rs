@@ -581,18 +581,19 @@ pub fn run_minor_cycle(
             }
         }
         // A partially blank channel is one joint solve, and has one row.
-        // Channels whose every polarization is blank keep the blank rows.
+        // A channel whose every polarization is blank reports one row.
         blank.retain(|(key, _)| {
-            !(0..n_pol).any(|polarization| {
-                holds_data(
-                    normal,
-                    false,
-                    PlaneKey {
-                        polarization,
-                        ..*key
-                    },
-                )
-            })
+            key.polarization == 0
+                && !(0..n_pol).any(|polarization| {
+                    holds_data(
+                        normal,
+                        false,
+                        PlaneKey {
+                            polarization,
+                            ..*key
+                        },
+                    )
+                })
         });
         team.for_each_mut(&mut groups, |_, group| {
             let summary = cache

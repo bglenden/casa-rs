@@ -690,6 +690,9 @@ fn an_empty_channel_does_not_split_another_channels_clark_polarizations() {
         1,
     );
     assert_eq!(outcome.summary.iterations, 1);
+    assert_eq!(outcome.summary.planes.len(), 2, "one row per channel");
+    assert_eq!(outcome.summary.planes[1].channel, 1);
+    assert_eq!(outcome.summary.planes[1].polarization, 0);
     assert_eq!(outcome.summary.trace.len(), 2);
     assert!(
         outcome
