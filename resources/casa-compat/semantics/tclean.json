@@ -1058,7 +1058,8 @@
       "evidence": [
         "signature",
         "reader",
-        "psf-off-centre-20261104"
+        "psf-off-centre-20261104",
+        "psf-off-centre-1130-20261104"
       ],
       "behaviors": [
         "deconvolution"
@@ -2051,6 +2052,21 @@
         "resources/casa-compat/evidence/tclean-model-column-bands-20261104.json",
         "tools/casa-compat/tclean_model_column_compare.py",
         "crates/casa-imaging-application/src/imaging/observation_source/write.rs"
+      ]
+    },
+    "psf-off-centre-1130-20261104": {
+      "kind": "CASA off-centre PSF minor-cycle cases against casa-rs, with a T0 law",
+      "state": "measured: 10 of 12 cases pass; one near-tie and one documented CASA bug",
+      "source_revision": "80c1b8091fa16545eaa7b97ffac3882ca05192e0",
+      "revision": "4359654c25a918333ddf1f7fe9c9710af388594a",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-psf-off-centre-cases.json --backend cpu --precision f64",
+      "receipt": "resources/casa-compat/evidence/tclean-psf-off-centre-1130-20261104.json",
+      "scope": "An off-centre plane takes its domain’s largest beam in the minor cycle; Clark and low automask agree. Hogbom at gain 0.2 differs through a near-tie and multiscale through a documented CASA bug. Sub-cubes can choose a different domain beam; the fit-failure fallback remains open in issue 1140.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-psf-off-centre-1130-20261104.json",
+        "resources/casa-compat/tclean-psf-off-centre-cases.json",
+        "crates/casa-imaging-runtime/src/minor/beams.rs"
       ]
     },
     "density-channels-20261104": {

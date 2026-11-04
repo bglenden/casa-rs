@@ -209,6 +209,61 @@ fn a_negative_residual_publishes_its_peak_magnitude() {
     assert!((outcome.summary.trace[0].flux + 0.1).abs() < 1e-6);
 }
 
+/// A plane whose PSF peaks off its centre has no beam of its own, and CASA
+/// gives it its domain's largest (`SIImageStore::makeImageBeamSet`), which
+/// sizes Clark's patch (`SDAlgorithmClarkClean2`, #1130). Here channel 0's PSF
+/// peaks off-centre, and channel 1's beam is the narrower and channel 2's the
+/// wider of two fitted ones: channel 0 takes channel 2's beam and patch, with
+/// its own sidelobe, measured off its own PSF. A pixel-wide beam would give it
+/// a patch of 13 pixels where channel 2's is about 60.
+#[test]
+fn an_off_centre_plane_takes_its_domains_largest_beam_and_clarks_patch() {
+    const WIDTH: usize = 128;
+    let problem = problem(
+        WIDTH,
+        ReconstructionBasis::ChannelLocal { channels: 3 },
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem);
+    let cells = WIDTH * WIDTH;
+    let cell = |x: usize, y: usize| x * WIDTH + y;
+    let completion = completion(&problem, &scene, |images| {
+        let psf = images.psf.as_mut().expect("the initial pass's PSF");
+        psf.fill(0.0);
+        psf[cell(10, 100)] = 1.0;
+        psf[cell(64, 64)] = 0.99;
+        for (plane, sigma) in [(1, 4.0), (2, 8.0)] {
+            for x in 0..WIDTH {
+                for y in 0..WIDTH {
+                    let (dx, dy) = (x as f64 - 64.0, y as f64 - 64.0);
+                    let value = (-(dx * dx + dy * dy) / (2.0_f64 * sigma * sigma)).exp();
+                    psf[plane * cells + cell(x, y)] = value as f32;
+                }
+            }
+        }
+        images.residual.fill(0.0);
+        images.residual[cell(40, 40)] = 1.0;
+    });
+    let team = WorkerTeam::new(1).expect("team");
+    let mut cache = PsfCache::default();
+    prepare_minor_cycle(
+        &completion,
+        &full_plane(&problem),
+        &setup(&problem, None),
+        &mut cache,
+        &team,
+    )
+    .expect("prepare");
+    let summary = |channel| cache.summary(0, channel, 0).expect("a measured plane");
+    let (off, narrow, wide) = (summary(0), summary(1), summary(2));
+    assert!(off.off_centre() && !narrow.off_centre() && !wide.off_centre());
+    assert!(narrow.clark().size[0] < wide.clark().size[0]);
+    assert_eq!(off.beam(), wide.beam());
+    assert_eq!(off.clark().size, wide.clark().size);
+    assert!(off.sidelobe() >= 1.0, "{}", off.sidelobe());
+    assert!(off.clark().exterior_sidelobe >= 1.0);
+}
+
 /// A multi-term component records each Taylor coefficient's flux, and the
 /// absolute flux sums them: `[1, −0.5]` at gain 0.1 is `[0.1, −0.05]`, 0.15.
 #[test]
