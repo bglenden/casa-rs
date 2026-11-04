@@ -588,12 +588,14 @@ fn read_selection(
     if read.density_only {
         selection = selection.with_density_only();
     }
-    if let Some(channels) = &read.density_channels {
-        selection = selection.with_density_channels(
-            channels
+    if let Some(density) = &read.density {
+        selection = selection.with_density_read(
+            density
+                .channels
                 .iter()
                 .map(|channel| u32::try_from(*channel).expect("a CHAN_FREQ index fits u32"))
                 .collect(),
+            density.bands.clone(),
         );
     }
     selection

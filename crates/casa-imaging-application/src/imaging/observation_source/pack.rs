@@ -261,9 +261,15 @@ impl Packer<'_> {
         let per_time = batch.samples_per_time();
         let origin = MjdHighPrec::new(0.0, 0.0);
         let uvw = batch.group.uvw.ok_or("the batch carries no UVW")?;
-        // An imaging pass reads a time's channels as CASA's frequency
-        // selection does; the density pass reads every selected channel.
-        let bands = partition.frequency_bands.as_ref().filter(|_| values);
+        // A pass reads a time's channels as CASA's frequency selection does:
+        // tuned to the image for one that images, and for a density over the
+        // whole selection its untuned bands. A density per plane reads every
+        // selected channel.
+        let bands = if values {
+            partition.frequency_bands.as_ref()
+        } else {
+            partition.density_bands.as_ref()
+        };
         scratch.in_band_by_time.clear();
         if keep_in_band && bands.is_some() {
             let cells = batch.samples() / per_time * layout.channels.len();

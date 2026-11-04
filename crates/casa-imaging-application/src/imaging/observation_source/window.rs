@@ -102,6 +102,9 @@ pub(super) fn wave_window(
 /// Runs of `channels`, as ordinals of it, each holding no more channels than
 /// `selected` and spanning no more native channels than `selected` does.
 pub(super) fn density_runs(channels: &[u32], selected: &[u32]) -> Vec<Range<usize>> {
+    if channels.is_empty() {
+        return Vec::new();
+    }
     let (first, last) = (selected[0], selected[selected.len() - 1]);
     let (count, span) = (selected.len(), last - first);
     let mut runs = Vec::new();

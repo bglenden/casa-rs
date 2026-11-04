@@ -1,10 +1,13 @@
 {
  "source": {
-  "purpose": "tclean cubes on part of a window with a density over the whole selection (issue 1137). The format is tools/casa-compat/tclean_case_matrix.py's."
+  "purpose": "tclean cubes with a density over the whole selection (issue 1137), on part of a window, with a stride, over two MeasurementSets, and where a time's channels move with its Doppler shift. drift.ms is the T1 fixture of crates/casars-imager/tests/t1/cube.rs's model_written_over_a_drift, saved: Setup::vla_q_band(40), channels of 2 kHz, MEAS_FREQ_REF TOPO. The format is tools/casa-compat/tclean_case_matrix.py's."
  },
  "common": {},
  "inputs": {
-  "refim_point.ms": "unittest/tclean/refim_point.ms"
+  "refim_point.ms": "unittest/tclean/refim_point.ms",
+  "drift.ms": "casa-rs-fixtures/drift.ms",
+  "refim_point_onespw0.ms": "unittest/tclean/refim_point_onespw0.ms",
+  "refim_point_onespw1.ms": "unittest/tclean/refim_point_onespw1.ms"
  },
  "cases": {
   "uniform-lsrk-part": {
@@ -295,6 +298,268 @@
     "start": 0
    },
    "note": "issue 1137: per-channel density, a control",
+   "skip_scalars": false
+  },
+  "stride-uniform": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0:0~10^2",
+    "weighting": "uniform",
+    "nchan": 11,
+    "outframe": "LSRK",
+    "start": 0
+   },
+   "note": "issue 1137: a range with a stride counts whole",
+   "skip_scalars": false
+  },
+  "stride-briggs": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0:0~10^2",
+    "weighting": "briggs",
+    "robust": 0.5,
+    "nchan": 11,
+    "outframe": "LSRK",
+    "start": 0
+   },
+   "note": "issue 1137: a range with a stride, Briggs",
+   "skip_scalars": false
+  },
+  "stride-cubedata": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cubedata",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0:0~10^2",
+    "weighting": "uniform",
+    "nchan": 5,
+    "start": 0
+   },
+   "note": "issue 1137: a range with a stride, cubedata",
+   "skip_scalars": false
+  },
+  "two-ms-uniform": {
+   "vis": [
+    "refim_point_onespw0.ms",
+    "refim_point_onespw1.ms"
+   ],
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "uniform",
+    "nchan": 5,
+    "outframe": "LSRK",
+    "start": 0
+   },
+   "note": "issue 1137: two MeasurementSets",
+   "skip_scalars": false
+  },
+  "two-ms-named": {
+   "vis": [
+    "refim_point_onespw0.ms",
+    "refim_point_onespw1.ms"
+   ],
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": [
+     "0",
+     "0:2~7"
+    ],
+    "weighting": "uniform",
+    "nchan": 5,
+    "outframe": "LSRK",
+    "start": 0
+   },
+   "note": "issue 1137: two MeasurementSets, one naming channels",
+   "skip_scalars": false
+  },
+  "cubedata-uniform": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cubedata",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "uniform",
+    "nchan": 5,
+    "start": 0
+   },
+   "note": "issue 1137: cubedata",
+   "skip_scalars": false
+  },
+  "drift-named-whole": {
+   "vis": "drift.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 128,
+    "cell": "0.012arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0:5~34",
+    "weighting": "uniform",
+    "start": 5,
+    "nchan": 30
+   },
+   "note": "issue 1137: a drifting time's channels, the axis on the named range",
+   "skip_scalars": false
+  },
+  "drift-named-part": {
+   "vis": "drift.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 128,
+    "cell": "0.012arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0:5~34",
+    "weighting": "uniform",
+    "start": 5,
+    "nchan": 4
+   },
+   "note": "issue 1137: a drifting time's channels, a part of the named range",
+   "skip_scalars": false
+  },
+  "drift-few-whole": {
+   "vis": "drift.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 128,
+    "cell": "0.012arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0:18~21",
+    "weighting": "uniform",
+    "start": 18,
+    "nchan": 4
+   },
+   "note": "issue 1137: a drifting time's channels, a short range",
+   "skip_scalars": false
+  },
+  "drift-few-superuniform": {
+   "vis": "drift.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 128,
+    "cell": "0.012arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": true,
+    "spw": "0:18~21",
+    "weighting": "superuniform",
+    "start": 18,
+    "nchan": 4
+   },
+   "note": "issue 1137: superuniform on a short range",
+   "skip_scalars": false
+  },
+  "drift-few-briggs": {
+   "vis": "drift.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 128,
+    "cell": "0.012arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0:18~21",
+    "weighting": "briggs",
+    "robust": 0.5,
+    "start": 18,
+    "nchan": 4
+   },
+   "note": "issue 1137: Briggs on a short range",
+   "skip_scalars": false
+  },
+  "drift-whole-window": {
+   "vis": "drift.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 128,
+    "cell": "0.012arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "uniform",
+    "start": 0,
+    "nchan": 40
+   },
+   "note": "issue 1137: the whole window",
+   "skip_scalars": false
+  },
+  "drift-cubedata": {
+   "vis": "drift.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 128,
+    "cell": "0.012arcsec",
+    "specmode": "cubedata",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0:5~34",
+    "weighting": "uniform",
+    "start": 5,
+    "nchan": 4
+   },
+   "note": "issue 1137: cubedata",
    "skip_scalars": false
   }
  }

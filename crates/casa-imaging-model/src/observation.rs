@@ -592,6 +592,7 @@ pub struct SpectralWindowSelection {
     frequency_bands: Option<FrequencyBands>,
     density_only: bool,
     density_channels: Option<Vec<u32>>,
+    density_bands: Option<FrequencyBands>,
 }
 
 // Construction rejects every non-finite factor, so IEEE equality is
@@ -610,6 +611,7 @@ impl SpectralWindowSelection {
             frequency_bands: None,
             density_only: false,
             density_channels: None,
+            density_bands: None,
         }
     }
 
@@ -645,19 +647,27 @@ impl SpectralWindowSelection {
         self.density_only
     }
 
-    /// Bind the channels a density over the whole selection counts, ascending,
-    /// where they aren't the selected ones: what `spw` names, of a window the
-    /// image's axis reaches only part of.
+    /// Bind what a density over the whole selection counts, where that isn't
+    /// every selected channel at every time: `channels`, ascending, are those
+    /// some time reads, whatever the image's axis reaches, and `bands` select
+    /// them at each time, unless every time reads them all.
     #[must_use]
-    pub fn with_density_channels(mut self, channels: Vec<u32>) -> Self {
+    pub fn with_density_read(mut self, channels: Vec<u32>, bands: Option<FrequencyBands>) -> Self {
         self.density_channels = Some(channels);
+        self.density_bands = bands;
         self
     }
 
-    /// The channels [`Self::with_density_channels`] bound, if any.
+    /// The channels [`Self::with_density_read`] bound, if any.
     #[must_use]
     pub fn density_channels(&self) -> Option<&[u32]> {
         self.density_channels.as_deref()
+    }
+
+    /// The bands [`Self::with_density_read`] bound, if any.
+    #[must_use]
+    pub const fn density_bands(&self) -> Option<&FrequencyBands> {
+        self.density_bands.as_ref()
     }
 
     /// Bind the factor that takes the window's frequencies to LSRK at the

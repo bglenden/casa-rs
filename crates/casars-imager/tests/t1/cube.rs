@@ -884,8 +884,8 @@ fn a_cube_reads_at_each_time_the_channels_its_band_selects_then() {
 /// on `refim_point.ms` gives a uniform cube of 5 of its 20 channels the same
 /// sums of weights as those planes of a cube of all 20, where counting only
 /// the channels reached gave 61.3 against 26.4. So do these, of a window
-/// read whole and of what `spw` names, and an image of `perchanweightdensity`
-/// doesn't depend on channels it doesn't reach either way.
+/// read whole and of what `spw` names, and a range with a stride counts
+/// whole, as CASA gives `0:0~10^2` the sums of `0:0~10`.
 #[test]
 fn a_whole_selection_density_counts_channels_the_axis_misses() {
     let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
@@ -929,6 +929,15 @@ fn a_whole_selection_density_counts_channels_the_axis_misses() {
         json!({ "spw": "0:2~13", "start": 4, "width": 1, "nchan": 4 }),
     );
     assert_close(&named_part, &named[2..6], "a part of what spw names");
+    let strided = sumwt(
+        "strided",
+        json!({ "spw": "0:0~10^2", "start": 0, "width": 1, "nchan": 11 }),
+    );
+    let contiguous = sumwt(
+        "contiguous",
+        json!({ "spw": "0:0~10", "start": 0, "width": 1, "nchan": 11 }),
+    );
+    assert_close(&strided, &contiguous, "a range with a stride");
 }
 
 /// Over a track where the LSRK drift is several channels wide, the rows in

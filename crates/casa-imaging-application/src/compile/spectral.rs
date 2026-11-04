@@ -90,10 +90,20 @@ pub(super) struct WindowRead {
     /// write them, if the source's test over its rows agrees that no channel
     /// reaches the axis.
     pub(super) density_only: bool,
-    /// The channels the density counts where they aren't the selected ones:
-    /// a density over the whole selection counts what `spw` names, whatever
-    /// the axis reaches.
-    pub(super) density_channels: Option<Vec<usize>>,
+    /// What a density over the whole selection counts, where that isn't
+    /// every selected channel at every time: it reads what the untuned bands
+    /// select, whatever the axis reaches ([`whole_selection_density`]).
+    pub(super) density: Option<WindowDensity>,
+}
+
+/// What a density over the whole selection counts of a window.
+#[derive(Clone, Debug)]
+pub(super) struct WindowDensity {
+    /// The channels some time reads, ascending.
+    pub(super) channels: Vec<usize>,
+    /// The bands that select them at each time, unless every time reads them
+    /// all.
+    pub(super) bands: Option<FrequencyBands>,
 }
 
 /// How each window reads, by window number; a window absent reads every
@@ -569,6 +579,11 @@ fn store_reads(
     (image_band, tuned): (Option<[f64; 2]>, bool),
 ) -> Result<StoreReads, PrepareError> {
     let bands = cube_bands(request, (catalogue, engine), survey, image_band)?;
+    let density_bands = if whole_selection_density(request) {
+        cube_bands(request, (catalogue, engine), survey, None)?
+    } else {
+        None
+    };
     let mut reads = StoreReads {
         channels: WindowChannels::new(),
         windows: WindowReads::new(),
@@ -611,28 +626,51 @@ fn store_reads(
                 reads.windows.entry(window.spw_id).or_default().bands = Some(window_bands.clone());
             }
         }
-        if whole_selection_density(request) {
-            let named = explicit
-                .cloned()
-                .unwrap_or_else(|| (0..window.frequencies_hz.len()).collect());
-            if named != channels {
-                reads
-                    .windows
-                    .entry(window.spw_id)
-                    .or_default()
-                    .density_channels = Some(named);
-            }
+        if let Some(density) = &density_bands
+            && let Some(read) =
+                window_density((catalogue, engine), survey, window, density, &channels)?
+        {
+            reads.windows.entry(window.spw_id).or_default().density = Some(read);
         }
         reads.channels.insert(window.spw_id, channels);
     }
     Ok(reads)
 }
 
+/// What a density over the whole selection counts of `window`, where that
+/// isn't simply `channels`: the channels `bands`, untuned, select at some
+/// time, so a range with a stride whole and a time's channels moving with its
+/// Doppler shift; None for a window without bands.
+fn window_density(
+    (catalogue, engine): (&Catalogue, &MsCalEngine),
+    survey: &Survey,
+    window: &SourceSpectralWindow,
+    bands: &frequency_bands::CubeBands,
+    channels: &[usize],
+) -> Result<Option<WindowDensity>, PrepareError> {
+    let Some(selection) = bands.epoch_selection((catalogue, engine), survey, window)? else {
+        return Ok(None);
+    };
+    let read = (0..window.frequencies_hz.len())
+        .filter(|channel| selection.ever(*channel))
+        .collect::<Vec<_>>();
+    let by_time = (!read.iter().all(|channel| selection.always(*channel)))
+        .then(|| bands.frequency_bands(window.spw_id).cloned())
+        .flatten();
+    Ok(
+        (read != channels || by_time.is_some()).then_some(WindowDensity {
+            channels: read,
+            bands: by_time,
+        }),
+    )
+}
+
 /// Whether a cube's weights divide by one density over the whole selection:
 /// `SynthesisImagerVi2::weight` forms `VisImagingWeight` on the parent
-/// imager's iterator, which reads what `spw` names whatever the axis reaches,
-/// unless `perchanweightdensity` asks for a density per output channel.
-/// `fitspw`, which CASA's tclean lacks, keeps its named channels.
+/// imager's iterator before it tunes the selection, which at each time reads
+/// what the bands of `spw` select whatever the axis reaches, unless
+/// `perchanweightdensity` asks for a density per output channel. `fitspw`,
+/// which CASA's tclean lacks, keeps its named channels.
 fn whole_selection_density(request: &ImagingRequest) -> bool {
     request.fitspw.is_none()
         && request.weighting.uses_density()
