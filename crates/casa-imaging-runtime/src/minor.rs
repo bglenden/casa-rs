@@ -39,6 +39,7 @@ use casa_imaging_products::{
 use crate::pass::WorkerTeam;
 use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit};
 
+mod beams;
 mod layout;
 mod pixels;
 mod rows;
@@ -144,6 +145,21 @@ pub struct PsfCache {
 }
 
 impl PsfCache {
+    /// The measurements of a plane, once measured.
+    #[must_use]
+    pub fn summary(
+        &self,
+        domain: usize,
+        channel: usize,
+        polarization: usize,
+    ) -> Option<&PsfSummary> {
+        self.summaries.get(&PlaneKey {
+            domain,
+            channel,
+            polarization,
+        })
+    }
+
     /// Heap bytes the cached Clark refresh holds, which outlives each minor
     /// cycle ([`LinearRefresh::bytes`]); zero when none is cached.
     #[must_use]
@@ -451,6 +467,11 @@ pub fn prepare_minor_cycle(
         planes.push((key, statistics));
         retained = retained.or(kept);
     }
+    // Only Clark's patch reads the settled beam here: an automatic mask's run
+    // settled it above.
+    if matches!(setup.algorithm, ReconstructionAlgorithm::Clark) {
+        beams::settle_off_centre(normal, taylor, cache)?;
+    }
     // Each image domain is one CASA image store.
     let mut statistics = ResidualStatistics::empty();
     let domains = planes
@@ -731,7 +752,7 @@ fn measure_psfs(
             cache.summaries.insert(key, summary);
         }
     }
-    Ok(())
+    beams::settle_off_centre(normal, taylor, cache)
 }
 
 /// Whether the plane `key` holds data: a valid channel, or a valid Taylor

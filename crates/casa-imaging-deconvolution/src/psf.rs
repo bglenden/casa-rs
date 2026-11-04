@@ -16,6 +16,7 @@ pub struct PsfSummary {
     beam: RestoringBeam,
     sidelobe: f64,
     clark: ClarkPatch,
+    off_centre: bool,
 }
 
 /// Clark's PSF patch (`SDAlgorithmClarkClean2`): the square the active
@@ -52,11 +53,12 @@ impl PsfSummary {
         let single = psf.iter().map(|value| *value as f32).collect::<Vec<_>>();
         let axes = [shape.nx, shape.ny];
         // A plane peaking away from its centre has no beam of its own in CASA,
-        // which takes another plane's and subtracts a Gaussian at the centre,
-        // far from that peak, which so stays the sidelobe. Its beam here serves
-        // the Clark patch and the automatic mask's smoothing, at a pixel: nothing
-        // here knows the other planes (#1130).
-        let (beam, sidelobe) = if peak_outside_inner_quarter(&single, axes)? {
+        // which takes its domain's largest and subtracts a Gaussian at the
+        // centre, far from that peak, which so stays the sidelobe. Its beam
+        // here is a pixel until the run knows the other planes
+        // ([`Self::with_domain_beam`]).
+        let off_centre = peak_outside_inner_quarter(&single, axes)?;
+        let (beam, sidelobe) = if off_centre {
             let level = psf
                 .iter()
                 .fold(0.0_f64, |level, value| level.max(value.abs()));
@@ -71,7 +73,28 @@ impl PsfSummary {
             beam,
             sidelobe,
             clark: ClarkPatch::new(psf, shape, beam),
+            off_centre,
         })
+    }
+
+    /// Whether the plane's PSF peaks outside its inner quarter, so it has no
+    /// beam of its own (`SIImageStore::makeImageBeamSet`).
+    #[must_use]
+    pub const fn off_centre(&self) -> bool {
+        self.off_centre
+    }
+
+    /// This summary of the normalised PSF `psf` with its domain's largest
+    /// beam, and Clark's patch for it, as CASA gives a plane with none of its
+    /// own (`SDAlgorithmClarkClean2` reads the patch from the beam set). The
+    /// sidelobe stays as measured.
+    #[must_use]
+    pub fn with_domain_beam(self, psf: &[f64], shape: PlaneShape, beam: RestoringBeam) -> Self {
+        Self {
+            beam,
+            clark: ClarkPatch::new(psf, shape, beam),
+            ..self
+        }
     }
 
     /// Storage index of the PSF peak.

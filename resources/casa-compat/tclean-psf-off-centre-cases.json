@@ -142,7 +142,58 @@
     "deconvolver": "mtmfs",
     "nterms": 1
    },
-   "note": "A Taylor family refused"
+   "note": "A Taylor family over the same selection, whose PSF is healthy: CASA logs its peak at the centre, so this refuses nothing"
+  },
+  "off_centre_automask": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.17,
+    "stokes": "I",
+    "specmode": "cube",
+    "nchan": 2,
+    "niter": 50,
+    "deconvolver": "hogbom",
+    "usemask": "auto-multithresh"
+   },
+   "note": "The automatic mask's common beam (issue 1130)"
+  },
+  "off_centre_automask_low": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.17,
+    "stokes": "I",
+    "specmode": "cube",
+    "nchan": 2,
+    "niter": 50,
+    "deconvolver": "hogbom",
+    "usemask": "auto-multithresh",
+    "sidelobethreshold": 0.5,
+    "noisethreshold": 1.0,
+    "lownoisethreshold": 0.5,
+    "minbeamfrac": 0.1
+   },
+   "note": "The automatic mask's common beam, with thresholds that leave a mask (issue 1130)"
+  },
+  "off_centre_clark_three": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.17,
+    "stokes": "I",
+    "specmode": "cube",
+    "nchan": 3,
+    "niter": 20,
+    "deconvolver": "clark"
+   },
+   "note": "Clark over three channels, whose fitted beams differ: channel 0 takes the larger (issue 1130)"
   }
  }
 }

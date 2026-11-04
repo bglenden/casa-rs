@@ -32,6 +32,8 @@ CASA behaviours casa-rs does not follow:
 [a tuned cube's frequency selection](#a-tuned-cube-selection-compares-outframe-frequencies-with-lsrk-ones),
 [a cube's fine frequency grid at a whole ratio](#a-cubes-fine-frequency-grid-lets-rounding-choose-one-or-two-samples-per-plane),
 [the `.gridwt` a cube leaves](#a-cube-without-a-per-channel-density-leaves-imagenamegridwt-behind),
+[multiscale on an off-centre PSF](#multiscale-misplaces-a-component-on-a-plane-whose-psf-peaks-off-centre),
+[a cube's beam for a plane without one](#a-cubes-beam-for-a-plane-without-one-depends-on-how-memory-splits-the-cube),
 [`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
 [`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0),
 [`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process),
@@ -3662,6 +3664,68 @@ mask, where a fresh call and a restart of a cube of several channels have
 5e-5 NRMS. `aw_restart_one_window` in
 `resources/casa-compat/tclean-aw-cube-cases.json` shows it and fails on the
 mask alone.
+
+## A cube's beam for a plane without one depends on how memory splits the cube
+
+- Date noted: 2026-11-04
+- Status: CASA behaviour; casa-rs does not follow it (#1130)
+- Affected code: `CubeMajorCycleAlgorithm.cc` (`dividePSFByWeight`, `makeImageBeamSet`
+  per chunk)
+
+A blank plane, or one whose PSF peaks off-centre, takes the largest beam of the
+image store that `makeImageBeamSet` runs on. In a cube each chunk runs it on its own
+sub-store, and the number of chunks follows the memory available. Forcing two
+sub-cubes through `system.resources.memory`, on `refim_point_linRL.ms` at 4 channels:
+
+| Run | Blank channel 3's beam | The store's largest |
+|---|---|---|
+| 1 sub-cube | 130.47" | 130.47" |
+| 2 sub-cubes | 98.12" | 130.47" |
+
+With 2 sub-cubes channel 0 also stops being off-centre, peaking at the centre with
+a beam of 196.38". So a large cube's beams and Clark patches can depend on the
+machine. casa-rs takes the largest of the whole image domain, which is CASA's answer
+for one sub-cube, and doesn't depend on the machine.
+
+## Multiscale misplaces a component on a plane whose PSF peaks off-centre
+
+- Date noted: 2026-11-04
+- Status: CASA bug; casa-rs does not follow it (#1130)
+- Affected code: `MatrixCleaner::clean`, `MatrixCleaner.cc` (`modelSub`, `scaleSub`)
+
+`MatrixCleaner` updates the model and the residual through a pair of boxes, one
+about the position it found and one about the PSF's peak (`blcPsf = blc +
+itsPositionPeakPsf - positionOptimum`). It reads the model's update from the scale
+image through the second box, though the scale's delta sits at the image's centre.
+`LCBox::verify` clips the two boxes separately and `makeBoxesSameSize` trims them
+to one size, which needn't keep them paired.
+
+So a component is exact only when the PSF peaks at `nx/2, ny/2`. Otherwise the
+model takes it at about `position + centre - psf_peak`, and where a box clips, the
+PSF is subtracted away from the position too, and a scale-0 component can miss the
+model altogether. This applies to any `itsPositionPeakPsf` off the centre, which
+`findPSFMaxAbs` looks for only in the central box, and not just to a plane the beam
+fit calls off-centre (outside the inner quarter).
+
+`refim_point_linRL.ms`, `stokes='I', specmode='cube', nchan=2, imsize=100,
+cell='8.0arcsec', gain=0.17, niter=20, deconvolver='multiscale', scales=[0,3]`.
+Channel 0's PSF peaks at (87,36), with 0.99982 at the centre, and CASA logs that
+peak. A component found there lands at (50,50), where the first one appears in
+`.model`. Later ones are further off: after 20 iterations CASA's channel 0 model
+holds negative components such as (20,61) at -0.527, and its peak stays at 0.843.
+
+| Channel 0 | CASA 6.7.6.14 | casa-rs |
+|---|---|---|
+| First component in `.model` | (50,50) | (87,36) |
+| Iterations in the first cycle | 20 | 6 |
+| Peak after that cycle | 0.843 | 0.733 |
+
+`off_centre_multiscale` in `tclean-psf-off-centre-cases.json` differs for this
+reason, by 1.2 NRMS on `.model`. casa-rs stores a component where it subtracted it,
+at its position. A plane whose PSF peaks at its centre is unchanged. Hogbom and
+Clark place a component at its position, and `MultiTermMatrixCleaner` cuts its
+scales at the image's centre, so a one-term mtmfs placed it correctly when tried
+(two terms weren't verified).
 
 ## A flat-noise cube predicts its start model without dividing it by the PB
 
