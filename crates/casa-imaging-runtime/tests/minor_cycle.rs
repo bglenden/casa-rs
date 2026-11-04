@@ -631,6 +631,7 @@ fn clark_solves_a_channels_polarizations_as_one_component() {
     );
     assert_eq!(outcome.summary.iterations, 1);
     assert_eq!(outcome.summary.planes.len(), 1);
+    assert_eq!(outcome.summary.planes[0].polarizations, 2);
     let trace = &outcome.summary.trace;
     assert_eq!(trace.len(), 2);
     assert_eq!(trace[0].cell.pixel(), [40, 40]);

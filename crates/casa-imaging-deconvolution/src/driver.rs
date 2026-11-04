@@ -32,8 +32,8 @@ pub struct PlaneOutcome {
     pub components: usize,
     /// Sum of the absolute component fluxes over every term.
     pub absolute_flux: f64,
-    /// Sum of the components' signed first-term fluxes: what the cycle adds
-    /// to the model's flux (CASA's `modelFlux`).
+    /// Signed model flux the solver reports (CASA's `modelFlux`): the first
+    /// Taylor term, or the sum of a joint polarization component.
     pub model_flux: f64,
     /// The peak residual on entry.
     pub start_peak: f64,

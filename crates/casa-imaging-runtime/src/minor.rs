@@ -265,8 +265,7 @@ pub struct MinorCycleSummary {
     pub components: usize,
     /// Sum of the absolute component fluxes over every term.
     pub absolute_flux: f64,
-    /// Sum of the components' signed first-term fluxes over every plane:
-    /// what the cycle adds to the model's flux.
+    /// Sum of the components' signed model fluxes over every solve.
     pub model_flux: f64,
     /// Largest peak residual on entry.
     pub start_peak: f64,
@@ -664,22 +663,18 @@ pub fn run_minor_cycle(
         }
         summary.stops.push(outcome.stop);
         summary.refreshes += outcome.refreshes;
-        summary.planes.push(rows::cycle_row(
-            key,
-            &statistics,
-            outcome,
-            solved.peak_no_mask,
-            controls,
-        ));
+        let mut row = rows::cycle_row(key, &statistics, outcome, solved.peak_no_mask, controls);
+        row.polarizations = if joint { n_pol } else { 1 };
+        summary.planes.push(row);
         let room = TRACE - summary.trace.len();
         summary.trace.extend(solved.trace.into_iter().take(room));
         terms.extend(solved.terms);
     }
-    summary.planes.extend(
-        blank
-            .iter()
-            .map(|(key, statistics)| rows::blank_row(*key, statistics, controls)),
-    );
+    summary.planes.extend(blank.iter().map(|(key, statistics)| {
+        let mut row = rows::blank_row(*key, statistics, controls);
+        row.polarizations = if joint { n_pol } else { 1 };
+        row
+    }));
     summary
         .planes
         .sort_unstable_by_key(|row| (row.domain, row.channel, row.polarization));

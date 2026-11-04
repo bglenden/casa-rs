@@ -203,7 +203,9 @@ fn summary_minor(run: &ImagerRunReport, rows: &PlaneRows, fullsummary: bool) -> 
             }
             planes
                 .entry([row.domain, row.channel, row.polarization])
-                .or_insert_with_key(|key| Rows::starting_from(start_flux(rows, *key)))
+                .or_insert_with_key(|key| {
+                    Rows::starting_from(start_flux(rows, *key, row.polarizations))
+                })
                 .push(row, cycle, done, field.1);
             done += row.iterations;
         }
@@ -216,10 +218,15 @@ fn summary_minor(run: &ImagerRunReport, rows: &PlaneRows, fullsummary: bool) -> 
 }
 
 /// The plane's start-model flux; zero when it has none.
-fn start_flux(rows: &PlaneRows, key: [usize; 3]) -> f64 {
-    rows.start_model_flux
-        .binary_search_by_key(&key, |(plane, _)| *plane)
-        .map_or(0.0, |index| rows.start_model_flux[index].1)
+fn start_flux(rows: &PlaneRows, key: [usize; 3], polarizations: usize) -> f64 {
+    (key[2]..key[2] + polarizations)
+        .map(|polarization| {
+            let plane = [key[0], key[1], polarization];
+            rows.start_model_flux
+                .binary_search_by_key(&plane, |(key, _)| *key)
+                .map_or(0.0, |index| rows.start_model_flux[index].1)
+        })
+        .sum()
 }
 
 /// `planes`, sorted by `[field, channel, stokes]`, as nested dictionaries.
@@ -467,6 +474,7 @@ mod tests {
             domain: key[0],
             channel: key[1],
             polarization: key[2],
+            polarizations: 1,
             iterations,
             start_peak: 1.0,
             peak: 0.5,
@@ -525,6 +533,25 @@ mod tests {
         assert_eq!(row(&summary, [0, 0, 0], "modelFlux"), [3.5, 3.3]);
         assert_eq!(row(&summary, [0, 1, 0], "startModelFlux"), [0.0, 0.25]);
         assert_eq!(row(&summary, [0, 1, 0], "modelFlux"), [0.25, 0.25]);
+    }
+
+    /// A joint Clark row starts from all its polarizations' model flux,
+    /// including non-first polarization start models and restarts (#1140).
+    #[test]
+    fn joint_polarization_row_starts_from_the_whole_groups_model_flux() {
+        let mut run = report(Some(ImagerCleanStopReason::IterationLimitReached));
+        run.minor_cycles = vec![cycle(0), cycle(1)];
+        let mut first = plane_row([0, 0, 0], 1, 0.5);
+        first.polarizations = 2;
+        let mut second = plane_row([0, 0, 0], 1, -0.2);
+        second.polarizations = 2;
+        let rows = PlaneRows {
+            start_model_flux: vec![([0, 0, 0], 3.0), ([0, 0, 1], -1.0), ([0, 1, 0], 9.0)],
+            cycles: vec![vec![first], vec![second]],
+        };
+        let summary = summary_minor(&run, &rows, true);
+        assert_eq!(row(&summary, [0, 0, 0], "startModelFlux"), [2.0, 2.5]);
+        assert_eq!(row(&summary, [0, 0, 0], "modelFlux"), [2.5, 2.3]);
     }
 
     /// Planes run in sequence in CASA, so `startIterDone` counts the planes
