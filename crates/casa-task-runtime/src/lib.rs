@@ -6,6 +6,7 @@
 //! line, Python, and providers to resolve the same self-contained surface
 //! bundle.
 
+mod casa_type_diagnostics;
 mod cli;
 mod completion;
 mod diagnostic;
