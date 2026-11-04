@@ -281,16 +281,17 @@ where
         return Err(MaskError::ShapeMismatch.into());
     }
     let polarizations = planes.polarizations();
-    let psfs = (0..planes.channels())
-        .flat_map(|channel| {
-            (0..polarizations).map(move |polarization| MaskPlaneKey {
+    // The materialization charge covers exactly one entry per plane.
+    let mut psfs = Vec::with_capacity(planes.count());
+    for channel in 0..planes.channels() {
+        for polarization in 0..polarizations {
+            psfs.push((source.psf)(MaskPlaneKey {
                 domain,
                 channel,
                 polarization,
-            })
-        })
-        .map(source.psf)
-        .collect::<Vec<_>>();
+            }));
+        }
+    }
     let sidelobe = psfs
         .iter()
         .flatten()
@@ -372,17 +373,26 @@ where
 /// by the plane's, at least ten channels, or the whole cube when it has no
 /// more channels than that; the last block holds what remains.
 pub(super) fn channel_blocks(channels: usize, shape: [usize; 2]) -> Vec<Range<usize>> {
-    let optimum = ((8.0e6 / shape[0] as f64 / shape[1] as f64) as usize).max(10);
-    let size = if channels > optimum {
-        optimum
-    } else {
-        channels
-    }
-    .max(1);
+    let size = block_size(channels, shape);
     (0..channels)
         .step_by(size)
         .map(|start| start..(start + size).min(channels))
         .collect()
+}
+
+/// The largest block, in channels, CASA forms for an image of `shape`.
+fn block_size(channels: usize, shape: [usize; 2]) -> usize {
+    let optimum = ((8.0e6 / shape[0] as f64 / shape[1] as f64) as usize).max(10);
+    channels.min(optimum).max(1)
+}
+
+/// The peak three simultaneously held beam arrays for one channel block:
+/// fitted beams, their numerical forms and the common-beam working copy.
+pub(super) fn block_beam_bytes(channels: usize, polarizations: usize, shape: [usize; 2]) -> u64 {
+    let planes = channels.min(block_size(channels, shape)) * polarizations;
+    let blocks = channels.div_ceil(block_size(channels, shape));
+    (planes * (size_of::<RestoringBeam>() + 2 * size_of::<casa_numerics::EllipticalGaussian>())
+        + blocks * size_of::<Range<usize>>()) as u64
 }
 
 /// Plan each channel block's beam from the complete image domain's beam set.
@@ -430,18 +440,19 @@ fn block_beam(
     coordinate: DirectionCoordinateSpec,
 ) -> Result<Option<AutoMaskBeam>, MaskError> {
     let cell = coordinate.increment_rad()[0].abs();
-    let beams = psfs
-        .iter()
-        .filter_map(|summary| summary.map(|summary| summary.beam()).or(largest))
-        .map(|beam| {
-            RestoringBeam::new(
-                beam.major_fwhm_rad() * cell,
-                beam.minor_fwhm_rad() * cell,
-                beam.position_angle_rad(),
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| MaskError::InvalidBeamArea)?;
+    let mut beams = Vec::with_capacity(psfs.len());
+    for summary in psfs {
+        if let Some(beam) = summary.map(|summary| summary.beam()).or(largest) {
+            beams.push(
+                RestoringBeam::new(
+                    beam.major_fwhm_rad() * cell,
+                    beam.minor_fwhm_rad() * cell,
+                    beam.position_angle_rad(),
+                )
+                .map_err(|_| MaskError::InvalidBeamArea)?,
+            );
+        }
+    }
     if beams.is_empty() {
         return Ok(None);
     }
