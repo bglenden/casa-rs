@@ -98,6 +98,9 @@ pub(crate) struct Prepared {
     /// run, in the manifest's order.
     pub(crate) observation: OpenedObservation,
     pub(crate) write_model_column: bool,
+    /// Whether the model column's final write is CASA's `predictModel`
+    /// ([`ImagingRequest::predicts_final_model`]).
+    pub(crate) predicts_final_model: bool,
     pub(crate) write_corrected_data: bool,
     /// What saving the run's model as CASA's virtual model in each
     /// MeasurementSet needs, when `savemodel='virtual'`; empty otherwise.
@@ -303,6 +306,7 @@ pub(crate) fn prepare(
             phase_table,
         },
         write_model_column: request.savemodel == SaveModel::ModelColumn,
+        predicts_final_model: request.predicts_final_model(),
         write_corrected_data: request.save_continuum_residual,
         virtual_model,
         deployment,

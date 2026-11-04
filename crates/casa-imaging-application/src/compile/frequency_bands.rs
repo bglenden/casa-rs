@@ -33,7 +33,9 @@
 //! field through the run's geometry. A channel a time's bands miss is read
 //! as flagged: no sample of it, or interpolated from it, is imaged, but the
 //! density pass still counts it, as CASA's density reads the untuned
-//! selection.
+//! selection. A final pass on CASA's tuned selection leaves its
+//! `MODEL_DATA` as it is; `predictModel` writes it (`observation_source`'s
+//! write-back says which).
 //!
 //! casa-rs departs from CASA in two ways, both recorded in
 //! `docs/CASA (C++) bugs.md`: a tuned band is narrowed by the selection's

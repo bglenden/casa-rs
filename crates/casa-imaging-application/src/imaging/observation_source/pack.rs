@@ -157,6 +157,10 @@ pub(super) struct PackScratch {
     /// Whether the window's frequency bands select each channel at the time
     /// packed; empty when every channel is read.
     in_band: Vec<bool>,
+    /// What a write limited by the bands keeps of `in_band`,
+    /// `[time][channel]`, for the block's provenance, which takes it; empty
+    /// when every channel is written.
+    pub(super) in_band_by_time: Vec<bool>,
     /// Each routed product's place along the batch's correlations.
     routed: Vec<usize>,
     /// One sample's weight per delivered product, for weights stored per
@@ -231,7 +235,7 @@ impl Packer<'_> {
         ),
         geometry: &BatchGeometry,
         keep: &[bool],
-        values: bool,
+        (values, keep_in_band): (bool, bool),
         scratch: &mut PackScratch,
         out: &mut NativeBlock,
     ) -> Result<(), SourceError> {
@@ -261,6 +265,11 @@ impl Packer<'_> {
         // An imaging pass reads a time's channels as CASA's frequency
         // selection does; the density pass reads every selected channel.
         let bands = partition.frequency_bands.as_ref().filter(|_| values);
+        scratch.in_band_by_time.clear();
+        if keep_in_band && bands.is_some() {
+            let cells = batch.samples() / per_time * layout.channels.len();
+            scratch.in_band_by_time.resize(cells, false);
+        }
         let mut packed_time = None;
         for sample in (0..batch.samples()).filter(|sample| keep[*sample]) {
             let time = sample / per_time;
@@ -285,6 +294,11 @@ impl Packer<'_> {
                         &scratch.frequencies_hz,
                         &mut scratch.in_band,
                     );
+                    if keep_in_band {
+                        scratch.in_band_by_time[time * layout.channels.len()..]
+                            [..layout.channels.len()]
+                            .copy_from_slice(&scratch.in_band);
+                    }
                 }
                 packed_time = Some(time);
             }

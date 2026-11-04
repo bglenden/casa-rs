@@ -178,8 +178,10 @@ fn measure(request: &ImagingRequest, planes_per_wave: u32, memory: u64) -> (Sour
 /// Continuum and cube sources, a cube resident and in waves, a window of
 /// 101 channels whole and gapped (`0:0~1;100`, whose batches span every
 /// channel between), a mosaic that reads pointing, and the writing passes
-/// of a continuum and a gapped cube that save the model (the first
-/// creating and seeding `MODEL_DATA`), the continuum's again under a policy
+/// of a continuum, a gapped cube and a cube whose channels drift out of its
+/// band that save the model (the first creating and seeding `MODEL_DATA`,
+/// the last keeping which channels each time reads), the continuum's again
+/// under a policy
 /// that splits its times into several batches; and over lists of
 /// MeasurementSets, whose source keeps each store's plan, pointing cache
 /// and survey: a continuum over two stores of different windows, a mosaic
@@ -223,9 +225,31 @@ fn the_batch_source_holds_at_most_its_charge() {
         ("niter".to_string(), json!(10)),
     ]);
     let save = json!({ "savemodel": "modelcolumn", "niter": 10 });
+    // A TOPO cube of TOPO rows, whose edge channels drift out of its band:
+    // the writing pass keeps which channels each time reads.
+    use casa_types::measures::frequency::FrequencyRef;
+    let topo = observation(&directory("topo"), 16);
+    let mut ms = casa_ms::MeasurementSet::open(&topo).expect("the fixture");
+    ms.spectral_window_mut()
+        .expect("its windows")
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .expect("its frame");
+    ms.save().expect("the frame saved");
+    drop(ms);
+    let drift = json!({
+        "specmode": "cube",
+        "outframe": "TOPO",
+        "spw": "0",
+        "start": "0",
+        "width": "1",
+        "channel_count": 8,
+        "interpolation": "linear",
+        "savemodel": "modelcolumn",
+        "niter": 10,
+    });
     let ample = 4 << 30;
     let pointed_mosaic = json!({ "gridder": "mosaic", "usepointing": true });
-    let cases: [(&str, Vec<&Path>, Value, u32, u64); 12] = [
+    let cases: [(&str, Vec<&Path>, Value, u32, u64); 13] = [
         ("continuum", vec![&narrow], json!({}), 1, ample),
         ("cube resident", vec![&narrow], cube.clone(), 16, ample),
         ("cube in waves", vec![&narrow], cube, 3, ample),
@@ -256,6 +280,13 @@ fn the_batch_source_holds_at_most_its_charge() {
             vec![&wide],
             gapped_write,
             10,
+            ample,
+        ),
+        (
+            "cube saving the model of the channels its band selects",
+            vec![&topo],
+            drift,
+            8,
             ample,
         ),
         (

@@ -5,6 +5,7 @@
 //! a TOPO cube gridded through LSRK as CASA grids it.
 
 use casa_provider_contracts::{CasaKey, CasaValue, TaskReply};
+use casa_types::Complex32;
 use serde_json::json;
 
 use super::casa_return::json_run;
@@ -875,6 +876,112 @@ fn a_cube_reads_at_each_time_the_channels_its_band_selects_then() {
         (0.3 * samples..=0.7 * samples).contains(&edge),
         "the edge plane on the band's end keeps {edge} of {samples}"
     );
+}
+
+/// Over a track where the LSRK drift is several channels wide, the rows in
+/// which each of 40 channels holds a written model, in row order, which is
+/// time order: a cube on channels 5 to 34 with `controls` added.
+fn model_written_over_a_drift(label: &str, controls: serde_json::Value) -> Vec<Vec<bool>> {
+    use casa_ms::MeasurementSet;
+    use casa_types::measures::frequency::FrequencyRef;
+    const NAMED: usize = 30;
+    let mut setup = super::fixture::Setup::vla_q_band(NAMED + 10);
+    setup.spectral_windows[0].channel_width_hz = 2.0e3;
+    let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let mut values = json!({
+        "specmode": "cube", "spw": format!("0:5~{}", 4 + NAMED), "start": 5, "width": 1,
+        "nchan": NAMED, "niter": 5, "savemodel": "modelcolumn",
+    });
+    values
+        .as_object_mut()
+        .unwrap()
+        .extend(controls.as_object().unwrap().clone());
+    observation.image(label, values);
+    let initial = Complex32::new(1.0, 0.0);
+    let rows = super::vis_list::model_rows(observation.measurement_set());
+    (0..NAMED + 10)
+        .map(|channel| {
+            rows.iter()
+                .map(|row| {
+                    let cells = row.column(channel);
+                    let untouched = cells.iter().filter(|cell| **cell == initial).count();
+                    assert!(
+                        untouched == 0 || untouched == cells.len(),
+                        "channel {channel} is part written in a row"
+                    );
+                    untouched == 0
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The last major cycle writes a time's model only into the channels its
+/// band selects: CASA's iterator leaves the others out of the buffer it
+/// writes back, so their `MODEL_DATA` keeps its initial value of one. CASA
+/// 6.7.6.14 on `test_cube_1`'s cube leaves 336258 cells of the channel past
+/// the band's end, of 336960; a run that wrote every time's channels filled
+/// them all (#1081). Here a channel the band drifts across is written while
+/// the band covers it, so from one end of the track on one edge of the band
+/// and to the other end on the other; a channel inside the drift's reach is
+/// written at every time, and one beyond it at none.
+#[test]
+fn a_times_model_column_holds_only_the_channels_its_band_selects() {
+    let written = model_written_over_a_drift("drift", json!({}));
+    let count = |channel: &Vec<bool>| channel.iter().filter(|row| **row).count();
+    let all = written[0].len();
+    for channel in &written[5..=30] {
+        assert_eq!(count(channel), all);
+    }
+    for channel in &written[36..] {
+        assert_eq!(count(channel), 0);
+    }
+    // Written rows lie at one end of the track, whole integrations of them.
+    let starts_written = |edge: &[Vec<bool>]| {
+        edge.iter()
+            .map(|channel| {
+                assert!((1..all).contains(&count(channel)));
+                let changes = channel.windows(2).filter(|pair| pair[0] != pair[1]);
+                assert_eq!(changes.count(), 1, "more than one run of written rows");
+                channel[0]
+            })
+            .collect::<Vec<_>>()
+    };
+    let (low, high) = (
+        starts_written(&written[0..=4]),
+        starts_written(&written[31..=35]),
+    );
+    assert!(low.iter().all(|first| *first == low[0]));
+    assert!(
+        high.iter().all(|first| *first != low[0]),
+        "{low:?} {high:?}"
+    );
+}
+
+/// tclean's final write after a run with `nsigma` or an automatic mask is
+/// `predictModel`, on the parent imager's selection, which is not tuned, so
+/// every time takes every channel it reads. CASA 6.7.6.14 on `test_cube_1`'s
+/// cube fills the channel past the band's end at every time under either.
+#[test]
+fn predicting_the_final_model_writes_every_time_of_a_channel_read() {
+    for (label, controls) in [
+        ("nsigma", json!({ "nsigma": 0.01 })),
+        ("auto", json!({ "usemask": "auto-multithresh" })),
+    ] {
+        let written = model_written_over_a_drift(label, controls);
+        let all = written[0].len();
+        for (channel, rows) in written.iter().enumerate().take(36) {
+            let count = rows.iter().filter(|row| **row).count();
+            assert_eq!(count, all, "{label}: channel {channel}");
+        }
+    }
 }
 
 /// Two adjacent Q-band windows of `channels` 128 MHz channels each, the

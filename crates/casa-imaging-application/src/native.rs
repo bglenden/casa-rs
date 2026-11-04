@@ -48,6 +48,9 @@ pub(crate) struct OpenedObservation {
 pub(crate) struct NativeInput {
     pub(crate) observation: OpenedObservation,
     pub(crate) write_model_column: bool,
+    /// Whether the model column's final write is CASA's `predictModel`, over
+    /// every time's channels ([`imaging::WriteBack::new`]).
+    pub(crate) predicts_final_model: bool,
     pub(crate) write_corrected_data: bool,
     /// Saving the final model as CASA's virtual model in each
     /// MeasurementSet, once the products are published.
@@ -152,11 +155,13 @@ pub(crate) struct NativeRun {
 /// geometry compiled, and the batches of every store admitted
 /// ([`imaging::admit_batches`]). A run that writes the model (`model_data`)
 /// or the corrected data (`corrected_data`) reads each store through the
-/// update session that writes them ([`imaging::WriteBack`]).
+/// update session that writes them ([`imaging::WriteBack`]);
+/// `predicts_final_model` says which channels of each time the model's
+/// write takes.
 pub(crate) fn batch_route(
     problem: &CompiledProblem,
     observation: OpenedObservation,
-    (model_data, corrected_data): (bool, bool),
+    (model_data, corrected_data, predicts_final_model): (bool, bool, bool),
     runtime: &ApplicationRuntime,
 ) -> Result<Admitted<imaging::BatchRoute>, NativeError> {
     let other = |error: Box<dyn std::error::Error + Send + Sync>| NativeError::Other(error);
@@ -208,8 +213,8 @@ pub(crate) fn batch_route(
         (&runtime.host, &runtime.resource_policy),
     )?;
     opening.join(reservation);
-    let write_back =
-        (model_data || corrected_data).then(|| imaging::WriteBack::new(model_data, corrected_data));
+    let write_back = (model_data || corrected_data)
+        .then(|| imaging::WriteBack::new(model_data, corrected_data, !predicts_final_model));
     let stores = routes
         .into_iter()
         .map(|(opened, selection, plan, pointing_budget)| {
@@ -261,7 +266,11 @@ pub(crate) fn prepare(
     } = batch_route(
         problem,
         input.observation,
-        (input.write_model_column, input.write_corrected_data),
+        (
+            input.write_model_column,
+            input.write_corrected_data,
+            input.predicts_final_model,
+        ),
         &runtime,
     )?;
     Ok(NativeRun {
