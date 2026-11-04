@@ -783,8 +783,8 @@
     "crates/casars-python/python/tests/test_simobserve_refusals.py"
    ],
    "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
-   "revision": "86cfd83f104fb6032e215aa5042c3aea59897ac2",
-   "source_revision": "86cfd83f104fb6032e215aa5042c3aea59897ac2",
+   "revision": "17c8206388b05beaf30c3c4ffadb4aedfa2c4e97",
+   "source_revision": "17c8206388b05beaf30c3c4ffadb4aedfa2c4e97",
    "command": "CASAPY tools/simulation/simobserve_casa_suite.py --test-file CASA6/casatasks/tests/tasks/test_task_simobserve.py --casatestdata LOCAL_COPY --casars-bin TARGET/release/simobserve --out OUT --only testBad_comp_nchan testBad_sdant test_noProject (bg-mac-mini)",
    "receipt": "resources/casa-compat/evidence/simobserve-refusals-1099-20261104.json"
   }

@@ -612,11 +612,11 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **CASA simobserve refusal comparisons — measured.** CASA's testBad_comp_nchan, testBad_sdant and test_noProject each pass with both CASA and casa-rs. The substring filter also selected testBad_sdantlist, which failed in both controls because no sky input was found; it is not counted as a comparison. A separate CASA probe records the seed type refusal, and the Python binding agrees. Integer type refusal messages and the empty project path; exception classes retain the #931 casa-rs decision.
 
-- [tools/simulation/simobserve_casa_suite.py](https://github.com/bglenden/casa-rs/blob/86cfd83f104fb6032e215aa5042c3aea59897ac2/tools/simulation/simobserve_casa_suite.py)
-- [tools/simulation/simobserve_refusals_oracle.py](https://github.com/bglenden/casa-rs/blob/86cfd83f104fb6032e215aa5042c3aea59897ac2/tools/simulation/simobserve_refusals_oracle.py)
-- [crates/casars-simulation/tests/casa_refusals.rs](https://github.com/bglenden/casa-rs/blob/86cfd83f104fb6032e215aa5042c3aea59897ac2/crates/casars-simulation/tests/casa_refusals.rs)
-- [crates/casars-python/python/tests/test_simobserve_refusals.py](https://github.com/bglenden/casa-rs/blob/86cfd83f104fb6032e215aa5042c3aea59897ac2/crates/casars-python/python/tests/test_simobserve_refusals.py)
-- Revision: `86cfd83f104fb6032e215aa5042c3aea59897ac2`; CASA: `casatasks 6.7.6.14, casatools 6.7.6-14`.
+- [tools/simulation/simobserve_casa_suite.py](https://github.com/bglenden/casa-rs/blob/17c8206388b05beaf30c3c4ffadb4aedfa2c4e97/tools/simulation/simobserve_casa_suite.py)
+- [tools/simulation/simobserve_refusals_oracle.py](https://github.com/bglenden/casa-rs/blob/17c8206388b05beaf30c3c4ffadb4aedfa2c4e97/tools/simulation/simobserve_refusals_oracle.py)
+- [crates/casars-simulation/tests/casa_refusals.rs](https://github.com/bglenden/casa-rs/blob/17c8206388b05beaf30c3c4ffadb4aedfa2c4e97/crates/casars-simulation/tests/casa_refusals.rs)
+- [crates/casars-python/python/tests/test_simobserve_refusals.py](https://github.com/bglenden/casa-rs/blob/17c8206388b05beaf30c3c4ffadb4aedfa2c4e97/crates/casars-python/python/tests/test_simobserve_refusals.py)
+- Revision: `17c8206388b05beaf30c3c4ffadb4aedfa2c4e97`; CASA: `casatasks 6.7.6.14, casatools 6.7.6-14`.
 - Command: `CASAPY tools/simulation/simobserve_casa_suite.py --test-file CASA6/casatasks/tests/tasks/test_task_simobserve.py --casatestdata LOCAL_COPY --casars-bin TARGET/release/simobserve --out OUT --only testBad_comp_nchan testBad_sdant test_noProject (bg-mac-mini)`.
 - Receipt: `resources/casa-compat/evidence/simobserve-refusals-1099-20261104.json`.
 
