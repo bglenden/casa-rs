@@ -19,7 +19,7 @@
 //! 14-pointing mosaic).
 
 use casa_imaging_deconvolution::{FinalNormalState, MajorCycle, ModelGeneration};
-use casa_imaging_model::ProductNormalization;
+use casa_imaging_model::{CompiledProblem, ProductNormalization, ReconstructionBasis};
 use casa_imaging_operator::ModeSet;
 use casa_imaging_products::{MinorCycleImageResponse, MosaicSensitivity};
 use casa_imaging_runtime::{Admitted, Reservation};
@@ -42,6 +42,35 @@ pub(super) fn reseed_response(
             ProductNormalization::FlatNoise | ProductNormalization::PbSquare
         )
     })
+}
+
+/// Each main-image plane's flux in a start model's `samples`, in `.model`'s
+/// units, as `SIImageStore::getModelFlux` sums it; a Taylor family's is its
+/// first term's, under its first channel. Sorted by `[domain, channel,
+/// polarization]`.
+pub(super) fn plane_fluxes(
+    problem: &CompiledProblem,
+    start: &StartModel,
+    samples: &[f32],
+) -> Vec<([usize; 3], f64)> {
+    let cube = matches!(
+        problem.reconstruction().basis(),
+        ReconstructionBasis::ChannelLocal { .. }
+    );
+    let polarizations = start.polarizations();
+    let [width, height] = start.image_size();
+    samples
+        .chunks_exact(width * height)
+        .enumerate()
+        .filter_map(|(index, plane)| {
+            let (coefficient, polarization) = (index / polarizations, index % polarizations);
+            (cube || coefficient == 0).then(|| {
+                let channel = if cube { coefficient } else { 0 };
+                let flux = plane.iter().map(|value| f64::from(*value)).sum();
+                ([0, channel, polarization], flux)
+            })
+        })
+        .collect()
 }
 
 impl Run<'_> {
@@ -93,6 +122,7 @@ impl Run<'_> {
                 // Released once the generation holds the samples.
                 let _seeding = pass.split(seeding);
                 let samples = start.main_samples().map_err(ImagingError::StartModel)?;
+                self.start_model_flux = plane_fluxes(self.problem, start, &samples);
                 self.lifecycle.initial_from_start_model(&samples)?
             }
             _ => self.lifecycle.initial_empty()?,
@@ -152,7 +182,7 @@ impl Run<'_> {
     /// where that supports them and zero elsewhere (`divideModelByWeight`),
     /// as the minor cycle maps solved values to the physical model.
     fn physical_generation(
-        &self,
+        &mut self,
         start: &StartModel,
         normal: &FinalNormalState,
         response: MinorCycleImageResponse,
@@ -160,6 +190,7 @@ impl Run<'_> {
         let [nx, ny] = start.image_size();
         let polarizations = start.polarizations();
         let apparent = start.main_samples().map_err(ImagingError::StartModel)?;
+        self.start_model_flux = plane_fluxes(self.problem, start, &apparent);
         let units = ImagingError::StartModelUnits;
         let mut physical = Vec::with_capacity(apparent.len());
         // Canonical order: spectral plane, polarization, y, x (x fastest);

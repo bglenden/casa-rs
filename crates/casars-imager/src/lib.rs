@@ -20,16 +20,14 @@ mod task_contract;
 
 use std::{path::PathBuf, time::Instant};
 
-use casa_imaging_application::{
-    HostResources, ImagingRequest, ResidualStatistics, RunContext, SummaryTarget, execute,
-};
+use casa_imaging_application::{HostResources, ImagingRequest, RunContext, SummaryTarget, execute};
 use casa_provider_contracts::{ParameterValue, SurfaceContractBundle};
 use casa_task_runtime::{
     TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess, resolve_plain_values,
 };
 use serde_json::{Map, Value};
 
-pub use casa_return::tclean_record;
+pub use casa_return::{RunReturn, tclean_record};
 pub use schema::command_schema;
 pub use task_contract::*;
 
@@ -90,17 +88,17 @@ pub fn run(
     parameters: ImagingParameters,
     request: &ImagingRequest,
 ) -> Result<ImagerRunTaskResult, String> {
-    run_with_statistics(parameters, request, false).map(|(result, _)| result)
+    run_with_return(parameters, request, false).map(|(result, _)| result)
 }
 
-/// Keep final controller statistics in memory for the CASA return without
+/// Keep what the CASA return needs beyond the report in memory, without
 /// adding fields to the serialized task report or the run summary, which is
 /// written beside the products only when `summary` asks for it.
-fn run_with_statistics(
+fn run_with_return(
     parameters: ImagingParameters,
     request: &ImagingRequest,
     summary: bool,
-) -> Result<(ImagerRunTaskResult, Option<ResidualStatistics>), String> {
+) -> Result<(ImagerRunTaskResult, RunReturn), String> {
     // Task continuation is distinct from internal atomic output replacement.
     let restart = parameters
         .0
@@ -129,7 +127,13 @@ fn run_with_statistics(
     let outcome = execute(request, context).map_err(|error| error.to_string())?;
     let result =
         ImagerRunTaskResult::from_outcome(parameters, request, &outcome, started.elapsed());
-    Ok((result, outcome.final_residual_statistics))
+    Ok((
+        result,
+        RunReturn {
+            statistics: outcome.final_residual_statistics,
+            plane_rows: outcome.plane_rows,
+        },
+    ))
 }
 
 /// The front end of the `casars-imager` binary, which hosts `tclean`.
@@ -171,14 +175,14 @@ pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     interrupt::install().map_err(|error| {
         TaskFailure::execution(format!("install the interrupt handler: {error}"))
     })?;
-    let (result, statistics) = run_with_statistics(parameters, &request, run_summary_requested())
-        .map_err(|error| {
-        if interrupt::token().is_cancelled() {
-            TaskFailure::interrupted(format!("{error}; nothing was published"))
-        } else {
-            TaskFailure::execution(error)
-        }
-    })?;
+    let (result, held) =
+        run_with_return(parameters, &request, run_summary_requested()).map_err(|error| {
+            if interrupt::token().is_cancelled() {
+                TaskFailure::interrupted(format!("{error}; nothing was published"))
+            } else {
+                TaskFailure::execution(error)
+            }
+        })?;
     let text = format!(
         "Wrote CASA-compatible products at prefix {} ({} gridded samples, {} major cycles, \
          {} reported minor iterations, {} actual components, stop={:?})\n",
@@ -189,6 +193,6 @@ pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         result.run.actual_minor_iterations,
         result.run.clean_stop_reason,
     );
-    let value = tclean_record(&request, &result.run, &values, statistics.as_ref());
+    let value = tclean_record(&request, &result.run, &values, &held);
     Ok(TaskSuccess::new(value, &result)?.with_text(text))
 }

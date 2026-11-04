@@ -26,7 +26,7 @@ use casa_imaging_deconvolution::{
 use casa_imaging_deconvolution::{
     Clark, Component, CycleControls, Delta, Hogbom, LinearRefresh, MinorCycleView, Multiscale,
     PlaneOutcome, PlaneShape, PlaneStatistics, PlaneStop, PsfSummary, ResidualStatistics, Solver,
-    Support, Taylor, run_plane,
+    Support, Taylor, peak_magnitude, run_plane,
 };
 use casa_imaging_model::{
     HogbomIterationAccounting, ModelCell, ModelDeltaTerm, ModelSupport, ModelValue,
@@ -41,10 +41,12 @@ use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit
 
 mod layout;
 mod pixels;
+mod rows;
 pub use layout::{
     MinorLayout, mask_bytes, prepare_bytes, prepare_bytes_for, psf_cache_bytes, run_bytes,
     run_bytes_for,
 };
+pub use rows::PlaneCycleRow;
 
 /// Component records kept per minor cycle for diagnostics.
 const TRACE: usize = 64;
@@ -173,6 +175,8 @@ pub struct PreparedMinorCycle {
     masks: ImageDomainReconstructionMasks,
     auto_masks: Box<[Option<AutoMaskEvidence>]>,
     planes: Vec<(PlaneKey, PlaneStatistics)>,
+    /// The planes with no data, measured as empty.
+    blank: Vec<(PlaneKey, PlaneStatistics)>,
     /// A single plane's load, kept for its solve ([`Self::retained_bytes`]).
     retained: Option<RetainedPlane>,
     /// The measurements of every plane and field, for the controller.
@@ -260,6 +264,9 @@ pub struct MinorCycleSummary {
     pub refreshes: usize,
     /// The first component records.
     pub trace: Vec<TracedComponent>,
+    /// Every plane's row, those with no data too, ordered by image domain,
+    /// channel and polarization.
+    pub planes: Vec<PlaneCycleRow>,
 }
 
 /// What one minor cycle hands to the next major cycle and to products.
@@ -424,6 +431,7 @@ pub fn prepare_minor_cycle(
         Ok::<_, MinorCycleRunError>(())
     })?;
     let mut planes = Vec::with_capacity(keys.len());
+    let mut blank = Vec::new();
     let mut sidelobes = Vec::with_capacity(keys.len());
     let mut retained = None;
     for (key, measured, kept) in slots {
@@ -432,6 +440,10 @@ pub fn prepare_minor_cycle(
             summary,
         }) = measured
         else {
+            blank.push((
+                key,
+                rows::blank_statistics(normal, &masks, key, setup.automask),
+            ));
             continue;
         };
         sidelobes.push(summary.sidelobe());
@@ -464,6 +476,7 @@ pub fn prepare_minor_cycle(
         masks,
         auto_masks,
         planes,
+        blank,
         retained,
         statistics,
     })
@@ -502,6 +515,7 @@ pub fn run_minor_cycle(
         masks,
         auto_masks,
         planes,
+        blank,
         retained,
         ..
     } = prepared;
@@ -572,11 +586,12 @@ pub fn run_minor_cycle(
         stops: Vec::with_capacity(results.len()),
         refreshes: 0,
         trace: Vec::new(),
+        planes: Vec::with_capacity(results.len() + blank.len()),
     };
     // Each plane's charge covers its terms' copy here.
     let mut terms = Vec::with_capacity(results.iter().map(|solved| solved.terms.len()).sum());
     let mut charge = Reservation::none();
-    for ((_, statistics), solved) in planes.iter().zip(results) {
+    for ((key, statistics), solved) in planes.iter().zip(results) {
         charge.join(solved.charge);
         let outcome = &solved.outcome;
         summary.iterations += outcome.iterations;
@@ -596,10 +611,24 @@ pub fn run_minor_cycle(
         }
         summary.stops.push(outcome.stop);
         summary.refreshes += outcome.refreshes;
+        summary.planes.push(rows::cycle_row(
+            *key,
+            statistics,
+            outcome,
+            solved.peak_no_mask,
+        ));
         let room = TRACE - summary.trace.len();
         summary.trace.extend(solved.trace.into_iter().take(room));
         terms.extend(solved.terms);
     }
+    summary.planes.extend(
+        blank
+            .iter()
+            .map(|(key, statistics)| rows::blank_row(*key, statistics, controls)),
+    );
+    summary
+        .planes
+        .sort_unstable_by_key(|row| (row.domain, row.channel, row.polarization));
     terms.sort_unstable_by_key(|(index, _)| *index);
     let mut ordered = Vec::with_capacity(terms.len());
     ordered.extend(terms.into_iter().map(|(_, term)| term));
@@ -1217,6 +1246,8 @@ fn normalise(mut plane: Vec<f64>, scale: f64) -> Vec<f64> {
 /// hold, and their charge.
 struct Solved {
     outcome: PlaneOutcome,
+    /// The residual's peak over the plane's pixels once the plane is done.
+    peak_no_mask: f64,
     terms: Vec<(usize, ModelDeltaTerm)>,
     trace: Vec<TracedComponent>,
     charge: Reservation,
@@ -1291,6 +1322,17 @@ fn solve(
         algorithm => return Err(MinorCycleRunError::Algorithm(algorithm.clone())),
     };
     let mut outcome = outcome;
+    // CASA reads this after a plane it cleaned, and keeps the entry's for one
+    // it skipped.
+    let end_residual = std::mem::take(&mut outcome.end_residual);
+    let peak_no_mask = match end_residual.first() {
+        Some(residual) => {
+            let pixels = plane_pixels(inputs, key, &plane)?;
+            peak_magnitude(residual, pixels.residual_mask(setup.residual_pixel_mask))
+        }
+        None => statistics.peak_no_mask,
+    };
+    drop(end_residual);
     let delta = std::mem::take(&mut outcome.delta);
     let entries = (0..delta.term_count())
         .map(|term| delta.term(term).count())
@@ -1307,6 +1349,7 @@ fn solve(
     let trace = trace(&outcome.trace, &plane, inputs, key);
     Ok(Solved {
         outcome,
+        peak_no_mask,
         terms,
         trace,
         charge,

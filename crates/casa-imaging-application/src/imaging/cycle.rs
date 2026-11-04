@@ -53,7 +53,7 @@ use crate::compile::StartModel;
 mod continuation;
 mod seeding;
 use crate::restart::ExistingProducts;
-use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason};
+use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason, PlaneRows};
 pub(crate) use continuation::Forms;
 
 /// What one native imaging run needs besides the compiled problem.
@@ -100,6 +100,7 @@ pub(crate) struct ImagingOutcome {
     pub(crate) scientific: MajorCycleCompletion,
     pub(crate) masks: Option<ReconstructionMaskSet>,
     pub(crate) minor_cycles: Vec<NativeMinorCycleOutcome>,
+    pub(crate) plane_rows: PlaneRows,
     pub(crate) final_residual_statistics: Option<ResidualStatistics>,
     pub(crate) stop: Option<CleanStop>,
     pub(crate) major_cycle_count: usize,
@@ -156,6 +157,8 @@ struct Run<'a> {
     visibility_write_bytes: u64,
     /// Planes per wave of the most finely waved pass so far.
     planes_per_wave: Option<u32>,
+    /// Each main-image plane's start-model flux, in `.model`'s units.
+    start_model_flux: Vec<([usize; 3], f64)>,
     /// Whether the initial pass also grids the sensitivity image
     /// (`Mode::Weight`): a kernel set with weight taps on any domain.
     weight_image: bool,
@@ -198,6 +201,10 @@ impl ImagingOutcome {
             scientific: major.completion,
             masks: None,
             minor_cycles: Vec::new(),
+            plane_rows: PlaneRows {
+                start_model_flux: run.start_model_flux.clone(),
+                cycles: Vec::new(),
+            },
             final_residual_statistics: None,
             stop: None,
             major_cycle_count: usize::from(run.forms.residual),
@@ -309,7 +316,9 @@ pub(crate) fn run(
                 held = run.admit(
                     "reconstruction masks",
                     2 * mask_bytes(&outcome.scientific, &mask_plans)
-                        + psf_cache_bytes(&outcome.scientific),
+                        + psf_cache_bytes(&outcome.scientific)
+                        + std::mem::size_of_val(outcome.plane_rows.start_model_flux.as_slice())
+                            as u64,
                 )?;
             }
             let mut preparing = run.admit(
@@ -518,6 +527,7 @@ fn account_minor_cycle(
         started.elapsed().as_secs_f64(),
     );
     outcome.minor_cycles.push(record);
+    outcome.plane_rows.cycles.push(minor.summary.planes.clone());
     outcome.masks = Some(ReconstructionMaskSet::Domains(minor.masks.clone()));
     cycle
 }
@@ -781,6 +791,7 @@ impl<'a> Run<'a> {
             visibility_write: inputs.visibility_write,
             visibility_write_bytes,
             planes_per_wave: None,
+            start_model_flux: Vec::new(),
             weight_image,
             retained: Reservation::none(),
             kept_weights: None,
@@ -1358,11 +1369,12 @@ pub(crate) fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
     }))
 }
 
-/// Bytes [`minor_cycle_record`] copies from `outcome`: its primary mask's
-/// first plane and its traced components.
+/// Bytes the run keeps from `outcome`: its primary mask's first plane, its
+/// traced components and its planes' rows.
 fn record_bytes(outcome: &MinorCycleOutcome) -> u64 {
     (std::mem::size_of_val(primary_plane(outcome))
-        + std::mem::size_of_val(outcome.summary.trace.as_slice())) as u64
+        + std::mem::size_of_val(outcome.summary.trace.as_slice())
+        + std::mem::size_of_val(outcome.summary.planes.as_slice())) as u64
 }
 
 /// The support of the primary mask's first plane (the first channel and

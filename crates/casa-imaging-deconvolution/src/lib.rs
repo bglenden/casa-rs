@@ -86,7 +86,9 @@ pub use controller::{
     CleanStop, Controller, CycleControls, PlaneControl, PlaneStatistics, PlaneStop,
     ResidualStatistics,
 };
-pub use driver::{Component, PlaneOutcome, run_plane, solve_bytes, update_entries};
+pub use driver::{
+    Component, PlaneOutcome, blank_plane_stop, run_plane, solve_bytes, update_entries,
+};
 pub use hogbom::Hogbom;
 pub use multiscale::{Multiscale, MultiscaleState};
 pub use plane::{

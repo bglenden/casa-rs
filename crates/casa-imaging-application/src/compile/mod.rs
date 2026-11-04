@@ -124,6 +124,13 @@ struct Surveyed<'a> {
     spectral: &'a PreparedSpectralAxis,
 }
 
+/// The outlier file's output prefixes.
+pub(crate) fn outlier_output_prefixes(
+    path: &std::path::Path,
+) -> Result<Vec<std::path::PathBuf>, PrepareError> {
+    outliers::read_output_prefixes(path)
+}
+
 /// Check outlier output prefixes with the same parser compile uses (#944).
 pub(crate) fn check_outlier_outputs(path: &std::path::Path) -> Result<(), PrepareError> {
     let outputs = outliers::read_output_prefixes(path)?;
