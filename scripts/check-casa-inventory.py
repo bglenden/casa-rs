@@ -36,6 +36,7 @@ CASA_VERSION = "6.7.6.14"
 INVENTORY = REPO_ROOT / "resources" / "casa-compat" / f"casa-{CASA_VERSION}"
 SURFACES = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources" / "parameter-surfaces.json"
 REPORT = REPO_ROOT / "docs" / "reference" / "casa-compatibility.md"
+INTEGER_TYPES = REPO_ROOT / "crates" / "casa-task-runtime" / "resources" / "casa-integer-parameters.json"
 SEMANTICS = REPO_ROOT / "resources" / "casa-compat" / "semantics"
 TOOL_SIGNATURES = REPO_ROOT / "crates" / "casars-python" / "python" / "tests" / "data"
 # The CASA classes casa-rs presents outside `casars.tools`: `simutil` is a
@@ -338,6 +339,17 @@ def main() -> int:
     args = parser.parse_args()
     try:
         tasks = load_inventory()
+        integer_types = {
+            name: [parameter["name"] for parameter in task["parameters"]
+                   if parameter["schema"].get("type") == "cInt"]
+            for name, task in sorted(tasks.items())
+        }
+        integer_types = {name: values for name, values in integer_types.items() if values}
+        integer_text = json.dumps(integer_types, indent=2, ensure_ascii=False) + "\n"
+        if args.write:
+            INTEGER_TYPES.write_text(integer_text, encoding="utf-8")
+        elif not INTEGER_TYPES.is_file() or INTEGER_TYPES.read_text(encoding="utf-8") != integer_text:
+            raise InventoryError(f"{INTEGER_TYPES.relative_to(REPO_ROOT)} is stale; run scripts/check-casa-inventory.py --write")
         text = render(tasks, load_surfaces(), load_tool_signatures())
     except (InventoryError, ValueError, KeyError) as error:
         print(f"casa-inventory: {error}", file=sys.stderr)

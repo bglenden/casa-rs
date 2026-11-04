@@ -1,0 +1,84 @@
+{
+  "bandpass": [
+    "minblperant",
+    "fillgaps",
+    "degamp",
+    "degphase",
+    "maskcenter",
+    "maskedge"
+  ],
+  "exportfits": [
+    "bitpix"
+  ],
+  "flagdata": [
+    "maxnpieces",
+    "halfwin",
+    "winsize",
+    "minabs",
+    "maxabs"
+  ],
+  "fluxscale": [
+    "fitorder"
+  ],
+  "gaincal": [
+    "minblperant",
+    "npointaver"
+  ],
+  "gencal": [
+    "timeout",
+    "retry",
+    "retry_wait_time",
+    "ant_pos_time_limit"
+  ],
+  "importfits": [
+    "whichrep",
+    "whichhdu"
+  ],
+  "imregrid": [
+    "decimate"
+  ],
+  "imstat": [
+    "maxiter",
+    "niter"
+  ],
+  "mstransform": [
+    "nchan",
+    "nspw",
+    "fitorder",
+    "nthreads",
+    "niter",
+    "ddistart"
+  ],
+  "plotms": [
+    "gridrows",
+    "gridcols",
+    "rowindex",
+    "colindex",
+    "plotindex",
+    "titlefont",
+    "xaxisfont",
+    "yaxisfont",
+    "majorwidth",
+    "minorwidth",
+    "dpi",
+    "width",
+    "height"
+  ],
+  "simobserve": [
+    "comp_nchan",
+    "sdant",
+    "seed"
+  ],
+  "tclean": [
+    "nchan",
+    "facets",
+    "wprojplanes",
+    "nterms",
+    "largestscale",
+    "npixels",
+    "niter",
+    "cycleniter",
+    "nmajor",
+    "growiterations"
+  ]
+}

@@ -266,6 +266,16 @@ pub(crate) fn checked_value(
 ) -> Result<ParameterValue, String> {
     let named = |error: crate::NormalizationError| {
         let note = error.binding_note(binding);
+        if matches!(error, crate::NormalizationError::Type(_))
+            && note.is_empty()
+            && let Some(message) = crate::casa_type_diagnostics::integer_refusal(
+                bundle.surface.id(),
+                &binding.name,
+                value,
+            )
+        {
+            return message;
+        }
         format!("parameter {:?}: {error}{note}", binding.name)
     };
     let concept = bundle

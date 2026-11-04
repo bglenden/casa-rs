@@ -1,0 +1,30 @@
+[
+  {
+    "args": {
+      "comp_nchan": -1.0
+    },
+    "type": "AssertionError",
+    "message": "{'comp_nchan': ['must be of cInt type']}"
+  },
+  {
+    "args": {
+      "sdant": "badname"
+    },
+    "type": "AssertionError",
+    "message": "{'sdant': ['must be of cInt type']}"
+  },
+  {
+    "args": {
+      "seed": "bad"
+    },
+    "type": "AssertionError",
+    "message": "{'seed': ['must be of cInt type']}"
+  },
+  {
+    "args": {
+      "project": ""
+    },
+    "type": "FileNotFoundError",
+    "message": "[Errno 2] No such file or directory: ''"
+  }
+]

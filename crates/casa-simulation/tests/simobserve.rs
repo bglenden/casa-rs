@@ -357,6 +357,10 @@ fn what_casa_refuses_is_refused_with_its_message() {
             .to_string()
     };
     assert_eq!(
+        refusal(|parameters| parameters.project.clear()),
+        "[Errno 2] No such file or directory: ''"
+    );
+    assert_eq!(
         refusal(|parameters| parameters.antennalist = "missing.cfg".to_string()),
         "Couldn't find antennalist: missing.cfg"
     );
