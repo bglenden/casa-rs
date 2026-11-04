@@ -570,15 +570,16 @@ pub fn run_minor_cycle(
         ordered.extend_from_slice(&planes);
         ordered.extend_from_slice(&blank);
         ordered.sort_unstable_by_key(|(key, _)| (key.domain, key.channel, key.polarization));
-        let mut groups = ordered
-            .chunks_exact(n_pol)
-            .filter(|chunk| chunk.iter().any(|(key, _)| holds_data(normal, false, *key)))
-            .map(|chunk| PolarizedSlot {
-                keys: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].0),
-                stats: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].1),
-                solved: None,
-            })
-            .collect::<Vec<_>>();
+        let mut groups = Vec::with_capacity(ordered.len() / n_pol);
+        for chunk in ordered.chunks_exact(n_pol) {
+            if chunk.iter().any(|(key, _)| holds_data(normal, false, *key)) {
+                groups.push(PolarizedSlot {
+                    keys: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].0),
+                    stats: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].1),
+                    solved: None,
+                });
+            }
+        }
         // A partially blank channel is one joint solve, and has one row.
         // Channels whose every polarization is blank keep the blank rows.
         blank.retain(|(key, _)| {
