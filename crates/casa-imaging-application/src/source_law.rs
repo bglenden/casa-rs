@@ -53,8 +53,12 @@ pub fn drive_batch_source(
 ) -> Result<SourceDrive, ApplicationDispatchError> {
     let resolved = std::cell::Cell::new(None);
     let (problem, input, native, _resident) = crate::compile_run(request, context, &resolved)?;
-    let admitted =
-        crate::native::batch_route(&problem, input.observation, (false, false), &native.runtime)?;
+    let admitted = crate::native::batch_route(
+        &problem,
+        input.observation,
+        (false, false, false),
+        &native.runtime,
+    )?;
     let planes = planes(&problem);
     let source = || {
         ObservationSource::new(
@@ -102,7 +106,11 @@ pub fn drive_batch_write(
     let admitted = crate::native::batch_route(
         &problem,
         input.observation,
-        (input.write_model_column, input.write_corrected_data),
+        (
+            input.write_model_column,
+            input.write_corrected_data,
+            input.predicts_final_model,
+        ),
         &native.runtime,
     )?;
     let failed = |error: casa_imaging_runtime::pass::SourceError| {

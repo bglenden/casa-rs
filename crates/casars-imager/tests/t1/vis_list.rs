@@ -312,7 +312,7 @@ fn a_measurement_set_outside_the_cube_holds_a_zero_model() {
 }
 
 /// Every MAIN row's `MODEL_DATA`, `[correlation, channel]`.
-fn model_rows(path: &Path) -> Vec<Array2<Complex32>> {
+pub(super) fn model_rows(path: &Path) -> Vec<Array2<Complex32>> {
     let ms = MeasurementSet::open(path).expect("reopen the MeasurementSet");
     let model = ms
         .data_column(VisibilityDataColumn::ModelData)

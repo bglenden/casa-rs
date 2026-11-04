@@ -850,6 +850,18 @@ impl ImagingRequest {
         Ok(())
     }
 
+    /// Whether tclean's final write of the model is `predictModel`, on the
+    /// parent imager's selection, which is not tuned to the image's band:
+    /// after a run with `nsigma` or an automatic mask, whose last major
+    /// cycle's write it overwrites, and for a run of no iterations that forms
+    /// no residual (`task_tclean.py`).
+    #[must_use]
+    pub fn predicts_final_model(&self) -> bool {
+        self.nsigma > 0.0
+            || self.usemask == UseMask::AutoMultithresh
+            || (self.niter == 0 && !self.calcres)
+    }
+
     /// Whether the run solves for a model: `mtmfs` always, the other
     /// solvers unless the run is dirty (`niter = 0`).
     #[must_use]
