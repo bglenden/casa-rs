@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Experimental joint-polarization Clark runtime.
+//! Joint-polarization Clark minor-cycle execution.
 
 use super::{
     Inputs, MinorCycleRunError, PlaneData, PlaneKey, PolarizedSlot, PsfCache, Solved,
