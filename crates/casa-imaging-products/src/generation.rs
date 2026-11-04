@@ -10,7 +10,7 @@ use casa_imaging_model::{
     ProductPixelMask, ProductRole, ProductTerm, ProductValidityRule, RestoringBeamPolicy,
 };
 
-use crate::beam::{RestoringBeam, fit_restoring_beam, fixed_restoring_beam};
+use crate::beam::{PlaneBeam, RestoringBeam, fit_plane_beam, fixed_restoring_beam, settle_beams};
 use crate::error::ProductsError;
 use crate::normalization::psf_peak;
 use crate::plan::{
@@ -127,15 +127,14 @@ fn fit_beams(
             // aside: CASA fits every Stokes plane's.
             let psf = psf_real_plane(&plane)?;
             if !psf_normalizes(psf_peak(psf.iter().copied())?) {
-                return Ok(None);
+                return Ok(PlaneBeam::Blank);
             }
-            fit_restoring_beam(
+            fit_plane_beam(
                 &psf,
                 plane.shape(),
                 inputs.cell_size_rad_for_domain(domain.role()),
                 planned.psf_cutoff(),
             )
-            .map(Some)
         })?;
         fitted.extend(
             slots
@@ -143,7 +142,7 @@ fn fit_beams(
                 .map(|slot| slot.expect("the executor fills every slot")),
         );
     }
-    Ok(fitted.into_boxed_slice())
+    Ok(settle_beams(&fitted, channels * polarizations))
 }
 
 /// The beams each plane is restored with, by the problem's restoring-beam

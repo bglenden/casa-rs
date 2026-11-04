@@ -1,0 +1,148 @@
+{
+ "source": {
+  "purpose": "tclean on a plane whose PSF peaks off-centre (issue 1124). Channel 0 of refim_point_linRL.ms holds few samples: its PSF peaks at pixel (13,64). The format is tools/casa-compat/tclean_case_matrix.py's."
+ },
+ "inputs": {
+  "refim_point_linRL.ms": "unittest/tclean/refim_point_linRL.ms"
+ },
+ "common": {},
+ "cases": {
+  "off_centre_dirty": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.2,
+    "stokes": "IV",
+    "specmode": "cube",
+    "nchan": 2,
+    "niter": 0
+   },
+   "note": "The beams of a dirty cube"
+  },
+  "off_centre_clean": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.2,
+    "stokes": "IV",
+    "specmode": "cube",
+    "nchan": 2,
+    "niter": 20
+   },
+   "note": "The cycle sequence, from the sidelobe level"
+  },
+  "off_centre_clean_no_tie": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.17,
+    "stokes": "IV",
+    "specmode": "cube",
+    "nchan": 2,
+    "niter": 20
+   },
+   "note": "The cycle sequence with no near-tie of the peak and the cycle threshold: at gain 0.2, one iteration leaves exactly the peak fraction 0.8 the cycle threshold clamps to"
+  },
+  "off_centre_only_plane": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.17,
+    "stokes": "IV",
+    "specmode": "cube",
+    "nchan": 1,
+    "niter": 20,
+    "start": 0,
+    "width": 1
+   },
+   "note": "A domain with no valid beam: every plane refused"
+  },
+  "off_centre_fixed_beam": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.17,
+    "stokes": "IV",
+    "specmode": "cube",
+    "nchan": 2,
+    "niter": 20,
+    "restoringbeam": "200arcsec"
+   },
+   "note": "The residual rescaled from the largest beam to a given one"
+  },
+  "off_centre_common_beam": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.17,
+    "stokes": "IV",
+    "specmode": "cube",
+    "nchan": 2,
+    "niter": 20,
+    "restoringbeam": "common"
+   },
+   "note": "The common beam of the planes"
+  },
+  "off_centre_clark": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.17,
+    "stokes": "I",
+    "specmode": "cube",
+    "nchan": 2,
+    "niter": 20,
+    "deconvolver": "clark"
+   },
+   "note": "Clark takes the PSF at the plane's centre"
+  },
+  "off_centre_multiscale": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.17,
+    "stokes": "I",
+    "specmode": "cube",
+    "nchan": 2,
+    "niter": 20,
+    "deconvolver": "multiscale",
+    "scales": [
+     0,
+     3
+    ]
+   },
+   "note": "The multi-scale cleaner takes the PSF at its peak"
+  },
+  "off_centre_mtmfs_one_channel": {
+   "vis": "refim_point_linRL.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "gain": 0.17,
+    "stokes": "I",
+    "spw": "0:0",
+    "niter": 20,
+    "deconvolver": "mtmfs",
+    "nterms": 1
+   },
+   "note": "A Taylor family refused"
+  }
+ }
+}

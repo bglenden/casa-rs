@@ -95,6 +95,12 @@ CASES = {
     "stokes": [{"vis": POL, "stokes": "IV", "niter": 20}],
     "stokes-cube": [{"vis": POL, "stokes": "IV", "specmode": "cube", "nchan": 1, "start": 1,
                      "width": 1, "niter": 20}],
+    # Channel 0's PSF peaks away from its centre (issue 1124).
+    "stokes-cube-off-centre": [{"vis": POL, "stokes": "IV", "specmode": "cube", "nchan": 2,
+                                "niter": 20}],
+    # The same with no near-tie of the peak and the cycle threshold.
+    "stokes-cube-off-centre-no-tie": [{"vis": POL, "stokes": "IV", "specmode": "cube", "nchan": 2,
+                                       "niter": 20, "gain": 0.17}],
     "nsigma": [{"vis": TWO, "niter": 30, "nsigma": 1.5, "specmode": "cube", "imsize": 64}],
     "nsigma-one-plane": [{"vis": TWO, "niter": 30, "nsigma": 1.5, "specmode": "cube", "nchan": 1,
                           "start": 1, "width": 1, "imsize": 64}],
