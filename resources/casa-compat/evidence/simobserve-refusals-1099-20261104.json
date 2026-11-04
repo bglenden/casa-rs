@@ -1,0 +1,41 @@
+{
+ "schema": "simobserve-casa-suite-receipt/1",
+ "work_issue": 1053,
+ "date": "2026-11-04",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "native_revision": "86cfd83f104fb6032e215aa5042c3aea59897ac2",
+ "host": "macOS-27.0.1-arm64-arm-64bit",
+ "test_file": "casatasks/tests/tasks/test_task_simobserve.py (CASA 6.7.6.14 source)",
+ "command": "CASAPY tools/simulation/simobserve_casa_suite.py --test-file ... --casatestdata ... --casars-bin TARGET/release/simobserve --out OUT",
+ "summary": {
+  "casa": {
+   "passed": 3,
+   "failed": 1
+  },
+  "casa-rs": {
+   "passed": 3,
+   "failed": 1
+  }
+ },
+ "tests": {
+  "simobserve_badinputs::testBad_comp_nchan": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_badinputs::testBad_sdant": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  },
+  "simobserve_badinputs::testBad_sdantlist": {
+   "casa": "failed: Exception: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist.",
+   "casa-rs": "failed: RuntimeError: No sky input found.  At least one of skymodel or complist must exist. | AssertionError: -1 == -1 : Unexpected exception was thrown: No sky input found.  At least one of skymodel or complist must exist."
+  },
+  "simobserve_badinputs::test_noProject": {
+   "casa": "passed",
+   "casa-rs": "passed"
+  }
+ }
+}
