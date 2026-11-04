@@ -24,6 +24,15 @@ jobs:
       # debug info in ~130 linked test binaries.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
+      # The restored cache and a rebuild of what a change to a low-level crate
+      # invalidates sit side by side, which can fill the runner's disk: the
+      # runner then dies with no log (#1115, #1119). These tools go unused here.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          df -h /
+
       - name: Checkout
         uses: actions/checkout@v5
         with:
