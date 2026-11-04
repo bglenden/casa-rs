@@ -628,7 +628,7 @@
     },
     "outlierfile": {
       "status": "Partial",
-      "scope": "Native outlier fields, natural weighting, dirty or Hogbom; each outlier currently has standard single-term MFS defaults. Per-field differing modes, start models and spectral controls are restricted by the existing parser.",
+      "scope": "Native outlier fields, natural weighting, dirty or Hogbom; each outlier currently has standard single-term MFS defaults. Per-field differing modes, start models and spectral controls are restricted by the existing parser. A relative imagename in the file reads from the working directory, wherever the file is, as tclean's imagename does.",
       "evidence": [
         "signature",
         "reader"

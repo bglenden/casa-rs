@@ -145,7 +145,9 @@ def expand(case, call, root):
 
 def run_case(case, calls, root, folder, call):
     (folder / case).mkdir(parents=True)
-    (folder / case / "outliers.txt").write_text(OUTLIER.format(name=folder / case))
+    # Relative, in a file that isn't in the working directory: a name in it
+    # reads from the working directory, as `imagename` does (issue 1125).
+    (folder / case / "outliers.txt").write_text(OUTLIER.format(name=case))
     reply = None
     for values in calls:
         reply = call(expand(case, values, root))
@@ -230,6 +232,10 @@ def main():
         casa = run_case(case, CASES[case], args.data_root, casa_folder, call_casa)
         native = run_case(case, CASES[case], args.data_root, native_folder, call_native)
         found, worst = differences(casa, native)
+        if case == "outlier":
+            found += [f"no {folder.name}/outlier/outlier.psf"
+                      for folder in (casa_folder, native_folder)
+                      if not (folder / "outlier/outlier.psf").is_dir()]
         summary[case] = {"passed": not found, "worst": worst, "differences": found}
         print(case, "passed" if not found else "DIFFERS", f"worst {worst:.1e}", flush=True)
         for line in found:

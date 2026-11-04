@@ -679,3 +679,35 @@ fn a_cubes_summary_holds_each_planes_own_rows() {
         );
     }
 }
+
+/// An outlier file's relative `imagename` reads from the working directory, as
+/// `imagename` itself does, wherever the file is (CASA 6.7.6.14, #1125).
+#[test]
+fn an_outlier_files_relative_name_reads_from_the_working_directory() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("outlier-names");
+    let settings = directory.join("settings");
+    std::fs::create_dir_all(&settings).expect("settings directory");
+    let outliers = settings.join("outliers.txt");
+    std::fs::write(
+        &outliers,
+        "imagename=fields/outlier\nimsize=[32,32]\nphasecenter=J2000 19:59:28.5 +40.44.01.5\n",
+    )
+    .expect("the outlier file");
+    let geometry = observation.geometry();
+    let reply = json_run(
+        &directory,
+        json!({
+            "vis": observation.measurement_set(),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend": "cpu",
+            "imagename": "main",
+            "outlierfile": outliers,
+        }),
+    );
+    assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+    assert!(directory.join("main.psf").is_dir());
+    assert!(directory.join("fields/outlier.psf").is_dir());
+    assert!(!settings.join("fields").exists());
+}

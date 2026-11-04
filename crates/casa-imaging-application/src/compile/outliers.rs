@@ -44,9 +44,7 @@ fn outlier_domains(
     read_records(path)?
         .into_iter()
         .enumerate()
-        .map(|(ordinal, fields)| {
-            compile_record(path, ordinal, fields, default_size, default_cell_arcsec)
-        })
+        .map(|(ordinal, fields)| compile_record(ordinal, fields, default_size, default_cell_arcsec))
         .collect()
 }
 
@@ -58,8 +56,7 @@ pub(super) fn read_output_prefixes(path: &Path) -> Result<Vec<PathBuf>, PrepareE
             .into_iter()
             .enumerate()
             .map(|(ordinal, mut fields)| {
-                take_required(&mut fields, "imagename", ordinal)
-                    .map(|name| resolve_output(path, &name))
+                take_required(&mut fields, "imagename", ordinal).map(|name| output_path(&name))
             })
             .collect::<Result<Vec<_>, OutlierProblem>>()
     };
@@ -117,15 +114,21 @@ fn parse_records(text: &str) -> Result<Vec<BTreeMap<String, String>>, OutlierPro
     Ok(records)
 }
 
+/// An outlier's output prefix, as tclean's `imagename` reads: from the working
+/// directory, wherever the file is (`ImagerParameters.parseOutlierFile` joins
+/// nothing).
+fn output_path(name: &str) -> PathBuf {
+    std::path::absolute(name).unwrap_or_else(|_| PathBuf::from(name))
+}
+
 fn compile_record(
-    path: &Path,
     ordinal: usize,
     mut fields: BTreeMap<String, String>,
     default_size: [usize; 2],
     default_cell_arcsec: [f64; 2],
 ) -> Result<OutlierDomain, OutlierProblem> {
     let name = take_required(&mut fields, "imagename", ordinal)?;
-    let output = resolve_output(path, &name);
+    let output = output_path(&name);
     let image_size = fields
         .remove("imsize")
         .map(|value| parse_size(&value))
@@ -313,18 +316,6 @@ fn trim_string(value: &str) -> &str {
         .trim()
 }
 
-fn resolve_output(outlier_file: &Path, name: &str) -> PathBuf {
-    let output = PathBuf::from(name);
-    if output.is_absolute() {
-        output
-    } else {
-        outlier_file
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .map_or(output.clone(), |parent| parent.join(output))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,7 +333,13 @@ mod tests {
         assert_eq!(domains.len(), 1);
         assert_eq!(domains[0].image_size, [80, 80]);
         assert_eq!(domains[0].cell_arcsec, [8.0, 8.0]);
-        assert_eq!(domains[0].output, directory.path().join("outlier"));
+        assert_eq!(domains[0].output, output_path("outlier"));
+        assert_eq!(
+            domains[0].output,
+            std::env::current_dir()
+                .expect("the working directory")
+                .join("outlier")
+        );
         let DomainMask::PixelSupport { support, .. } = &domains[0].mask else {
             panic!("expected pixel support");
         };

@@ -1105,8 +1105,12 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
     let outlier_file = root.path().join("reversed.outlier");
     std::fs::write(
         &outlier_file,
-        "imagename=zeta\nimsize=[10,10]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 1.003rad 0.497rad\nusemask=user\nmask=circle[[5pix,5pix],2pix]\n\
-         imagename=alpha\nimsize=[12,12]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 0.998rad 0.502rad\nusemask=user\nmask=circle[[3pix,3pix],1pix]\n",
+        format!(
+            "imagename={}\nimsize=[10,10]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 1.003rad 0.497rad\nusemask=user\nmask=circle[[5pix,5pix],2pix]\n\
+             imagename={}\nimsize=[12,12]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 0.998rad 0.502rad\nusemask=user\nmask=circle[[3pix,3pix],1pix]\n",
+            zeta.display(),
+            alpha.display(),
+        ),
     )
     .expect("write reversed CASA outlier fixture");
     let imaging = request(
@@ -1119,14 +1123,14 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
     let expected = [
         (ImageDomainRole::Main, main.as_path(), 16, [1.0, 0.5], 256),
         (
-            ImageDomainRole::Outlier("alpha".to_string()),
+            ImageDomainRole::Outlier(alpha.display().to_string()),
             alpha.as_path(),
             12,
             [0.998, 0.502],
             5,
         ),
         (
-            ImageDomainRole::Outlier("zeta".to_string()),
+            ImageDomainRole::Outlier(zeta.display().to_string()),
             zeta.as_path(),
             10,
             [1.003, 0.497],
