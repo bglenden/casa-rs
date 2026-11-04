@@ -22,7 +22,7 @@ use casa_lattices::{
 };
 use casa_tables::{
     ColumnSchema, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerKind, Table, TableInfo, TableOptions,
-    TableSchema, TilePixel, TiledArrayStorage, TiledFileIoStats,
+    TableSchema, TableWriteLock, TilePixel, TiledArrayStorage, TiledFileIoStats,
 };
 use casa_types::{
     ArrayD, ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue,
@@ -1974,6 +1974,10 @@ impl<T: ImagePixel> PagedImage<T> {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|e| ImageError::Io(e.to_string()))?
                 .as_secs_f64();
+        // casacore takes a reopened table's row count from the sync data in
+        // `table.lock`, which this lock publishes: a save alone leaves a
+        // `logtable` CASA wrote unreadable to it.
+        let mut lock = TableWriteLock::acquire(path, 1)?;
         let mut table = Table::open(TableOptions::new(path))?;
         for message in messages {
             table.add_row(RecordValue::new(vec![
@@ -1997,6 +2001,8 @@ impl<T: ImagePixel> PagedImage<T> {
             ]))?;
         }
         table.save(TableOptions::new(path))?;
+        lock.record_write();
+        lock.release()?;
         Ok(())
     }
 
@@ -2739,6 +2745,15 @@ mod tests {
             };
             assert!((4.5e9..6.0e9).contains(&time), "row {row}: {time}");
         }
+        // The append reaches `table.lock`, where casacore reads the row count.
+        let published = || {
+            TableWriteLock::acquire(path.join(LOGTABLE_NAME), 1)
+                .and_then(|lock| lock.modify_counter())
+                .expect("the lock's counter")
+        };
+        let before = published();
+        add_image_history(&path, "tclean", &["c".to_owned()]).expect("add");
+        assert_ne!(published(), before);
     }
 
     struct BareImage<T: ImagePixel> {
