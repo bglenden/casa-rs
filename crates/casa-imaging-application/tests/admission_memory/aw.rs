@@ -25,6 +25,7 @@ fn an_aw_cube_stays_within_its_admission() {
         "imagename": root.path().join("aw-cube"),
         "imsize": 1024,
         "cell": "10arcsec",
+        "spw": "0:0",
         "specmode": "cube",
         "deconvolver": "hogbom",
         "weighting": "natural",
