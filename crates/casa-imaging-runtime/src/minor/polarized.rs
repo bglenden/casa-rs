@@ -3,11 +3,11 @@
 
 use super::{
     Inputs, MinorCycleRunError, PlaneData, PlaneKey, Solved, TracedComponent, clean, load,
-    plane_pixels, result_bytes,
+    plane_pixels, plane_shape, result_bytes,
 };
 use crate::{Demand, HostResources, ResourcePolicy, admit};
 use casa_imaging_deconvolution::{
-    ClarkPolarized, Component, CycleControls, MinorCycleView, PlaneStatistics, PsfSummary,
+    ClarkPolarized, Component, CycleControls, MinorCycleView, PlaneStatistics, PsfSummary, Support,
     peak_magnitude,
 };
 use casa_imaging_model::{ModelCell, ModelDeltaTerm, ModelValue};
@@ -24,8 +24,7 @@ pub(super) fn solve<const N: usize>(
     let mut planes = keys
         .iter()
         .map(|key| {
-            load(inputs, *key)
-                .map(|plane| plane.expect("experiment requires data in every polarization"))
+            load(inputs, *key).map(|plane| plane.unwrap_or_else(|| blank_plane(inputs, *key)))
         })
         .collect::<Result<Vec<PlaneData<'_>>, _>>()?;
     let mut residual = Vec::with_capacity(N);
@@ -33,6 +32,14 @@ pub(super) fn solve<const N: usize>(
         residual.push(plane.residual.pop().expect("one residual per polarization"));
     }
     let first = &planes[0];
+    // CASA uses polarization zero's PSF even when it is blank. Its fitted
+    // beam set gives that plane the domain's largest beam.
+    let blank_summary = if !super::holds_data(inputs.normal, false, keys[0]) {
+        Some(summary.with_domain_beam(&first.psf[0], first.shape, summary.beam()))
+    } else {
+        None
+    };
+    let summary = blank_summary.as_ref().unwrap_or(summary);
     let view = MinorCycleView {
         shape: first.shape,
         residual: &residual,
@@ -106,6 +113,30 @@ pub(super) fn solve<const N: usize>(
         trace,
         charge,
     })
+}
+
+/// The zero-valued residual and PSF of a polarization with no data. CASA's
+/// joint Clark uses the first polarization's mask even when that plane is blank.
+fn blank_plane<'a>(inputs: &Inputs<'a>, key: PlaneKey) -> PlaneData<'a> {
+    let shape = plane_shape(inputs.normal, key);
+    let mask = inputs
+        .masks
+        .get(key.domain)
+        .and_then(|m| {
+            m.plane(
+                key.channel - inputs.normal.slab().core_range().start,
+                key.polarization,
+            )
+        })
+        .expect("mask for every plane");
+    PlaneData {
+        shape,
+        residual: vec![vec![0.0; shape.len()]],
+        psf: vec![vec![0.0; shape.len()]],
+        support: Support::new(shape, mask.to_vec()),
+        valid: Support::new(shape, vec![false; shape.len()]),
+        response: None,
+    }
 }
 
 fn group_trace(

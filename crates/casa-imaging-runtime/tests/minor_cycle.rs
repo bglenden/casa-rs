@@ -699,3 +699,58 @@ fn an_empty_channel_does_not_split_another_channels_clark_polarizations() {
             .all(|c| c.cell.pixel() == [40, 40])
     );
 }
+
+/// CASA's joint IV Clark runs one channel even if either polarization has
+/// no data, retaining a single iteration record (#1140).
+#[test]
+fn joint_clark_keeps_a_blank_polarization_in_its_channel() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    for blank in 0..2 {
+        let width = 64;
+        let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+            31,
+            [width, width],
+            1,
+            1,
+            ReconstructionBasis::ChannelLocal { channels: 1 },
+            ReconstructionAlgorithm::Clark,
+            ReconstructionControls::new(1, 0.17, 0.0),
+            vec![StokesI, StokesV],
+        );
+        let scene = Scene::new(&problem);
+        let completion = completion(&problem, &scene, |images| {
+            let cells = width * width;
+            images.polarizations = 2;
+            let unit = scene
+                .unit_psf()
+                .into_iter()
+                .map(|v| v as f32)
+                .collect::<Vec<_>>();
+            images.psf = Some(unit.repeat(2));
+            images.psf.as_mut().unwrap()[blank * cells..(blank + 1) * cells].fill(0.0);
+            images.sum_weights = vec![1.0, 1.0];
+            images.sum_weights[blank] = 0.0;
+            images.published_sum_weights = images.sum_weights.clone();
+            images.residual = vec![0.0; 2 * cells];
+            images.residual[(1 - blank) * cells + 40 * width + 40] = 3.0;
+        });
+        let (_, outcome) = minor_cycle(
+            &problem,
+            &completion,
+            &setup(&problem, None),
+            &controls(1, 0.17),
+            1,
+        );
+        assert_eq!(outcome.summary.iterations, 1, "blank={blank}");
+        assert_eq!(outcome.summary.planes.len(), 1, "blank={blank}");
+        assert_eq!(outcome.terms.len(), 1, "blank={blank}");
+        let changed = outcome
+            .summary
+            .trace
+            .iter()
+            .find(|c| c.flux != 0.0)
+            .unwrap();
+        assert_eq!(changed.cell.polarization(), 1 - blank);
+        assert!((changed.flux - 0.51).abs() < 1e-6);
+    }
+}

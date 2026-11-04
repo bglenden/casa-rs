@@ -544,7 +544,7 @@ pub fn run_minor_cycle(
         masks,
         auto_masks,
         planes,
-        blank,
+        mut blank,
         retained,
         ..
     } = prepared;
@@ -564,31 +564,52 @@ pub fn run_minor_cycle(
     // comparison before this path can be considered complete.
     let joint = matches!(setup.algorithm, ReconstructionAlgorithm::Clark)
         && !inputs.taylor
-        && matches!(n_pol, 2 | 4)
-        && planes.len() >= n_pol;
+        && matches!(n_pol, 2 | 4);
     if joint {
-        let mut ordered = planes.clone();
+        let mut ordered = Vec::with_capacity(planes.len() + blank.len());
+        ordered.extend_from_slice(&planes);
+        ordered.extend_from_slice(&blank);
         ordered.sort_unstable_by_key(|(key, _)| (key.domain, key.channel, key.polarization));
-        let mut groups = Vec::with_capacity(ordered.len() / n_pol);
-        let mut singles = Vec::with_capacity(ordered.len());
-        for chunk in ordered.chunk_by(|a, b| a.0.domain == b.0.domain && a.0.channel == b.0.channel)
-        {
-            if chunk.len() == n_pol {
-                groups.push(PolarizedSlot {
-                    keys: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].0),
-                    stats: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].1),
-                    solved: None,
-                });
-            } else {
-                singles.extend(chunk.iter().map(|(key, statistics)| Slot {
-                    key: *key,
-                    statistics: *statistics,
-                    solved: None,
-                }));
-            }
-        }
+        let mut groups = ordered
+            .chunks_exact(n_pol)
+            .filter(|chunk| chunk.iter().any(|(key, _)| holds_data(normal, false, *key)))
+            .map(|chunk| PolarizedSlot {
+                keys: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].0),
+                stats: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].1),
+                solved: None,
+            })
+            .collect::<Vec<_>>();
+        // A partially blank channel is one joint solve, and has one row.
+        // Channels whose every polarization is blank keep the blank rows.
+        blank.retain(|(key, _)| {
+            !(0..n_pol).any(|polarization| {
+                holds_data(
+                    normal,
+                    false,
+                    PlaneKey {
+                        polarization,
+                        ..*key
+                    },
+                )
+            })
+        });
         team.for_each_mut(&mut groups, |_, group| {
-            let summary = cache.summaries[&group.keys[0]];
+            let summary = cache
+                .summaries
+                .get(&group.keys[0])
+                .copied()
+                .unwrap_or_else(|| {
+                    cache
+                        .summaries
+                        .iter()
+                        .filter(|(key, _)| key.domain == group.keys[0].domain)
+                        .map(|(_, summary)| *summary)
+                        .max_by(|a, b| {
+                            (a.beam().major_fwhm_rad() * a.beam().minor_fwhm_rad())
+                                .total_cmp(&(b.beam().major_fwhm_rad() * b.beam().minor_fwhm_rad()))
+                        })
+                        .expect("a group with data has a measured PSF")
+                });
             group.solved = Some(match n_pol {
                 2 => polarized::solve::<2>(
                     &inputs,
@@ -610,26 +631,6 @@ pub fn run_minor_cycle(
             });
             Ok::<_, MinorCycleRunError>(())
         })?;
-        team.for_each_mut(&mut singles, |_, slot| {
-            let summary = cache.summaries[&slot.key];
-            slot.solved = Some(solve(
-                &inputs,
-                admission,
-                (slot.key, None),
-                &summary,
-                &slot.statistics,
-                controls,
-                (&mut None, fft_threads),
-            )?);
-            Ok::<_, MinorCycleRunError>(())
-        })?;
-        results.extend(singles.into_iter().map(|slot| {
-            (
-                slot.key,
-                slot.statistics,
-                slot.solved.expect("every plane solved"),
-            )
-        }));
         results.extend(groups.into_iter().map(|mut group| {
             let mut stats = group.stats[0];
             for other in &group.stats[1..n_pol] {
