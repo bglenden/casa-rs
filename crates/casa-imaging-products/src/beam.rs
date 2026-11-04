@@ -58,3 +58,27 @@ pub(crate) fn fixed_restoring_beam(
     )
     .map_err(|error| ProductsError::BeamFitFailed(error.to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `makeImageBeamSet` warns and leaves a plane whose fit fails to the
+    /// largest beam; a fit that works is the plane's own.
+    #[test]
+    fn a_plane_whose_fit_is_refused_has_no_beam_of_its_own() {
+        let lobe = |centre: [f64; 2]| {
+            let mut psf = vec![0.0_f32; 64 * 64];
+            for x in 0..64 {
+                for y in 0..64 {
+                    let [dx, dy] = [x as f64 - centre[0], y as f64 - centre[1]];
+                    psf[x * 64 + y] = (-(dx * dx + dy * dy) / 8.0).exp() as f32;
+                }
+            }
+            psf
+        };
+        let cells = [1.0e-5, 1.0e-5];
+        assert!(fit_plane_beam(&lobe([32.0, 32.0]), [64, 64], cells, 0.35).is_some());
+        assert!(fit_plane_beam(&lobe([8.0, 40.0]), [64, 64], cells, 0.35).is_none());
+    }
+}
