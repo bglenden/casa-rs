@@ -108,7 +108,7 @@ def expand(case, call, root):
 
 def run_case(case, calls, root, folder, call):
     (folder / case).mkdir(parents=True)
-    (folder / case / "outliers.txt").write_text(OUTLIER.format(name=case))
+    (folder / case / "outliers.txt").write_text(OUTLIER.format(name=folder / case))
     reply = None
     for values in calls:
         reply = call(expand(case, values, root))
