@@ -1051,10 +1051,11 @@
     },
     "psfcutoff": {
       "status": "Implemented",
-      "scope": "Copied; request requires positive value.",
+      "scope": "Copied; request requires positive value. A plane whose PSF peaks outside its inner quarter is not fitted, as StokesImageUtil::FitGaussianPSF refuses it, and takes its domain's largest beam, or a tiny one where no plane has a beam (SIImageStore::makeImageBeamSet). Its peak is its sidelobe level.",
       "evidence": [
         "signature",
-        "reader"
+        "reader",
+        "psf-off-centre-20261104"
       ],
       "behaviors": [
         "deconvolution"
@@ -2002,6 +2003,21 @@
         "resources/casa-compat/evidence/tclean-image-history-20261103.json",
         "tools/casa-compat/tclean_history_compare.py",
         "crates/casars-imager/src/history.rs"
+      ]
+    },
+    "psf-off-centre-20261104": {
+      "kind": "CASA's off-centre PSF case against casa-rs, with T0 laws",
+      "state": "measured: 6 of 9 cases pass every product; one near-tie and two left to issue 1130",
+      "source_revision": "ea691fd1337819eadc3e15ccb57081285cce84b0",
+      "revision": "c6858c25606f2807b6e80fbdf15fc75a16d27819",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-psf-off-centre-cases.json --backend cpu --precision f64",
+      "receipt": "resources/casa-compat/evidence/tclean-psf-off-centre-20261104.json",
+      "scope": "Channel 0 of refim_point_linRL.ms peaks at pixel (13,64). Dirty, Hogbom, every plane refused, a fixed and a common beam, and a Taylor family agree. deconvolver='clark' and 'multiscale' on that plane don't yet (issue 1130). A fit that fails to converge stays an error, where CASA stores a beam of 2.5 cells.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-psf-off-centre-20261104.json",
+        "resources/casa-compat/tclean-psf-off-centre-cases.json",
+        "crates/casa-imaging-products/src/beam.rs"
       ]
     }
   }
