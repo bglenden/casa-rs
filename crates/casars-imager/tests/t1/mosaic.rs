@@ -452,6 +452,7 @@ fn a_mosweight_cube_weighs_each_field_by_its_own_density() {
         controls["mosweight"] = json!(true);
         let together = sumwt(&format!("mosweight-{weighting}"), &controls);
         let mut alone = vec![0.0; together.len()];
+        let mut each = Vec::new();
         for field in ["0", "1", "2"] {
             controls["field"] = json!(field);
             let one = sumwt(&format!("mosweight-{weighting}-{field}"), &controls);
@@ -459,9 +460,21 @@ fn a_mosweight_cube_weighs_each_field_by_its_own_density() {
                 one.iter().all(|sum| *sum > 0.0),
                 "{weighting}, field {field}"
             );
-            for (sum, value) in alone.iter_mut().zip(one) {
+            for (sum, value) in alone.iter_mut().zip(&one) {
                 *sum += value;
             }
+            each.push(one);
+        }
+        // Fields with a gap between them take their own densities too (#1072).
+        controls["field"] = json!("0,2");
+        let gap = sumwt(&format!("mosweight-{weighting}-gap"), &controls);
+        for channel in 0..gap.len() {
+            let alone = each[0][channel] + each[2][channel];
+            assert!(
+                (gap[channel] - alone).abs() <= 1.0e-5 * alone,
+                "{weighting}, channel {channel}: sumwt {} over fields 0 and 2, {alone} alone",
+                gap[channel]
+            );
         }
         controls["field"] = json!("0,1,2");
         eprintln!("T1 mosweight cube {weighting}: sumwt {together:?}, fields alone {alone:?}");

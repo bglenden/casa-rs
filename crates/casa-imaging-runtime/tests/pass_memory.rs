@@ -852,7 +852,9 @@ fn the_density_pass_holds_at_most_its_charge_with_every_fields_cube() {
         fields,
     };
     let per_field = shape(Some(
-        DensityFieldKeys::new([0, 1, 2]).expect("three fields"),
+        // Far apart, as a sparse selection is: three fields' planes, whatever
+        // lies between them (#1072). Every row here is field 0.
+        DensityFieldKeys::new([0, 1000, 5000]).expect("three fields"),
     ));
     assert_eq!(per_field.bytes(), 3 * shape(None).bytes());
     let teams = [1, 3].map(|workers| WorkerTeam::new(workers).expect("team"));

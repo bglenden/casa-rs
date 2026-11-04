@@ -43,9 +43,9 @@ pub(super) struct SpecificationInputs {
     /// image of one plane (`HetArrayConvFunc` takes the conjugate only
     /// when `nchan_p == 1`).
     pub(super) mosaic_conjugate_beams: bool,
-    /// The FIELD_IDs a density weighs by field over under `mosweight`: the
-    /// first and the span to the last selected field with data
-    /// ([`density_fields`]).
+    /// The field keys a density weighs by field over under `mosweight`: the
+    /// selected fields with data, as `VisImagingWeight` keys a density by
+    /// each field its traversal meets.
     pub(super) density_fields: Option<DensityFieldKeys>,
     pub(super) cube_density_padding: Option<usize>,
     pub(super) continuum_transform: Option<SequentialContinuumTransform>,
@@ -277,13 +277,6 @@ fn reconstruction_controls(
     } else {
         controls
     }
-}
-
-/// The field keys `mosweight` grids a density for: the selected fields with
-/// data (`VisImagingWeight` keys a density by each field its traversal
-/// meets); `None` without one.
-pub(super) fn density_fields(fields: &BTreeSet<i32>) -> Option<DensityFieldKeys> {
-    DensityFieldKeys::new(fields.iter().filter_map(|key| u32::try_from(*key).ok()))
 }
 
 /// The weighting: a cube's density per output channel under
@@ -706,16 +699,14 @@ mod tests {
     }
 
     /// `mosweight` weighs each selected field's continuum density on its
-    /// own, over the span of FIELD_IDs from the first to the last with data;
-    /// a cube without `perchanweightdensity`, `briggsbwtaper`'s uniform
+    /// own; a cube without `perchanweightdensity`, `briggsbwtaper`'s uniform
     /// fallback and a superuniform cube do too. A cube's per-channel density
     /// is each field's density cube (`BriggsCubeWeightor`'s `multiField`).
     #[test]
     fn mosweight_weighs_each_fields_density_apart() {
-        let fields = density_fields(&BTreeSet::from([3, 5, 4, 7]));
+        let fields = DensityFieldKeys::new([3, 5, 4, 7]);
         let keys = fields.clone().expect("fields");
         assert_eq!(keys.keys(), [3, 4, 5, 7]);
-        assert_eq!(density_fields(&BTreeSet::new()), None);
         let per_field = WeightDensityScope::PerField {
             fields: keys.clone(),
         };

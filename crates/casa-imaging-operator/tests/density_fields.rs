@@ -30,9 +30,10 @@ const PADDING: u32 = 2;
 const NATIVE_HZ: [f64; 9] = [
     0.90e9, 0.94e9, 0.98e9, 1.02e9, 1.06e9, 1.10e9, 1.14e9, 1.18e9, 1.22e9,
 ];
-/// The densities' field keys: 4, 5 and 7 have rows, 6 none; 9 has no density.
-fn span() -> DensityFieldKeys {
-    DensityFieldKeys::new([4, 5, 6, 7]).expect("four fields")
+/// The densities' field keys, with gaps between them: 4, 7 and 1004 have rows
+/// and 6 none; 5 and 9, between them, have rows and no density.
+fn keys() -> DensityFieldKeys {
+    DensityFieldKeys::new([4, 6, 7, 1004]).expect("four fields")
 }
 
 /// One row's owned samples.
@@ -73,7 +74,7 @@ impl Row {
 fn rows() -> Vec<Row> {
     let mut rng = Rng::new(818);
     let mut rows = Vec::new();
-    for field in [4, 5, 7, 9] {
+    for field in [4, 5, 7, 9, 1004] {
         for _ in 0..24 {
             let samples = NATIVE_HZ.len() * XX_YY.len();
             rows.push(Row {
@@ -163,7 +164,7 @@ fn weightings(grid: &DensityGrid) -> [WeightingGeneration; 3] {
     ]
 }
 
-/// Field `index` of the span's planes in `grid` equal `alone`'s, cell for
+/// Field `index` of the keys' planes in `grid` equal `alone`'s, cell for
 /// cell, with its weight sums.
 fn assert_field_planes(grid: &DensityGrid, index: usize, alone: &DensityGrid, field: u32) {
     let planes = alone.shape().planes;
@@ -185,43 +186,43 @@ fn assert_field_planes(grid: &DensityGrid, index: usize, alone: &DensityGrid, fi
 /// cube: its cells and weight sums, its Briggs factors per channel, and the
 /// imaging weight of every sample of its rows, under uniform, Briggs and
 /// bandwidth-tapered Briggs weighting, equal those of a per-channel density
-/// gridded from that field's rows alone. A field in the span without rows
-/// keeps empty planes, and a field outside the span grids and weighs
-/// nothing. One density over every field weighs the same rows otherwise.
+/// gridded from that field's rows alone. A field with a density and no rows
+/// keeps empty planes, and a field without one grids and weighs nothing,
+/// though its key lies between those of fields that have one. One density
+/// over every field weighs the same rows otherwise.
 #[test]
 fn a_per_field_cube_density_is_each_fields_density_alone() {
     let fixture = Fixture::new();
     let rows = rows();
-    let per_field = fixture.density(shape(Some(span())), rows.iter());
+    let per_field = fixture.density(shape(Some(keys())), rows.iter());
     let by_field = weightings(&per_field);
     let joint = weightings(&fixture.density(shape(None), rows.iter()));
     // The grid holds the planes of every field it names: it is charged as
     // that many single-field grids.
-    assert_eq!(shape(Some(span())).total_planes(), 4 * shape(None).planes);
-    assert_eq!(shape(Some(span())).bytes(), 4 * shape(None).bytes());
+    assert_eq!(shape(Some(keys())).total_planes(), 4 * shape(None).planes);
+    assert_eq!(shape(Some(keys())).bytes(), 4 * shape(None).bytes());
     assert_eq!(per_field.cells().len(), 4 * shape(None).cells());
-    // Fields far apart take a plane each, however many FIELD_IDs lie between:
+    // Fields far apart take a plane each, however many keys lie between:
     // `VisImagingWeight`'s `multiFieldMap_p` holds what its traversal meets
-    // (#1072). Two fields 1,000 keys apart hold two grids' planes.
+    // (#1072).
     let apart = shape(DensityFieldKeys::new([4, 1004]));
     assert_eq!(apart.bytes(), 2 * shape(None).bytes());
-    assert_eq!(
-        DensityGrid::new(apart.clone()).cells().len(),
-        2 * shape(None).cells()
-    );
     let last = (apart.planes - 1) as u32;
     assert_eq!(apart.density_plane(0, 4), Some(0));
     assert_eq!(
         apart.density_plane(last, 1004),
         Some(apart.planes as u32 + last)
     );
-    assert_eq!(
-        apart.density_plane(0, 5),
-        None,
-        "a key between them has no plane"
-    );
+    assert_eq!(apart.density_plane(0, 5), None, "a key between them");
+    // A continuum density's one plane per field, whatever the output plane.
+    let continuum = DensityGridShape {
+        planes: 1,
+        padding: 0,
+        ..apart
+    };
+    assert_eq!(continuum.density_plane(3, 1004), Some(1));
     let mut joint_differs = false;
-    for (index, field) in span().keys().iter().copied().enumerate() {
+    for (index, field) in keys().keys().iter().copied().enumerate() {
         let own = rows.iter().filter(|row| row.field == field);
         let alone = fixture.density(shape(None), own.clone());
         assert_field_planes(&per_field, index, &alone, field);
@@ -252,7 +253,7 @@ fn a_per_field_cube_density_is_each_fields_density_alone() {
         }
     }
     assert!(joint_differs, "one density over every field weighs alike");
-    for row in rows.iter().filter(|row| row.field == 9) {
+    for row in rows.iter().filter(|row| [5, 9].contains(&row.field)) {
         for weighting in &by_field {
             assert!(fixture.weights(weighting, row).is_empty());
         }

@@ -238,7 +238,7 @@ fn the_uv_taper_weighs_each_channel_at_its_own_frequency_after_the_density() {
 /// samples grid their own density plane and read it with that plane's
 /// Briggs factors, so a field observing a cell three times weighs a third
 /// as uniformly as one observing it once, yet both weigh alike under Briggs
-/// when each field's density is that cell alone; a field outside the span
+/// when each field's density is that cell alone; a field without a density
 /// grids and weighs nothing.
 #[test]
 fn a_per_field_density_weighs_each_field_by_its_own_samples() {
