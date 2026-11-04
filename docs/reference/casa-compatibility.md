@@ -1477,12 +1477,12 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="tclean-evidence-two-ms-band-20261104"></a>
 ##### two-ms-band-20261104
 
-**casa-rs's own two-MeasurementSet cube cases and CASA's against CASA, with a T1 law — measured: 10 of 10, and CASA's 5 of 5.** Dirty cubes over two MeasurementSets of disjoint bands, in both orders, with channel selections, and one MeasurementSet's selections. The band is taken in each store's data frame, as datafstart is; frames that differ between stores aren't covered.
+**casa-rs's own two-MeasurementSet cube cases and CASA's against CASA, with a T1 law — measured: 14 of 14, and CASA's 5 of 5.** Dirty cubes over two MeasurementSets, in both orders, with a selection above, below and overlapping the other's, and one MeasurementSet's selections, with the rest frequency over both stores. Stores of differing frames are refused.
 
-- [resources/casa-compat/evidence/tclean-two-ms-band-20261104.json](https://github.com/bglenden/casa-rs/blob/09abeafbadf77ce77b922889c3aa0212cc16443f/resources/casa-compat/evidence/tclean-two-ms-band-20261104.json)
-- [resources/casa-compat/tclean-two-ms-band-cases.json](https://github.com/bglenden/casa-rs/blob/09abeafbadf77ce77b922889c3aa0212cc16443f/resources/casa-compat/tclean-two-ms-band-cases.json)
-- [crates/casa-imaging-application/src/compile/spectral.rs](https://github.com/bglenden/casa-rs/blob/09abeafbadf77ce77b922889c3aa0212cc16443f/crates/casa-imaging-application/src/compile/spectral.rs)
-- Revision: `c43f29ecc318f5e5647122daa7f2d25208ff0f41`; CASA: `casatasks 6.7.6.14; casatools 6.7.6-14`.
+- [resources/casa-compat/evidence/tclean-two-ms-band-20261104.json](https://github.com/bglenden/casa-rs/blob/20cdfce4876217301b0463c3d72cd209f53b29f7/resources/casa-compat/evidence/tclean-two-ms-band-20261104.json)
+- [resources/casa-compat/tclean-two-ms-band-cases.json](https://github.com/bglenden/casa-rs/blob/20cdfce4876217301b0463c3d72cd209f53b29f7/resources/casa-compat/tclean-two-ms-band-cases.json)
+- [crates/casa-imaging-application/src/compile/spectral.rs](https://github.com/bglenden/casa-rs/blob/20cdfce4876217301b0463c3d72cd209f53b29f7/crates/casa-imaging-application/src/compile/spectral.rs)
+- Revision: `8866d7b6f2febdd6076ef29737afa3d5c46ec9c5`; CASA: `casatasks 6.7.6.14; casatools 6.7.6-14`.
 - Command: `tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-two-ms-band-cases.json --backend cpu --precision f64, and with tclean-casa-test-cases.json --case-prefix test_cube.test_cube_twoMS --case-prefix test_modelvis.test_modelvis_29`.
 - Receipt: `resources/casa-compat/evidence/tclean-two-ms-band-20261104.json`.
 
