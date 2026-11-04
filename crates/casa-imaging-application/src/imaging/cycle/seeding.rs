@@ -187,8 +187,11 @@ impl Run<'_> {
                 }
             };
             // `SIImageStore::divideModelByWeight` skips a plane whose PB's
-            // peak is zero: no sample reached it, and its model stays as it is.
-            let Some(bound) = MosaicSensitivity::try_new(&sensitivity).map_err(units)? else {
+            // peak is zero: no sample reached it, or its rows all miss the
+            // grid (an AW weight image with no sum, which
+            // `divideImageByWeightVal` zeroes). Its model stays as it is.
+            let bound = MosaicSensitivity::try_new(&sensitivity).map_err(units)?;
+            let Some(bound) = bound.filter(|_| sum_weight > 0.0) else {
                 physical.extend_from_slice(samples);
                 continue;
             };

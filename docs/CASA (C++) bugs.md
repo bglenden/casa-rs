@@ -3604,3 +3604,48 @@ sample reaches it: `SIImageStore::restore` restores every plane, and
 there is the model convolved with that beam. Evidence: `casa-images` `regrid::spectral` laws, the
 start-model axis laws, and CASA's `test_modelvis_7` and
 `test_startmodel_regrid_cube`.
+
+## A restarted AW cube's weight image grows with the other channels' sums
+
+- Date noted: 2026-11-03
+- Status: CASA bug casa-rs does not follow (#719)
+- Affected code: casatools `synthesis/TransformMachines2/CFCache.cc`
+  (`CFCache::loadWtImage`), `synthesis/ImagerObjects/SIImageStore.cc`
+  (`divideWeightBySumwt`, `divideResidualByWeight`)
+
+`SynthesisImagerVi2` names the run's image as the weight prefix
+(`setWtImagePrefix`), so `AWProjectWBFT::initializeToSky` reads an existing
+`.weight` back as its average PB (`CFCache::loadAvgPB`), and `loadWtImage`
+multiplies it by `max(sumWtTmp.get())`: the largest sum of weights over all
+channels. `.weight` was divided by each channel's own sum
+(`divideWeightBySumwt`), so a second tclean call on the same image name scales
+channel `c`'s weight by `max(sumwt)/sumwt[c]`. `divideResidualByWeight`, which
+divides by the PB peak times the weight's root, then moves its residual and
+every product after it. The result depends on whether an earlier call made the
+image and on how other channels were flagged, and no sky could change it. Each
+reload also applies `AWProjectFT::getWeightImage`'s sinc correction again, a
+smaller effect of about 1e-5 NRMS that a channel with the largest sum keeps.
+
+`refim_oneshiftpoint.mosaic.ms`, three channels, `niter=10`: a fresh call's
+`.weight` peaks are 1.0000, 1.0041 and 1.0233 and its channel 2 residual peak
+is 0.1019; after a `niter=0` call on that name they are 1.0000, 1.0081 and
+1.0472, and 0.1139. casa-rs computes the weight image afresh, and agrees with
+CASA's fresh call within 5.7e-7 NRMS on every product; on one window, where
+`max(sumwt)` is the channel's own, CASA's restart also stays consistent and
+agrees within 5e-5. `test_mosaic_cube.test_cube_awproject_*` make that second
+call, so they differ from casa-rs on the channels the reload scales. Evidence:
+`resources/casa-compat/evidence/tclean-aw-cube-20261103.json`.
+
+## A one-channel AW cube's restart writes its images with no default mask
+
+- Date noted: 2026-11-03
+- Status: a CASA inconsistency casa-rs does not follow (#719)
+- Affected code: not traced
+
+A second tclean call on the same image name, on a cube of one channel with
+`gridder='awproject'`, leaves CASA's `.image` and `.residual` with no default
+mask, where a fresh call and a restart of a cube of several channels have
+`mask0`. casa-rs writes `mask0`, the PB cut, each time. The pixels agree within
+5e-5 NRMS. `aw_restart_one_window` in
+`resources/casa-compat/tclean-aw-cube-cases.json` shows it and fails on the
+mask alone.

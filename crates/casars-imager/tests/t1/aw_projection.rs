@@ -434,6 +434,134 @@ fn a_native_cache_reused_across_an_spw_selection_change_gives_a_fresh_caches_pro
     assert_same_products(&reused, &fresh);
 }
 
+/// #719: each plane of an AW cube is normalized by its own weights. On a grid
+/// that drops more of the upper window's long baselines the planes' sums of
+/// weights differ, and each plane's weight image peaks at the whole sample
+/// weight over its own sum (`AWProjectWBFT::resampleCFToGrid`,
+/// `SIImageStore::divideWeightBySumwt`). `divideResidualByWeight` divides by
+/// the PB peak and the weight's root, so a point on axis of the same flux in
+/// both planes reads its flux over that plane's own peak.
+#[test]
+fn each_plane_of_an_aw_cube_is_normalized_by_its_own_weights() {
+    let observation = Observation::synthesise_setup(two_window_setup(), &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let run = |name: &str, imsize: usize, cell: &str| {
+        let cache = observation.scratch(&format!("{name}-cf"));
+        let mut controls = cached_clean("0,1", &cache, &surface);
+        let fields = controls.as_object_mut().expect("controls");
+        fields.insert("niter".into(), json!(0));
+        fields.insert("imsize".into(), json!([imsize, imsize]));
+        fields.insert("cell".into(), json!([cell, cell]));
+        fields.insert("specmode".into(), json!("cube"));
+        fields.insert("nchan".into(), json!(2));
+        fields.insert("start".into(), json!("1.4GHz"));
+        fields.insert("width".into(), json!("200MHz"));
+        fields.insert("interpolation".into(), json!("nearest"));
+        observation.image(name, controls).1
+    };
+    let whole = run("aw-cube-holding", 1024, "10arcsec")
+        .get(".sumwt")
+        .channel_values();
+    let coarse = run("aw-cube-coarse", 256, "40arcsec");
+    let gridded = coarse.get(".sumwt").channel_values();
+    let peaks = |suffix: &str| {
+        [0, 1].map(|plane| {
+            coarse
+                .get(suffix)
+                .plane(plane)
+                .iter()
+                .fold(0.0_f32, |m, v| m.max(*v))
+        })
+    };
+    let expected = [whole[0] / gridded[0], whole[1] / gridded[1]];
+    assert!(
+        (expected[1] - expected[0]).abs() > 0.005,
+        "the planes' weights must differ for this law: {expected:?}"
+    );
+    let (weight, residual) = (peaks(".weight"), peaks(".residual"));
+    for plane in 0..2 {
+        assert!(
+            (weight[plane] - expected[plane]).abs() < 2.0e-3 * expected[plane],
+            "plane {plane}'s weight image peaks at {weight:?}, not {expected:?}"
+        );
+    }
+    let fluxes = [residual[0] * expected[0], residual[1] * expected[1]];
+    assert!(
+        (fluxes[0] - fluxes[1]).abs() < 0.02 * fluxes[0],
+        "the point reads {fluxes:?} once each plane's own peak is taken out"
+    );
+}
+
+/// A window of several channels interpolates onto a cube's axis, where
+/// CASA's `AWVisResampler` reads a native channel's frequency: that has no
+/// CASA comparison, so it is refused naming its issue, and its one-channel
+/// selection runs.
+#[test]
+fn an_aw_cube_of_a_window_of_several_channels_is_refused() {
+    let setup = Setup {
+        spectral_windows: vec![SyntheticSpectralSetup {
+            channel_count: 2,
+            ..lband_window("t1-lband-two", FREQUENCY_HZ)
+        }],
+        ..setup()
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let controls = |spw: &str| {
+        let mut controls = cached_clean(spw, &observation.scratch("two-cf"), &surface);
+        let fields = controls.as_object_mut().expect("controls");
+        fields.insert("niter".into(), json!(0));
+        fields.insert("specmode".into(), json!("cube"));
+        controls
+    };
+    let refused = observation
+        .try_image("aw-two-channels", controls("0"))
+        .err()
+        .expect("a window of two channels");
+    assert!(refused.contains("#1121"), "{refused}");
+    observation.image("aw-one-channel", controls("0:0"));
+}
+
+/// A row off the grid still weighs in the sensitivity:
+/// `AWProjectWBFT::resampleCFToGrid` puts every weight cell at the uv origin,
+/// where `onGrid` holds, so the weight image's peak is the whole sample
+/// weight over the sum of the rows that were gridded. On a grid too coarse
+/// for the longest baselines the sum is lower than on one that holds them.
+#[test]
+fn a_row_off_the_grid_counts_in_the_aw_weight_image() {
+    let observation = Observation::synthesise_setup(setup(), &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let run = |name: &str, imsize: usize, cell: &str| {
+        let mut controls = cached_clean("0", &observation.scratch(&format!("{name}-cf")), &surface);
+        let fields = controls.as_object_mut().expect("controls");
+        fields.insert("niter".into(), json!(0));
+        fields.insert("imsize".into(), json!([imsize, imsize]));
+        fields.insert("cell".into(), json!([cell, cell]));
+        observation.image(name, controls).1
+    };
+    let holding = run("aw-holding", 1024, "10arcsec");
+    let coarse = run("aw-coarse", 256, "40arcsec");
+    let sum = |products: &Products| products.get(".sumwt").channel_values()[0];
+    let (whole, gridded) = (sum(&holding), sum(&coarse));
+    assert!(
+        gridded < 0.99 * whole,
+        "the coarse grid must drop rows: {gridded} of {whole}"
+    );
+    let weight_peak = coarse
+        .get(".weight")
+        .plane(0)
+        .iter()
+        .fold(0.0_f32, |m, v| m.max(*v));
+    let expected = whole / gridded;
+    assert!(
+        (weight_peak - expected).abs() < 2.0e-3 * expected,
+        "the weight image's peak is {weight_peak}, the whole weight over the gridded {expected}"
+    );
+}
+
 /// tclean's AW terms reach the native cells and their lookup (#980). With
 /// cells at each window's frequency, `conjbeams` grids each window with the
 /// other's beam and weighs with the conjugate pair, so the products differ;

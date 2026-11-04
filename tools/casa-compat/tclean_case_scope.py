@@ -89,14 +89,6 @@ def awproject_cache(vis, params, case):
     return cache == "" or cache not in staged(case)
 
 
-def awproject_cube(_vis, params, _case):
-    return params.get("gridder") == "awproject" and params.get("specmode") in (
-        "cube",
-        "cubedata",
-        "cubesource",
-    )
-
-
 def awproject_imported_mosaic(vis, params, case):
     cache = text(params, "cfcache")
     return (
@@ -231,11 +223,6 @@ LATER = [
         "awproject-cache-generation",
         awproject_cache,
         "awproject with no CASA CF cache to read: generating one is not native yet",
-    ),
-    (
-        "awproject-cube",
-        awproject_cube,
-        "AW projection of a cube: awproject stays at its current coverage",
     ),
     (
         "awproject-imported-mosaic",

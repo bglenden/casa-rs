@@ -324,7 +324,10 @@ pub(super) fn plane_beam(
         let plane = normal.read_plane(key.domain, key.channel, key.polarization)?;
         (plane.read_sensitivity()?, plane.sum_weight())
     };
-    let Some(beam) = MosaicSensitivity::try_new(&sensitivity)? else {
+    // A plane whose rows all miss the grid holds an AW weight image (they
+    // weigh at the uv origin) and no sum: `SIImageStore::divideImageByWeightVal`
+    // zeroes it, so it has no `.pb` to cut by.
+    let Some(beam) = MosaicSensitivity::try_new(&sensitivity)?.filter(|_| sum_weight > 0.0) else {
         return Ok(Some(vec![false; sensitivity.len()]));
     };
     let beam = beam.with_normal_sum_weight(sum_weight)?;

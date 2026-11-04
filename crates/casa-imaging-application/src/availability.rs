@@ -42,11 +42,11 @@ pub enum Unsupported {
     /// Facets grid with the standard kernel set. CASA refuses AW and mosaic
     /// facets; W-projection facets wait for a per-facet W set.
     FacetedKernelSet,
-    /// AW projection images a continuum or MT-MFS image. A cube would keep
-    /// each channel's weight image as its plane's sensitivity, as a mosaic
-    /// cube does, but its per-plane weights have no CASA comparison yet
-    /// (#719).
-    CubeAwProjection,
+    /// AW projection images a cube whose windows hold one selected channel
+    /// each; a window of several interpolates onto the cube's axis, where
+    /// CASA's `AWVisResampler` reads a native channel's frequency and casa-rs
+    /// the fine grid's, and that has no CASA comparison yet (#1121).
+    MultiChannelWindowAwCube,
     /// AW projection grids a square image of square cells: its native
     /// convolution functions and their cache are laid out on one axis.
     NonSquareAwProjection,
@@ -84,9 +84,9 @@ impl fmt::Display for Unsupported {
             Self::FacetedKernelSet => {
                 formatter.write_str("facets grid with the standard gridder only (#1063)")
             }
-            Self::CubeAwProjection => formatter.write_str(
-                "AW projection images specmode mfs; a cube waits for its per-plane weight check \
-                 (#719)",
+            Self::MultiChannelWindowAwCube => formatter.write_str(
+                "AW projection images a cube whose selected windows hold one channel each; a \
+                 window of several waits for a CASA comparison (#1121)",
             ),
             Self::NonSquareAwProjection => formatter.write_str(
                 "AW projection images a square imsize of square cells; the standard, W and \
@@ -227,8 +227,15 @@ pub fn check(
     ) && problem
         .required_capabilities()
         .contains(&RequiredCapability::AwProjection)
+        && problem
+            .observation_transaction()
+            .read_set()
+            .sources()
+            .iter()
+            .flat_map(|source| source.selection().spectral_windows())
+            .any(|window| window.channel_indices().len() > 1)
     {
-        unsupported.push(Unsupported::CubeAwProjection);
+        unsupported.push(Unsupported::MultiChannelWindowAwCube);
     }
     if problem
         .required_capabilities()

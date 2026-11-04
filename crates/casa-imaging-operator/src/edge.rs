@@ -4,7 +4,9 @@
 //! counts in `sumwt` ([`Reach`]). Both backends grid by it.
 //!
 //! A set that drops a sample whose support overruns the grid
-//! ([`GridEdge::Whole`]) grids every placement the resampler keeps wholly.
+//! ([`GridEdge::Whole`]) grids wholly every placement that fits; the AW
+//! set's placements that do not are kept for its weight image alone
+//! ([`Mode::Weight`] at the uv origin), and every other mode is [`Reach::Off`].
 //! W projection's sectioned edge ([`GridEdge::Sectioned`]) clips the data
 //! and the PSF to the same sectors as the mosaic's, and every sample with a
 //! tap on them weighs, by the kernel sum of those taps
