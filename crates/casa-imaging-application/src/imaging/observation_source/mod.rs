@@ -190,12 +190,14 @@ impl BatchRoute {
             .partitions()
             .try_fold(WriteCharge::default(), |most, key| {
                 let route = &self.stores[key.store];
-                let channels = route.selection.partitions[key.partition].channels.len();
+                let partition = &route.selection.partitions[key.partition];
+                let channels = partition.channels.len();
                 let (request, _) = self.request(key, 0..channels, true)?;
                 let session = route
                     .session()
                     .ok_or("a writing run's store was opened to read only")?;
-                Ok::<_, SourceError>(most.most(write_back.write_bytes(session, &request)?))
+                let bands = partition.frequency_bands.is_some();
+                Ok::<_, SourceError>(most.most(write_back.write_bytes(session, &request, bands)?))
             })?;
         Ok(charge.bytes())
     }
@@ -476,7 +478,10 @@ impl<'a> ObservationSource<'a> {
                 (&batch, key.store, partition, layout),
                 &self.geometry,
                 &self.keep,
-                stream.values,
+                (
+                    stream.values,
+                    stream.writing && route.write_back().is_some_and(WriteBack::by_band),
+                ),
                 &mut self.scratch,
                 out,
             )?;
@@ -493,6 +498,7 @@ impl<'a> ObservationSource<'a> {
                 write_back.deliver(Delivered::Block(Provenance {
                     address: batch.address(),
                     samples,
+                    in_band: std::mem::take(&mut self.scratch.in_band_by_time),
                     spectral_window: self
                         .packer
                         .keys

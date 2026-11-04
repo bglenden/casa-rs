@@ -475,6 +475,7 @@ fn compile_run(
     let input = NativeInput {
         observation: prepared.observation,
         write_model_column: prepared.write_model_column,
+        predicts_final_model: prepared.predicts_final_model,
         write_corrected_data: prepared.write_corrected_data,
         virtual_model: prepared.virtual_model,
         masks: prepared.masks,

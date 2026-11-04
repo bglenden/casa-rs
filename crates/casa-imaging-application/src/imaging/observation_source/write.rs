@@ -24,6 +24,19 @@
 //! selection excludes, the channels of a batch's span the selection leaves
 //! out, the fit-only channels of a continuum transform, and the products
 //! not routed. Flagged samples are written, as CASA writes them.
+//!
+//! Which of a time's channels are written follows CASA's final write. Its
+//! last major cycle writes on the tuned selection of
+//! `CubeMajorCycleAlgorithm`'s imager, whose iterator leaves a channel the
+//! time's frequency bands miss out of the buffer it writes back
+//! (`VisibilityIteratorImpl2::putColumnRows`), so that channel keeps its
+//! contents. `SynthesisImagerVi2::predictModel`, which overwrites it where
+//! tclean goes on to call it, reads the parent imager's selection, which is
+//! not tuned and so takes every channel at every time
+//! ([`WriteBack::by_band`]). There a channel a time's bands miss holds the
+//! prediction of a flagged sample, zero, where CASA extrapolates, and a
+//! channel the run doesn't read keeps its contents, where CASA writes it
+//! (#1134).
 
 use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
@@ -65,6 +78,10 @@ pub(super) struct Provenance {
     pub(super) address: BatchAddress,
     /// The batch sample of each of its rows.
     pub(super) samples: Vec<u32>,
+    /// Whether the window's frequency bands select each of the block's
+    /// channels at each of the batch's times, `[time][channel]`; empty when
+    /// every channel is written.
+    pub(super) in_band: Vec<bool>,
     /// The spectral window key its rows carry ([`super::StoreKeys`]).
     pub(super) spectral_window: u32,
 }
@@ -83,16 +100,20 @@ pub(crate) struct WriteBack {
     /// corrected data's.
     model: bool,
     corrected: bool,
+    /// Whether a time's frequency bands limit the channels written.
+    by_band: bool,
     queue: Mutex<Queue>,
 }
 
 impl WriteBack {
     /// The write-back of a run writing the model when `model` and the
-    /// corrected data when `corrected`.
-    pub(crate) fn new(model: bool, corrected: bool) -> Self {
+    /// corrected data when `corrected`, limited at each time to the
+    /// channels its frequency bands select when `by_band`.
+    pub(crate) fn new(model: bool, corrected: bool, by_band: bool) -> Self {
         Self {
             model,
             corrected,
+            by_band,
             queue: Mutex::default(),
         }
     }
@@ -128,6 +149,11 @@ impl WriteBack {
         }
     }
 
+    /// Whether a time's frequency bands limit the channels written.
+    pub(super) const fn by_band(&self) -> bool {
+        self.by_band
+    }
+
     /// The sessions' targets, every one of which each write gives values
     /// for.
     fn targets(&self) -> Vec<usize> {
@@ -161,10 +187,12 @@ impl WriteBack {
 
     /// What one partition's write holds beyond the passes', for its
     /// traversal `request` of its store's `session` ([`WriteCharge`]).
+    /// `bands` says whether a time reads only some of its channels.
     pub(super) fn write_bytes(
         &self,
         session: &UpdateSession,
         request: &AccessRequest,
+        bands: bool,
     ) -> Result<WriteCharge, SourceError> {
         let targets = self.targets();
         let updater = session.write_bytes(request, &targets)?;
@@ -185,12 +213,18 @@ impl WriteBack {
         let elements = samples * request.channels.len() * products;
         let patch = elements * (targets.len() * size_of::<Complex32>() + size_of::<bool>());
         // The blocks in flight and the one being written, each with its
-        // batch's times and products.
+        // batch's times and products and which channels each time reads.
+        let in_band = if bands && self.by_band {
+            partition.times_per_batch * request.channels.len() * size_of::<bool>()
+        } else {
+            0
+        };
         let provenance = (STREAM_SLOTS + 1)
             * (samples * size_of::<u32>()
                 + size_of::<Delivered>()
                 + partition.times_per_batch * size_of::<f64>()
-                + products * size_of::<Correlation>());
+                + products * size_of::<Correlation>()
+                + in_band);
         Ok(WriteCharge {
             updater: updater as u64,
             patch: patch as u64,
@@ -293,11 +327,15 @@ impl<'a> BatchWriter<'a> {
         let provenance = self.next_block()?;
         check(block, &provenance)?;
         let Provenance {
-            address, samples, ..
+            address,
+            samples,
+            in_band,
+            ..
         } = provenance;
         let [batch_samples, channels, products] = address.shape();
         let first = address.channels().start;
         let entry = address.catalogue().partition(address.partition());
+        let per_time = entry.baselines.len();
         let channel_of = block
             .channel_indices()
             .iter()
@@ -335,7 +373,9 @@ impl<'a> BatchWriter<'a> {
             });
             let values = block.row(0, row).values;
             for (k, channel) in channel_of.iter().enumerate() {
-                if !writes_channel(rule, block.channel_indices()[k]) {
+                let read = in_band.is_empty()
+                    || in_band[*sample as usize / per_time * block.channels() + k];
+                if !read || !writes_channel(rule, block.channel_indices()[k]) {
                     continue;
                 }
                 for (j, product) in product_of.iter().enumerate() {
@@ -442,12 +482,15 @@ fn check(block: &NativeBlock, provenance: &Provenance) -> Result<(), SourceError
     let Provenance {
         address,
         samples,
+        in_band,
         spectral_window,
     } = provenance;
     let baselines = &address.catalogue().partition(address.partition()).baselines;
     let time = address.time();
     let mjd_zero = MjdHighPrec::new(0.0, 0.0);
     let matches = samples.len() == block.len()
+        && (in_band.is_empty()
+            || in_band.len() == address.samples() / baselines.len() * block.channels())
         && samples.iter().enumerate().all(|(row, sample)| {
             let sample = *sample as usize;
             let context = &block.header(row).context;
