@@ -14,7 +14,7 @@
  "precision": "f64",
  "driver": "tools/casa-compat/tclean_case_matrix.py with resources/casa-compat/tclean-density-channels-cases.json, and tclean-casa-test-cases.json --case-prefix test_onefield.test_onefield_pcwdT_and_pcwdF --case-prefix test_cube.test_cube_perchanweight_briggs; on a data root staged from the NAS casatestdata with its XSym links resolved, plus drift.ms, which is the T1 fixture drifting_track saved",
  "limits": "exact image-product inventory and masks; NRMS <= 1e-3; the scalars and counts as the driver states them",
- "outcome": "Of 27 own cases, .psf and .residual agree at 2.1e-4 or better in all and at 2e-7 or better in all but the TOPO and BARY ones. The driver passes 2 of 27 because the other 25 differ by .gridwt, which casa-rs doesn't write (docs/CASA (C++) bugs.md); one of those, briggs-bary-part, also has .pb at 1.5e-2 from issue 1138, on main too with natural weighting. CASA's own 6 cases: 5 pass and test_onefield_pcwdT_and_pcwdF.2 differs by .gridwt alone. Before this change a uniform cube of 5 of 20 channels had a PSF 0.2-0.4 NRMS away from CASA's.",
+ "outcome": "Of 27 own cases, .psf and .residual agree at 2.1e-4 or better in all; at 3e-6 or better in all but the TOPO and BARY ones, and at 2e-7 or better on the .psf in those. The driver passes 2 of 27 because the other 25 differ by .gridwt, which casa-rs doesn't write (docs/CASA (C++) bugs.md); one of those, briggs-bary-part, also has .pb at 1.5e-2 from issue 1138, on main too with natural weighting. CASA's own 6 cases: 5 pass and test_onefield_pcwdT_and_pcwdF.2 differs by .gridwt alone. Before this change a uniform cube of 5 of 20 channels had a PSF 0.2-0.4 NRMS away from CASA's.",
  "own_cases": {
   "uniform-lsrk-part": {
    "passed": false,
