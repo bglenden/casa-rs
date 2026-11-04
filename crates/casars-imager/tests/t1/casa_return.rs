@@ -13,6 +13,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use casa_provider_contracts::{CasaKey, CasaValue, IntDtype, TaskReply};
+use casa_types::{ScalarValue, Value as CellValue};
 use serde_json::{Value, json};
 
 use super::fixture::{Component, Observation};
@@ -460,21 +461,16 @@ fn each_image_holds_tcleans_history_and_its_source() {
         other => panic!("{other:?}"),
     };
     run();
-    let open = |suffix: &str| {
-        casa_images::PagedImage::<f32>::open(directory.join(format!("run{suffix}")))
-            .unwrap_or_else(|error| panic!("{suffix}: {error}"))
-    };
+    let path = |suffix: &str| directory.join(format!("run{suffix}"));
     let products = [".image", ".psf", ".residual", ".model", ".sumwt", ".pb"];
-    let first = products.map(|suffix| open(suffix).history().expect("history").len());
-    for (suffix, lines) in products.iter().zip(first) {
-        let image = open(suffix);
+    for suffix in products {
+        let image = casa_images::PagedImage::<f32>::open(path(suffix)).expect("open");
         let history = image.history().expect("history");
-        assert_eq!(lines, history.len());
         assert_eq!(history[0], "taskname=tclean", "{suffix}");
         assert!(history[1].starts_with("version: casa-rs "), "{suffix}");
         assert!(history.contains(&"niter       = 5".to_owned()), "{suffix}");
         assert!(
-            history.contains(&"spw         = \"0\"".to_owned()),
+            history.contains(&"spw         = ['0']".to_owned()),
             "{suffix}"
         );
         let info = image.image_info().expect("image info");
@@ -484,10 +480,61 @@ fn each_image_holds_tcleans_history_and_its_source() {
             casa_images::ImageType::Intensity,
             "{suffix}"
         );
+        let misc = image.misc_info();
+        for (name, expected) in [
+            ("INSTRUME", ScalarValue::String("VLA".to_owned())),
+            ("distance", ScalarValue::Float64(0.0)),
+            ("mpiprocs", ScalarValue::Int32(1)),
+            ("chnchnks", ScalarValue::Int32(1)),
+        ] {
+            let held = misc.fields().iter().find(|field| field.name == name);
+            assert_eq!(
+                held.map(|field| &field.value),
+                Some(&CellValue::Scalar(expected)),
+                "{suffix}: {name}"
+            );
+        }
+    }
+    // A second call replaces each image and keeps what its history held, in
+    // order, each row where it was.
+    let rows_of = |suffix: &str| {
+        let table = casa_tables::Table::open(casa_tables::TableOptions::new(
+            path(suffix).join("logtable"),
+        ))
+        .expect("logtable");
+        (0..table.row_count())
+            .map(|row| {
+                let cell = |name: &str| {
+                    table
+                        .cell_accessor(row, name)
+                        .and_then(|cell| cell.value().map(|value| value.cloned()))
+                        .expect("a cell")
+                };
+                (cell("TIME"), cell("MESSAGE"), cell("LOCATION"))
+            })
+            .collect::<Vec<_>>()
+    };
+    let first = products.map(rows_of);
+    for (suffix, rows) in products.iter().zip(&first) {
+        assert_eq!(
+            rows[0].2,
+            Some(CellValue::Scalar(ScalarValue::String(
+                "::tclean".to_owned()
+            ))),
+            "{suffix}"
+        );
+        // MJD seconds of this century, as casacore's log sink writes them.
+        let Some(CellValue::Scalar(ScalarValue::Float64(time))) = rows[0].0 else {
+            panic!("{suffix}: TIME");
+        };
+        assert!((4.5e9..6.0e9).contains(&time), "{suffix}: TIME {time}");
     }
     run();
-    assert_eq!(
-        open(".image").history().expect("history").len(),
-        2 * first[0]
-    );
+    for (suffix, first) in products.iter().zip(first) {
+        let rows = rows_of(suffix);
+        assert_eq!(rows.len(), 2 * first.len(), "{suffix}");
+        assert_eq!(&rows[..first.len()], &first[..], "{suffix}");
+        assert_eq!(rows[first.len()].1, rows[0].1, "{suffix}");
+        assert_ne!(rows[first.len()].0, rows[0].0, "{suffix}");
+    }
 }

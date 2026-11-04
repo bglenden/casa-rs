@@ -2,47 +2,21 @@
 //! The history a finished `tclean` leaves in its images' `logtable`s:
 //! `cleanhelper.write_tclean_history`.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use casa_images::PagedImage;
+use casa_images::image::add_image_history;
 use casa_provider_contracts::{DefaultSpec, ParameterValue, python_repr};
 use casa_task_runtime::TaskInvocation;
 
 use crate::imager_task_schema_bundle;
 
-/// What the images at `imagename` hold before a run: a run that replaces an
-/// image starts its `logtable` afresh, where CASA's restart appends to it.
-pub(crate) fn existing_history(imagename: &Path) -> BTreeMap<PathBuf, Vec<String>> {
-    image_paths(imagename)
-        .into_iter()
-        .filter_map(|path| {
-            let history = PagedImage::<f32>::open(&path).ok()?.history().ok()?;
-            Some((path, history))
-        })
-        .collect()
-}
-
 /// Add the task's name, casa-rs's version and every parameter to the images
-/// of prefix `imagename`, after what `earlier` holds of an image the run
-/// replaced. As in CASA's task, a failure is a warning: the run has published
-/// its products.
-pub(crate) fn write_tclean_history(
-    imagename: &Path,
-    task: &TaskInvocation<'_>,
-    earlier: &BTreeMap<PathBuf, Vec<String>>,
-) {
+/// of prefix `imagename`. As in CASA's task, a failure is a warning: the run
+/// has published its products.
+pub(crate) fn write_tclean_history(imagename: &Path, task: &TaskInvocation<'_>) {
     let history = history_lines(|name| task.session().given(name).cloned());
     for path in image_paths(imagename) {
-        let added = PagedImage::<f32>::open(&path).and_then(|mut image| {
-            if let Some(earlier) = earlier.get(&path)
-                && image.history()?.is_empty()
-            {
-                image.add_history_from("tclean", earlier)?;
-            }
-            image.add_history_from("tclean", &history)
-        });
-        if let Err(error) = added {
+        if let Err(error) = add_image_history(&path, "tclean", &history) {
             tracing::warn!("updating the history of {}: {error}", path.display());
         }
     }
@@ -71,6 +45,13 @@ fn history_lines(given: impl Fn(&str) -> Option<ParameterValue>) -> Vec<String> 
             } => Some(value.clone()),
             DefaultSpec::Required => None,
         })?;
+        // `task_tclean` rewrites this local before the history reads it.
+        let value = match value {
+            ParameterValue::String(text) if binding.name == "specmode" && text == "cont" => {
+                ParameterValue::String("mfs".to_owned())
+            }
+            value => value,
+        };
         Some(format!("{:<11} = {}", binding.name, python_str(&value)))
     }));
     lines
@@ -81,21 +62,37 @@ fn history_lines(given: impl Fn(&str) -> Option<ParameterValue>) -> Vec<String> 
 fn python_str(value: &ParameterValue) -> String {
     match value {
         ParameterValue::String(text) => format!("\"{text}\""),
+        ParameterValue::Float(value) => python_float(*value),
         other => python_repr(other),
     }
+}
+
+/// `value` as Python's `str` writes it: its exponent signed, of two digits at
+/// least (`1e-05`, where Rust writes `1e-5`).
+fn python_float(value: f64) -> String {
+    let text = format!("{value:?}");
+    let Some((mantissa, exponent)) = text.split_once('e') else {
+        return text;
+    };
+    let (sign, digits) = match exponent.strip_prefix('-') {
+        Some(digits) => ('-', digits),
+        None => ('+', exponent),
+    };
+    format!("{}e{sign}{digits:0>2}", mantissa.trim_end_matches(".0"))
 }
 
 /// `write_tclean_history`'s images: directories named by the prefix, an
 /// optional number and `_number`, a dot and a suffix, holding a `logtable`,
 /// and not one of its temporary or text suffixes.
 fn image_paths(imagename: &Path) -> Vec<PathBuf> {
-    let Some(prefix) = imagename.file_name().and_then(|name| name.to_str()) else {
-        return Vec::new();
+    // By text, as CASA's glob reads it: a trailing slash names no file, and
+    // its images are the directory's own.
+    let text = imagename.to_string_lossy();
+    let (parent, prefix) = match text.rsplit_once('/') {
+        Some(("", prefix)) => ("/", prefix),
+        Some(split) => split,
+        None => (".", text.as_ref()),
     };
-    let parent = imagename
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
     let Ok(entries) = std::fs::read_dir(parent) else {
         return Vec::new();
     };
@@ -164,6 +161,8 @@ mod tests {
         assert_eq!(python_str(&text("0:0~7")), "\"0:0~7\"");
         assert_eq!(python_str(&ParameterValue::Bool(true)), "True");
         assert_eq!(python_str(&ParameterValue::Float(0.35)), "0.35");
+        assert_eq!(python_str(&ParameterValue::Float(1e-5)), "1e-05");
+        assert_eq!(python_str(&ParameterValue::Float(1.5e16)), "1.5e+16");
         assert_eq!(python_str(&ParameterValue::Integer(100)), "100");
         assert_eq!(
             python_str(&ParameterValue::Array(vec![
@@ -191,5 +190,34 @@ mod tests {
         assert_eq!(lines[2], "vis         = \"a.ms\"");
         assert!(lines.contains(&"niter       = 10".to_owned()));
         assert!(lines.contains(&"spw         = \"\"".to_owned()));
+    }
+
+    /// `task_tclean` rewrites `specmode` before the history reads it.
+    #[test]
+    fn a_continuum_specmode_is_written_as_tcleans_mfs() {
+        let lines = history_lines(|name| {
+            (name == "specmode").then(|| ParameterValue::String("cont".to_owned()))
+        });
+        assert!(lines.contains(&"specmode    = \"mfs\"".to_owned()));
+    }
+
+    /// A trailing slash names the directory's own images, not its siblings.
+    #[test]
+    fn the_images_of_a_prefix_are_found_by_text() {
+        let directory = tempfile::tempdir().expect("scratch");
+        let image = |name: &str| {
+            let logtable = directory.path().join(name).join("logtable");
+            std::fs::create_dir_all(&logtable).expect("logtable");
+            std::fs::write(logtable.join("table.info"), "").expect("table.info");
+            directory.path().join(name)
+        };
+        let [ours, numbered] = [image("im.image"), image("im1_2.psf")];
+        image("other.image");
+        std::fs::create_dir_all(directory.path().join("im.nolog")).expect("not an image");
+        assert_eq!(image_paths(&directory.path().join("im")), [ours, numbered]);
+        let inside = image("im/.image");
+        let mut slashed = directory.path().join("im").into_os_string();
+        slashed.push("/");
+        assert_eq!(image_paths(Path::new(&slashed)), [inside]);
     }
 }

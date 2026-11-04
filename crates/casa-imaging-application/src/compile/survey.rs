@@ -108,6 +108,9 @@ pub(super) struct Survey {
     pub(super) first_visibility_field_id: usize,
     /// The spectral window of that first buffer.
     pub(super) first_visibility_spw_id: usize,
+    /// The field at the earliest selected time, which stands for CASA's first
+    /// selected row (`msc.fieldId()(0)`) in a MeasurementSet in time order.
+    pub(super) earliest_field_id: usize,
     pub(super) observation_ids: BTreeSet<i32>,
     /// The earliest selected time: the anchor of the spectral frame and of
     /// the image's observation date.
@@ -189,6 +192,7 @@ impl FirstVisibility {
 struct Facts {
     fields: BTreeSet<i32>,
     first_visibility: Option<FirstVisibility>,
+    earliest_field_id: Option<i32>,
     observation_ids: BTreeSet<i32>,
     time_bounds_mjd_seconds: [f64; 2],
     w: WRange,
@@ -389,6 +393,7 @@ pub(super) fn survey(
     let mut facts = Facts {
         fields: BTreeSet::new(),
         first_visibility: None,
+        earliest_field_id: None,
         observation_ids: BTreeSet::new(),
         time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
         w: WRange::EMPTY,
@@ -466,6 +471,10 @@ pub(super) fn survey(
             first_visibility_field_id: usize::try_from(first_visibility.field_id)
                 .expect("a FIELD row is nonnegative"),
             first_visibility_spw_id: first_visibility.spw_id,
+            earliest_field_id: usize::try_from(
+                facts.earliest_field_id.unwrap_or(first_visibility.field_id),
+            )
+            .expect("a FIELD row is nonnegative"),
             observation_ids: facts.observation_ids,
             first_time_mjd_seconds: facts.time_bounds_mjd_seconds[0],
             time_bounds_mjd_seconds: facts.time_bounds_mjd_seconds,
@@ -572,6 +581,9 @@ fn survey_partition(
                 },
             );
             let bounds = &mut facts.time_bounds_mjd_seconds;
+            if time_mjd_seconds < bounds[0] {
+                facts.earliest_field_id = Some(field_id);
+            }
             bounds[0] = bounds[0].min(time_mjd_seconds);
             bounds[1] = bounds[1].max(time_mjd_seconds);
             epochs.push(Epoch {
@@ -883,6 +895,7 @@ mod tests {
             let mut facts = Facts {
                 fields: BTreeSet::new(),
                 first_visibility: None,
+                earliest_field_id: None,
                 observation_ids: BTreeSet::new(),
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
@@ -1042,6 +1055,7 @@ mod tests {
             let mut facts = Facts {
                 fields: BTreeSet::new(),
                 first_visibility: None,
+                earliest_field_id: None,
                 observation_ids: BTreeSet::new(),
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
@@ -1139,6 +1153,7 @@ mod tests {
             let mut facts = Facts {
                 fields: BTreeSet::new(),
                 first_visibility: None,
+                earliest_field_id: None,
                 observation_ids: BTreeSet::new(),
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,

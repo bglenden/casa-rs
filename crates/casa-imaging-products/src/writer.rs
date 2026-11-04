@@ -88,6 +88,33 @@ struct StagedImage {
     target: PathBuf,
 }
 
+/// Keep the `logtable` of the image at `target` in the image about to replace
+/// it: a run on an existing image appends to its history, as CASA's does,
+/// which updates the image in place.
+fn carry_history(target: &Path, staging: &Path) -> std::io::Result<()> {
+    let earlier = target.join("logtable");
+    if !earlier.is_dir() {
+        return Ok(());
+    }
+    let staged = staging.join("logtable");
+    fs::remove_dir_all(&staged)?;
+    copy_directory(&earlier, &staged)
+}
+
+fn copy_directory(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_directory(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 impl CasaImageWriter {
     /// Write the main domain's members under `base` with `coordinates`.
     #[must_use]
@@ -229,13 +256,13 @@ impl CasaImageWriter {
         let staged =
             std::mem::take(&mut *self.staged.lock().unwrap_or_else(PoisonError::into_inner));
         for image in staged {
-            promote_atomically(&image.staging, &image.target).map_err(|source| {
-                ProductsError::Io {
-                    operation: "replacing",
-                    path: image.target.clone(),
-                    source,
-                }
-            })?;
+            let failed = |source| ProductsError::Io {
+                operation: "replacing",
+                path: image.target.clone(),
+                source,
+            };
+            carry_history(&image.target, &image.staging).map_err(failed)?;
+            promote_atomically(&image.staging, &image.target).map_err(failed)?;
             published(&image.target);
         }
         Ok(())

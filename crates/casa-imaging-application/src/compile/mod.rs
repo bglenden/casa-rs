@@ -187,10 +187,12 @@ pub(crate) fn prepare(
     let surveyed = &surveyed_observation;
     let (continuum_transform, channels) = continuum_selection(request, surveyed, &centre)?;
     let observation_info = direction::observation_info(catalogue, survey, &centre, engine)?;
-    let object_name = survey
+    // `msc.fieldId()(0)` of the first MeasurementSet, whichever is the
+    // reference.
+    let object_name = stores[0]
+        .catalogue()
         .fields
-        .first()
-        .and_then(|field| catalogue.fields.get(usize::try_from(*field).ok()?))
+        .get(stores[0].survey.earliest_field_id)
         .map_or("", |field| field.name.as_str());
     let mut domains = domains::prepare_domains(
         request,

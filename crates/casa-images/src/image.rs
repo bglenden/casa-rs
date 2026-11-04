@@ -1436,29 +1436,6 @@ impl<T: ImagePixel> PagedImage<T> {
         }
     }
 
-    /// Appends `messages` from `origin`, as `image.sethistory` does: its
-    /// `LogOrigin` gives each the location `::origin`.
-    pub fn add_history_from(
-        &mut self,
-        origin: &str,
-        messages: &[String],
-    ) -> Result<(), ImageError> {
-        match self.path.clone() {
-            Some(path) => {
-                self.ensure_logtable()?;
-                Self::append_logtable_rows(
-                    &Self::logtable_path(&path),
-                    &format!("::{origin}"),
-                    messages,
-                )
-            }
-            None => {
-                self.temp_history.extend_from_slice(messages);
-                Ok(())
-            }
-        }
-    }
-
     /// Clears the history log.
     pub fn clear_history(&mut self) -> Result<(), ImageError> {
         match self.path.clone() {
@@ -2132,6 +2109,25 @@ impl<T: ImagePixel> ImageInterface<T> for PagedImage<T> {
             None => Ok(None),
         }
     }
+}
+
+/// Appends `messages` from `origin` to the `logtable` of the image at `image`,
+/// whatever its pixel type, as `image.sethistory` does: its `LogOrigin` gives
+/// each the location `::origin`.
+///
+/// # Errors
+///
+/// When the `logtable` can't be opened or saved.
+pub fn add_image_history(
+    image: &Path,
+    origin: &str,
+    messages: &[String],
+) -> Result<(), ImageError> {
+    PagedImage::<f32>::append_logtable_rows(
+        &image.join(LOGTABLE_NAME),
+        &format!("::{origin}"),
+        messages,
+    )
 }
 
 impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {

@@ -169,7 +169,6 @@ pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             .given("threshold")
             .map_or(Value::from(0.0), ParameterValue::to_plain_json),
     );
-    let earlier_history = history::existing_history(&request.imagename);
     interrupt::install().map_err(|error| {
         TaskFailure::execution(format!("install the interrupt handler: {error}"))
     })?;
@@ -192,6 +191,6 @@ pub fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         result.run.clean_stop_reason,
     );
     let value = tclean_record(&request, &result.run, &values, statistics.as_ref());
-    history::write_tclean_history(&request.imagename, task, &earlier_history);
+    history::write_tclean_history(&request.imagename, task);
     Ok(TaskSuccess::new(value, &result)?.with_text(text))
 }
