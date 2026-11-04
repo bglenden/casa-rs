@@ -593,3 +593,50 @@ fn a_cube_with_an_empty_first_channel_cleans_the_others() {
     assert_eq!(increments[0].0, 1);
     assert!((increments[0].1 - 1.0).abs() < 1e-6, "{increments:?}");
 }
+
+/// Clark chooses one joint polarization component, rather than one per
+/// plane, as CASA's two-position IV experiment does (#1140).
+#[test]
+fn clark_solves_a_channels_polarizations_as_one_component() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [64, 64],
+        1,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 1 },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(1, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = 64 * 64;
+        images.polarizations = 2;
+        let psf = images.psf.as_ref().unwrap().clone();
+        images.psf = Some([psf.as_slice(), psf.as_slice()].concat());
+        images.sum_weights = vec![1.0, 1.0];
+        images.published_sum_weights = vec![1.0, 1.0];
+        images.residual = vec![0.0; 2 * cells];
+        images.residual[20 * 64 + 20] = 3.0;
+        images.residual[40 * 64 + 40] = 1.0;
+        images.residual[cells + 40 * 64 + 40] = 3.0;
+    });
+    let (_, outcome) = minor_cycle(
+        &problem,
+        &completion,
+        &setup(&problem, None),
+        &controls(1, 0.17),
+        1,
+    );
+    assert_eq!(outcome.summary.iterations, 1);
+    assert_eq!(outcome.summary.planes.len(), 1);
+    let trace = &outcome.summary.trace;
+    assert_eq!(trace.len(), 2);
+    assert_eq!(trace[0].cell.pixel(), [40, 40]);
+    assert_eq!(trace[1].cell.pixel(), [40, 40]);
+    assert_eq!(trace[0].cell.polarization(), 0);
+    assert_eq!(trace[1].cell.polarization(), 1);
+    assert!((trace[0].flux - 0.17).abs() < 1e-6);
+    assert!((trace[1].flux - 0.51).abs() < 1e-6);
+}

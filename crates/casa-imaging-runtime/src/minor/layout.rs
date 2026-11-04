@@ -354,8 +354,14 @@ pub fn run_bytes_for(
     };
     // Every plane's slot, solved record and stop, which the cycle keeps
     // until it merges them.
-    let records =
-        layout.planes * (size_of::<Slot>() + size_of::<Solved>() + size_of::<PlaneStop>());
+    let records = layout.planes
+        * (size_of::<Slot>()
+            + size_of::<(
+                PlaneKey,
+                casa_imaging_deconvolution::PlaneStatistics,
+                Solved,
+            )>()
+            + size_of::<PlaneStop>());
     let ordinary = layout.concurrent(workers)
         * (layout.load_bytes(setup.response.is_some()) + solve)
         + records as u64;
@@ -380,12 +386,20 @@ pub fn run_bytes_for(
         };
         let groups = layout.planes.div_ceil(n_pol);
         let concurrent = workers.min(groups).max(1) as u64;
-        let provisional_group_overhead = (layout.planes as u64) * 1024 + concurrent * 4096;
+        // The sorted copy and group slots persist while the team solves. Each
+        // concurrent solve also holds its vector of loaded plane descriptors
+        // and the vector of residual descriptors moved from those planes.
+        let group_records = (layout.planes
+            * size_of::<(PlaneKey, casa_imaging_deconvolution::PlaneStatistics)>()
+            + groups * size_of::<super::PolarizedSlot>()) as u64;
+        let group_descriptors = concurrent
+            * (n_pol * (size_of::<super::PlaneData<'_>>() + size_of::<Vec<f64>>())) as u64;
         ordinary.max(
             concurrent
                 * (n_pol as u64 * layout.load_bytes(setup.response.is_some()) + polarized_solve)
                 + records as u64
-                + provisional_group_overhead,
+                + group_records
+                + group_descriptors,
         )
     } else {
         ordinary

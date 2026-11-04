@@ -511,6 +511,13 @@ struct Slot {
     solved: Option<Solved>,
 }
 
+/// A CASA Clark solve groups a channel's polarization planes.
+struct PolarizedSlot {
+    keys: [PlaneKey; 4],
+    stats: [PlaneStatistics; 4],
+    solved: Option<Solved>,
+}
+
 /// Clean every plane of `completion` under `controls`.
 ///
 /// Planes are independent: several run concurrently on `team`, each on one
@@ -560,40 +567,32 @@ pub fn run_minor_cycle(
         && matches!(n_pol, 2 | 4)
         && blank.is_empty();
     if joint {
-        struct Group {
-            keys: Vec<PlaneKey>,
-            stats: Vec<PlaneStatistics>,
-            solved: Option<Solved>,
-        }
-        let mut groups = BTreeMap::<(usize, usize), Group>::new();
-        for (key, stats) in &planes {
-            let group = groups
-                .entry((key.domain, key.channel))
-                .or_insert_with(|| Group {
-                    keys: Vec::new(),
-                    stats: Vec::new(),
-                    solved: None,
-                });
-            group.keys.push(*key);
-            group.stats.push(*stats);
-        }
-        let mut groups = groups.into_values().collect::<Vec<_>>();
+        let mut ordered = planes.clone();
+        ordered.sort_unstable_by_key(|(key, _)| (key.domain, key.channel, key.polarization));
+        let mut groups = ordered
+            .chunks_exact(n_pol)
+            .map(|chunk| PolarizedSlot {
+                keys: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].0),
+                stats: std::array::from_fn(|p| chunk[p.min(n_pol - 1)].1),
+                solved: None,
+            })
+            .collect::<Vec<_>>();
         team.for_each_mut(&mut groups, |_, group| {
             let summary = cache.summaries[&group.keys[0]];
             group.solved = Some(match n_pol {
                 2 => polarized::solve::<2>(
                     &inputs,
                     admission,
-                    &group.keys,
-                    &group.stats,
+                    &group.keys[..n_pol],
+                    &group.stats[..n_pol],
                     &summary,
                     controls,
                 )?,
                 4 => polarized::solve::<4>(
                     &inputs,
                     admission,
-                    &group.keys,
-                    &group.stats,
+                    &group.keys[..n_pol],
+                    &group.stats[..n_pol],
                     &summary,
                     controls,
                 )?,
@@ -603,7 +602,7 @@ pub fn run_minor_cycle(
         })?;
         results.extend(groups.into_iter().map(|mut group| {
             let mut stats = group.stats[0];
-            for other in &group.stats[1..] {
+            for other in &group.stats[1..n_pol] {
                 stats.peak_in_mask = stats.peak_in_mask.max(other.peak_in_mask);
                 stats.peak_no_mask = stats.peak_no_mask.max(other.peak_no_mask);
             }
