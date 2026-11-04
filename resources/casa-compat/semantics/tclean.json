@@ -1016,11 +1016,12 @@
     },
     "savemodel": {
       "status": "Partial",
-      "scope": "Copied. modelcolumn writes MODEL_DATA; request checks a solved or start model exists. virtual saves the final model as CASA's virtual model (casa_ms::virtual_model): the selection's fields'/windows' models are cleared first (VisModelData::clearModel), then the standard gridder's GridFT record (MultiTermFTNew over GridFT for mtmfs) and its FT_MODEL grid image are filed, incrementally, under SOURCE (rows and a known source) or MAIN keywords as CASA 6.7.6.14 files them; CASA predicts from them what it predicts from its own. A model of no flux saves nothing. Other gridders, polarizations than I, facets and outlier fields are refused (issue 823).",
+      "scope": "Copied. modelcolumn writes MODEL_DATA, at each time only the channels its bands select where CASA's final write is its last major cycle's; after nsigma, auto-multithresh, or niter=0 with calcres=False, CASA's final write is predictModel, which casa-rs doesn't match outside the imaged band (issue 1134); request checks a solved or start model exists. virtual saves the final model as CASA's virtual model (casa_ms::virtual_model): the selection's fields'/windows' models are cleared first (VisModelData::clearModel), then the standard gridder's GridFT record (MultiTermFTNew over GridFT for mtmfs) and its FT_MODEL grid image are filed, incrementally, under SOURCE (rows and a known source) or MAIN keywords as CASA 6.7.6.14 files them; CASA predicts from them what it predicts from its own. A model of no flux saves nothing. Other gridders, polarizations than I, facets and outlier fields are refused (issue 823).",
       "evidence": [
         "signature",
         "reader",
-        "virtual-model"
+        "virtual-model",
+        "model-column-bands-20261104"
       ],
       "behaviors": [
         "returns"
@@ -2034,6 +2035,21 @@
         "resources/casa-compat/evidence/tclean-two-ms-band-20261104.json",
         "resources/casa-compat/tclean-two-ms-band-cases.json",
         "crates/casa-imaging-application/src/compile/spectral.rs"
+      ]
+    },
+    "model-column-bands-20261104": {
+      "kind": "casa-rs's cubes' MODEL_DATA against CASA's, cell by cell, with T1 laws",
+      "state": "measured: 4 of 8; the 4 that end in predictModel differ outside the imaged band (issue 1134)",
+      "source_revision": "46e52e01e064d316a767fa9b2fbc7d676665f3fe",
+      "revision": "8418b9b1e03a9d1742fabe0b2272b165ae781c83",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_model_column_compare.py",
+      "receipt": "resources/casa-compat/evidence/tclean-model-column-bands-20261104.json",
+      "scope": "refim_point.ms cubes in TOPO and LSRK, with a final write by the last major cycle or by predictModel (nsigma, auto-multithresh, niter=0 with calcres=False).",
+      "links": [
+        "resources/casa-compat/evidence/tclean-model-column-bands-20261104.json",
+        "tools/casa-compat/tclean_model_column_compare.py",
+        "crates/casa-imaging-application/src/imaging/observation_source/write.rs"
       ]
     }
   }
