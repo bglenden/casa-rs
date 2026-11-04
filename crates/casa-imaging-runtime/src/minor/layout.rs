@@ -516,8 +516,14 @@ mod tests {
             terms: (1, 1),
             ..lone
         };
-        let records =
-            (4 * (size_of::<Slot>() + size_of::<Solved>() + size_of::<PlaneStop>())) as u64;
+        let records = (4
+            * (size_of::<Slot>()
+                + size_of::<(
+                    PlaneKey,
+                    casa_imaging_deconvolution::PlaneStatistics,
+                    Solved,
+                )>()
+                + size_of::<PlaneStop>())) as u64;
         let run = |workers| run_bytes_for(&side, &multiscale, 100, 0, workers) - records;
         assert_eq!(run(4), 4 * run(1), "four one-thread solves at once");
     }
