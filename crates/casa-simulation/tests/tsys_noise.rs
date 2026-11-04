@@ -856,6 +856,28 @@ fn tsys_atm_draws_are_the_same_for_any_worker_count_and_add_to_other_terms() {
 /// both, as they are keyed by what they depend on, not by the batch.
 #[test]
 fn tsys_atm_draws_are_the_same_for_any_memory_budget() {
+    // The budget is intentionally just above the writer's demand. Other
+    // tests can leave a process-wide cache reservation behind, so run this
+    // law in a fresh process under both libtest and nextest (#1144).
+    const ALONE: &str = "CASA_RS_TSYS_BUDGET_LAW_ALONE";
+    const NAME: &str = "tsys_atm_draws_are_the_same_for_any_memory_budget";
+    const MARKER: &str = "tsys-atm budget law running alone";
+    if std::env::var_os(ALONE).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args([NAME, "--exact", "--nocapture"])
+            .env(ALONE, "1")
+            .output()
+            .expect("the budget law's process runs");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains(MARKER),
+            "budget law did not pass alone: {}\n{stdout}\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    println!("{MARKER}");
     let directory = tempfile::tempdir().expect("temporary directory");
     let run = |name: &str, memory: u64| {
         let path = directory.path().join(name);

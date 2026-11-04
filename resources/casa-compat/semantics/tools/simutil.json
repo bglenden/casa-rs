@@ -138,39 +138,35 @@
    ]
   },
   "getBaseTriangularTiling": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Returns the two coordinate lists for the CASA triangular pointing pattern; zero spacing raises ZeroDivisionError.",
    "evidence": [
     "signature",
-    "refusals"
+    "tiling-casa"
    ]
   },
   "getShiftTriangularTiling": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Returns the two coordinate lists for the CASA triangular pointing pattern; zero spacing raises ZeroDivisionError.",
    "evidence": [
     "signature",
-    "refusals"
+    "tiling-casa"
    ]
   },
   "getTrianglePoints": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Returns the two coordinate lists for the CASA triangular pointing pattern; zero spacing raises ZeroDivisionError.",
    "evidence": [
     "signature",
-    "refusals"
+    "tiling-casa"
    ]
   },
   "getTriangularTiling": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Returns the two coordinate lists for the CASA triangular pointing pattern; zero spacing raises ZeroDivisionError.",
    "evidence": [
     "signature",
-    "refusals"
+    "tiling-casa"
    ]
   },
   "getdatum": {
@@ -811,6 +807,18 @@
    "links": [
     "crates/casars-python/python/tests/test_simutil.py"
    ]
+  },
+  "tiling-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Fifteen patterns and four zero-spacing errors recorded on CASA 6.7.6.14; direct Python binding results agree to 1e-13.",
+   "scope": "getTrianglePoints, getTriangularTiling and the direct base and shifted patterns, including rotation, landscape, portrait and square maps.",
+   "links": [
+    "tools/simulation/simutil_tiling_oracle.py",
+    "crates/casars-python/python/tests/data/casa_simutil_tiling.json",
+    "crates/casars-python/python/tests/test_simutil.py"
+   ],
+   "source_revision": "50789c6def3dcf1b55dda2bcbe7d2ef39470f02a"
   }
  }
 }
