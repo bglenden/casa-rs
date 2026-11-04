@@ -571,7 +571,7 @@ struct StoreReads {
 /// prediction there, zero, into its `MODEL_DATA` (test_modelvis_29). The
 /// other passes skip it where their source confirms this test, at a few
 /// epochs and over the whole window's channels, for its rows
-/// ([`WindowTimes::DensityOnly`]).
+/// ([`WindowRead::density_only`]).
 fn store_reads(
     request: &ImagingRequest,
     ((catalogue, engine), survey, field): ((&Catalogue, &MsCalEngine), &Survey, usize),
