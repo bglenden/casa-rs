@@ -240,7 +240,9 @@ fn restored_plane(
     )?;
     let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain());
     let residual = if valid {
-        let fitted_beam = fitted_beam.ok_or_else(unfitted)?;
+        // A plane whose fit failed has the largest beam as its PSF beam too
+        // (`makeImageBeamSet`), so its residual isn't rescaled.
+        let fitted_beam = fitted_beam.unwrap_or(beam);
         let residual = normalize_domain_plane(
             &residual_real_plane(plane)?,
             required_normalization(member),
