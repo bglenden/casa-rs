@@ -419,6 +419,19 @@ equally valid cleans; such rows cannot measure parity, so
 IF-5's multiscale and MT-MFS acceptance uses skies without the symmetry
 (`refim_twopoints_twochan`, `refim_eptwochan`).
 
+`refim_point_withline.ms` with `spw='0:0~7', niter=50, gain=0.2,
+deconvolver='mtmfs'` shows the same thing component by component (#1113).
+Running `niter` from 1 to 50 on each side and differencing consecutive
+`.model` images gives each iteration's component. Both sides choose the same
+pixels through iteration 19. At iteration 20 CASA takes [49,46] and that
+casa-rs series takes [51,54], the mirror pixel through the source at [50,50],
+with the same strengths to six figures. In five repeats in separate
+processes, CASA gave identical images each time; casa-rs gave two outcomes,
+one matching CASA and one matching CASA reflected through [50,50]. That
+difference (`.model.tt1` 2.4e-2 NRMS, `.residual.tt1` 6.2e-2) falls to
+between 6e-8 and 8e-7 on either match, so the case cannot measure parity
+either.
+
 ## The multi-term weight normalization override is never called
 
 - Date noted: 2026-10-11
