@@ -377,8 +377,9 @@ fn tunes_selection(request: &ImagingRequest, first_window: &SourceSpectralWindow
 /// (`buildCoordinateSystemCore` on `msobj`'s windows): one window's
 /// channels, or several windows' merged into one axis
 /// ([`casa_ms::combine_spectral_windows`]), with `axis`'s grid laid over
-/// them; and the band their `spw` selection spans in the data's frame
-/// ([`casa_ms::casa_selected_band_hz`]). Every window's samples are
+/// them; and the band the `spw` selection spans over `band_surveys`, in each
+/// one's data frame ([`casa_ms::casa_selected_band_hz`]; CASA's `gdatafstart`
+/// and `gdatafend`). Every window's samples are
 /// gridded onto the one axis (`FTMachine::matchChannel`).
 fn cube_setup(
     request: &ImagingRequest,

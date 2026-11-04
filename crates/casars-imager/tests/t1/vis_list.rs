@@ -182,6 +182,15 @@ fn a_cubes_default_axis_reads_the_band_selected_over_every_measurement_set() {
     assert_eq!(image.channels(), 3);
     let expected = first_alone.get(".image").channel_frequency_hz(1);
     assert!((image.channel_frequency_hz(0) - expected).abs() < 1.0);
+    // Overlapping, the second selection lying below the first's: the band
+    // takes the lower edge from one and the upper from the other.
+    let overlap = track(1, 2);
+    let stores = [low.measurement_set(), overlap.measurement_set()];
+    let lower = cube("overlap", &stores, json!(["0:3", "0:1"]));
+    let image = lower.get(".image");
+    assert_eq!(image.channels(), 2);
+    let expected = first_alone.get(".image").channel_frequency_hz(2);
+    assert!((image.channel_frequency_hz(0) - expected).abs() < 1.0);
 }
 
 /// `MODEL_DATA` of each MeasurementSet of the list (CASA's
