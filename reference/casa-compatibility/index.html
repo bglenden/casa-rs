@@ -1733,6 +1733,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#summary-rows-20261103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        summary-rows-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5055,6 +5066,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#summary-rows-20261103" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        summary-rows-20261103
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -7920,7 +7942,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <h4 id="tclean-parameter-implementation">tclean parameter implementation<a class="headerlink" href="#tclean-parameter-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.</p>
-<p>Audit baseline: <code>c64f13cb09054b080fe8b228a5f2c02c99bfd486</code>. Status counts: Default only: 5, Implemented: 45, Not implemented: 0, Partial: 41, Unassessed: 1.</p>
+<p>Audit baseline: <code>c64f13cb09054b080fe8b228a5f2c02c99bfd486</code>. Status counts: Default only: 5, Implemented: 46, Not implemented: 0, Partial: 40, Unassessed: 1.</p>
 <p>Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.</p>
 <table>
 <thead>
@@ -8498,9 +8520,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>fullsummary</code></td>
 <td><code>False</code></td>
 <td><code>False</code>; <code>fullsummary</code> → <code>fullsummary</code></td>
-<td>Partial</td>
-<td>Long-form keys exist, but missing measurements and per-plane values are NaN. Return shape alone is not return-value equivalence. <a href="#tclean-behavior-returns">returns</a><br>Catalog domain: <code>bool</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-returns">returns</a>, <a href="#tclean-evidence-scalars-empty-mask">scalars-empty-mask</a></td>
+<td>Implemented</td>
+<td>Every plane of every minor cycle has its own rows, in CASA's order of field, channel and Stokes: iterations through the planes in sequence (SDAlgorithmBase::deconvolve, addSummaryMinor), peaks inside the mask and over the plane's pixels, flux from the start model, mask sum and stop code. A dirty run reads its products as construct_summary_minor does. A plane with no data under nsigma can differ in its stop code, where CASA's checkStop reads a threshold left by an earlier plane or cycle. deconvolver='clark' on several Stokes planes has a row per plane, where CASA cleans them jointly (issue 1126). <a href="#tclean-behavior-returns">returns</a><br>Catalog domain: <code>bool</code></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-returns">returns</a>, <a href="#tclean-evidence-scalars-empty-mask">scalars-empty-mask</a>, <a href="#tclean-evidence-summary-rows-20261103">summary-rows-20261103</a></td>
 </tr>
 <tr>
 <td><code>usemask</code></td>
@@ -8701,7 +8723,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><a id="tclean-behavior-returns"></a></p>
 <h5 id="return-values-exceptions-and-metadata">Return values, exceptions and metadata<a class="headerlink" href="#return-values-exceptions-and-metadata" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — Python and CLI CASA return record, output topology, coordinates, beams, mask validity, model-column effects and reopen.</p>
-<p>The recorded 22-key structure exists. Final maxpsfsidelobe and raw automatic cyclethreshold now report already-measured controller statistics with CASA Float rounding; 18 small pinned cases pass these two scalar checks, exact iteration/major/stop integers and recorded scientific products on CPU64/CPU32/Metal32. This does not verify every return key. Dirty peaks, unmasked residual peaks, seeded/restarted model flux and multi-plane rows remain unavailable or inaccurate. The fd7b8e7b2d full normal gate passes 4,698 workspace tests/45 skips and relevant checks. Full metadata, broader exceptions/mode combinations and representative persistence remain open. Earlier moving-MFS increment and ordinary SOURCE rest-frequency defects are repaired at their recorded revisions. Contract32 numbering adds20 small product rows, with19 raw selected-scalar passes and one identity-bound owner-accepted Metal cyclethreshold result (1.5132ppm difference). The original failed verdict remains; no future-output waiver. The owner agreed to native preservation of prior histories during fresh numbering; correct new-image history remains required. Nmajor-zero adds20 scoped product/count pairs; two public Python pairs also gate the two selected numeric scalars. Full return parity remains unfinished. The owner declined the native .summary.json sidecar (2026-11-02): a tclean run writes only its image products, as CASA's does, and the six-case replay now requires an exact product inventory; casars-imager writes the run summary only when CASA_RS_IMAGER_RUN_SUMMARY=1, for performance tooling. The handoff's point-cube-briggs maxpsfsidelobe raw failure (relative 8.2e-6 at 2851c6dc, 9768bb1 and 3016f1b) is attributed to those 7 boundary weights and passes at 2628d8b (relative 7.7e-8), with all six handoff cases passing both selected scalars.</p>
+<p>The recorded 22-key structure exists. Final maxpsfsidelobe and raw automatic cyclethreshold now report already-measured controller statistics with CASA Float rounding; 18 small pinned cases pass these two scalar checks, exact iteration/major/stop integers and recorded scientific products on CPU64/CPU32/Metal32. This does not verify every return key. summaryminor's rows are measured for each plane, and agree with CASA on 29 of 35 cases, the rest attributed (summary-rows-20261103). The fd7b8e7b2d full normal gate passes 4,698 workspace tests/45 skips and relevant checks. Full metadata, broader exceptions/mode combinations and representative persistence remain open. Earlier moving-MFS increment and ordinary SOURCE rest-frequency defects are repaired at their recorded revisions. Contract32 numbering adds20 small product rows, with19 raw selected-scalar passes and one identity-bound owner-accepted Metal cyclethreshold result (1.5132ppm difference). The original failed verdict remains; no future-output waiver. The owner agreed to native preservation of prior histories during fresh numbering; correct new-image history remains required. Nmajor-zero adds20 scoped product/count pairs; two public Python pairs also gate the two selected numeric scalars. Full return parity remains unfinished. The owner declined the native .summary.json sidecar (2026-11-02): a tclean run writes only its image products, as CASA's does, and the six-case replay now requires an exact product inventory; casars-imager writes the run summary only when CASA_RS_IMAGER_RUN_SUMMARY=1, for performance tooling. The handoff's point-cube-briggs maxpsfsidelobe raw failure (relative 8.2e-6 at 2851c6dc, 9768bb1 and 3016f1b) is attributed to those 7 boundary weights and passes at 2628d8b (relative 7.7e-8), with all six handoff cases passing both selected scalars.</p>
 <p>Evidence: <a href="#tclean-evidence-returns">returns</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-representative">representative</a>, <a href="#tclean-evidence-default-products">default-products</a>, <a href="#tclean-evidence-adopted-defaults">adopted-defaults</a>, <a href="#tclean-evidence-approved-comparisons-restart">approved-comparisons-restart</a>, <a href="#tclean-evidence-scalars-empty-mask">scalars-empty-mask</a>, <a href="#tclean-evidence-numbering-activation">numbering-activation</a>, <a href="#tclean-evidence-nmajor-zero">nmajor-zero</a>, <a href="#tclean-evidence-native-summary-sidecar">native-summary-sidecar</a>, <a href="#tclean-evidence-cloud-continuation">cloud-continuation</a>.</p>
 <p><a id="tclean-behavior-accuracy"></a></p>
 <h5 id="precision-backend-and-resource-acceptance">Precision, backend and resource acceptance<a class="headerlink" href="#precision-backend-and-resource-acceptance" title="Permanent link">&para;</a></h5>
@@ -9289,6 +9311,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>f051e3b71b2d8e890a33ea4607cea5ca1c01b683</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
 <li>Command: <code>tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with tclean-casa-test-cases.json (#1065's 14 cases, --include-skipped) and tclean-mtmfs-polarized-cases.json</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-mtmfs-polarized-review-20261103.json</code>.</li>
+</ul>
+<p><a id="tclean-evidence-summary-rows-20261103"></a></p>
+<h5 id="summary-rows-20261103">summary-rows-20261103<a class="headerlink" href="#summary-rows-20261103" title="Permanent link">&para;</a></h5>
+<p><strong>tclean's summaryminor against CASA's, row by row, on 35 small cases, with T0 and T1 laws — measured: 29 of 35 pass within 6.3e-6; the other six attributed.</strong> Every deconvolver, cubes, Stokes, outliers, masks, thresholds, n-sigma, restarts, start models and dirty runs, with CASA's own test_iterbot fullsummary calls. Differences: the recorded full-Stokes cube channel-0 near-tie (two cases), issue 1126 (clark on several Stokes planes), issue 1127 (a seeded mosaic cube, two cases) and one stop code on a plane with no data under nsigma. The products weren't compared here.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/5094adcd3915eefa1d671c184c770f557af43200/resources/casa-compat/evidence/tclean-summary-rows-20261103.json">resources/casa-compat/evidence/tclean-summary-rows-20261103.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/5094adcd3915eefa1d671c184c770f557af43200/tools/casa-compat/tclean_summary_matrix.py">tools/casa-compat/tclean_summary_matrix.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/5094adcd3915eefa1d671c184c770f557af43200/crates/casars-imager/src/casa_return.rs">crates/casars-imager/src/casa_return.rs</a></li>
+<li>Revision: <code>0662d8215e0c178e0c46a3628d12b19b8c9cec89</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>tools/casa-compat/tclean_summary_matrix.py --data-root &lt;staged root&gt; --casars-python &lt;venv&gt; --imager-binary &lt;binary&gt; --output &lt;new dir&gt;</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-summary-rows-20261103.json</code>.</li>
 </ul>
 <h2 id="tools">Tools<a class="headerlink" href="#tools" title="Permanent link">&para;</a></h2>
 <p>Each CASA class casa-rs presents in Python, against the signatures recorded from CASA 6.7.6.14 (<code>crates/casars-python/python/tests/data/casa_&lt;class&gt;_signatures.json</code>), which the Python tests hold the classes to. A reviewed class has a file under <code>resources/casa-compat/semantics/tools/</code> giving each method's status, scope and evidence; the others are not reviewed yet. The simulation classes (<code>simulator</code>, <code>componentlist</code>, <code>measures</code>, <code>quanta</code> and <code>simutil</code>) are reviewed in #1053, and <code>image</code>, <code>coordsys</code>, <code>table</code>, <code>msmetadata</code> and <code>ms</code> in #1025.</p>

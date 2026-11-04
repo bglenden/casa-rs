@@ -392,156 +392,157 @@
 <a href=#392 id=392 data-nosnippet>392</a>    <span class="prelude-val">Ok</span>(<span class="kw">move </span>|summary| ImagingOutcome {
 <a href=#393 id=393 data-nosnippet>393</a>        problem,
 <a href=#394 id=394 data-nosnippet>394</a>        minor_cycles: outcome.minor_cycles,
-<a href=#395 id=395 data-nosnippet>395</a>        final_residual_statistics: outcome.final_residual_statistics,
-<a href=#396 id=396 data-nosnippet>396</a>        stop: outcome.stop,
-<a href=#397 id=397 data-nosnippet>397</a>        major_cycle_count: outcome.major_cycle_count,
-<a href=#398 id=398 data-nosnippet>398</a>        total_minor_iterations: outcome.total_minor_iterations,
-<a href=#399 id=399 data-nosnippet>399</a>        total_actual_minor_iterations: outcome.total_actual_minor_iterations,
-<a href=#400 id=400 data-nosnippet>400</a>        workers,
-<a href=#401 id=401 data-nosnippet>401</a>        planes_per_wave: outcome.planes_per_wave,
-<a href=#402 id=402 data-nosnippet>402</a>        visibility_products: outcome.visibility_products,
-<a href=#403 id=403 data-nosnippet>403</a>        summary,
-<a href=#404 id=404 data-nosnippet>404</a>        scientific: products.scientific,
-<a href=#405 id=405 data-nosnippet>405</a>        planned_products: products.planned,
-<a href=#406 id=406 data-nosnippet>406</a>        products: products.published,
-<a href=#407 id=407 data-nosnippet>407</a>        _retained: outcome.retained,
-<a href=#408 id=408 data-nosnippet>408</a>    })
-<a href=#409 id=409 data-nosnippet>409</a>}
-<a href=#410 id=410 data-nosnippet>410</a>
-<a href=#411 id=411 data-nosnippet>411</a><span class="doccomment">/// The products of a run and the state they were generated from.
-<a href=#412 id=412 data-nosnippet>412</a></span><span class="kw">struct </span>Products {
-<a href=#413 id=413 data-nosnippet>413</a>    planned: PlannedContinuumGeneration,
-<a href=#414 id=414 data-nosnippet>414</a>    scientific: MajorCycleCompletion,
-<a href=#415 id=415 data-nosnippet>415</a>    published: PublishedContinuumGeneration,
-<a href=#416 id=416 data-nosnippet>416</a>}
-<a href=#417 id=417 data-nosnippet>417</a>
-<a href=#418 id=418 data-nosnippet>418</a><span class="doccomment">/// What the products are formed from: the final completion, its
-<a href=#419 id=419 data-nosnippet>419</a>/// reconstruction masks and the faceted domains' facets' own sums of
-<a href=#420 id=420 data-nosnippet>420</a>/// weights.
-<a href=#421 id=421 data-nosnippet>421</a></span><span class="kw">struct </span>ProductSource {
-<a href=#422 id=422 data-nosnippet>422</a>    scientific: MajorCycleCompletion,
-<a href=#423 id=423 data-nosnippet>423</a>    masks: <span class="prelude-ty">Option</span>&lt;ReconstructionMaskSet&gt;,
-<a href=#424 id=424 data-nosnippet>424</a>    facet_sum_weights: FacetSumWeights,
-<a href=#425 id=425 data-nosnippet>425</a>}
-<a href=#426 id=426 data-nosnippet>426</a>
-<a href=#427 id=427 data-nosnippet>427</a><span class="doccomment">/// What `problem`'s products hold on one lane, before the run
-<a href=#428 id=428 data-nosnippet>428</a>/// (`PlannedContinuumGeneration::planned_demand`): the least they can run
-<a href=#429 id=429 data-nosnippet>429</a>/// on, which the run's setup fits beside it.
-<a href=#430 id=430 data-nosnippet>430</a></span><span class="kw">fn </span>products_floor(
-<a href=#431 id=431 data-nosnippet>431</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#432 id=432 data-nosnippet>432</a>    publication: <span class="kw-2">&amp;</span>ApplicationPublication,
-<a href=#433 id=433 data-nosnippet>433</a>) -&gt; <span class="prelude-ty">Result</span>&lt;u64, NativeError&gt; {
-<a href=#434 id=434 data-nosnippet>434</a>    <span class="prelude-val">Ok</span>(
-<a href=#435 id=435 data-nosnippet>435</a>        PlannedContinuumGeneration::for_problem(problem, <span class="kw-2">&amp;</span>publication.controls)<span class="question-mark">?
-<a href=#436 id=436 data-nosnippet>436</a>            </span>.planned_demand(problem, ProductStoragePlan::new(<span class="number">1</span>, <span class="number">1</span>)<span class="question-mark">?</span>, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?
-<a href=#437 id=437 data-nosnippet>437</a>            </span>.peak_residency_bytes(),
-<a href=#438 id=438 data-nosnippet>438</a>    )
-<a href=#439 id=439 data-nosnippet>439</a>}
-<a href=#440 id=440 data-nosnippet>440</a>
-<a href=#441 id=441 data-nosnippet>441</a><span class="doccomment">/// Generate every planned product member into the writer's private staging,
-<a href=#442 id=442 data-nosnippet>442</a>/// one output channel per window on the run's team, and publish them,
-<a href=#443 id=443 data-nosnippet>443</a>/// adding each image published to `published`; a cancelled run publishes
-<a href=#444 id=444 data-nosnippet>444</a>/// nothing. `lanes` receives the lanes the products ran on and, when fewer
-<a href=#445 id=445 data-nosnippet>445</a>/// than the team's workers, why.
-<a href=#446 id=446 data-nosnippet>446</a></span><span class="kw">fn </span>publish_products(
-<a href=#447 id=447 data-nosnippet>447</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#448 id=448 data-nosnippet>448</a>    source: ProductSource,
-<a href=#449 id=449 data-nosnippet>449</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
-<a href=#450 id=450 data-nosnippet>450</a>    publication: ApplicationPublication,
-<a href=#451 id=451 data-nosnippet>451</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#452 id=452 data-nosnippet>452</a>    published: <span class="kw-2">&amp;mut </span>Vec&lt;String&gt;,
-<a href=#453 id=453 data-nosnippet>453</a>    lanes: <span class="kw-2">&amp;mut </span>(usize, <span class="prelude-ty">Option</span>&lt;String&gt;),
-<a href=#454 id=454 data-nosnippet>454</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Products, NativeError&gt; {
-<a href=#455 id=455 data-nosnippet>455</a>    <span class="kw">let </span>ProductSource {
-<a href=#456 id=456 data-nosnippet>456</a>        scientific,
-<a href=#457 id=457 data-nosnippet>457</a>        masks: reconstruction_masks,
-<a href=#458 id=458 data-nosnippet>458</a>        facet_sum_weights,
-<a href=#459 id=459 data-nosnippet>459</a>    } = source;
-<a href=#460 id=460 data-nosnippet>460</a>    <span class="kw">let </span><span class="kw-2">mut </span>inputs = ContinuumProductInputs::from_major_cycle(problem, <span class="kw-2">&amp;</span>scientific);
-<a href=#461 id=461 data-nosnippet>461</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(masks) = reconstruction_masks.as_ref() {
-<a href=#462 id=462 data-nosnippet>462</a>        inputs = <span class="kw">match </span>masks {
-<a href=#463 id=463 data-nosnippet>463</a>            ReconstructionMaskSet::Shared(mask) =&gt; inputs.with_reconstruction_mask(mask),
-<a href=#464 id=464 data-nosnippet>464</a>            ReconstructionMaskSet::Domains(masks) =&gt; inputs.with_domain_reconstruction_masks(masks),
-<a href=#465 id=465 data-nosnippet>465</a>        };
-<a href=#466 id=466 data-nosnippet>466</a>    }
-<a href=#467 id=467 data-nosnippet>467</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(centres) = publication.primary_beam_centres.as_ref() {
-<a href=#468 id=468 data-nosnippet>468</a>        inputs = inputs.with_primary_beam_centres(centres);
-<a href=#469 id=469 data-nosnippet>469</a>    }
-<a href=#470 id=470 data-nosnippet>470</a>    <span class="kw">if </span>!facet_sum_weights.is_empty() {
-<a href=#471 id=471 data-nosnippet>471</a>        inputs = inputs.with_facet_sum_weights(<span class="kw-2">&amp;</span>facet_sum_weights);
-<a href=#472 id=472 data-nosnippet>472</a>    }
-<a href=#473 id=473 data-nosnippet>473</a>    <span class="kw">let </span>planned = PlannedContinuumGeneration::new(<span class="kw-2">&amp;</span>inputs, <span class="kw-2">&amp;</span>publication.controls)<span class="question-mark">?</span>;
-<a href=#474 id=474 data-nosnippet>474</a>    <span class="comment">// The products' scratch grows with their lanes, and the gridding's
-<a href=#475 id=475 data-nosnippet>475</a>    // workers were chosen without it: the products take the most lanes, up
-<a href=#476 id=476 data-nosnippet>476</a>    // to the team's, whose demand fits what the policy leaves free (#763
-<a href=#477 id=477 data-nosnippet>477</a>    // review), and one when none does, which admission then refuses.
-<a href=#478 id=478 data-nosnippet>478</a>    </span><span class="kw">let </span>free = free_memory(<span class="kw-2">&amp;</span>runtime.host, <span class="kw-2">&amp;</span>runtime.resource_policy);
-<a href=#479 id=479 data-nosnippet>479</a>    <span class="kw">let </span>demand_on = |count: usize| -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, NativeError&gt; {
-<a href=#480 id=480 data-nosnippet>480</a>        <span class="kw">let </span>window = ProductStoragePlan::new(<span class="number">1</span>, count)<span class="question-mark">?</span>;
-<a href=#481 id=481 data-nosnippet>481</a>        <span class="prelude-val">Ok</span>((
-<a href=#482 id=482 data-nosnippet>482</a>            window,
-<a href=#483 id=483 data-nosnippet>483</a>            planned.demand(<span class="kw-2">&amp;</span>inputs, window, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>,
-<a href=#484 id=484 data-nosnippet>484</a>        ))
-<a href=#485 id=485 data-nosnippet>485</a>    };
-<a href=#486 id=486 data-nosnippet>486</a>    <span class="kw">let </span>workers = team.workers();
-<a href=#487 id=487 data-nosnippet>487</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>window, <span class="kw-2">mut </span>demand) = demand_on(workers)<span class="question-mark">?</span>;
-<a href=#488 id=488 data-nosnippet>488</a>    <span class="macro">debug_assert_eq!</span>(
-<a href=#489 id=489 data-nosnippet>489</a>        planned.planned_demand(problem, window, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>,
-<a href=#490 id=490 data-nosnippet>490</a>        demand,
-<a href=#491 id=491 data-nosnippet>491</a>        <span class="string">"the products' demand before the run is the run's"
-<a href=#492 id=492 data-nosnippet>492</a>    </span>);
-<a href=#493 id=493 data-nosnippet>493</a>    <span class="kw">let </span>needed = demand.peak_residency_bytes();
-<a href=#494 id=494 data-nosnippet>494</a>    <span class="kw">if </span>needed &gt; free {
-<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">for </span>count <span class="kw">in </span>(<span class="number">1</span>..workers).rev() {
-<a href=#496 id=496 data-nosnippet>496</a>            (window, demand) = demand_on(count)<span class="question-mark">?</span>;
-<a href=#497 id=497 data-nosnippet>497</a>            <span class="kw">if </span>demand.peak_residency_bytes() &lt;= free {
-<a href=#498 id=498 data-nosnippet>498</a>                <span class="kw">break</span>;
-<a href=#499 id=499 data-nosnippet>499</a>            }
-<a href=#500 id=500 data-nosnippet>500</a>        }
-<a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">let </span>count = window.maximum_workers();
-<a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">let </span>gigabytes = |bytes: u64| <span class="macro">format!</span>(<span class="string">"{:.2} GB"</span>, bytes <span class="kw">as </span>f64 / <span class="number">1e9</span>);
-<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span>reason = <span class="kw">if </span>demand.peak_residency_bytes() &lt;= free {
-<a href=#504 id=504 data-nosnippet>504</a>            <span class="macro">format!</span>(
-<a href=#505 id=505 data-nosnippet>505</a>                <span class="string">"{workers} lanes need {}, {count} fit {} free"</span>,
-<a href=#506 id=506 data-nosnippet>506</a>                gigabytes(needed),
-<a href=#507 id=507 data-nosnippet>507</a>                gigabytes(free)
-<a href=#508 id=508 data-nosnippet>508</a>            )
-<a href=#509 id=509 data-nosnippet>509</a>        } <span class="kw">else </span>{
-<a href=#510 id=510 data-nosnippet>510</a>            <span class="macro">format!</span>(
-<a href=#511 id=511 data-nosnippet>511</a>                <span class="string">"{workers} lanes need {} and no fewer fit {} free"</span>,
-<a href=#512 id=512 data-nosnippet>512</a>                gigabytes(needed),
-<a href=#513 id=513 data-nosnippet>513</a>                gigabytes(free)
-<a href=#514 id=514 data-nosnippet>514</a>            )
-<a href=#515 id=515 data-nosnippet>515</a>        };
-<a href=#516 id=516 data-nosnippet>516</a>        <span class="kw">if </span>count &lt; workers {
-<a href=#517 id=517 data-nosnippet>517</a>            <span class="macro">tracing::warn!</span>(<span class="string">"products on {count} lanes, not the team's {workers}: {reason}"</span>);
-<a href=#518 id=518 data-nosnippet>518</a>            lanes.<span class="number">1 </span>= <span class="prelude-val">Some</span>(reason);
-<a href=#519 id=519 data-nosnippet>519</a>        }
-<a href=#520 id=520 data-nosnippet>520</a>    }
-<a href=#521 id=521 data-nosnippet>521</a>    lanes.<span class="number">0 </span>= window.maximum_workers();
-<a href=#522 id=522 data-nosnippet>522</a>    <span class="kw">let </span>held = admit(
-<a href=#523 id=523 data-nosnippet>523</a>        <span class="kw-2">&amp;</span>runtime.host,
-<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
-<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw-2">&amp;</span>Demand {
-<a href=#526 id=526 data-nosnippet>526</a>            phase: <span class="string">"products"</span>,
-<a href=#527 id=527 data-nosnippet>527</a>            memory: demand.peak_residency_bytes(),
-<a href=#528 id=528 data-nosnippet>528</a>        },
-<a href=#529 id=529 data-nosnippet>529</a>    )<span class="question-mark">?</span>;
-<a href=#530 id=530 data-nosnippet>530</a>    <span class="kw">let </span>generation =
-<a href=#531 id=531 data-nosnippet>531</a>        produce_continuum_members(<span class="kw-2">&amp;</span>planned, <span class="kw-2">&amp;</span>inputs, window, team, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>;
-<a href=#532 id=532 data-nosnippet>532</a>    <span class="kw">if </span>runtime.cancel.is_cancelled() {
-<a href=#533 id=533 data-nosnippet>533</a>        <span class="comment">// The staged members are removed when the writer drops.
-<a href=#534 id=534 data-nosnippet>534</a>        </span><span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
-<a href=#535 id=535 data-nosnippet>535</a>    }
-<a href=#536 id=536 data-nosnippet>536</a>    publication
-<a href=#537 id=537 data-nosnippet>537</a>        .writer
-<a href=#538 id=538 data-nosnippet>538</a>        .publish(|image: <span class="kw-2">&amp;</span>Path| published.push(image.to_string_lossy().into_owned()))<span class="question-mark">?</span>;
-<a href=#539 id=539 data-nosnippet>539</a>    <span class="comment">// The charge covers the staged records until they are published.
-<a href=#540 id=540 data-nosnippet>540</a>    </span>drop(held);
-<a href=#541 id=541 data-nosnippet>541</a>    <span class="prelude-val">Ok</span>(Products {
-<a href=#542 id=542 data-nosnippet>542</a>        planned,
-<a href=#543 id=543 data-nosnippet>543</a>        scientific,
-<a href=#544 id=544 data-nosnippet>544</a>        published: generation,
-<a href=#545 id=545 data-nosnippet>545</a>    })
-<a href=#546 id=546 data-nosnippet>546</a>}
+<a href=#395 id=395 data-nosnippet>395</a>        plane_rows: outcome.plane_rows,
+<a href=#396 id=396 data-nosnippet>396</a>        final_residual_statistics: outcome.final_residual_statistics,
+<a href=#397 id=397 data-nosnippet>397</a>        stop: outcome.stop,
+<a href=#398 id=398 data-nosnippet>398</a>        major_cycle_count: outcome.major_cycle_count,
+<a href=#399 id=399 data-nosnippet>399</a>        total_minor_iterations: outcome.total_minor_iterations,
+<a href=#400 id=400 data-nosnippet>400</a>        total_actual_minor_iterations: outcome.total_actual_minor_iterations,
+<a href=#401 id=401 data-nosnippet>401</a>        workers,
+<a href=#402 id=402 data-nosnippet>402</a>        planes_per_wave: outcome.planes_per_wave,
+<a href=#403 id=403 data-nosnippet>403</a>        visibility_products: outcome.visibility_products,
+<a href=#404 id=404 data-nosnippet>404</a>        summary,
+<a href=#405 id=405 data-nosnippet>405</a>        scientific: products.scientific,
+<a href=#406 id=406 data-nosnippet>406</a>        planned_products: products.planned,
+<a href=#407 id=407 data-nosnippet>407</a>        products: products.published,
+<a href=#408 id=408 data-nosnippet>408</a>        _retained: outcome.retained,
+<a href=#409 id=409 data-nosnippet>409</a>    })
+<a href=#410 id=410 data-nosnippet>410</a>}
+<a href=#411 id=411 data-nosnippet>411</a>
+<a href=#412 id=412 data-nosnippet>412</a><span class="doccomment">/// The products of a run and the state they were generated from.
+<a href=#413 id=413 data-nosnippet>413</a></span><span class="kw">struct </span>Products {
+<a href=#414 id=414 data-nosnippet>414</a>    planned: PlannedContinuumGeneration,
+<a href=#415 id=415 data-nosnippet>415</a>    scientific: MajorCycleCompletion,
+<a href=#416 id=416 data-nosnippet>416</a>    published: PublishedContinuumGeneration,
+<a href=#417 id=417 data-nosnippet>417</a>}
+<a href=#418 id=418 data-nosnippet>418</a>
+<a href=#419 id=419 data-nosnippet>419</a><span class="doccomment">/// What the products are formed from: the final completion, its
+<a href=#420 id=420 data-nosnippet>420</a>/// reconstruction masks and the faceted domains' facets' own sums of
+<a href=#421 id=421 data-nosnippet>421</a>/// weights.
+<a href=#422 id=422 data-nosnippet>422</a></span><span class="kw">struct </span>ProductSource {
+<a href=#423 id=423 data-nosnippet>423</a>    scientific: MajorCycleCompletion,
+<a href=#424 id=424 data-nosnippet>424</a>    masks: <span class="prelude-ty">Option</span>&lt;ReconstructionMaskSet&gt;,
+<a href=#425 id=425 data-nosnippet>425</a>    facet_sum_weights: FacetSumWeights,
+<a href=#426 id=426 data-nosnippet>426</a>}
+<a href=#427 id=427 data-nosnippet>427</a>
+<a href=#428 id=428 data-nosnippet>428</a><span class="doccomment">/// What `problem`'s products hold on one lane, before the run
+<a href=#429 id=429 data-nosnippet>429</a>/// (`PlannedContinuumGeneration::planned_demand`): the least they can run
+<a href=#430 id=430 data-nosnippet>430</a>/// on, which the run's setup fits beside it.
+<a href=#431 id=431 data-nosnippet>431</a></span><span class="kw">fn </span>products_floor(
+<a href=#432 id=432 data-nosnippet>432</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#433 id=433 data-nosnippet>433</a>    publication: <span class="kw-2">&amp;</span>ApplicationPublication,
+<a href=#434 id=434 data-nosnippet>434</a>) -&gt; <span class="prelude-ty">Result</span>&lt;u64, NativeError&gt; {
+<a href=#435 id=435 data-nosnippet>435</a>    <span class="prelude-val">Ok</span>(
+<a href=#436 id=436 data-nosnippet>436</a>        PlannedContinuumGeneration::for_problem(problem, <span class="kw-2">&amp;</span>publication.controls)<span class="question-mark">?
+<a href=#437 id=437 data-nosnippet>437</a>            </span>.planned_demand(problem, ProductStoragePlan::new(<span class="number">1</span>, <span class="number">1</span>)<span class="question-mark">?</span>, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?
+<a href=#438 id=438 data-nosnippet>438</a>            </span>.peak_residency_bytes(),
+<a href=#439 id=439 data-nosnippet>439</a>    )
+<a href=#440 id=440 data-nosnippet>440</a>}
+<a href=#441 id=441 data-nosnippet>441</a>
+<a href=#442 id=442 data-nosnippet>442</a><span class="doccomment">/// Generate every planned product member into the writer's private staging,
+<a href=#443 id=443 data-nosnippet>443</a>/// one output channel per window on the run's team, and publish them,
+<a href=#444 id=444 data-nosnippet>444</a>/// adding each image published to `published`; a cancelled run publishes
+<a href=#445 id=445 data-nosnippet>445</a>/// nothing. `lanes` receives the lanes the products ran on and, when fewer
+<a href=#446 id=446 data-nosnippet>446</a>/// than the team's workers, why.
+<a href=#447 id=447 data-nosnippet>447</a></span><span class="kw">fn </span>publish_products(
+<a href=#448 id=448 data-nosnippet>448</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#449 id=449 data-nosnippet>449</a>    source: ProductSource,
+<a href=#450 id=450 data-nosnippet>450</a>    runtime: <span class="kw-2">&amp;</span>ApplicationRuntime,
+<a href=#451 id=451 data-nosnippet>451</a>    publication: ApplicationPublication,
+<a href=#452 id=452 data-nosnippet>452</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#453 id=453 data-nosnippet>453</a>    published: <span class="kw-2">&amp;mut </span>Vec&lt;String&gt;,
+<a href=#454 id=454 data-nosnippet>454</a>    lanes: <span class="kw-2">&amp;mut </span>(usize, <span class="prelude-ty">Option</span>&lt;String&gt;),
+<a href=#455 id=455 data-nosnippet>455</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Products, NativeError&gt; {
+<a href=#456 id=456 data-nosnippet>456</a>    <span class="kw">let </span>ProductSource {
+<a href=#457 id=457 data-nosnippet>457</a>        scientific,
+<a href=#458 id=458 data-nosnippet>458</a>        masks: reconstruction_masks,
+<a href=#459 id=459 data-nosnippet>459</a>        facet_sum_weights,
+<a href=#460 id=460 data-nosnippet>460</a>    } = source;
+<a href=#461 id=461 data-nosnippet>461</a>    <span class="kw">let </span><span class="kw-2">mut </span>inputs = ContinuumProductInputs::from_major_cycle(problem, <span class="kw-2">&amp;</span>scientific);
+<a href=#462 id=462 data-nosnippet>462</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(masks) = reconstruction_masks.as_ref() {
+<a href=#463 id=463 data-nosnippet>463</a>        inputs = <span class="kw">match </span>masks {
+<a href=#464 id=464 data-nosnippet>464</a>            ReconstructionMaskSet::Shared(mask) =&gt; inputs.with_reconstruction_mask(mask),
+<a href=#465 id=465 data-nosnippet>465</a>            ReconstructionMaskSet::Domains(masks) =&gt; inputs.with_domain_reconstruction_masks(masks),
+<a href=#466 id=466 data-nosnippet>466</a>        };
+<a href=#467 id=467 data-nosnippet>467</a>    }
+<a href=#468 id=468 data-nosnippet>468</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(centres) = publication.primary_beam_centres.as_ref() {
+<a href=#469 id=469 data-nosnippet>469</a>        inputs = inputs.with_primary_beam_centres(centres);
+<a href=#470 id=470 data-nosnippet>470</a>    }
+<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">if </span>!facet_sum_weights.is_empty() {
+<a href=#472 id=472 data-nosnippet>472</a>        inputs = inputs.with_facet_sum_weights(<span class="kw-2">&amp;</span>facet_sum_weights);
+<a href=#473 id=473 data-nosnippet>473</a>    }
+<a href=#474 id=474 data-nosnippet>474</a>    <span class="kw">let </span>planned = PlannedContinuumGeneration::new(<span class="kw-2">&amp;</span>inputs, <span class="kw-2">&amp;</span>publication.controls)<span class="question-mark">?</span>;
+<a href=#475 id=475 data-nosnippet>475</a>    <span class="comment">// The products' scratch grows with their lanes, and the gridding's
+<a href=#476 id=476 data-nosnippet>476</a>    // workers were chosen without it: the products take the most lanes, up
+<a href=#477 id=477 data-nosnippet>477</a>    // to the team's, whose demand fits what the policy leaves free (#763
+<a href=#478 id=478 data-nosnippet>478</a>    // review), and one when none does, which admission then refuses.
+<a href=#479 id=479 data-nosnippet>479</a>    </span><span class="kw">let </span>free = free_memory(<span class="kw-2">&amp;</span>runtime.host, <span class="kw-2">&amp;</span>runtime.resource_policy);
+<a href=#480 id=480 data-nosnippet>480</a>    <span class="kw">let </span>demand_on = |count: usize| -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, NativeError&gt; {
+<a href=#481 id=481 data-nosnippet>481</a>        <span class="kw">let </span>window = ProductStoragePlan::new(<span class="number">1</span>, count)<span class="question-mark">?</span>;
+<a href=#482 id=482 data-nosnippet>482</a>        <span class="prelude-val">Ok</span>((
+<a href=#483 id=483 data-nosnippet>483</a>            window,
+<a href=#484 id=484 data-nosnippet>484</a>            planned.demand(<span class="kw-2">&amp;</span>inputs, window, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>,
+<a href=#485 id=485 data-nosnippet>485</a>        ))
+<a href=#486 id=486 data-nosnippet>486</a>    };
+<a href=#487 id=487 data-nosnippet>487</a>    <span class="kw">let </span>workers = team.workers();
+<a href=#488 id=488 data-nosnippet>488</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>window, <span class="kw-2">mut </span>demand) = demand_on(workers)<span class="question-mark">?</span>;
+<a href=#489 id=489 data-nosnippet>489</a>    <span class="macro">debug_assert_eq!</span>(
+<a href=#490 id=490 data-nosnippet>490</a>        planned.planned_demand(problem, window, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>,
+<a href=#491 id=491 data-nosnippet>491</a>        demand,
+<a href=#492 id=492 data-nosnippet>492</a>        <span class="string">"the products' demand before the run is the run's"
+<a href=#493 id=493 data-nosnippet>493</a>    </span>);
+<a href=#494 id=494 data-nosnippet>494</a>    <span class="kw">let </span>needed = demand.peak_residency_bytes();
+<a href=#495 id=495 data-nosnippet>495</a>    <span class="kw">if </span>needed &gt; free {
+<a href=#496 id=496 data-nosnippet>496</a>        <span class="kw">for </span>count <span class="kw">in </span>(<span class="number">1</span>..workers).rev() {
+<a href=#497 id=497 data-nosnippet>497</a>            (window, demand) = demand_on(count)<span class="question-mark">?</span>;
+<a href=#498 id=498 data-nosnippet>498</a>            <span class="kw">if </span>demand.peak_residency_bytes() &lt;= free {
+<a href=#499 id=499 data-nosnippet>499</a>                <span class="kw">break</span>;
+<a href=#500 id=500 data-nosnippet>500</a>            }
+<a href=#501 id=501 data-nosnippet>501</a>        }
+<a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">let </span>count = window.maximum_workers();
+<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span>gigabytes = |bytes: u64| <span class="macro">format!</span>(<span class="string">"{:.2} GB"</span>, bytes <span class="kw">as </span>f64 / <span class="number">1e9</span>);
+<a href=#504 id=504 data-nosnippet>504</a>        <span class="kw">let </span>reason = <span class="kw">if </span>demand.peak_residency_bytes() &lt;= free {
+<a href=#505 id=505 data-nosnippet>505</a>            <span class="macro">format!</span>(
+<a href=#506 id=506 data-nosnippet>506</a>                <span class="string">"{workers} lanes need {}, {count} fit {} free"</span>,
+<a href=#507 id=507 data-nosnippet>507</a>                gigabytes(needed),
+<a href=#508 id=508 data-nosnippet>508</a>                gigabytes(free)
+<a href=#509 id=509 data-nosnippet>509</a>            )
+<a href=#510 id=510 data-nosnippet>510</a>        } <span class="kw">else </span>{
+<a href=#511 id=511 data-nosnippet>511</a>            <span class="macro">format!</span>(
+<a href=#512 id=512 data-nosnippet>512</a>                <span class="string">"{workers} lanes need {} and no fewer fit {} free"</span>,
+<a href=#513 id=513 data-nosnippet>513</a>                gigabytes(needed),
+<a href=#514 id=514 data-nosnippet>514</a>                gigabytes(free)
+<a href=#515 id=515 data-nosnippet>515</a>            )
+<a href=#516 id=516 data-nosnippet>516</a>        };
+<a href=#517 id=517 data-nosnippet>517</a>        <span class="kw">if </span>count &lt; workers {
+<a href=#518 id=518 data-nosnippet>518</a>            <span class="macro">tracing::warn!</span>(<span class="string">"products on {count} lanes, not the team's {workers}: {reason}"</span>);
+<a href=#519 id=519 data-nosnippet>519</a>            lanes.<span class="number">1 </span>= <span class="prelude-val">Some</span>(reason);
+<a href=#520 id=520 data-nosnippet>520</a>        }
+<a href=#521 id=521 data-nosnippet>521</a>    }
+<a href=#522 id=522 data-nosnippet>522</a>    lanes.<span class="number">0 </span>= window.maximum_workers();
+<a href=#523 id=523 data-nosnippet>523</a>    <span class="kw">let </span>held = admit(
+<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw-2">&amp;</span>runtime.host,
+<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw-2">&amp;</span>runtime.resource_policy,
+<a href=#526 id=526 data-nosnippet>526</a>        <span class="kw-2">&amp;</span>Demand {
+<a href=#527 id=527 data-nosnippet>527</a>            phase: <span class="string">"products"</span>,
+<a href=#528 id=528 data-nosnippet>528</a>            memory: demand.peak_residency_bytes(),
+<a href=#529 id=529 data-nosnippet>529</a>        },
+<a href=#530 id=530 data-nosnippet>530</a>    )<span class="question-mark">?</span>;
+<a href=#531 id=531 data-nosnippet>531</a>    <span class="kw">let </span>generation =
+<a href=#532 id=532 data-nosnippet>532</a>        produce_continuum_members(<span class="kw-2">&amp;</span>planned, <span class="kw-2">&amp;</span>inputs, window, team, <span class="kw-2">&amp;</span>publication.writer)<span class="question-mark">?</span>;
+<a href=#533 id=533 data-nosnippet>533</a>    <span class="kw">if </span>runtime.cancel.is_cancelled() {
+<a href=#534 id=534 data-nosnippet>534</a>        <span class="comment">// The staged members are removed when the writer drops.
+<a href=#535 id=535 data-nosnippet>535</a>        </span><span class="kw">return </span><span class="prelude-val">Err</span>(Cancelled.into());
+<a href=#536 id=536 data-nosnippet>536</a>    }
+<a href=#537 id=537 data-nosnippet>537</a>    publication
+<a href=#538 id=538 data-nosnippet>538</a>        .writer
+<a href=#539 id=539 data-nosnippet>539</a>        .publish(|image: <span class="kw-2">&amp;</span>Path| published.push(image.to_string_lossy().into_owned()))<span class="question-mark">?</span>;
+<a href=#540 id=540 data-nosnippet>540</a>    <span class="comment">// The charge covers the staged records until they are published.
+<a href=#541 id=541 data-nosnippet>541</a>    </span>drop(held);
+<a href=#542 id=542 data-nosnippet>542</a>    <span class="prelude-val">Ok</span>(Products {
+<a href=#543 id=543 data-nosnippet>543</a>        planned,
+<a href=#544 id=544 data-nosnippet>544</a>        scientific,
+<a href=#545 id=545 data-nosnippet>545</a>        published: generation,
+<a href=#546 id=546 data-nosnippet>546</a>    })
+<a href=#547 id=547 data-nosnippet>547</a>}
 </code></pre></div></section></main></body></html>
