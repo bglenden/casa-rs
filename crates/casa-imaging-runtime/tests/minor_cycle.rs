@@ -754,3 +754,46 @@ fn joint_clark_keeps_a_blank_polarization_in_its_channel() {
         assert!((changed.flux - 0.51).abs() < 1e-6);
     }
 }
+
+/// CASA's Clark uses the first polarization's PSF even when it is blank;
+/// a zero PSF leaves the other polarization's peak unchanged (#1140).
+#[test]
+fn joint_clark_uses_the_blank_first_polarizations_psf() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    let width = 64;
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [width, width],
+        1,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 1 },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(20, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = width * width;
+        images.polarizations = 2;
+        let unit = scene
+            .unit_psf()
+            .into_iter()
+            .map(|v| v as f32)
+            .collect::<Vec<_>>();
+        images.psf = Some([vec![0.0; cells].as_slice(), unit.as_slice()].concat());
+        images.sum_weights = vec![0.0, 1.0];
+        images.published_sum_weights = images.sum_weights.clone();
+        images.residual = vec![0.0; 2 * cells];
+        images.residual[cells + 40 * width + 40] = 3.0;
+    });
+    let (_, outcome) = minor_cycle(
+        &problem,
+        &completion,
+        &setup(&problem, None),
+        &controls(20, 0.17),
+        1,
+    );
+    assert_eq!(outcome.summary.iterations, 10);
+    assert!((outcome.summary.peak - 3.0).abs() < 1e-6);
+    assert!((outcome.summary.model_flux - 5.1).abs() < 1e-6);
+}
