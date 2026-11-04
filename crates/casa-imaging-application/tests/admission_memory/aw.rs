@@ -12,8 +12,8 @@ use super::{
 /// admission covers it (#719). This catalog lies under the automatic bound's
 /// floor, as in the MT-MFS law below, so it is not raised here.
 #[test]
-fn an_aw_cube_is_admitted_close_to_what_it_holds() {
-    if !alone("aw::an_aw_cube_is_admitted_close_to_what_it_holds") {
+fn an_aw_cube_stays_within_its_admission() {
+    if !alone("aw::an_aw_cube_stays_within_its_admission") {
         return;
     }
     let root = tempfile::tempdir().expect("test root");

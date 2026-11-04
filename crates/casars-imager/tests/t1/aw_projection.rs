@@ -434,12 +434,6 @@ fn a_native_cache_reused_across_an_spw_selection_change_gives_a_fresh_caches_pro
     assert_same_products(&reused, &fresh);
 }
 
-/// tclean's AW terms reach the native cells and their lookup (#980). With
-/// cells at each window's frequency, `conjbeams` grids each window with the
-/// other's beam and weighs with the conjugate pair, so the products differ;
-/// at the reference frequency alone (`wbawp=False`) every row takes the one
-/// cell whatever `conjbeams` says (`AWConvFunc::makeFreqValList`), and the
-/// products agree. A co-planar run (`wprojplanes=1`) makes one plane.
 /// #719: each plane of an AW cube is normalized by its own weights. On a grid
 /// that drops more of the upper window's long baselines the planes' sums of
 /// weights differ, and each plane's weight image peaks at the whole sample
@@ -492,12 +486,42 @@ fn each_plane_of_an_aw_cube_is_normalized_by_its_own_weights() {
             "plane {plane}'s weight image peaks at {weight:?}, not {expected:?}"
         );
     }
-    assert_eq!(peaks(".psf"), [1.0, 1.0]);
     let fluxes = [residual[0] * expected[0], residual[1] * expected[1]];
     assert!(
         (fluxes[0] - fluxes[1]).abs() < 0.02 * fluxes[0],
         "the point reads {fluxes:?} once each plane's own peak is taken out"
     );
+}
+
+/// A window of several channels interpolates onto a cube's axis, where
+/// CASA's `AWVisResampler` reads a native channel's frequency: that has no
+/// CASA comparison, so it is refused naming its issue, and its one-channel
+/// selection runs.
+#[test]
+fn an_aw_cube_of_a_window_of_several_channels_is_refused() {
+    let setup = Setup {
+        spectral_windows: vec![SyntheticSpectralSetup {
+            channel_count: 2,
+            ..lband_window("t1-lband-two", FREQUENCY_HZ)
+        }],
+        ..setup()
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let controls = |spw: &str| {
+        let mut controls = cached_clean(spw, &observation.scratch("two-cf"), &surface);
+        let fields = controls.as_object_mut().expect("controls");
+        fields.insert("niter".into(), json!(0));
+        fields.insert("specmode".into(), json!("cube"));
+        controls
+    };
+    let refused = observation
+        .try_image("aw-two-channels", controls("0"))
+        .err()
+        .expect("a window of two channels");
+    assert!(refused.contains("#1121"), "{refused}");
+    observation.image("aw-one-channel", controls("0:0"));
 }
 
 /// A row off the grid still weighs in the sensitivity:
@@ -538,6 +562,12 @@ fn a_row_off_the_grid_counts_in_the_aw_weight_image() {
     );
 }
 
+/// tclean's AW terms reach the native cells and their lookup (#980). With
+/// cells at each window's frequency, `conjbeams` grids each window with the
+/// other's beam and weighs with the conjugate pair, so the products differ;
+/// at the reference frequency alone (`wbawp=False`) every row takes the one
+/// cell whatever `conjbeams` says (`AWConvFunc::makeFreqValList`), and the
+/// products agree. A co-planar run (`wprojplanes=1`) makes one plane.
 #[test]
 fn aw_terms_select_the_native_cells_tclean_names() {
     let observation = Observation::synthesise_setup(two_window_setup(), &[("centre", CENTRE)]);

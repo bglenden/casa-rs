@@ -630,7 +630,8 @@ impl RowPlacing {
 /// The placement of `row`'s sample at `frequency_hz` on `plane`: its cell,
 /// its pointing gradient when the set has a ramp (the kernels anchor the
 /// ramp at the sample's fine offset), and its phase-centre shift, when the
-/// cell's support fits the padded grid.
+/// cell's support fits the padded grid or its set's weight image counts it
+/// wherever it falls ([`ConvolutionFunctionSet::weighs_samples_off_the_grid`]).
 fn locate_sample(
     cf: &dyn ConvolutionFunctionSet,
     geometry: &GridGeometry,
@@ -650,13 +651,15 @@ fn locate_sample(
     if placing.key != Some(key) {
         placing.key = Some(key);
         placing.oversampling = cf.gridding_oversampling(key);
-        placing.half_support = cf.placement_half_support(key, &mut placing.hold);
+        if !cf.weighs_samples_off_the_grid() {
+            placing.half_support = cf.placement_half_support(key, &mut placing.hold);
+        }
     }
     let (u, v) = (row.uvw_m[0] * scale, row.uvw_m[1] * scale);
     let location = geometry.locate(u, v, placing.oversampling);
     let gridded = match cf.grid_edge() {
         GridEdge::Whole => {
-            geometry.fits(location, placing.half_support) || cf.weighs_samples_off_the_grid()
+            cf.weighs_samples_off_the_grid() || geometry.fits(location, placing.half_support)
         }
         GridEdge::Clipped | GridEdge::Sectioned => geometry.reaches(location, placing.half_support),
     };
@@ -884,8 +887,10 @@ impl SpectralResampler {
     /// Place one row's unflagged samples with imaging weights into `out`.
     ///
     /// Each sample's value is `W · V · e^{iφ}` and its weight `W` for every
-    /// polarization; samples whose kernel support leaves the padded grid or
-    /// whose imaging weight is zero are dropped. An autocorrelation places
+    /// polarization; samples whose kernel support leaves the padded grid
+    /// (unless their set's weight image counts them,
+    /// [`ConvolutionFunctionSet::weighs_samples_off_the_grid`]) or whose
+    /// imaging weight is zero are dropped. An autocorrelation places
     /// nothing: CASA's imaging `GridFT` flags rows whose antennas agree
     /// (`GridFT::put`, `usezero = false`), while the weight densities
     /// ([`Self::place_density`]) still count them.
