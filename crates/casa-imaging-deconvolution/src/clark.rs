@@ -132,7 +132,10 @@ impl Solver for Clark {
         threshold: f64,
     ) -> Result<ClarkState, Error> {
         let shape = view.shape;
-        let peak = view.summary.peak();
+        // `LatConvEquation` takes the PSF at the plane's centre, whatever its
+        // peak (`ClarkCleanLatModel::solve`).
+        let [x, y] = shape.centre();
+        let peak = shape.index(x, y);
         let refresh = match self.refresh.take() {
             Some(refresh) if refresh.serves(shape, peak) => refresh,
             _ => LinearRefresh::new(&view.psf[0], shape, peak)?,

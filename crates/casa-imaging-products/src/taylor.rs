@@ -10,7 +10,7 @@ use casa_imaging_model::{
 use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 
 use crate::AnalyticPrimaryBeamModel;
-use crate::beam::{RestoringBeam, fit_restoring_beam};
+use crate::beam::{PlaneBeam, RestoringBeam, fit_plane_beam, settle_beams};
 use crate::error::ProductsError;
 use crate::normalization::{
     MosaicSensitivity, ResidualFamily, normalize_plane, normalized_psf_value, psf_peak,
@@ -466,7 +466,7 @@ struct SolvedFamily<'a> {
     sensitivity: Vec<f32>,
     inverse: Vec<f64>,
     principal_residual: Vec<Vec<f32>>,
-    fitted_beam: Option<RestoringBeam>,
+    fit: PlaneBeam,
 }
 
 impl<'a> SolvedFamily<'a> {
@@ -519,7 +519,7 @@ impl<'a> SolvedFamily<'a> {
             .collect::<Vec<_>>();
         let (inverse, principal_residual) = principal_residuals(&family.psf, &family.residual)?;
         let list = inputs.problem().product_list();
-        let fitted_beam = list
+        let fit = list
             .publication()
             .members()
             .iter()
@@ -527,14 +527,15 @@ impl<'a> SolvedFamily<'a> {
                 list.entries()[id.ordinal()].beam() != casa_imaging_model::ProductBeamRule::None
             })
             .then(|| {
-                fit_restoring_beam(
+                fit_plane_beam(
                     &family.psf[0],
                     state.shape(),
                     inputs.cell_size_rad_for_domain(domain_role(state)),
                     psf_cutoff,
                 )
             })
-            .transpose()?;
+            .transpose()?
+            .unwrap_or(PlaneBeam::Blank);
         Ok(Self {
             polarization,
             family,
@@ -542,7 +543,7 @@ impl<'a> SolvedFamily<'a> {
             sensitivity,
             inverse,
             principal_residual,
-            fitted_beam,
+            fit,
         })
     }
 
@@ -553,6 +554,7 @@ impl<'a> SolvedFamily<'a> {
         self,
         inputs: &ContinuumProductInputs<'_>,
         state: &FinalNormalStateWindow<'_>,
+        fitted_beam: Option<RestoringBeam>,
         restoring_beam: Option<RestoringBeam>,
         primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     ) -> Result<TaylorPlane, ProductsError> {
@@ -563,7 +565,7 @@ impl<'a> SolvedFamily<'a> {
             sensitivity,
             inverse,
             principal_residual,
-            fitted_beam,
+            fit: _,
         } = self;
         let domain_role = domain_role(state);
         let shape = state.shape();
@@ -679,17 +681,21 @@ impl TaylorProducts {
         // The restoring-beam policy applies across the polarizations as
         // across any image's planes: each its own, one enclosing them all,
         // or the one the request gives.
-        let fitted = solved
-            .iter()
-            .map(|family| family.fitted_beam)
-            .collect::<Vec<_>>();
+        let fits = solved.iter().map(|family| family.fit).collect::<Vec<_>>();
+        let fitted = settle_beams(&fits, fits.len());
         let restoring = crate::generation::restoring_beams(inputs, &fitted)?;
         let planes = solved
             .into_iter()
             .enumerate()
             .map(|(polarization, family)| {
                 let beam = restoring.get(polarization).copied().flatten();
-                family.restore(inputs, state, beam, primary_beam_model)
+                family.restore(
+                    inputs,
+                    state,
+                    fitted[polarization],
+                    beam,
+                    primary_beam_model,
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {

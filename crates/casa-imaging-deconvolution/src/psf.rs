@@ -51,16 +51,20 @@ impl PsfSummary {
         }
         let single = psf.iter().map(|value| *value as f32).collect::<Vec<_>>();
         let axes = [shape.nx, shape.ny];
-        // A plane peaking away from its centre has no beam of its own in CASA.
-        // `getPSFSidelobeLevel` subtracts a Gaussian at the centre, far from
-        // that peak, which so stays the sidelobe. The fit here serves the
-        // Clark patch and the automatic mask's smoothing only.
-        let beam = fit_main_lobe(&single, axes, [1.0, 1.0], DEFAULT_PSF_FIT_CUTOFF)?;
-        let sidelobe = if peak_outside_inner_quarter(&single, axes)? {
-            psf.iter()
-                .fold(0.0_f64, |level, value| level.max(value.abs()))
+        // A plane peaking away from its centre has no beam of its own in CASA,
+        // which takes another plane's and subtracts a Gaussian at the centre,
+        // far from that peak, which so stays the sidelobe. Its beam here serves
+        // the Clark patch and the automatic mask's smoothing, at a pixel: nothing
+        // here knows the other planes (#1130).
+        let (beam, sidelobe) = if peak_outside_inner_quarter(&single, axes)? {
+            let level = psf
+                .iter()
+                .fold(0.0_f64, |level, value| level.max(value.abs()));
+            (RestoringBeam::new(1.0, 1.0, 0.0)?, level)
         } else {
-            fitted_psf_sidelobe_fraction_with_beam(&single, axes, beam)?
+            let beam = fit_main_lobe(&single, axes, [1.0, 1.0], DEFAULT_PSF_FIT_CUTOFF)?;
+            let sidelobe = fitted_psf_sidelobe_fraction_with_beam(&single, axes, beam)?;
+            (beam, sidelobe)
         };
         Ok(Self {
             peak,
@@ -159,5 +163,19 @@ mod tests {
         assert!(centred.sidelobe() < 0.2, "{}", centred.sidelobe());
         let off = PsfSummary::new(&lobe([8, 40]), shape).expect("a summary");
         assert_eq!(off.sidelobe(), 1.0);
+        // The most negative sample counts by its magnitude, as CASA's does.
+        let mut deep = lobe([8, 40]);
+        deep[0] = -1.5;
+        let deep = PsfSummary::new(&deep, shape).expect("a summary");
+        assert_eq!(deep.sidelobe(), 1.5);
+        // No fit, so a spike too narrow for one is no failure.
+        let mut spike = vec![0.0; 64 * 64];
+        spike[8 * 64 + 40] = 1.0;
+        assert_eq!(
+            PsfSummary::new(&spike, shape)
+                .expect("a summary")
+                .sidelobe(),
+            1.0
+        );
     }
 }
