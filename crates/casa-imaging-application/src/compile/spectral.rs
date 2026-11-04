@@ -79,9 +79,20 @@ impl PreparedSpectralAxis {
     }
 }
 
-/// Each window's per-time frequency selection, by window number; a window
-/// absent reads every selected channel at every time.
-pub(super) type WindowBands = BTreeMap<usize, FrequencyBands>;
+/// How a window's times read its selected channels, for one that doesn't
+/// read them all at every time.
+#[derive(Clone, Debug)]
+pub(super) enum WindowTimes {
+    /// By its per-time frequency selection.
+    Bands(FrequencyBands),
+    /// Only to count its samples in the density and to write them: no
+    /// channel reaches the axis.
+    DensityOnly,
+}
+
+/// How each window reads, by window number; a window absent reads every
+/// selected channel at every time.
+pub(super) type WindowBands = BTreeMap<usize, WindowTimes>;
 
 /// Where and when a frame conversion is evaluated.
 pub(super) struct FrameContext<'a> {
@@ -537,11 +548,12 @@ struct StoreReads {
 /// does.
 ///
 /// A window none of whose channels reaches the axis is read as `spw`
-/// selects it, tuned or not, as CASA does: its samples fall outside every
-/// plane, but `VisImagingWeight`'s density counts them, since CASA forms it
-/// over the untuned selection of the imager that defines the cube, and a
-/// final pass writes the cube model's prediction there, zero, into its
-/// `MODEL_DATA` (test_modelvis_29).
+/// selects it, tuned or not, as CASA does, by the two passes that need it:
+/// its samples fall outside every plane, but `VisImagingWeight`'s density
+/// counts them, since CASA forms it over the untuned selection of the imager
+/// that defines the cube, and a final pass writes the cube model's
+/// prediction there, zero, into its `MODEL_DATA` (test_modelvis_29). The
+/// other passes skip it ([`WindowTimes::DensityOnly`]).
 fn store_reads(
     request: &ImagingRequest,
     ((catalogue, engine), survey, field): ((&Catalogue, &MsCalEngine), &Survey, usize),
@@ -581,13 +593,16 @@ fn store_reads(
             channels = explicit
                 .cloned()
                 .unwrap_or_else(|| (0..window.frequencies_hz.len()).collect());
+            reads.bands.insert(window.spw_id, WindowTimes::DensityOnly);
         } else {
             reads.reaches_axis = true;
             if let (Some(bands), Some(selection)) = (&bands, &selection)
                 && channels.iter().any(|channel| !selection.always(*channel))
                 && let Some(window_bands) = bands.frequency_bands(window.spw_id)
             {
-                reads.bands.insert(window.spw_id, window_bands.clone());
+                reads
+                    .bands
+                    .insert(window.spw_id, WindowTimes::Bands(window_bands.clone()));
             }
         }
         reads.channels.insert(window.spw_id, channels);

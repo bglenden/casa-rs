@@ -590,6 +590,7 @@ pub struct SpectralWindowSelection {
     coordinate_catalog: Option<SpectralWindowCoordinateCatalog>,
     first_buffer_lsrk_factor: Option<f64>,
     frequency_bands: Option<FrequencyBands>,
+    density_only: bool,
 }
 
 // Construction rejects every non-finite factor, so IEEE equality is
@@ -606,6 +607,7 @@ impl SpectralWindowSelection {
             coordinate_catalog: None,
             first_buffer_lsrk_factor: None,
             frequency_bands: None,
+            density_only: false,
         }
     }
 
@@ -623,6 +625,21 @@ impl SpectralWindowSelection {
     #[must_use]
     pub const fn frequency_bands(&self) -> Option<&FrequencyBands> {
         self.frequency_bands.as_ref()
+    }
+
+    /// Mark a window no channel of which reaches the image's axis: its
+    /// samples count in the imaging weights' density and fall on no plane, so
+    /// a pass that images reads nothing of it.
+    #[must_use]
+    pub const fn with_density_only(mut self) -> Self {
+        self.density_only = true;
+        self
+    }
+
+    /// Whether [`Self::with_density_only`] marked the window.
+    #[must_use]
+    pub const fn density_only(&self) -> bool {
+        self.density_only
     }
 
     /// Bind the factor that takes the window's frequencies to LSRK at the

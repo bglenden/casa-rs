@@ -521,12 +521,21 @@ impl BoundedSource for ObservationSource<'_> {
             return Err("a traversal began before the previous one finished".into());
         }
         self.state = State::Failed;
-        let windows = self.windows(planes, restrict)?;
+        let mut windows = self.windows(planes, restrict)?;
         let values = content == SampleContent::Visibilities;
         let writing = match self.route.write_back() {
             Some(write_back) if values => write_back.writing()?,
             _ => false,
         };
+        if values && !writing {
+            let stores = &self.route.stores;
+            windows
+                .iter_mut()
+                .filter(|(key, _)| {
+                    stores[key.store].selection.partitions[key.partition].density_only
+                })
+                .for_each(|(_, window)| *window = None);
+        }
         self.state = State::Streaming(Box::new(Stream {
             values,
             writing,

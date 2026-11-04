@@ -249,6 +249,7 @@ pub(crate) fn resolve_partitions(
             spectral_window: window,
             channels,
             frequency_bands: window_selection.frequency_bands().cloned(),
+            density_only: window_selection.density_only(),
             correlations,
             wavelength_m: wavelength(catalogue, entry, rows)?,
         });
