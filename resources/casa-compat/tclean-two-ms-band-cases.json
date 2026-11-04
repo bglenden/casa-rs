@@ -1,0 +1,217 @@
+{
+ "source": {
+  "purpose": "tclean cubes with an unset start, on selections over one and two MeasurementSets (issue 1081, item 3). The format is tools/casa-compat/tclean_case_matrix.py's."
+ },
+ "inputs": {
+  "refim_point_onespw0.ms": "unittest/tclean/refim_point_onespw0.ms",
+  "refim_point_onespw1.ms": "unittest/tclean/refim_point_onespw1.ms",
+  "refim_point_first11chans.ms": "unittest/tclean/refim_point_first11chans.ms",
+  "refim_point_last10chans.ms": "unittest/tclean/refim_point_last10chans.ms"
+ },
+ "common": {},
+ "cases": {
+  "two_ms_default": {
+   "vis": [
+    "refim_point_onespw0.ms",
+    "refim_point_onespw1.ms"
+   ],
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0
+   }
+  },
+  "two_ms_reversed": {
+   "vis": [
+    "refim_point_onespw1.ms",
+    "refim_point_onespw0.ms"
+   ],
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0
+   }
+  },
+  "two_ms_nchan": {
+   "vis": [
+    "refim_point_onespw0.ms",
+    "refim_point_onespw1.ms"
+   ],
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "nchan": 5,
+    "width": 2
+   }
+  },
+  "two_ms_channel_selection": {
+   "vis": [
+    "refim_point_onespw0.ms",
+    "refim_point_onespw1.ms"
+   ],
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "spw": [
+     "0:2~5",
+     "0:8~12"
+    ]
+   }
+  },
+  "two_ms_field_rest": {
+   "vis": [
+    "refim_point_onespw0.ms",
+    "refim_point_onespw1.ms"
+   ],
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "start": 1,
+    "width": 1,
+    "nchan": 6
+   }
+  },
+  "one_ms_one_channel": {
+   "vis": "refim_point_onespw0.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "spw": "0:5"
+   }
+  },
+  "one_ms_two_channels": {
+   "vis": "refim_point_onespw0.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "spw": "0:5~6"
+   }
+  },
+  "one_ms_last_channel": {
+   "vis": "refim_point_onespw0.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "spw": "0:19"
+   }
+  },
+  "one_ms_first_channel": {
+   "vis": "refim_point_onespw0.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "spw": "0:0"
+   }
+  },
+  "two_ms_one_channel_each": {
+   "vis": [
+    "refim_point_onespw0.ms",
+    "refim_point_onespw1.ms"
+   ],
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "spw": [
+     "0:5",
+     "0:5"
+    ]
+   }
+  },
+  "first_above_second_selected": {
+   "vis": [
+    "refim_point_onespw1.ms",
+    "refim_point_onespw0.ms"
+   ],
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "spw": [
+     "0:2~5",
+     "0:8~12"
+    ]
+   }
+  },
+  "overlap_second_lower": {
+   "vis": [
+    "refim_point_first11chans.ms",
+    "refim_point_last10chans.ms"
+   ],
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "spw": [
+     "0:9",
+     "0:1"
+    ]
+   }
+  },
+  "overlap_second_inside": {
+   "vis": [
+    "refim_point_first11chans.ms",
+    "refim_point_last10chans.ms"
+   ],
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "spw": [
+     "0:3~5",
+     "0:1~2"
+    ]
+   }
+  },
+  "first_later_second_earlier": {
+   "vis": [
+    "refim_point_last10chans.ms",
+    "refim_point_first11chans.ms"
+   ],
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "spw": [
+     "0:4~5",
+     "0:2"
+    ]
+   }
+  }
+ }
+}

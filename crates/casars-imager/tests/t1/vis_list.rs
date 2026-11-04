@@ -14,7 +14,7 @@ use std::path::Path;
 use casa_ms::{MeasurementSet, SyntheticSpectralSetup, VisibilityDataColumn};
 use casa_types::{ArrayValue, Complex32};
 use ndarray::Array2;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::fixture::{Component, Observation, Products, Setup};
 
@@ -157,6 +157,40 @@ fn a_cube_over_two_measurement_sets_reads_each_where_it_reaches_the_cube() {
         }
         assert_products(&products, &whole, &[".sumwt", ".psf", ".residual"], label);
     }
+}
+
+/// An unset `start` and `nchan` read the selected band over every
+/// MeasurementSet, and lay the axis on the first one's channels, from its first
+/// selected channel to its last whatever it selects (#1081;
+/// `SynthesisParamsImage::buildCoordinateSystem`).
+#[test]
+fn a_cubes_default_axis_reads_the_band_selected_over_every_measurement_set() {
+    let (low, high) = (track(0, 4), track(4, 2));
+    let stores = [low.measurement_set(), high.measurement_set()];
+    let cube = |name: &str, stores: &[&Path], spw: Value| {
+        low.image_stores(
+            stores,
+            name,
+            json!({"specmode": "cube", "spw": spw, "interpolation": "nearest", "niter": 0}),
+        )
+        .1
+    };
+    let first_alone = cube("first-alone", &stores[..1], json!("0"));
+    assert_eq!(first_alone.get(".image").channels(), 4);
+    let selected = cube("selected", &stores, json!(["0:1~2", "0:1~1"]));
+    let image = selected.get(".image");
+    assert_eq!(image.channels(), 3);
+    let expected = first_alone.get(".image").channel_frequency_hz(1);
+    assert!((image.channel_frequency_hz(0) - expected).abs() < 1.0);
+    // Overlapping, the second selection lying below the first's: the band
+    // takes the lower edge from one and the upper from the other.
+    let overlap = track(1, 2);
+    let stores = [low.measurement_set(), overlap.measurement_set()];
+    let lower = cube("overlap", &stores, json!(["0:3", "0:1"]));
+    let image = lower.get(".image");
+    assert_eq!(image.channels(), 2);
+    let expected = first_alone.get(".image").channel_frequency_hz(2);
+    assert!((image.channel_frequency_hz(0) - expected).abs() < 1.0);
 }
 
 /// `MODEL_DATA` of each MeasurementSet of the list (CASA's

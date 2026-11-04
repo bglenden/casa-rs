@@ -6,11 +6,12 @@
   "parameters": {
     "vis": {
       "status": "Partial",
-      "scope": "Contract 38: a list of MeasurementSets images as one, as CASA's tclean images its vis list. Each is opened and surveyed with its own selectors (one per MeasurementSet, or one or a list of one for all; another length is refused with CASA's message), ordered stably by its earliest MAIN TIME and visited as CASA visits its ms0, ms1, ... keys, as text (input_parameters.checkAndFixSelectionPars, mslisthelper.sort_mslist, imager_base.selectData); one selecting no sample is left out unless it is the first (SynthesisImagerVi2::selectData). The image's coordinates (obs date, telescope, phase centre, rest frequency, a cube's axis) come from CASA's msobj (buildCoordinateSystem): the first MeasurementSet, or for a cube or cubedata whose start is a frequency or velocity the last one whose selected band holds it (CAS-12877); a continuum band, and so the MFS and MT-MFS reference frequency, spans every one. A cube reads each other MeasurementSet's window where it reaches the cube, and one that does not reach it is read so its MODEL_DATA holds the zero prediction, as CASA writes it. Weighting density spans every MeasurementSet; datacolumn falls back to DATA per MeasurementSet; savemodel writes each one's MODEL_DATA (or virtual model). CASA's addwtspec, which adds WEIGHT_SPECTRUM to a listed MeasurementSet lacking it as a Vi/VB2 workaround, is not done: casa-rs reads each MeasurementSet's own weights, which that column copies, and never modifies its inputs. A row's spectral window and field are keyed among every MeasurementSet's, as if they were concatenated, so the mosaic keeps each one's beams (CASA's msId_spw, SimplePBConvFunc::convIndex) and a mosweight density each one's fields (VisImagingWeight's msId_field) apart; its dishes are every MeasurementSet's aperture classes (HetArrayConvFunc::findAntennaSizes). Refused with several MeasurementSets (#980): the awproject gridder (its catalog keys cells on the first MeasurementSet's frequencies), a moving phase centre, specmode cubesource, fitspw and a cube's per-channel density weighting.",
+      "scope": "Contract 38: a list of MeasurementSets images as one, as CASA's tclean images its vis list. Each is opened and surveyed with its own selectors (one per MeasurementSet, or one or a list of one for all; another length is refused with CASA's message), ordered stably by its earliest MAIN TIME and visited as CASA visits its ms0, ms1, ... keys, as text (input_parameters.checkAndFixSelectionPars, mslisthelper.sort_mslist, imager_base.selectData); one selecting no sample is left out unless it is the first (SynthesisImagerVi2::selectData). The image's coordinates (obs date, telescope, phase centre, rest frequency, a cube's axis) come from CASA's msobj (buildCoordinateSystem): the first MeasurementSet, or for a cube or cubedata whose start is a frequency or velocity the last one whose selected band holds it (CAS-12877); a continuum band, and so the MFS and MT-MFS reference frequency, spans every one. A cube reads each other MeasurementSet's window where it reaches the cube, and one that does not reach it is read so its MODEL_DATA holds the zero prediction, as CASA writes it. Weighting density spans every MeasurementSet; datacolumn falls back to DATA per MeasurementSet; savemodel writes each one's MODEL_DATA (or virtual model). CASA's addwtspec, which adds WEIGHT_SPECTRUM to a listed MeasurementSet lacking it as a Vi/VB2 workaround, is not done: casa-rs reads each MeasurementSet's own weights, which that column copies, and never modifies its inputs. A row's spectral window and field are keyed among every MeasurementSet's, as if they were concatenated, so the mosaic keeps each one's beams (CASA's msId_spw, SimplePBConvFunc::convIndex) and a mosweight density each one's fields (VisImagingWeight's msId_field) apart; its dishes are every MeasurementSet's aperture classes (HetArrayConvFunc::findAntennaSizes). Refused with several MeasurementSets (#980): the awproject gridder (its catalog keys cells on the first MeasurementSet's frequencies), a moving phase centre, specmode cubesource, fitspw and a cube's per-channel density weighting. A cube with an unset start reads the band selected over every MeasurementSet, on the first one's channels (SynthesisParamsImage::buildCoordinateSystem).",
       "evidence": [
         "signature",
         "reader",
-        "vis-list-20261102"
+        "vis-list-20261102",
+        "two-ms-band-20261104"
       ],
       "behaviors": [
         "selection"
@@ -2018,6 +2019,21 @@
         "resources/casa-compat/evidence/tclean-psf-off-centre-20261104.json",
         "resources/casa-compat/tclean-psf-off-centre-cases.json",
         "crates/casa-imaging-products/src/beam.rs"
+      ]
+    },
+    "two-ms-band-20261104": {
+      "kind": "casa-rs's own two-MeasurementSet cube cases and CASA's against CASA, with a T1 law",
+      "state": "measured: 14 of 14, and CASA's 5 of 5",
+      "source_revision": "20cdfce4876217301b0463c3d72cd209f53b29f7",
+      "revision": "8866d7b6f2febdd6076ef29737afa3d5c46ec9c5",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-two-ms-band-cases.json --backend cpu --precision f64, and with tclean-casa-test-cases.json --case-prefix test_cube.test_cube_twoMS --case-prefix test_modelvis.test_modelvis_29",
+      "receipt": "resources/casa-compat/evidence/tclean-two-ms-band-20261104.json",
+      "scope": "Dirty cubes over two MeasurementSets, in both orders, with a selection above, below and overlapping the other's, and one MeasurementSet's selections, with the rest frequency over both stores. Stores of differing frames are refused.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-two-ms-band-20261104.json",
+        "resources/casa-compat/tclean-two-ms-band-cases.json",
+        "crates/casa-imaging-application/src/compile/spectral.rs"
       ]
     }
   }

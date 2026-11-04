@@ -1,0 +1,18 @@
+{
+ "schema": "tclean-evidence-receipt/1",
+ "title": "tclean cube axes on selections over one and two MeasurementSets",
+ "work_issue": 1081,
+ "date": "2026-11-04",
+ "oracle": {
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14"
+ },
+ "native_revision": "8866d7b6f2febdd6076ef29737afa3d5c46ec9c5",
+ "imager_binary_sha256": "367bcc5fde921a75be7a411868538288d778284c26d1d8a52b810a58ee995392",
+ "builds": "release casars-imager and casars wheel of the committed revision in a private target directory, on the laptop, with the NEON FFTW",
+ "backend": "cpu",
+ "precision": "f64",
+ "driver": "tools/casa-compat/tclean_case_matrix.py, on a data root staged from the NAS casatestdata with its XSym links resolved",
+ "limits": "exact image-product inventory and masks; NRMS <= 1e-3; the scalars and counts as the driver states them",
+ "outcome": "14 of 14 cases of tclean-two-ms-band-cases.json pass every product, and 5 of 5 of CASA's test_cube_twoMS and test_modelvis_29. Before this, two_ms_channel_selection failed: 4 channels against CASA's 18. CASA reads the band over every MeasurementSet, and lays the axis on the first one's channels from the first selected to the last, so channels 2 to 5 of the first and 8 to 12 of the second give channels 2 to 19 of the first's axis. The cases cover a second selection above, below and overlapping the first, in both orders, and the rest frequency, which is the midpoint of the band over both stores where the source has no line (1.425, 1.375 and 1.5 GHz)."
+}

@@ -377,12 +377,13 @@ fn tunes_selection(request: &ImagingRequest, first_window: &SourceSpectralWindow
 /// (`buildCoordinateSystemCore` on `msobj`'s windows): one window's
 /// channels, or several windows' merged into one axis
 /// ([`casa_ms::combine_spectral_windows`]), with `axis`'s grid laid over
-/// them; and the band their `spw` selection spans in the data's frame
-/// ([`casa_ms::casa_selected_band_hz`]). Every window's samples are
+/// them; and the band the `spw` selection spans over `band_surveys`, in each
+/// one's data frame ([`casa_ms::casa_selected_band_hz`]; CASA's `gdatafstart`
+/// and `gdatafend`). Every window's samples are
 /// gridded onto the one axis (`FTMachine::matchChannel`).
 fn cube_setup(
     request: &ImagingRequest,
-    survey: &Survey,
+    (survey, band_surveys): (&Survey, &[&Survey]),
     frame: &FrameContext<'_>,
     mut axis: CubeAxisConfig,
 ) -> Result<(CubeSpectralSetup, [f64; 2]), PrepareError> {
@@ -398,17 +399,32 @@ fn cube_setup(
     }
     let windows = &survey.spectral_windows;
     // Name the window whose selection spans no band.
-    if let Some(window) = windows
+    if let Some(window) = band_surveys
         .iter()
-        .find(|window| casa_ms::casa_selected_band_hz([selected(survey, window)]).is_none())
+        .flat_map(|survey| {
+            survey
+                .spectral_windows
+                .iter()
+                .map(move |window| (*survey, window))
+        })
+        .find(|(survey, window)| {
+            casa_ms::casa_selected_band_hz([selected(survey, window)]).is_none()
+        })
+        .map(|(_, window)| window)
     {
         return Err(PrepareError::SpectralWindowCoordinates {
             spw_id: window.spw_id,
         });
     }
-    let band_hz =
-        casa_ms::casa_selected_band_hz(windows.iter().map(|window| selected(survey, window)))
-            .ok_or(PrepareError::NoSelectedSamples)?;
+    // Over every MeasurementSet (`buildCoordinateSystem`'s `gdatafstart` and
+    // `gdatafend`), though the axis lies on `survey`'s channels.
+    let band_hz = casa_ms::casa_selected_band_hz(band_surveys.iter().flat_map(|survey| {
+        survey
+            .spectral_windows
+            .iter()
+            .map(move |window| selected(survey, window))
+    }))
+    .ok_or(PrepareError::NoSelectedSamples)?;
     axis.selected_band_hz = Some(band_hz);
     let (frequencies_hz, widths_hz) = match windows.as_slice() {
         [window] => (
@@ -638,7 +654,9 @@ fn cube_law(
 ) -> Result<AxisLaw, PrepareError> {
     let store = &stores[reference];
     let (catalogue, survey) = (store.catalogue(), &store.survey);
-    let (setup, band_hz) = cube_setup(request, survey, frame, cube_axis(request)?)?;
+    let band_surveys = stores.iter().map(|store| &store.survey).collect::<Vec<_>>();
+    let (setup, band_hz) =
+        cube_setup(request, (survey, &band_surveys), frame, cube_axis(request)?)?;
     let (selected_source_channels, frequency_bands) =
         cube_store_reads(request, (stores, reference), frame, &setup)?;
     let output_channels = setup.output_channel_frequencies_hz.len();
@@ -709,7 +727,7 @@ fn source_frame_cube_law(
         outframe: source_reference,
         ..cube_axis(request)?
     };
-    let (setup, _) = cube_setup(request, survey, frame, axis)?;
+    let (setup, _) = cube_setup(request, (survey, &[survey]), frame, axis)?;
     let reads = store_reads(
         request,
         ((catalogue, &store.engine), survey, frame.field_id),
