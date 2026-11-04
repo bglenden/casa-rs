@@ -3,7 +3,7 @@
   "classifier": "tools/casa-compat/classify_tclean_test_cases.py",
   "case_file": "resources/casa-compat/tclean-casa-test-cases.json",
   "case_file_sha256": "9b013f95ef2900975db882e714977570766076bb31854c28ea376f6410265112",
-  "casa_rs_revision": "8596172326491c4e395e43588956477b14af211b",
+  "casa_rs_revision": "f12e12ef9195841a8f331d00098b2ade69c020f9",
   "parameter_surfaces_sha256": "38562f275c5feba9406d47df9412fe50cf0689df320d1ab74fa02212031ea118",
   "parameter_catalog_sha256": "af7b80bc2453cb21d9a19094471f22eadadfc1efd100a7aa2f05262abbf362f8",
   "tclean_rs_sha256": "ecd14419d35fc51b888ed238fa41db09e8c964cc18e409864715c9cee37de8e3",
@@ -13,10 +13,10 @@
   "resolved_cases": 354,
   "cases_where_casa_expects_an_error": 4,
   "cases_counted": 350,
-  "cases_with_no_refusal": 278,
-  "cases_with_a_gap": 70,
+  "cases_with_no_refusal": 286,
+  "cases_with_a_gap": 62,
   "cases_with_only_refusals_casa_shares": 2,
-  "single_call_cases_with_no_refusal": 221
+  "single_call_cases_with_no_refusal": 229
  },
  "gaps": [
   {
@@ -135,50 +135,6 @@
    "examples": [
     "test_widefield.test_mosaicft_newpsfphasecenter.1",
     "test_widefield.test_mosaicft_newpsfphasecenter_cube.1"
-   ]
-  },
-  {
-   "reason": "restoringbeam: a beam given by its axes",
-   "source": "tclean.rs not_yet",
-   "issue": 980,
-   "cases": 2,
-   "sole_blocker": 2,
-   "examples": [
-    "test_onefield.test_onefield_cube_restoringbeam.2",
-    "test_onefield.test_onefield_mtmfs_restoringbeam.2"
-   ]
-  },
-  {
-   "reason": "weighting='briggsabs'",
-   "source": "tclean.rs not_yet",
-   "issue": 980,
-   "cases": 2,
-   "sole_blocker": 2,
-   "examples": [
-    "test_onefield.test_onefield_briggsabs.2",
-    "test_onefield.test_onefield_briggsabs.3"
-   ]
-  },
-  {
-   "reason": "weighting='radial'",
-   "source": "tclean.rs not_yet",
-   "issue": 980,
-   "cases": 2,
-   "sole_blocker": 2,
-   "examples": [
-    "test_onefield.test_onefield_weighting.6",
-    "test_stokes.test_stokes_weighting.6"
-   ]
-  },
-  {
-   "reason": "weighting='superuniform'",
-   "source": "tclean.rs not_yet",
-   "issue": 980,
-   "cases": 2,
-   "sole_blocker": 2,
-   "examples": [
-    "test_onefield.test_onefield_weighting.7",
-    "test_stokes.test_stokes_weighting.7"
    ]
   },
   {
@@ -381,26 +337,12 @@
    "refusals": []
   },
   "test_onefield.test_onefield_weighting.6": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "weighting='radial'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 6
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_weighting.7": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "weighting='superuniform'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 7
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_weighting.8": {
    "runs_without_refusal": true,
@@ -435,26 +377,12 @@
    "refusals": []
   },
   "test_onefield.test_onefield_briggsabs.2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "weighting='briggsabs'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_briggsabs.3": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "weighting='briggsabs'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 3
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_restart_mfs.1+2+3+4": {
    "runs_without_refusal": true,
@@ -505,30 +433,16 @@
    "refusals": []
   },
   "test_onefield.test_onefield_cube_restoringbeam.2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "restoringbeam: a beam given by its axes",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_mtmfs_restoringbeam.1": {
    "runs_without_refusal": true,
    "refusals": []
   },
   "test_onefield.test_onefield_mtmfs_restoringbeam.2": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "restoringbeam: a beam given by its axes",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 2
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_onefield.test_onefield_projections.1": {
    "runs_without_refusal": true,
@@ -790,26 +704,12 @@
    "refusals": []
   },
   "test_stokes.test_stokes_weighting.6": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "weighting='radial'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 6
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_stokes.test_stokes_weighting.7": {
-   "runs_without_refusal": false,
-   "refusals": [
-    {
-     "reason": "weighting='superuniform'",
-     "source": "tclean.rs not_yet",
-     "issue": 980,
-     "call": 7
-    }
-   ]
+   "runs_without_refusal": true,
+   "refusals": []
   },
   "test_stokes.test_stokes_weighting.8": {
    "runs_without_refusal": true,
