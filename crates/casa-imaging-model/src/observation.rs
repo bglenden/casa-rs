@@ -591,6 +591,7 @@ pub struct SpectralWindowSelection {
     first_buffer_lsrk_factor: Option<f64>,
     frequency_bands: Option<FrequencyBands>,
     density_only: bool,
+    density_channels: Option<Vec<u32>>,
 }
 
 // Construction rejects every non-finite factor, so IEEE equality is
@@ -608,6 +609,7 @@ impl SpectralWindowSelection {
             first_buffer_lsrk_factor: None,
             frequency_bands: None,
             density_only: false,
+            density_channels: None,
         }
     }
 
@@ -641,6 +643,21 @@ impl SpectralWindowSelection {
     #[must_use]
     pub const fn density_only(&self) -> bool {
         self.density_only
+    }
+
+    /// Bind the channels a density over the whole selection counts, ascending,
+    /// where they aren't the selected ones: what `spw` names, of a window the
+    /// image's axis reaches only part of.
+    #[must_use]
+    pub fn with_density_channels(mut self, channels: Vec<u32>) -> Self {
+        self.density_channels = Some(channels);
+        self
+    }
+
+    /// The channels [`Self::with_density_channels`] bound, if any.
+    #[must_use]
+    pub fn density_channels(&self) -> Option<&[u32]> {
+        self.density_channels.as_deref()
     }
 
     /// Bind the factor that takes the window's frequencies to LSRK at the

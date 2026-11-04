@@ -280,7 +280,7 @@ pub(crate) fn prepare(
         domains::mask_plans(&domains, spectral.output_channels, context)?;
     mask_resident.join(continuation.mask_resident);
     let (snapshot, stores, survey_charge) =
-        snapshot_input(stores, &channels, &spectral.frequency_bands)?;
+        snapshot_input(stores, &channels, &spectral.window_reads)?;
     Ok(Prepared {
         specification,
         geometry,
@@ -588,7 +588,7 @@ fn density_field_keys(stores: &[stores::SurveyedStore]) -> Option<DensityFieldKe
 fn snapshot_input(
     stores: Vec<stores::SurveyedStore>,
     channels: &[WindowChannels],
-    bands: &[spectral::WindowBands],
+    bands: &[spectral::WindowReads],
 ) -> Result<
     (
         ObservationSnapshotInput,

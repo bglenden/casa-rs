@@ -19,7 +19,6 @@ use casa_observation::{Catalogue, StateId};
 use casa_types::measures::frequency::FrequencyRef;
 
 use super::opening::OpenedStore;
-use super::spectral::WindowTimes;
 use super::survey::Survey;
 use super::{PrepareError, intents};
 use crate::{DataColumn, ImagingRequest, MeasurementSetSelection};
@@ -533,7 +532,7 @@ pub(super) fn observation_selection(
     survey: Survey,
     channels: &WindowChannels,
     lsrk_factors: &BTreeMap<usize, f64>,
-    bands: &super::spectral::WindowBands,
+    reads: &super::spectral::WindowReads,
 ) -> Result<ObservationSelection, PrepareError> {
     let spectral_windows = channels
         .iter()
@@ -563,9 +562,8 @@ pub(super) fn observation_selection(
             )
             .with_coordinate_catalog(catalog)
             .with_first_buffer_lsrk_factor(factor)
-            .map(|selection| match bands.get(spw_id) {
-                Some(WindowTimes::Bands(bands)) => selection.with_frequency_bands(bands.clone()),
-                Some(WindowTimes::DensityOnly) => selection.with_density_only(),
+            .map(|selection| match reads.get(spw_id) {
+                Some(read) => read_selection(selection, read),
                 None => selection,
             })
             .ok_or(PrepareError::SpectralWindowCoordinates { spw_id: *spw_id })
@@ -577,6 +575,28 @@ pub(super) fn observation_selection(
         survey.partitions,
         spectral_windows,
     ))
+}
+
+/// `selection` reading as `read` says.
+fn read_selection(
+    mut selection: SpectralWindowSelection,
+    read: &super::spectral::WindowRead,
+) -> SpectralWindowSelection {
+    if let Some(bands) = &read.bands {
+        selection = selection.with_frequency_bands(bands.clone());
+    }
+    if read.density_only {
+        selection = selection.with_density_only();
+    }
+    if let Some(channels) = &read.density_channels {
+        selection = selection.with_density_channels(
+            channels
+                .iter()
+                .map(|channel| u32::try_from(*channel).expect("a CHAN_FREQ index fits u32"))
+                .collect(),
+        );
+    }
+    selection
 }
 
 /// The visibility column imaged: `DATA` when asked for, else

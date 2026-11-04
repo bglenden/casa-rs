@@ -99,9 +99,47 @@ pub(super) fn wave_window(
     window.map(|(first, last)| first..last + 1)
 }
 
+/// Runs of `channels`, as ordinals of it, each holding no more channels than
+/// `selected` and spanning no more native channels than `selected` does.
+pub(super) fn density_runs(channels: &[u32], selected: &[u32]) -> Vec<Range<usize>> {
+    let (first, last) = (selected[0], selected[selected.len() - 1]);
+    let (count, span) = (selected.len(), last - first);
+    let mut runs = Vec::new();
+    let mut start = 0;
+    for (ordinal, channel) in channels.iter().enumerate() {
+        if ordinal - start == count || channel - channels[start] > span {
+            runs.push(start..ordinal);
+            start = ordinal;
+        }
+    }
+    runs.push(start..channels.len());
+    runs
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{FactorRange, wave_window};
+    use super::{FactorRange, density_runs, wave_window};
+
+    /// A partition's runs of density channels hold every channel once, in
+    /// order, and no run is wider than its selection, in channels or in span.
+    #[test]
+    fn density_runs_stay_within_what_a_partition_selects() {
+        let check = |channels: &[u32], selected: &[u32], expected: &[std::ops::Range<usize>]| {
+            let runs = density_runs(channels, selected);
+            assert_eq!(runs, expected);
+            assert_eq!(
+                runs.iter().map(|run| run.len()).sum::<usize>(),
+                channels.len()
+            );
+        };
+        let all = (0..20).collect::<Vec<_>>();
+        check(&all, &[0, 1, 2, 3, 4], &[0..5, 5..10, 10..15, 15..20]);
+        check(&all[..7], &[3, 4, 5], &[0..3, 3..6, 6..7]);
+        check(&[0, 1, 2], &[7], &[0..1, 1..2, 2..3]);
+        // Two selected channels span six; a gap ends a run at the span.
+        check(&[0, 1, 2, 9, 10], &[3, 8], &[0..2, 2..3, 3..5]);
+        check(&[0, 5, 6, 7], &[0, 1, 2, 4], &[0..1, 1..4]);
+    }
 
     fn range(factors: &[f64]) -> FactorRange {
         factors

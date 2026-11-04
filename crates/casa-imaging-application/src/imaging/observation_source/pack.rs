@@ -41,15 +41,14 @@ pub(super) struct Layout {
 }
 
 impl Layout {
-    /// The layout of `partition`'s selected channels `ordinals` (indices
-    /// into its selected channels), read as the native channels from the
-    /// first of them.
+    /// The layout of `partition`'s native channels `channels`, read as the
+    /// native channels from the first of them.
     pub(super) fn new(
         partition: &SelectedPartition,
         entry: &PartitionEntry,
-        ordinals: std::ops::Range<usize>,
+        channels: &[u32],
     ) -> Result<Self, SourceError> {
-        let channel_indices = partition.channels[ordinals].to_vec();
+        let channel_indices = channels.to_vec();
         let first = channel_indices[0] as usize;
         let correlation_indices = partition
             .correlations

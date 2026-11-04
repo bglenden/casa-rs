@@ -878,6 +878,59 @@ fn a_cube_reads_at_each_time_the_channels_its_band_selects_then() {
     );
 }
 
+/// A cube's density without `perchanweightdensity` counts every channel `spw`
+/// selects, whatever the axis reaches: `SynthesisImagerVi2::weight` forms
+/// `VisImagingWeight` on the parent imager's iterator (#1137). CASA 6.7.6.14
+/// on `refim_point.ms` gives a uniform cube of 5 of its 20 channels the same
+/// sums of weights as those planes of a cube of all 20, where counting only
+/// the channels reached gave 61.3 against 26.4. So do these, of a window
+/// read whole and of what `spw` names, and an image of `perchanweightdensity`
+/// doesn't depend on channels it doesn't reach either way.
+#[test]
+fn a_whole_selection_density_counts_channels_the_axis_misses() {
+    let observation = Observation::synthesise_band(CHANNELS, &[("point", POINT)]);
+    let sumwt = |name: &str, controls: serde_json::Value| {
+        let mut values = json!({
+            "specmode": "cube", "weighting": "uniform", "perchanweightdensity": false,
+            "interpolation": "linear", "niter": 0,
+        });
+        values
+            .as_object_mut()
+            .unwrap()
+            .extend(controls.as_object().unwrap().clone());
+        observation
+            .image(name, values)
+            .1
+            .get(".sumwt")
+            .channel_values()
+    };
+    let assert_close = |part: &[f32], whole: &[f32], label: &str| {
+        for (plane, (part, whole)) in part.iter().zip(whole).enumerate() {
+            assert!(
+                (part - whole).abs() <= 1.0e-3 * whole.abs(),
+                "{label}, plane {plane}: {part} against {whole}"
+            );
+        }
+    };
+    let whole = sumwt(
+        "whole",
+        json!({ "start": 0, "width": 1, "nchan": CHANNELS }),
+    );
+    let part = sumwt("part", json!({ "start": 4, "width": 1, "nchan": 4 }));
+    assert_close(&part, &whole[4..8], "a part of the window");
+    let one = sumwt("one", json!({ "start": 6, "width": 1, "nchan": 1 }));
+    assert_close(&one, &whole[6..7], "one channel of the window");
+    let named = sumwt(
+        "named",
+        json!({ "spw": "0:2~13", "start": 2, "width": 1, "nchan": 12 }),
+    );
+    let named_part = sumwt(
+        "named-part",
+        json!({ "spw": "0:2~13", "start": 4, "width": 1, "nchan": 4 }),
+    );
+    assert_close(&named_part, &named[2..6], "a part of what spw names");
+}
+
 /// Over a track where the LSRK drift is several channels wide, the rows in
 /// which each of 40 channels holds a written model, in row order, which is
 /// time order: a cube on channels 5 to 34 with `controls` added.

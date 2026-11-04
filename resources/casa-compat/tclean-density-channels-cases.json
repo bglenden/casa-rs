@@ -1,0 +1,301 @@
+{
+ "source": {
+  "purpose": "tclean cubes on part of a window with a density over the whole selection (issue 1137). The format is tools/casa-compat/tclean_case_matrix.py's."
+ },
+ "common": {},
+ "inputs": {
+  "refim_point.ms": "unittest/tclean/refim_point.ms"
+ },
+ "cases": {
+  "uniform-lsrk-part": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "uniform",
+    "nchan": 5,
+    "outframe": "LSRK",
+    "start": 0
+   },
+   "note": "issue 1137: a uniform cube of 5 of 20 channels",
+   "skip_scalars": false
+  },
+  "uniform-topo-part": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "uniform",
+    "nchan": 5,
+    "outframe": "TOPO",
+    "start": 0
+   },
+   "note": "issue 1137: the same in TOPO",
+   "skip_scalars": false
+  },
+  "uniform-lsrk-middle": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "uniform",
+    "nchan": 5,
+    "outframe": "LSRK",
+    "start": 5
+   },
+   "note": "issue 1137: further up the window",
+   "skip_scalars": false
+  },
+  "uniform-lsrk-one": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "uniform",
+    "nchan": 1,
+    "outframe": "LSRK",
+    "start": 7
+   },
+   "note": "issue 1137: one plane",
+   "skip_scalars": false
+  },
+  "uniform-lsrk-whole": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "uniform",
+    "nchan": 20,
+    "outframe": "LSRK",
+    "start": 0
+   },
+   "note": "issue 1137: the whole window, a control",
+   "skip_scalars": false
+  },
+  "uniform-named-part": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0:3~14",
+    "weighting": "uniform",
+    "nchan": 4,
+    "outframe": "LSRK",
+    "start": 5
+   },
+   "note": "issue 1137: part of what spw names",
+   "skip_scalars": false
+  },
+  "uniform-gapped-part": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0:0~4;10~15",
+    "weighting": "uniform",
+    "nchan": 3,
+    "outframe": "LSRK",
+    "start": 1
+   },
+   "note": "issue 1137: part of a gapped selection",
+   "skip_scalars": false
+  },
+  "briggs-lsrk-part": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "briggs",
+    "robust": 0.5,
+    "nchan": 5,
+    "outframe": "LSRK",
+    "start": 0
+   },
+   "note": "issue 1137: Briggs",
+   "skip_scalars": false
+  },
+  "briggs-bary-part": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "briggs",
+    "robust": 0.5,
+    "nchan": 5,
+    "outframe": "BARY",
+    "start": 0
+   },
+   "note": "issue 1137: Briggs in BARY",
+   "skip_scalars": false
+  },
+  "briggs-clean": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 50,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "briggs",
+    "robust": 0.5,
+    "nchan": 5,
+    "outframe": "LSRK",
+    "threshold": "0Jy",
+    "deconvolver": "hogbom",
+    "start": 0
+   },
+   "note": "issue 1137: Briggs, cleaned",
+   "skip_scalars": false
+  },
+  "briggs-model": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 50,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "briggs",
+    "robust": 0.5,
+    "nchan": 5,
+    "outframe": "LSRK",
+    "threshold": "0Jy",
+    "deconvolver": "hogbom",
+    "savemodel": "modelcolumn",
+    "start": 0
+   },
+   "note": "issue 1137: Briggs, cleaned, saving the model",
+   "skip_scalars": false
+  },
+  "superuniform-perchan": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": true,
+    "spw": "0",
+    "weighting": "superuniform",
+    "nchan": 5,
+    "outframe": "LSRK",
+    "start": 0
+   },
+   "note": "issue 1137: superuniform always grids one density",
+   "skip_scalars": false
+  },
+  "natural-part": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": false,
+    "spw": "0",
+    "weighting": "natural",
+    "nchan": 5,
+    "outframe": "LSRK",
+    "start": 0
+   },
+   "note": "issue 1137: natural, a control",
+   "skip_scalars": false
+  },
+  "perchan-part": {
+   "vis": "refim_point.ms",
+   "imagename": "im",
+   "params": {
+    "imsize": 100,
+    "cell": "8.0arcsec",
+    "specmode": "cube",
+    "niter": 0,
+    "interpolation": "linear",
+    "width": 1,
+    "perchanweightdensity": true,
+    "spw": "0",
+    "weighting": "briggs",
+    "robust": 0.5,
+    "nchan": 5,
+    "outframe": "LSRK",
+    "start": 0
+   },
+   "note": "issue 1137: per-channel density, a control",
+   "skip_scalars": false
+  }
+ }
+}

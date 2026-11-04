@@ -46,7 +46,7 @@ use pointing::PointingCache;
 pub(crate) use pointing::pointing_direction;
 pub(crate) use selection::{PartitionSelection, SelectedPartition};
 use survey::{PartitionSurvey, survey};
-use window::wave_window;
+use window::{density_runs, wave_window};
 pub(crate) use write::{BatchWriter, WriteBack};
 use write::{Delivered, Provenance, WriteCharge};
 
@@ -140,10 +140,10 @@ impl BatchRoute {
         })
     }
 
-    /// The request reading partition `key`'s selected channels `window`
-    /// (ordinals of its selected channels), with the visibilities when
-    /// `values`, its batches holding the admitted times; and the layout of
-    /// its blocks.
+    /// The request reading partition `key`'s channels `window` (ordinals of
+    /// its selected channels, or of those its density counts when it counts
+    /// others and doesn't read `values`), with the visibilities when `values`,
+    /// its batches holding the admitted times; and the layout of its blocks.
     fn request(
         &self,
         key: PartitionKey,
@@ -153,7 +153,11 @@ impl BatchRoute {
         let route = &self.stores[key.store];
         let partition = &route.selection.partitions[key.partition];
         let entry = route.observation().catalogue().partition(partition.id);
-        let layout = Layout::new(partition, entry, window)?;
+        let channels = match &partition.density_channels {
+            Some(channels) if !values => channels,
+            _ => &partition.channels,
+        };
+        let layout = Layout::new(partition, entry, &channels[window])?;
         let probe = requests::payload(
             (&route.selection, &route.plan),
             entry,
@@ -357,6 +361,28 @@ impl<'a> ObservationSource<'a> {
                 (key, window)
             })
             .collect())
+    }
+
+    /// `windows` with each partition whose density counts other channels than
+    /// it selects read over those, a traversal per run of channels no wider
+    /// than it selects, which is what its block and batches are charged for.
+    /// The density places each channel as a sample of its own, so splitting
+    /// them changes nothing.
+    fn density_windows(&self, windows: Vec<PartitionWindow>) -> Vec<PartitionWindow> {
+        let stores = &self.route.stores;
+        windows
+            .into_iter()
+            .flat_map(|(key, window)| {
+                let partition = &stores[key.store].selection.partitions[key.partition];
+                match &partition.density_channels {
+                    Some(channels) => density_runs(channels, &partition.channels)
+                        .into_iter()
+                        .map(|run| (key, Some(run)))
+                        .collect(),
+                    None => vec![(key, window)],
+                }
+            })
+            .collect()
     }
 
     /// Leave out of a traversal that images each partition compile marked
@@ -570,6 +596,9 @@ impl BoundedSource for ObservationSource<'_> {
         };
         if values && !writing {
             self.skip_density_only(&mut windows)?;
+        }
+        if !values {
+            windows = self.density_windows(windows);
         }
         self.state = State::Streaming(Box::new(Stream {
             values,

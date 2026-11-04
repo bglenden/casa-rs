@@ -35,9 +35,9 @@ use crate::{ImagingRequest, SaveModel, SpecMode};
 pub(super) struct PreparedSpectralAxis {
     /// Each store's source channels the axis reads, in store order.
     pub(super) selected_source_channels: Vec<WindowChannels>,
-    /// Each store's windows whose times read only some of their selected
-    /// channels ([`frequency_bands`]), by window number, in store order.
-    pub(super) frequency_bands: Vec<WindowBands>,
+    /// How each store's windows read beyond their selected channels at
+    /// every time ([`WindowRead`]), in store order.
+    pub(super) window_reads: Vec<WindowReads>,
     pub(super) source_frame: FrequencyFrame,
     pub(super) output_frequency_reference: FrequencyRef,
     pub(super) output_frame: FrequencyFrame,
@@ -79,20 +79,26 @@ impl PreparedSpectralAxis {
     }
 }
 
-/// How a window's times read its selected channels, for one that doesn't
-/// read them all at every time.
-#[derive(Clone, Debug)]
-pub(super) enum WindowTimes {
-    /// By its per-time frequency selection.
-    Bands(FrequencyBands),
-    /// Only to count its samples in the density and to write them, if the
-    /// source's test over its rows agrees that no channel reaches the axis.
-    DensityOnly,
+/// How a window reads, where a pass doesn't simply read every selected
+/// channel at every time.
+#[derive(Clone, Debug, Default)]
+pub(super) struct WindowRead {
+    /// Its per-time frequency selection, for a time that reads only some of
+    /// its channels ([`frequency_bands`]).
+    pub(super) bands: Option<FrequencyBands>,
+    /// Whether it's read only to count its samples in the density and to
+    /// write them, if the source's test over its rows agrees that no channel
+    /// reaches the axis.
+    pub(super) density_only: bool,
+    /// The channels the density counts where they aren't the selected ones:
+    /// a density over the whole selection counts what `spw` names, whatever
+    /// the axis reaches.
+    pub(super) density_channels: Option<Vec<usize>>,
 }
 
 /// How each window reads, by window number; a window absent reads every
 /// selected channel at every time.
-pub(super) type WindowBands = BTreeMap<usize, WindowTimes>;
+pub(super) type WindowReads = BTreeMap<usize, WindowRead>;
 
 /// Where and when a frame conversion is evaluated.
 pub(super) struct FrameContext<'a> {
@@ -106,7 +112,7 @@ pub(super) struct FrameContext<'a> {
 /// The output axis of one spectral mode, before its frame anchor.
 struct AxisLaw {
     selected_source_channels: Vec<WindowChannels>,
-    frequency_bands: Vec<WindowBands>,
+    window_reads: Vec<WindowReads>,
     output_frequency_reference: FrequencyRef,
     reference_frequency_hz: f64,
     increment_hz: f64,
@@ -158,7 +164,7 @@ pub(super) fn prepare_axis(
     let output_frame = imaging_frequency_frame(law.output_frequency_reference)?;
     Ok(PreparedSpectralAxis {
         selected_source_channels: law.selected_source_channels,
-        frequency_bands: law.frequency_bands,
+        window_reads: law.window_reads,
         source_frame,
         output_frequency_reference: law.output_frequency_reference,
         output_frame,
@@ -241,7 +247,7 @@ fn continuum_law(
     };
     Ok(AxisLaw {
         selected_source_channels: channels.clone(),
-        frequency_bands: vec![WindowBands::new(); channels.len()],
+        window_reads: vec![WindowReads::new(); channels.len()],
         output_frequency_reference: FrequencyRef::LSRK,
         reference_frequency_hz,
         increment_hz,
@@ -489,7 +495,7 @@ fn cube_store_reads(
     (stores, reference): (&[SurveyedStore], usize),
     frame: &FrameContext<'_>,
     setup: &CubeSpectralSetup,
-) -> Result<(Vec<WindowChannels>, Vec<WindowBands>), PrepareError> {
+) -> Result<(Vec<WindowChannels>, Vec<WindowReads>), PrepareError> {
     let first = &stores[0].survey;
     let first_window = first
         .spectral_windows
@@ -522,7 +528,7 @@ fn cube_store_reads(
             return Err(PrepareError::NoCommonCubeChannels);
         }
         channels.push(reads.channels);
-        bands.push(reads.bands);
+        bands.push(reads.windows);
     }
     Ok((channels, bands))
 }
@@ -530,7 +536,7 @@ fn cube_store_reads(
 /// What a cube reads of one store ([`store_reads`]).
 struct StoreReads {
     channels: WindowChannels,
-    bands: WindowBands,
+    windows: WindowReads,
     /// Whether some window's channels reach the axis.
     reaches_axis: bool,
 }
@@ -565,7 +571,7 @@ fn store_reads(
     let bands = cube_bands(request, (catalogue, engine), survey, image_band)?;
     let mut reads = StoreReads {
         channels: WindowChannels::new(),
-        bands: WindowBands::new(),
+        windows: WindowReads::new(),
         reaches_axis: false,
     };
     for window in &survey.spectral_windows {
@@ -595,21 +601,42 @@ fn store_reads(
             channels = explicit
                 .cloned()
                 .unwrap_or_else(|| (0..window.frequencies_hz.len()).collect());
-            reads.bands.insert(window.spw_id, WindowTimes::DensityOnly);
+            reads.windows.entry(window.spw_id).or_default().density_only = true;
         } else {
             reads.reaches_axis = true;
             if let (Some(bands), Some(selection)) = (&bands, &selection)
                 && channels.iter().any(|channel| !selection.always(*channel))
                 && let Some(window_bands) = bands.frequency_bands(window.spw_id)
             {
+                reads.windows.entry(window.spw_id).or_default().bands = Some(window_bands.clone());
+            }
+        }
+        if whole_selection_density(request) {
+            let named = explicit
+                .cloned()
+                .unwrap_or_else(|| (0..window.frequencies_hz.len()).collect());
+            if named != channels {
                 reads
-                    .bands
-                    .insert(window.spw_id, WindowTimes::Bands(window_bands.clone()));
+                    .windows
+                    .entry(window.spw_id)
+                    .or_default()
+                    .density_channels = Some(named);
             }
         }
         reads.channels.insert(window.spw_id, channels);
     }
     Ok(reads)
+}
+
+/// Whether a cube's weights divide by one density over the whole selection:
+/// `SynthesisImagerVi2::weight` forms `VisImagingWeight` on the parent
+/// imager's iterator, which reads what `spw` names whatever the axis reaches,
+/// unless `perchanweightdensity` asks for a density per output channel.
+/// `fitspw`, which CASA's tclean lacks, keeps its named channels.
+fn whole_selection_density(request: &ImagingRequest) -> bool {
+    request.fitspw.is_none()
+        && request.weighting.uses_density()
+        && !(request.perchanweightdensity && request.weighting.per_channel_density())
 }
 
 /// The image's LSRK band a `cube` tunes its selection to
@@ -674,7 +701,7 @@ fn cube_law(
     let band_surveys = stores.iter().map(|store| &store.survey).collect::<Vec<_>>();
     let (setup, band_hz) =
         cube_setup(request, (survey, &band_surveys), frame, cube_axis(request)?)?;
-    let (selected_source_channels, frequency_bands) =
+    let (selected_source_channels, window_reads) =
         cube_store_reads(request, (stores, reference), frame, &setup)?;
     let output_channels = setup.output_channel_frequencies_hz.len();
     let (reference_frequency_hz, increment_hz) = first_and_increment(&setup, output_channels, 1.0)?;
@@ -694,7 +721,7 @@ fn cube_law(
     };
     Ok(AxisLaw {
         selected_source_channels,
-        frequency_bands,
+        window_reads,
         output_frequency_reference: setup.output_freq_ref,
         reference_frequency_hz,
         increment_hz,
@@ -775,7 +802,7 @@ fn source_frame_cube_law(
         .ok_or(PrepareError::RestFrequencyMissing)?;
     Ok(AxisLaw {
         selected_source_channels: vec![reads.channels],
-        frequency_bands: vec![reads.bands],
+        window_reads: vec![reads.windows],
         output_frequency_reference: FrequencyRef::REST,
         reference_frequency_hz,
         increment_hz,
