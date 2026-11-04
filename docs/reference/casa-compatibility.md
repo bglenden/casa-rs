@@ -1503,9 +1503,9 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **casa-rs's own cube cases with a density over the whole selection against CASA, with T1 laws — measured: .psf and .residual at 2.1e-4 or better in all 27; the driver's pass is 2 of 27 because the others' inventories differ by .gridwt, which casa-rs doesn't write; one .pb differs by issue 1138.** Cubes with uniform, Briggs or superuniform density over the whole selection, on part of a window, with a stride, a gap and named channels, over two MeasurementSets, in cubedata, and on a track where a time's channels move with its Doppler shift.
 
-- [resources/casa-compat/evidence/tclean-density-channels-20261104.json](https://github.com/bglenden/casa-rs/blob/dedd0ce85aa894915ce18e1bf7764c25263e12db/resources/casa-compat/evidence/tclean-density-channels-20261104.json)
-- [resources/casa-compat/tclean-density-channels-cases.json](https://github.com/bglenden/casa-rs/blob/dedd0ce85aa894915ce18e1bf7764c25263e12db/resources/casa-compat/tclean-density-channels-cases.json)
-- [crates/casa-imaging-application/src/compile/spectral.rs](https://github.com/bglenden/casa-rs/blob/dedd0ce85aa894915ce18e1bf7764c25263e12db/crates/casa-imaging-application/src/compile/spectral.rs)
+- [resources/casa-compat/evidence/tclean-density-channels-20261104.json](https://github.com/bglenden/casa-rs/blob/a0ba6185901de169f09df54b42cc4fc763589571/resources/casa-compat/evidence/tclean-density-channels-20261104.json)
+- [resources/casa-compat/tclean-density-channels-cases.json](https://github.com/bglenden/casa-rs/blob/a0ba6185901de169f09df54b42cc4fc763589571/resources/casa-compat/tclean-density-channels-cases.json)
+- [crates/casa-imaging-application/src/compile/spectral.rs](https://github.com/bglenden/casa-rs/blob/a0ba6185901de169f09df54b42cc4fc763589571/crates/casa-imaging-application/src/compile/spectral.rs)
 - Revision: `70b803349f382be4026d45d8bba324e8700eb185`; CASA: `casatasks 6.7.6.14; casatools 6.7.6-14`.
 - Command: `tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-density-channels-cases.json --backend cpu --precision f64`.
 - Receipt: `resources/casa-compat/evidence/tclean-density-channels-20261104.json`.

@@ -2056,7 +2056,7 @@
     "density-channels-20261104": {
       "kind": "casa-rs's own cube cases with a density over the whole selection against CASA, with T1 laws",
       "state": "measured: .psf and .residual at 2.1e-4 or better in all 27; the driver's pass is 2 of 27 because the others' inventories differ by .gridwt, which casa-rs doesn't write; one .pb differs by issue 1138",
-      "source_revision": "dedd0ce85aa894915ce18e1bf7764c25263e12db",
+      "source_revision": "a0ba6185901de169f09df54b42cc4fc763589571",
       "revision": "70b803349f382be4026d45d8bba324e8700eb185",
       "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
       "command": "tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-density-channels-cases.json --backend cpu --precision f64",
