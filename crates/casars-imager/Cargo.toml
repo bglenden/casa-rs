@@ -12,6 +12,8 @@ publish = false
 workspace = true
 
 [dependencies]
+ndarray.workspace = true
+casa-images = { path = "../casa-images" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-imaging-application = { path = "../casa-imaging-application" }
@@ -29,7 +31,6 @@ casa-ms = { path = "../casa-ms", features = ["msv4"] }
 casa-logging = { path = "../casa-logging" }
 tracing.workspace = true
 casa-coordinates = { path = "../casa-coordinates" }
-casa-images = { path = "../casa-images" }
 # T1's cube law measures each PSF plane's sidelobe as the minor cycle does.
 casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }
 casa-numerics = { path = "../casa-numerics" }
@@ -37,7 +38,6 @@ casa-simulation-synthesis = { path = "../casa-simulation-synthesis" }
 casa-tables = { path = "../casa-tables" }
 casa-test-support = { path = "../casa-test-support" }
 casa-types = { path = "../casa-types" }
-ndarray.workspace = true
 tempfile = "3"
 tracing-subscriber.workspace = true
 

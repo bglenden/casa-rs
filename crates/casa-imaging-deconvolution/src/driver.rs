@@ -45,6 +45,18 @@ pub struct PlaneOutcome {
     pub trace: Vec<Component>,
     /// Exact whole-plane residual refreshes.
     pub refreshes: usize,
+    /// The residual terms the last step left, which the caller measures and
+    /// drops; empty when no step ran.
+    pub end_residual: Vec<Vec<f64>>,
+}
+
+/// What stops a plane with no data, whose peak is zero: `checkStop` as for
+/// any plane ([`run_plane`]), and the plane is skipped either way.
+#[must_use]
+pub fn blank_plane_stop(cycle: &CycleControls, statistics: &PlaneStatistics) -> PlaneStop {
+    PlaneControl::new(cycle, statistics, 0.0)
+        .stop(0.0)
+        .unwrap_or(PlaneStop::ZeroMask)
 }
 
 /// Heap bytes a [`Delta`] entry costs at most: one `(index, flux)` pair in a
@@ -121,6 +133,7 @@ pub fn run_plane<S: Solver>(
         stop: PlaneStop::ZeroMask,
         trace: Vec::new(),
         refreshes: 0,
+        end_residual: Vec::new(),
     };
     let mut stop = control.stop(start_peak);
     if view.support.is_empty() || stop.is_some() {
@@ -160,6 +173,7 @@ pub fn run_plane<S: Solver>(
         }
     }
     outcome.stop = stop.expect("the step loop ends on a stop");
+    outcome.end_residual = residual;
     Ok(outcome)
 }
 

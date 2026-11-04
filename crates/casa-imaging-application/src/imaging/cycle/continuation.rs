@@ -24,7 +24,7 @@ use casa_imaging_operator::{Basis, ModeSet};
 use casa_imaging_runtime::pass::Residency;
 use casa_imaging_runtime::{Admitted, Cancelled};
 
-use super::{Major, Run};
+use super::{Major, Run, seeding};
 use crate::imaging::ImagingError;
 use crate::restart::ExistingProducts;
 
@@ -100,6 +100,7 @@ impl Run<'_> {
             Some(start) => {
                 let _seeding = charge.split(seeding);
                 let samples = start.main_samples().map_err(ImagingError::StartModel)?;
+                self.start_model_flux = seeding::plane_fluxes(self.problem, start, &samples);
                 self.lifecycle.initial_from_start_model(&samples)?
             }
             None => self.lifecycle.initial_empty()?,
@@ -156,6 +157,7 @@ impl Run<'_> {
             Some(start) => {
                 let _seeding = pass.split(seeding);
                 let samples = start.main_samples().map_err(ImagingError::StartModel)?;
+                self.start_model_flux = seeding::plane_fluxes(self.problem, start, &samples);
                 self.lifecycle.initial_from_start_model(&samples)?
             }
             None => self.lifecycle.initial_empty()?,

@@ -30,8 +30,9 @@ use casa_imaging_model::{
 };
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{
-    Demand, HostResources, MinorCycleSetup, PsfCache, ResourcePolicy, admit, free_memory,
-    prepare_bytes, prepare_minor_cycle, psf_cache_bytes, result_bytes, run_bytes, run_minor_cycle,
+    Demand, HostResources, MinorCycleSetup, MinorLayout, PsfCache, ResourcePolicy, admit,
+    free_memory, prepare_bytes, prepare_minor_cycle, psf_cache_bytes, result_bytes, run_bytes,
+    run_minor_cycle,
 };
 use problems::{empty_final_model, model_lifecycle, reconstruction_problem};
 use synthetic_pass::{BLOCKS, SAMPLES, Scene};
@@ -214,11 +215,111 @@ fn a_minor_cycle_holds_at_most_its_admission_whatever_its_planes() {
         );
         assert_eq!(outcome.summary.stops.len(), channels);
         assert!(outcome.results.memory() >= result_bytes(outcome.terms.len()));
+        // What the run keeps of the cycle: a row of every plane, within what
+        // its record's admission planned.
+        assert_eq!(outcome.summary.planes.len(), channels);
+        let kept = std::mem::size_of_val(outcome.summary.planes.as_slice()) as u64;
+        assert!(kept <= MinorLayout::of(completion.normal_state()).record_bytes());
         charges.push(outcome.results.memory());
     }
     assert!(
         charges.windows(2).all(|pair| pair[1] > pair[0]),
         "the results' charge grows with the planes: {charges:?}"
+    );
+}
+
+/// A plane's peak over its pixels after its solve (#1068) reads the analytic
+/// beam again where the residual's pixel mask is that beam: the solve holds
+/// the beam and its supports under its admission too, which the load's
+/// charge for the model samples it no longer holds covers. A plane this size
+/// takes the fixed part of the admission out of the comparison.
+#[test]
+fn a_solve_measuring_through_a_beam_holds_at_most_its_admission() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let problem = reconstruction_problem(
+        31,
+        724,
+        2,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Hogbom,
+        ReconstructionControls::new(10, 0.1, 0.0),
+    );
+    let scene = Scene::new(&problem).with_point([362, 362], &[1.0, 1.0]);
+    let lifecycle = model_lifecycle(&problem);
+    let mut cycle = MajorCycle::initial(
+        &problem,
+        empty_final_model(&lifecycle),
+        scene.resident_storage(),
+    )
+    .expect("major cycle");
+    let (model, mut pass) = cycle.parts();
+    pass.append(scene.pass_images(model, true)).expect("images");
+    let completion = cycle.finish(SAMPLES, BLOCKS).expect("complete");
+    let centres = std::collections::BTreeMap::from([(
+        casa_imaging_model::ImageDomainRole::Main,
+        vec![[362.0, 362.0]],
+    )]);
+    let setup = MinorCycleSetup {
+        algorithm: ReconstructionAlgorithm::Hogbom,
+        accounting: HogbomIterationAccounting::Strict,
+        response: None,
+        nsigma: 0.0,
+        noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
+        automask: false,
+        primary_beam: casa_imaging_products::AnalyticPrimaryBeam::new(
+            &problem,
+            casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon,
+            Some(&centres),
+        )
+        .expect("L band"),
+        residual_pixel_mask: true,
+        pbmask: 0.0,
+    };
+    assert!(setup.primary_beam.is_some());
+    let masks = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::FullPlane {
+        coordinate: problem.geometry().domains()[0].direction(),
+    }])
+    .expect("full-plane mask");
+    let controls = CycleControls {
+        iterations: 5,
+        threshold: 0.0,
+        threshold_reached: true,
+        gain: 0.1,
+        nsigma: 0.0,
+    };
+    let team = WorkerTeam::new(1).expect("team");
+    let mut cache = PsfCache::default();
+    let prepared =
+        prepare_minor_cycle(&completion, &masks, &setup, &mut cache, &team).expect("prepare");
+    ADMITTED.store(held(), Ordering::Relaxed);
+    let solving = admit(
+        &HOST,
+        &POLICY,
+        &Demand {
+            phase: "minor cycle",
+            memory: run_bytes(&completion, &setup, &controls, &cache, 1),
+        },
+    )
+    .expect("admitted");
+    EXCESS.store(i64::MIN, Ordering::Relaxed);
+    BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+    MEASURING.store(true, Ordering::Relaxed);
+    let outcome = run_minor_cycle(
+        prepared,
+        &completion,
+        &setup,
+        &controls,
+        &mut cache,
+        &team,
+        (&HOST, &POLICY),
+    );
+    MEASURING.store(false, Ordering::Relaxed);
+    drop(solving);
+    outcome.expect("minor cycle");
+    let excess = EXCESS.load(Ordering::Relaxed);
+    assert!(
+        excess <= 0,
+        "the solve held {excess} bytes more than it was admitted"
     );
 }
 

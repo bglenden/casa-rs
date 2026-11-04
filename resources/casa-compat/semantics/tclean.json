@@ -811,13 +811,14 @@
       "mapping": "nmajor -> ReconstructionControls.maximum_major_cycles (-1 -> None; otherwise Some(limit)); reported nmajordone includes the initial pass."
     },
     "fullsummary": {
-      "status": "Partial",
-      "scope": "Long-form keys exist, but missing measurements and per-plane values are NaN. Return shape alone is not return-value equivalence.",
+      "status": "Implemented",
+      "scope": "Every plane of every minor cycle has its own rows, in CASA's order of field, channel and Stokes: iterations through the planes in sequence (SDAlgorithmBase::deconvolve, addSummaryMinor), peaks inside the mask and over the plane's pixels, flux from the start model, mask sum and stop code. A dirty run reads its products as construct_summary_minor does. A plane with no data under nsigma can differ in its stop code, where CASA's checkStop reads a threshold left by an earlier plane or cycle. deconvolver='clark' on several Stokes planes has a row per plane, where CASA cleans them jointly (issue 1126).",
       "evidence": [
         "signature",
         "reader",
         "returns",
-        "scalars-empty-mask"
+        "scalars-empty-mask",
+        "summary-rows-20261103"
       ],
       "behaviors": [
         "returns"
@@ -1162,7 +1163,7 @@
       "title": "Return values, exceptions and metadata",
       "status": "Partial",
       "scope": "Python and CLI CASA return record, output topology, coordinates, beams, mask validity, model-column effects and reopen.",
-      "gap": "The recorded 22-key structure exists. Final maxpsfsidelobe and raw automatic cyclethreshold now report already-measured controller statistics with CASA Float rounding; 18 small pinned cases pass these two scalar checks, exact iteration/major/stop integers and recorded scientific products on CPU64/CPU32/Metal32. This does not verify every return key. Dirty peaks, unmasked residual peaks, seeded/restarted model flux and multi-plane rows remain unavailable or inaccurate. The fd7b8e7b2d full normal gate passes 4,698 workspace tests/45 skips and relevant checks. Full metadata, broader exceptions/mode combinations and representative persistence remain open. Earlier moving-MFS increment and ordinary SOURCE rest-frequency defects are repaired at their recorded revisions. Contract32 numbering adds20 small product rows, with19 raw selected-scalar passes and one identity-bound owner-accepted Metal cyclethreshold result (1.5132ppm difference). The original failed verdict remains; no future-output waiver. The owner agreed to native preservation of prior histories during fresh numbering; correct new-image history remains required. Nmajor-zero adds20 scoped product/count pairs; two public Python pairs also gate the two selected numeric scalars. Full return parity remains unfinished. The owner declined the native .summary.json sidecar (2026-11-02): a tclean run writes only its image products, as CASA's does, and the six-case replay now requires an exact product inventory; casars-imager writes the run summary only when CASA_RS_IMAGER_RUN_SUMMARY=1, for performance tooling. The handoff's point-cube-briggs maxpsfsidelobe raw failure (relative 8.2e-6 at 2851c6dc, 9768bb1 and 3016f1b) is attributed to those 7 boundary weights and passes at 2628d8b (relative 7.7e-8), with all six handoff cases passing both selected scalars.",
+      "gap": "The recorded 22-key structure exists. Final maxpsfsidelobe and raw automatic cyclethreshold now report already-measured controller statistics with CASA Float rounding; 18 small pinned cases pass these two scalar checks, exact iteration/major/stop integers and recorded scientific products on CPU64/CPU32/Metal32. This does not verify every return key. summaryminor's rows are measured for each plane, and agree with CASA on 29 of 35 cases, the rest attributed (summary-rows-20261103). The fd7b8e7b2d full normal gate passes 4,698 workspace tests/45 skips and relevant checks. Full metadata, broader exceptions/mode combinations and representative persistence remain open. Earlier moving-MFS increment and ordinary SOURCE rest-frequency defects are repaired at their recorded revisions. Contract32 numbering adds20 small product rows, with19 raw selected-scalar passes and one identity-bound owner-accepted Metal cyclethreshold result (1.5132ppm difference). The original failed verdict remains; no future-output waiver. The owner agreed to native preservation of prior histories during fresh numbering; correct new-image history remains required. Nmajor-zero adds20 scoped product/count pairs; two public Python pairs also gate the two selected numeric scalars. Full return parity remains unfinished. The owner declined the native .summary.json sidecar (2026-11-02): a tclean run writes only its image products, as CASA's does, and the six-case replay now requires an exact product inventory; casars-imager writes the run summary only when CASA_RS_IMAGER_RUN_SUMMARY=1, for performance tooling. The handoff's point-cube-briggs maxpsfsidelobe raw failure (relative 8.2e-6 at 2851c6dc, 9768bb1 and 3016f1b) is attributed to those 7 boundary weights and passes at 2628d8b (relative 7.7e-8), with all six handoff cases passing both selected scalars.",
       "evidence": [
         "returns",
         "reader",
@@ -1970,6 +1971,21 @@
         "crates/casars-imager/tests/t1/mtmfs.rs",
         "crates/casa-imaging-products/src/generation.rs",
         "crates/casa-imaging-application/src/availability.rs"
+      ]
+    },
+    "summary-rows-20261103": {
+      "kind": "tclean's summaryminor against CASA's, row by row, on 35 small cases, with T0 and T1 laws",
+      "state": "measured: 29 of 35 pass within 6.3e-6; the other six attributed",
+      "source_revision": "5094adcd3915eefa1d671c184c770f557af43200",
+      "revision": "0662d8215e0c178e0c46a3628d12b19b8c9cec89",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_summary_matrix.py --data-root <staged root> --casars-python <venv> --imager-binary <binary> --output <new dir>",
+      "receipt": "resources/casa-compat/evidence/tclean-summary-rows-20261103.json",
+      "scope": "Every deconvolver, cubes, Stokes, outliers, masks, thresholds, n-sigma, restarts, start models and dirty runs, with CASA's own test_iterbot fullsummary calls. Differences: the recorded full-Stokes cube channel-0 near-tie (two cases), issue 1126 (clark on several Stokes planes), issue 1127 (a seeded mosaic cube, two cases) and one stop code on a plane with no data under nsigma. The products weren't compared here.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-summary-rows-20261103.json",
+        "tools/casa-compat/tclean_summary_matrix.py",
+        "crates/casars-imager/src/casa_return.rs"
       ]
     }
   }

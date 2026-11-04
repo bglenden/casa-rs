@@ -35,6 +35,7 @@ pub use casa_imaging_model::{
     HogbomIterationAccounting, PolarizationCoordinate, ProductNormalization, RestoringBeamPolicy,
 };
 pub use casa_imaging_operator::GridPrecision;
+pub use casa_imaging_runtime::PlaneCycleRow;
 pub use casa_imaging_runtime::pass::{BackendChoice, Cancel};
 pub use casa_imaging_runtime::{
     Admission, Diagnostics, HostResources, Phase, ResourcePolicy, ReturningAllocator, RunStatus,
@@ -137,6 +138,9 @@ pub struct ImagingOutcome {
     pub problem: CompiledProblem,
     /// Ordered solve evidence captured before each major-cycle pass.
     pub minor_cycles: Vec<NativeMinorCycleOutcome>,
+    /// Each plane's part of each minor cycle. Like the statistics below, it
+    /// is not part of the persisted run summary.
+    pub plane_rows: PlaneRows,
     /// Statistics from the final minor-cycle preparation/convergence check.
     /// Captured even when no minor cycle runs; absent for dirty imaging.
     /// These in-memory scalars are not part of the persisted run summary.
@@ -216,6 +220,16 @@ impl ImagingOutcome {
             reconstruction.polarization().coordinates().len(),
         ]
     }
+}
+
+/// Each plane's part of each minor cycle (CASA's `summaryminor`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlaneRows {
+    /// Each main-image plane's start-model flux, in `.model`'s units, sorted
+    /// by `[domain, channel, polarization]`; a plane absent starts from zero.
+    pub start_model_flux: Vec<([usize; 3], f64)>,
+    /// Each minor cycle's rows, in order.
+    pub cycles: Vec<Vec<casa_imaging_runtime::PlaneCycleRow>>,
 }
 
 /// Stable application projection of the T21 owner evidence.

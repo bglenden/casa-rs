@@ -857,6 +857,18 @@ impl ImagingRequest {
         self.deconvolver == Deconvolver::Mtmfs || self.niter > 0
     }
 
+    /// Each image domain's output prefix: `imagename`, then the outlier
+    /// file's, which an unreadable file leaves out.
+    #[must_use]
+    pub fn image_names(&self) -> Vec<PathBuf> {
+        let outliers = self.outlierfile.as_deref().map_or_else(Vec::new, |path| {
+            crate::compile::outlier_output_prefixes(path).unwrap_or_default()
+        });
+        std::iter::once(self.imagename.clone())
+            .chain(outliers)
+            .collect()
+    }
+
     /// Whether the model starts from an image rather than empty: a
     /// `startmodel`, or the model an earlier run left at `imagename` that a
     /// continuation reads (#944).

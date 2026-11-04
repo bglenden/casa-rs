@@ -127,14 +127,17 @@ impl MinorLayout {
 
     /// Heap bytes the record of one minor cycle keeps for the rest of the
     /// run: a copy of the primary mask's support, the first image domain's,
-    /// and at most `TRACE` traced components (the run's `record_bytes`).
+    /// at most `TRACE` traced components and every plane's row (the run's
+    /// `record_bytes`).
     #[must_use]
     pub fn record_bytes(&self) -> u64 {
         let support = self
             .domains
             .first()
             .map_or(0, |[width, height]| width * height * size_of::<bool>());
-        (support + TRACE * size_of::<super::TracedComponent>()) as u64
+        (support
+            + TRACE * size_of::<super::TracedComponent>()
+            + self.planes * size_of::<super::PlaneCycleRow>()) as u64
     }
 
     /// Heap bytes the model terms of a minor cycle under `setup` hold, from
