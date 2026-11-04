@@ -404,7 +404,7 @@ fn real_clark_worker_cases(
                 let contract = output.problem.weighting();
                 let natural = weighting == "natural";
                 assert_eq!(
-                    contract.density_scope(),
+                    *contract.density_scope(),
                     if natural {
                         WeightDensityScope::NotApplicable
                     } else {

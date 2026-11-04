@@ -298,8 +298,8 @@ impl WeightingOperatorContract {
 
     /// Return the complete-selection density scope. No chunk-local scope exists.
     #[must_use]
-    pub const fn density_scope(&self) -> WeightDensityScope {
-        self.density_scope
+    pub const fn density_scope(&self) -> &WeightDensityScope {
+        &self.density_scope
     }
 
     /// Return the cells the density is gridded on (CASA's `npixels`).
@@ -558,7 +558,7 @@ fn compile_weighting_operator(
     WeightingOperatorContract {
         visibility_inner_product,
         scheme: weighting.scheme(),
-        density_scope: weighting.density_scope(),
+        density_scope: weighting.density_scope().clone(),
         density_cells: weighting.density_cells(),
         casa_cube_density_padding: weighting.casa_cube_density_padding(),
         uv_taper: weighting.uv_taper(),

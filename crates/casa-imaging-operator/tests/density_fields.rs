@@ -9,13 +9,11 @@
 
 mod common;
 
-use std::num::NonZeroU32;
-
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
-    BandwidthTaper, DensityCellRule, DensityFields, DensityGrid, DensityGridShape, GridPrecision,
-    MeasurementOperator, NativeRow, RowContext, SampleBuffer, SpectralAxis, SpectralKernel,
-    SpectralResampler, WeightingGeneration, build_density_grid,
+    BandwidthTaper, DensityCellRule, DensityFieldKeys, DensityGrid, DensityGridShape,
+    GridPrecision, MeasurementOperator, NativeRow, RowContext, SampleBuffer, SpectralAxis,
+    SpectralKernel, SpectralResampler, WeightingGeneration, build_density_grid,
 };
 use casa_types::Correlation;
 use common::{Rng, operator};
@@ -32,11 +30,10 @@ const PADDING: u32 = 2;
 const NATIVE_HZ: [f64; 9] = [
     0.90e9, 0.94e9, 0.98e9, 1.02e9, 1.06e9, 1.10e9, 1.14e9, 1.18e9, 1.22e9,
 ];
-/// The span's field keys: 4, 5 and 7 have rows, 6 none; 9 is outside it.
-const SPAN: DensityFields = DensityFields {
-    first: 4,
-    count: NonZeroU32::new(4).expect("four fields"),
-};
+/// The densities' field keys: 4, 5 and 7 have rows, 6 none; 9 has no density.
+fn span() -> DensityFieldKeys {
+    DensityFieldKeys::new([4, 5, 6, 7]).expect("four fields")
+}
 
 /// One row's owned samples.
 struct Row {
@@ -97,7 +94,7 @@ fn rows() -> Vec<Row> {
     rows
 }
 
-fn shape(fields: Option<DensityFields>) -> DensityGridShape {
+fn shape(fields: Option<DensityFieldKeys>) -> DensityGridShape {
     DensityGridShape {
         width: 64,
         height: 64,
@@ -195,16 +192,36 @@ fn assert_field_planes(grid: &DensityGrid, index: usize, alone: &DensityGrid, fi
 fn a_per_field_cube_density_is_each_fields_density_alone() {
     let fixture = Fixture::new();
     let rows = rows();
-    let per_field = fixture.density(shape(Some(SPAN)), rows.iter());
+    let per_field = fixture.density(shape(Some(span())), rows.iter());
     let by_field = weightings(&per_field);
     let joint = weightings(&fixture.density(shape(None), rows.iter()));
-    // The grid holds the planes of every field the span names: it is charged
-    // as that many single-field grids.
-    assert_eq!(shape(Some(SPAN)).total_planes(), 4 * shape(None).planes);
-    assert_eq!(shape(Some(SPAN)).bytes(), 4 * shape(None).bytes());
+    // The grid holds the planes of every field it names: it is charged as
+    // that many single-field grids.
+    assert_eq!(shape(Some(span())).total_planes(), 4 * shape(None).planes);
+    assert_eq!(shape(Some(span())).bytes(), 4 * shape(None).bytes());
     assert_eq!(per_field.cells().len(), 4 * shape(None).cells());
+    // Fields far apart take a plane each, however many FIELD_IDs lie between:
+    // `VisImagingWeight`'s `multiFieldMap_p` holds what its traversal meets
+    // (#1072). Two fields 1,000 keys apart hold two grids' planes.
+    let apart = shape(DensityFieldKeys::new([4, 1004]));
+    assert_eq!(apart.bytes(), 2 * shape(None).bytes());
+    assert_eq!(
+        DensityGrid::new(apart.clone()).cells().len(),
+        2 * shape(None).cells()
+    );
+    let last = (apart.planes - 1) as u32;
+    assert_eq!(apart.density_plane(0, 4), Some(0));
+    assert_eq!(
+        apart.density_plane(last, 1004),
+        Some(apart.planes as u32 + last)
+    );
+    assert_eq!(
+        apart.density_plane(0, 5),
+        None,
+        "a key between them has no plane"
+    );
     let mut joint_differs = false;
-    for (index, field) in (SPAN.first..SPAN.first + SPAN.count.get()).enumerate() {
+    for (index, field) in span().keys().iter().copied().enumerate() {
         let own = rows.iter().filter(|row| row.field == field);
         let alone = fixture.density(shape(None), own.clone());
         assert_field_planes(&per_field, index, &alone, field);

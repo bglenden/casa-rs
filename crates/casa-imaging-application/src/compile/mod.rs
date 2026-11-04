@@ -535,8 +535,8 @@ fn specification_inputs(
                 ..
             }
         ) && surveyed.spectral.output_channels == 1,
-        density_fields,
         cube_density_padding: cube_density_padding(request, surveyed, density_fields.is_some())?,
+        density_fields,
         continuum_transform,
     })
 }

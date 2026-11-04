@@ -20,7 +20,9 @@ use crate::transaction::{
     ObservationTransactionCompileError, ObservationTransactionContract,
     ObservationTransactionRequirements, compile_observation_transaction,
 };
-pub use crate::weighting::{UvTaper, WeightDensityScope, WeightingContract, WeightingScheme};
+pub use crate::weighting::{
+    DensityFieldKeys, UvTaper, WeightDensityScope, WeightingContract, WeightingScheme,
+};
 
 /// Spectral coefficient kernel shared exactly by prediction and adjoint imaging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
