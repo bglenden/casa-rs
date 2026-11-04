@@ -702,12 +702,13 @@ fn an_outlier_files_relative_name_reads_from_the_working_directory() {
             "imsize": geometry.image_size,
             "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
             "backend": "cpu",
-            "imagename": "main",
+            "imagename": "products/main",
             "outlierfile": outliers,
         }),
     );
     assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
-    assert!(directory.join("main.psf").is_dir());
+    assert!(directory.join("products/main.psf").is_dir());
     assert!(directory.join("fields/outlier.psf").is_dir());
     assert!(!settings.join("fields").exists());
+    assert!(!directory.join("products/fields").exists());
 }
