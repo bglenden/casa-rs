@@ -5,11 +5,9 @@
 
 mod common;
 
-use std::num::NonZeroU32;
-
 use casa_imaging_model::PolarizationCoordinate;
 use casa_imaging_operator::{
-    Basis, CellHold, CfKey, ConvolutionFunctionSet, DensityCellRule, DensityFields,
+    Basis, CellHold, CfKey, ConvolutionFunctionSet, DensityCellRule, DensityFieldKeys,
     DensityGridShape, DensityUv, GridGeometry, GridPadding, GridPrecision, ImageCorrection,
     ImageExtent, KernelNormalisation, MeasurementOperator, MuellerRouting, NativeRow,
     OperatorError, PaddingFactor, PolarizationRouting, RowContext, RowSpectrum, SampleBuffer,
@@ -240,7 +238,7 @@ fn the_uv_taper_weighs_each_channel_at_its_own_frequency_after_the_density() {
 /// samples grid their own density plane and read it with that plane's
 /// Briggs factors, so a field observing a cell three times weighs a third
 /// as uniformly as one observing it once, yet both weigh alike under Briggs
-/// when each field's density is that cell alone; a field outside the span
+/// when each field's density is that cell alone; a field without a density
 /// grids and weighs nothing.
 #[test]
 fn a_per_field_density_weighs_each_field_by_its_own_samples() {
@@ -269,10 +267,8 @@ fn a_per_field_density_weighs_each_field_by_its_own_samples() {
         box_half_width: 0,
         increment_rad: [-2.0e-5, 2.0e-5],
         rule: DensityCellRule::Standard,
-        fields: first_field.map(|first| DensityFields {
-            first,
-            count: NonZeroU32::new(2).expect("two fields"),
-        }),
+        fields: first_field
+            .map(|first| DensityFieldKeys::new([first, first + 1]).expect("two fields")),
     };
     let [a, b] = [[300.0, -150.0, 0.0], [-700.0, 420.0, 0.0]];
     let rows = [
@@ -603,7 +599,7 @@ fn linear_mapping_interpolates_values_and_channel_weights_and_ors_flags() {
         .expect("density");
     assert_eq!(density.len(), 3, "one density sample per native channel");
     let uniform = WeightingGeneration::density(
-        build_density_grid(std::iter::once(density.block()), global),
+        build_density_grid(std::iter::once(density.block()), global.clone()),
         None,
         None,
         None,
@@ -623,7 +619,7 @@ fn linear_mapping_interpolates_values_and_channel_weights_and_ors_flags() {
     let per_channel = DensityGridShape {
         planes: 2,
         rule: DensityCellRule::Cube,
-        ..global
+        ..global.clone()
     };
     let mut density = SampleBuffer::new(1);
     resampler
@@ -723,7 +719,7 @@ fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis()
             &mut density,
         )
         .expect("density");
-    let grid = build_density_grid(std::iter::once(density.block()), shape);
+    let grid = build_density_grid(std::iter::once(density.block()), shape.clone());
     let uniform = WeightingGeneration::density(grid, None, None, None).expect("uniform");
 
     // Natives 0.97, 1.07, 1.17 GHz: the samples at 1.00, 1.05, 1.10 and
@@ -763,7 +759,7 @@ fn cube_briggs_weights_come_from_the_nearest_native_channel_on_the_padded_axis()
         planes: 4,
         padding: 0,
         box_half_width: 0,
-        ..shape
+        ..shape.clone()
     };
     let (frequencies, values, weights) = row(&[1.0, 1.05, 1.1, 1.15], &[2.0, 3.0, 4.0, 5.0]);
     let flags = vec![false; values.len()];

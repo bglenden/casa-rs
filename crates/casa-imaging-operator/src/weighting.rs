@@ -4,13 +4,13 @@
 //! density weights, with an optional Gaussian taper, pinned to CASA
 //! (`VisImagingWeight`, `BriggsCubeWeightor`).
 
-use std::num::NonZeroU32;
-
 use crate::error::OperatorError;
 use crate::sample::{Placement, SampleBlock};
 
 /// Gaussian uv taper in baseline half-widths at half maximum.
 pub type Taper = casa_imaging_model::UvTaper;
+
+pub use casa_imaging_model::DensityFieldKeys;
 
 /// Which CASA cell arithmetic a density grid uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,20 +72,8 @@ impl DensityUv {
 /// CASA `C::c`.
 pub(crate) const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 
-/// The fields of a per-field density generation (tclean's `mosweight`):
-/// the field keys `first` to `first + count − 1`, each gridded from its own
-/// samples alone.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DensityFields {
-    /// The first field key with densities.
-    pub first: u32,
-    /// The field keys the densities span; a key in the span with no samples
-    /// keeps empty densities.
-    pub count: NonZeroU32,
-}
-
 /// Shape of a density grid: image-sized cells per plane.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DensityGridShape {
     /// Cells along u (the image width).
     pub width: usize,
@@ -113,28 +101,28 @@ pub struct DensityGridShape {
     pub rule: DensityCellRule,
     /// A per-field generation (tclean's `mosweight`: the `multiField` of
     /// `VisImagingWeight` on [`DensityCellRule::Standard`] cells and of
-    /// `BriggsCubeWeightor` on [`DensityCellRule::Cube`] cells): field key
-    /// `first + f` has the [`Self::planes`] after those of the `f` keys
-    /// before it, gridded from its samples alone, each plane with its own
-    /// Briggs factors, and a sample reads its own field's planes. `None`
-    /// when one generation covers every field.
-    pub fields: Option<DensityFields>,
+    /// `BriggsCubeWeightor` on [`DensityCellRule::Cube`] cells): each field
+    /// key has the [`Self::planes`] after those of the keys before it,
+    /// gridded from its samples alone, each plane with its own Briggs
+    /// factors, and a sample reads its own field's planes. `None` when one
+    /// generation covers every field.
+    pub fields: Option<DensityFieldKeys>,
 }
 
 impl DensityGridShape {
     /// Density planes over every field: [`Self::planes`] for each of
     /// [`Self::fields`], or [`Self::planes`] without them.
     #[must_use]
-    pub const fn total_planes(&self) -> usize {
-        match self.fields {
-            Some(fields) => self.planes * fields.count.get() as usize,
+    pub fn total_planes(&self) -> usize {
+        match &self.fields {
+            Some(fields) => self.planes * fields.count(),
             None => self.planes,
         }
     }
 
     /// Cells over every plane.
     #[must_use]
-    pub const fn cells(&self) -> usize {
+    pub fn cells(&self) -> usize {
         self.width * self.height * self.total_planes()
     }
 
@@ -142,13 +130,13 @@ impl DensityGridShape {
     /// weight sum per plane, over every field's planes. A weighting
     /// generation keeps its grid for the whole run, so a per-field cube
     /// density (`mosweight`) holds every field's `f64` cube at once,
-    /// `8·(nx·ny + 1)·F·(C + 2·padding)` bytes for `F` fields spanned and
+    /// `8·(nx·ny + 1)·F·(C + 2·padding)` bytes for `F` selected fields and
     /// `C` channels, where CASA holds one field's `Float` cube at a time
     /// (`BriggsCubeWeightor::fillImgWeightCol`): 20 fields of 480 channels
     /// at 800² hold about 50 GB, which admission refuses on most hosts
     /// (#1085).
     #[must_use]
-    pub const fn bytes(&self) -> u64 {
+    pub fn bytes(&self) -> u64 {
         ((self.cells() + self.total_planes()) * size_of::<f64>()) as u64
     }
 
@@ -164,17 +152,16 @@ impl DensityGridShape {
 
     /// The density plane a sample on plane `plane` of one generation, from
     /// field key `field`, grids into and reads: under a per-field generation
-    /// `plane` of its field's planes (`None` outside the span or past the
-    /// planes), a continuum density's one plane whatever `plane` is; else
+    /// `plane` of its field's planes (`None` for a field without densities
+    /// or past the planes), a continuum density's one plane whatever `plane`
+    /// is; else
     /// `plane`, which `plane_of` resolves.
     #[must_use]
     pub fn density_plane(&self, plane: u32, field: u32) -> Option<u32> {
-        let Some(fields) = self.fields else {
+        let Some(fields) = &self.fields else {
             return Some(plane);
         };
-        let index = field
-            .checked_sub(fields.first)
-            .filter(|index| *index < fields.count.get())?;
+        let index = fields.index_of(field)?;
         let plane = if self.planes == 1 { 0 } else { plane };
         let planes = u32::try_from(self.planes).ok()?;
         if plane >= planes {

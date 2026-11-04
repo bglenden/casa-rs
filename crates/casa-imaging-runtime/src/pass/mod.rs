@@ -589,7 +589,7 @@ pub fn run_density_pass(
             SampleContent::FlagsAndWeights,
         )
         .map_err(PassError::Source)?;
-    let mut grid = DensityGrid::new(shape);
+    let mut grid = DensityGrid::new(shape.clone());
     let maximum = source.maximum_block();
     let count = team.workers() * DENSITY_CHUNKS_PER_WORKER;
     let row = resampler.density_samples_per_row(&shape, maximum.spectrum);
