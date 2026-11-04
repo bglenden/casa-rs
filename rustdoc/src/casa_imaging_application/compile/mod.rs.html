@@ -280,7 +280,7 @@
 <a href=#280 id=280 data-nosnippet>280</a>        domains::mask_plans(<span class="kw-2">&amp;</span>domains, spectral.output_channels, context)<span class="question-mark">?</span>;
 <a href=#281 id=281 data-nosnippet>281</a>    mask_resident.join(continuation.mask_resident);
 <a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">let </span>(snapshot, stores, survey_charge) =
-<a href=#283 id=283 data-nosnippet>283</a>        snapshot_input(stores, <span class="kw-2">&amp;</span>channels, <span class="kw-2">&amp;</span>spectral.frequency_bands)<span class="question-mark">?</span>;
+<a href=#283 id=283 data-nosnippet>283</a>        snapshot_input(stores, <span class="kw-2">&amp;</span>channels, <span class="kw-2">&amp;</span>spectral.window_reads)<span class="question-mark">?</span>;
 <a href=#284 id=284 data-nosnippet>284</a>    <span class="prelude-val">Ok</span>(Prepared {
 <a href=#285 id=285 data-nosnippet>285</a>        specification,
 <a href=#286 id=286 data-nosnippet>286</a>        geometry,
@@ -588,7 +588,7 @@
 <a href=#588 id=588 data-nosnippet>588</a></span><span class="kw">fn </span>snapshot_input(
 <a href=#589 id=589 data-nosnippet>589</a>    stores: Vec&lt;stores::SurveyedStore&gt;,
 <a href=#590 id=590 data-nosnippet>590</a>    channels: <span class="kw-2">&amp;</span>[WindowChannels],
-<a href=#591 id=591 data-nosnippet>591</a>    bands: <span class="kw-2">&amp;</span>[spectral::WindowBands],
+<a href=#591 id=591 data-nosnippet>591</a>    bands: <span class="kw-2">&amp;</span>[spectral::WindowReads],
 <a href=#592 id=592 data-nosnippet>592</a>) -&gt; <span class="prelude-ty">Result</span>&lt;
 <a href=#593 id=593 data-nosnippet>593</a>    (
 <a href=#594 id=594 data-nosnippet>594</a>        ObservationSnapshotInput,

@@ -1788,6 +1788,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#density-channels-20261104" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        density-channels-20261104
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5165,6 +5176,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#density-channels-20261104" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        density-channels-20261104
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -8265,8 +8287,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>True</code></td>
 <td><code>True</code>; <code>perchanweightdensity</code> → <code>perchanweightdensity</code></td>
 <td>Implemented</td>
-<td>Copied as per-channel density-weighting flag. <a href="#tclean-behavior-spectral">spectral</a><br>Catalog domain: <code>bool</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a></td>
+<td>Copied as per-channel density-weighting flag. Without it, and for superuniform always, a cube's one density reads what the untuned bands of spw select at each time, whatever the axis reaches, as VisImagingWeight reads the parent imager's iterator. <a href="#tclean-behavior-spectral">spectral</a><br>Catalog domain: <code>bool</code></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-density-channels-20261104">density-channels-20261104</a></td>
 </tr>
 <tr>
 <td><code>gridder</code></td>
@@ -9454,6 +9476,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>8418b9b1e03a9d1742fabe0b2272b165ae781c83</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
 <li>Command: <code>tools/casa-compat/tclean_model_column_compare.py</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-model-column-bands-20261104.json</code>.</li>
+</ul>
+<p><a id="tclean-evidence-density-channels-20261104"></a></p>
+<h5 id="density-channels-20261104">density-channels-20261104<a class="headerlink" href="#density-channels-20261104" title="Permanent link">&para;</a></h5>
+<p><strong>casa-rs's own cube cases with a density over the whole selection against CASA, with T1 laws — measured: .psf and .residual at 2.1e-4 or better in all 27; the driver's pass is 2 of 27 because the others' inventories differ by .gridwt, which casa-rs doesn't write; one .pb differs by issue 1138.</strong> Cubes with uniform, Briggs or superuniform density over the whole selection, on part of a window, with a stride, a gap and named channels, over two MeasurementSets, in cubedata, and on a track where a time's channels move with its Doppler shift.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a0ba6185901de169f09df54b42cc4fc763589571/resources/casa-compat/evidence/tclean-density-channels-20261104.json">resources/casa-compat/evidence/tclean-density-channels-20261104.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a0ba6185901de169f09df54b42cc4fc763589571/resources/casa-compat/tclean-density-channels-cases.json">resources/casa-compat/tclean-density-channels-cases.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a0ba6185901de169f09df54b42cc4fc763589571/crates/casa-imaging-application/src/compile/spectral.rs">crates/casa-imaging-application/src/compile/spectral.rs</a></li>
+<li>Revision: <code>70b803349f382be4026d45d8bba324e8700eb185</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-density-channels-cases.json --backend cpu --precision f64</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-density-channels-20261104.json</code>.</li>
 </ul>
 <h2 id="tools">Tools<a class="headerlink" href="#tools" title="Permanent link">&para;</a></h2>
 <p>Each CASA class casa-rs presents in Python, against the signatures recorded from CASA 6.7.6.14 (<code>crates/casars-python/python/tests/data/casa_&lt;class&gt;_signatures.json</code>), which the Python tests hold the classes to. A reviewed class has a file under <code>resources/casa-compat/semantics/tools/</code> giving each method's status, scope and evidence; the others are not reviewed yet. The simulation classes (<code>simulator</code>, <code>componentlist</code>, <code>measures</code>, <code>quanta</code> and <code>simutil</code>) are reviewed in #1053, and <code>image</code>, <code>coordsys</code>, <code>table</code>, <code>msmetadata</code> and <code>ms</code> in #1025.</p>

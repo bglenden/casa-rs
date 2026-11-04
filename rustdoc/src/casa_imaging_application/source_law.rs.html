@@ -171,42 +171,48 @@
 <a href=#171 id=171 data-nosnippet>171</a>    planes_per_wave: u32,
 <a href=#172 id=172 data-nosnippet>172</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(usize, u64), ApplicationDispatchError&gt; {
 <a href=#173 id=173 data-nosnippet>173</a>    <span class="kw">let </span><span class="kw-2">mut </span>block = NativeBlock::with_capacity(source.maximum_block());
-<a href=#174 id=174 data-nosnippet>174</a>    <span class="kw">let </span><span class="kw-2">mut </span>blocks = <span class="number">0</span>;
-<a href=#175 id=175 data-nosnippet>175</a>    <span class="kw">let </span><span class="kw-2">mut </span>traverse = |range: PlaneRange, restrict: bool, content: SampleContent| {
-<a href=#176 id=176 data-nosnippet>176</a>        source.begin(range, restrict, content)<span class="question-mark">?</span>;
-<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">while </span>source.fill(<span class="kw-2">&amp;mut </span>block)<span class="question-mark">? </span>{
-<a href=#178 id=178 data-nosnippet>178</a>            blocks += <span class="number">1</span>;
-<a href=#179 id=179 data-nosnippet>179</a>        }
-<a href=#180 id=180 data-nosnippet>180</a>        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, casa_imaging_runtime::pass::SourceError&gt;(())
-<a href=#181 id=181 data-nosnippet>181</a>    };
-<a href=#182 id=182 data-nosnippet>182</a>    <span class="kw">let </span>all = PlaneRange::new(<span class="number">0</span>, planes);
-<a href=#183 id=183 data-nosnippet>183</a>    <span class="kw">let </span>step = planes_per_wave.clamp(<span class="number">1</span>, planes);
-<a href=#184 id=184 data-nosnippet>184</a>    traverse(all, <span class="bool-val">false</span>, SampleContent::FlagsAndWeights)
-<a href=#185 id=185 data-nosnippet>185</a>        .and_then(|()| traverse(all, <span class="bool-val">false</span>, SampleContent::Visibilities))
-<a href=#186 id=186 data-nosnippet>186</a>        .and_then(|()| {
-<a href=#187 id=187 data-nosnippet>187</a>            (<span class="number">0</span>..planes)
-<a href=#188 id=188 data-nosnippet>188</a>                .step_by(step <span class="kw">as </span>usize)
-<a href=#189 id=189 data-nosnippet>189</a>                .filter(|<span class="kw">_</span>| step &lt; planes)
-<a href=#190 id=190 data-nosnippet>190</a>                .try_for_each(|start| {
-<a href=#191 id=191 data-nosnippet>191</a>                    traverse(
-<a href=#192 id=192 data-nosnippet>192</a>                        PlaneRange::new(start, (start + step).min(planes)),
-<a href=#193 id=193 data-nosnippet>193</a>                        <span class="bool-val">true</span>,
-<a href=#194 id=194 data-nosnippet>194</a>                        SampleContent::Visibilities,
-<a href=#195 id=195 data-nosnippet>195</a>                    )
-<a href=#196 id=196 data-nosnippet>196</a>                })
-<a href=#197 id=197 data-nosnippet>197</a>        })
-<a href=#198 id=198 data-nosnippet>198</a>        .map_err(|error| ApplicationDispatchError::Native(error.to_string().into()))<span class="question-mark">?</span>;
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="prelude-val">Ok</span>((blocks, block.capacity_bytes()))
-<a href=#200 id=200 data-nosnippet>200</a>}
-<a href=#201 id=201 data-nosnippet>201</a>
-<a href=#202 id=202 data-nosnippet>202</a><span class="doccomment">/// The planes of `problem`'s basis a wave divides: a cube's channels, or
-<a href=#203 id=203 data-nosnippet>203</a>/// one.
-<a href=#204 id=204 data-nosnippet>204</a></span><span class="kw">fn </span>planes(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; u32 {
-<a href=#205 id=205 data-nosnippet>205</a>    <span class="kw">match </span>problem.reconstruction().basis() {
-<a href=#206 id=206 data-nosnippet>206</a>        ReconstructionBasis::ChannelLocal { channels } =&gt; {
-<a href=#207 id=207 data-nosnippet>207</a>            u32::try_from(channels).expect(<span class="string">"a cube's channels fit a plane index"</span>)
-<a href=#208 id=208 data-nosnippet>208</a>        }
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">_ </span>=&gt; <span class="number">1</span>,
-<a href=#210 id=210 data-nosnippet>210</a>    }
-<a href=#211 id=211 data-nosnippet>211</a>}
+<a href=#174 id=174 data-nosnippet>174</a>    <span class="kw">let </span>capacity = block.capacity_bytes();
+<a href=#175 id=175 data-nosnippet>175</a>    <span class="kw">let </span><span class="kw-2">mut </span>blocks = <span class="number">0</span>;
+<a href=#176 id=176 data-nosnippet>176</a>    <span class="kw">let </span><span class="kw-2">mut </span>traverse = |range: PlaneRange, restrict: bool, content: SampleContent| {
+<a href=#177 id=177 data-nosnippet>177</a>        source.begin(range, restrict, content)<span class="question-mark">?</span>;
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">while </span>source.fill(<span class="kw-2">&amp;mut </span>block)<span class="question-mark">? </span>{
+<a href=#179 id=179 data-nosnippet>179</a>            blocks += <span class="number">1</span>;
+<a href=#180 id=180 data-nosnippet>180</a>        }
+<a href=#181 id=181 data-nosnippet>181</a>        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, casa_imaging_runtime::pass::SourceError&gt;(())
+<a href=#182 id=182 data-nosnippet>182</a>    };
+<a href=#183 id=183 data-nosnippet>183</a>    <span class="kw">let </span>all = PlaneRange::new(<span class="number">0</span>, planes);
+<a href=#184 id=184 data-nosnippet>184</a>    <span class="kw">let </span>step = planes_per_wave.clamp(<span class="number">1</span>, planes);
+<a href=#185 id=185 data-nosnippet>185</a>    traverse(all, <span class="bool-val">false</span>, SampleContent::FlagsAndWeights)
+<a href=#186 id=186 data-nosnippet>186</a>        .and_then(|()| traverse(all, <span class="bool-val">false</span>, SampleContent::Visibilities))
+<a href=#187 id=187 data-nosnippet>187</a>        .and_then(|()| {
+<a href=#188 id=188 data-nosnippet>188</a>            (<span class="number">0</span>..planes)
+<a href=#189 id=189 data-nosnippet>189</a>                .step_by(step <span class="kw">as </span>usize)
+<a href=#190 id=190 data-nosnippet>190</a>                .filter(|<span class="kw">_</span>| step &lt; planes)
+<a href=#191 id=191 data-nosnippet>191</a>                .try_for_each(|start| {
+<a href=#192 id=192 data-nosnippet>192</a>                    traverse(
+<a href=#193 id=193 data-nosnippet>193</a>                        PlaneRange::new(start, (start + step).min(planes)),
+<a href=#194 id=194 data-nosnippet>194</a>                        <span class="bool-val">true</span>,
+<a href=#195 id=195 data-nosnippet>195</a>                        SampleContent::Visibilities,
+<a href=#196 id=196 data-nosnippet>196</a>                    )
+<a href=#197 id=197 data-nosnippet>197</a>                })
+<a href=#198 id=198 data-nosnippet>198</a>        })
+<a href=#199 id=199 data-nosnippet>199</a>        .map_err(|error| ApplicationDispatchError::Native(error.to_string().into()))<span class="question-mark">?</span>;
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">if </span>block.capacity_bytes() &gt; capacity {
+<a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ApplicationDispatchError::Native(
+<a href=#202 id=202 data-nosnippet>202</a>            <span class="string">"a traversal outgrew the source's maximum block"</span>.into(),
+<a href=#203 id=203 data-nosnippet>203</a>        ));
+<a href=#204 id=204 data-nosnippet>204</a>    }
+<a href=#205 id=205 data-nosnippet>205</a>    <span class="prelude-val">Ok</span>((blocks, capacity))
+<a href=#206 id=206 data-nosnippet>206</a>}
+<a href=#207 id=207 data-nosnippet>207</a>
+<a href=#208 id=208 data-nosnippet>208</a><span class="doccomment">/// The planes of `problem`'s basis a wave divides: a cube's channels, or
+<a href=#209 id=209 data-nosnippet>209</a>/// one.
+<a href=#210 id=210 data-nosnippet>210</a></span><span class="kw">fn </span>planes(problem: <span class="kw-2">&amp;</span>CompiledProblem) -&gt; u32 {
+<a href=#211 id=211 data-nosnippet>211</a>    <span class="kw">match </span>problem.reconstruction().basis() {
+<a href=#212 id=212 data-nosnippet>212</a>        ReconstructionBasis::ChannelLocal { channels } =&gt; {
+<a href=#213 id=213 data-nosnippet>213</a>            u32::try_from(channels).expect(<span class="string">"a cube's channels fit a plane index"</span>)
+<a href=#214 id=214 data-nosnippet>214</a>        }
+<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw">_ </span>=&gt; <span class="number">1</span>,
+<a href=#216 id=216 data-nosnippet>216</a>    }
+<a href=#217 id=217 data-nosnippet>217</a>}
 </code></pre></div></section></main></body></html>
