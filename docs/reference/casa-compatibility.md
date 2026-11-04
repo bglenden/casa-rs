@@ -1524,7 +1524,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
 | [quanta](#quanta) | `casars.tools` | 57 | yes | 25 | 0 | 32 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 18 | 11 | 0 | 3 | 1 | 0 |
-| [simutil](#simutil) | `casars.simutil` | 57 | yes | 41 | 2 | 14 | 0 | 0 | 0 |
+| [simutil](#simutil) | `casars.simutil` | 57 | yes | 43 | 2 | 12 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
 
 ### componentlist
@@ -2821,7 +2821,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 41, Partial: 2, Not implemented: 14, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 43, Partial: 2, Not implemented: 12, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -2840,9 +2840,9 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `endfig` | `show=True, filename=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `ephemeris` | `date, usehourangle=True, direction=None, telescope=None, ms=None, cofa=None` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `flatimage` | `image, complist='', verbose=False` | Implemented | Collapses a model to CASA's flat image, adding a component list as CASA does. | [signature](#simutil-evidence-signature), [skymodel-casa-fixture](#simutil-evidence-skymodel-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
-| `getBaseTriangularTiling` | `width, height, angle, spacing, pb` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `getBaseTriangularTiling` | `width, height, angle, spacing, pb` | Implemented | Returns the two coordinate lists for the CASA triangular pointing pattern; zero spacing raises ZeroDivisionError. | [signature](#simutil-evidence-signature), [tiling-casa](#simutil-evidence-tiling-casa) |
 | `getdatum` | `datumcode, verbose=False` | Implemented | CASA's datum table: (dx, dy, dz, er, rf), whole offsets as ints; an unknown datum raises CASA's message. | [signature](#simutil-evidence-signature), [geodesy-casa](#simutil-evidence-geodesy-casa), [binding-tests](#simutil-evidence-binding-tests) |
-| `getShiftTriangularTiling` | `width, height, angle, spacing, pb` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `getShiftTriangularTiling` | `width, height, angle, spacing, pb` | Implemented | Returns the two coordinate lists for the CASA triangular pointing pattern; zero spacing raises ZeroDivisionError. | [signature](#simutil-evidence-signature), [tiling-casa](#simutil-evidence-tiling-casa) |
 | `getTrianglePoints` | `width, height, angle, spacing` | Implemented | Returns the two coordinate lists for the CASA triangular pointing pattern; zero spacing raises ZeroDivisionError. | [signature](#simutil-evidence-signature), [tiling-casa](#simutil-evidence-tiling-casa) |
 | `getTriangularTiling` | `longlength, latlength, angle, spacing, pb` | Implemented | Returns the two coordinate lists for the CASA triangular pointing pattern; zero spacing raises ZeroDivisionError. | [signature](#simutil-evidence-signature), [tiling-casa](#simutil-evidence-tiling-casa) |
 | `imclean` | `mstoimage, imagename, cleanmode, psfmode, cell, imsize, imcenter, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, sourcefieldlist='', modelimage='', mask=[], dryrun=False` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
@@ -3135,8 +3135,8 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="simutil-evidence-tiling-casa"></a>
 ##### tiling-casa
 
-**CASA-recorded values — measured.** Nine patterns and two zero-spacing errors recorded on CASA 6.7.6.14; direct Python binding results agree to 1e-13. getTrianglePoints and getTriangularTiling, including rotation, landscape, portrait, square, base and shifted patterns.
+**CASA-recorded values — measured.** Fifteen patterns and four zero-spacing errors recorded on CASA 6.7.6.14; direct Python binding results agree to 1e-13. getTrianglePoints, getTriangularTiling and the direct base and shifted patterns, including rotation, landscape, portrait and square maps.
 
-- [tools/simulation/simutil_tiling_oracle.py](https://github.com/bglenden/casa-rs/blob/b2107e82633ff9553dfb56473cca5b2106d7a2e7/tools/simulation/simutil_tiling_oracle.py)
-- [crates/casars-python/python/tests/data/casa_simutil_tiling.json](https://github.com/bglenden/casa-rs/blob/b2107e82633ff9553dfb56473cca5b2106d7a2e7/crates/casars-python/python/tests/data/casa_simutil_tiling.json)
-- [crates/casars-python/python/tests/test_simutil.py](https://github.com/bglenden/casa-rs/blob/b2107e82633ff9553dfb56473cca5b2106d7a2e7/crates/casars-python/python/tests/test_simutil.py)
+- [tools/simulation/simutil_tiling_oracle.py](https://github.com/bglenden/casa-rs/blob/50789c6def3dcf1b55dda2bcbe7d2ef39470f02a/tools/simulation/simutil_tiling_oracle.py)
+- [crates/casars-python/python/tests/data/casa_simutil_tiling.json](https://github.com/bglenden/casa-rs/blob/50789c6def3dcf1b55dda2bcbe7d2ef39470f02a/crates/casars-python/python/tests/data/casa_simutil_tiling.json)
+- [crates/casars-python/python/tests/test_simutil.py](https://github.com/bglenden/casa-rs/blob/50789c6def3dcf1b55dda2bcbe7d2ef39470f02a/crates/casars-python/python/tests/test_simutil.py)
