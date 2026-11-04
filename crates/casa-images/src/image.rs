@@ -1436,6 +1436,29 @@ impl<T: ImagePixel> PagedImage<T> {
         }
     }
 
+    /// Appends `messages` from `origin`, as `image.sethistory` does: its
+    /// `LogOrigin` gives each the location `::origin`.
+    pub fn add_history_from(
+        &mut self,
+        origin: &str,
+        messages: &[String],
+    ) -> Result<(), ImageError> {
+        match self.path.clone() {
+            Some(path) => {
+                self.ensure_logtable()?;
+                Self::append_logtable_rows(
+                    &Self::logtable_path(&path),
+                    &format!("::{origin}"),
+                    messages,
+                )
+            }
+            None => {
+                self.temp_history.extend_from_slice(messages);
+                Ok(())
+            }
+        }
+    }
+
     /// Clears the history log.
     pub fn clear_history(&mut self) -> Result<(), ImageError> {
         match self.path.clone() {
@@ -1954,34 +1977,48 @@ impl<T: ImagePixel> PagedImage<T> {
     }
 
     fn append_logtable_row(path: &Path, message: &str) -> Result<(), ImageError> {
+        Self::append_logtable_rows(
+            path,
+            "casa-images",
+            std::slice::from_ref(&message.to_string()),
+        )
+    }
+
+    /// Appends `messages` in one save, each at `location`, with `TIME` in
+    /// MJD seconds, as casacore's `TableLogSink` writes it.
+    fn append_logtable_rows(
+        path: &Path,
+        location: &str,
+        messages: &[String],
+    ) -> Result<(), ImageError> {
+        const UNIX_EPOCH_MJD_SECONDS: f64 = 40_587.0 * 86_400.0;
+        let time = UNIX_EPOCH_MJD_SECONDS
+            + std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|e| ImageError::Io(e.to_string()))?
+                .as_secs_f64();
         let mut table = Table::open(TableOptions::new(path))?;
-        table.add_row(RecordValue::new(vec![
-            RecordField::new(
-                "TIME",
-                Value::Scalar(ScalarValue::Float64(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_err(|e| ImageError::Io(e.to_string()))?
-                        .as_secs_f64(),
-                )),
-            ),
-            RecordField::new(
-                "PRIORITY",
-                Value::Scalar(ScalarValue::String("INFO".into())),
-            ),
-            RecordField::new(
-                "MESSAGE",
-                Value::Scalar(ScalarValue::String(message.to_string())),
-            ),
-            RecordField::new(
-                "LOCATION",
-                Value::Scalar(ScalarValue::String("casa-images".into())),
-            ),
-            RecordField::new(
-                "OBJECT_ID",
-                Value::Scalar(ScalarValue::String(String::new())),
-            ),
-        ]))?;
+        for message in messages {
+            table.add_row(RecordValue::new(vec![
+                RecordField::new("TIME", Value::Scalar(ScalarValue::Float64(time))),
+                RecordField::new(
+                    "PRIORITY",
+                    Value::Scalar(ScalarValue::String("INFO".into())),
+                ),
+                RecordField::new(
+                    "MESSAGE",
+                    Value::Scalar(ScalarValue::String(message.clone())),
+                ),
+                RecordField::new(
+                    "LOCATION",
+                    Value::Scalar(ScalarValue::String(location.to_string())),
+                ),
+                RecordField::new(
+                    "OBJECT_ID",
+                    Value::Scalar(ScalarValue::String(String::new())),
+                ),
+            ]))?;
+        }
         table.save(TableOptions::new(path))?;
         Ok(())
     }

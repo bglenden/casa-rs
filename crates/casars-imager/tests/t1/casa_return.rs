@@ -435,3 +435,59 @@ fn zero_major_limit_stops_before_minor_work_with_casa_stop_precedence() {
         seed
     );
 }
+
+/// A finished tclean leaves CASA's history and metadata in each image
+/// (#1068): the task, the version and every parameter, again for each call on
+/// the same name, and the field's name and telescope (CASA 6.7.6.14's
+/// `write_tclean_history`, `SynthesisImager::createIMStore`).
+#[test]
+fn each_image_holds_tcleans_history_and_its_source() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("history");
+    std::fs::create_dir_all(&directory).expect("run directory");
+    let geometry = observation.geometry();
+    let values = json!({
+        "vis": observation.measurement_set(),
+        "imsize": geometry.image_size,
+        "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+        "backend": "cpu",
+        "imagename": directory.join("run"),
+        "niter": 5,
+        "spw": "0",
+    });
+    let run = || match json_run(&directory, values.clone()) {
+        TaskReply::Succeeded { .. } => {}
+        other => panic!("{other:?}"),
+    };
+    run();
+    let open = |suffix: &str| {
+        casa_images::PagedImage::<f32>::open(directory.join(format!("run{suffix}")))
+            .unwrap_or_else(|error| panic!("{suffix}: {error}"))
+    };
+    let products = [".image", ".psf", ".residual", ".model", ".sumwt", ".pb"];
+    let first = products.map(|suffix| open(suffix).history().expect("history").len());
+    for (suffix, lines) in products.iter().zip(first) {
+        let image = open(suffix);
+        let history = image.history().expect("history");
+        assert_eq!(lines, history.len());
+        assert_eq!(history[0], "taskname=tclean", "{suffix}");
+        assert!(history[1].starts_with("version: casa-rs "), "{suffix}");
+        assert!(history.contains(&"niter       = 5".to_owned()), "{suffix}");
+        assert!(
+            history.contains(&"spw         = \"0\"".to_owned()),
+            "{suffix}"
+        );
+        let info = image.image_info().expect("image info");
+        assert_eq!(info.object_name, "t1", "{suffix}");
+        assert_eq!(
+            info.image_type,
+            casa_images::ImageType::Intensity,
+            "{suffix}"
+        );
+    }
+    run();
+    assert_eq!(
+        open(".image").history().expect("history").len(),
+        2 * first[0]
+    );
+}
