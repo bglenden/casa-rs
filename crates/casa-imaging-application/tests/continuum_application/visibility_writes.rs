@@ -504,3 +504,55 @@ fn final_model_prediction_preserves_continuum_fit_and_residual_writes() {
         }
     }
 }
+
+/// If the separate predictor cannot hold every plane, refuse before the
+/// corrected-data traversal can change the observation.
+#[test]
+fn refused_final_prediction_leaves_both_visibility_columns_unchanged() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = spectral_line_many_row_measurement_set(root.path());
+    let imaging = continuum_subtracted_line(
+        &measurement_set,
+        &root.path().join("refused-prediction"),
+        json!({
+            "imsize": 256, "channel_count": 2, "niter": 1, "nsigma": 0.01,
+            "savemodel": "modelcolumn", "save_continuum_residual": true,
+        }),
+    );
+    let context = RunContext {
+        host: HostResources {
+            threads: 64,
+            performance_cores: 64,
+            available_memory: 1 << 40,
+            metal: false,
+        },
+        ..context_with(ResourcePolicy::Explicit {
+            workers: 4,
+            memory: compile_resident() + (35_000 << 10),
+        })
+    };
+    let Err(error) = casa_imaging_application::execute(&imaging, context) else {
+        panic!("the predictor must refuse when it cannot fit all planes");
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("writing visibilities needs every plane resident"),
+        "{error}"
+    );
+    let reopened = MeasurementSet::open(&measurement_set).expect("reopen the observation");
+    for (column, expected) in [
+        (
+            VisibilityDataColumn::CorrectedData,
+            Complex32::new(21.0, -3.0),
+        ),
+        (VisibilityDataColumn::ModelData, Complex32::new(9.0, 9.0)),
+    ] {
+        let data = reopened.data_column(column).expect("visibility column");
+        let ArrayValue::Complex32(row) = data.get(0).expect("first row") else {
+            panic!("visibility row is complex");
+        };
+        assert_eq!(row[[0, 1]], expected, "{column:?} changed before refusal");
+    }
+}
