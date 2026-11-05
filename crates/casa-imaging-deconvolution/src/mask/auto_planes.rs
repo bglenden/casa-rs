@@ -409,6 +409,7 @@ fn block_beams(
         .map(move |block| {
             let beam = block_beam(
                 &psfs[block.start * polarizations..block.end * polarizations],
+                polarizations,
                 largest,
                 sidelobe,
                 coordinate,
@@ -435,22 +436,28 @@ fn largest_beam(psfs: &[Option<PsfSummary>]) -> Option<RestoringBeam> {
 /// direction axis's increment; the common beam is found in radians.
 fn block_beam(
     psfs: &[Option<PsfSummary>],
+    polarizations: usize,
     largest: Option<RestoringBeam>,
     sidelobe: f64,
     coordinate: DirectionCoordinateSpec,
 ) -> Result<Option<AutoMaskBeam>, MaskError> {
     let cell = coordinate.increment_rad()[0].abs();
     let mut beams = Vec::with_capacity(psfs.len());
-    for summary in psfs {
-        if let Some(beam) = summary.map(|summary| summary.beam()).or(largest) {
-            beams.push(
-                RestoringBeam::new(
-                    beam.major_fwhm_rad() * cell,
-                    beam.minor_fwhm_rad() * cell,
-                    beam.position_angle_rad(),
-                )
-                .map_err(|_| MaskError::InvalidBeamArea)?,
-            );
+    // CASA iterates its channel-by-polarization beam matrix with channel
+    // varying fastest, even though our plane list is channel-major.
+    for polarization in 0..polarizations {
+        for channel in 0..psfs.len() / polarizations {
+            let summary = psfs[channel * polarizations + polarization];
+            if let Some(beam) = summary.map(|summary| summary.beam()).or(largest) {
+                beams.push(
+                    RestoringBeam::new(
+                        beam.major_fwhm_rad() * cell,
+                        beam.minor_fwhm_rad() * cell,
+                        beam.position_angle_rad(),
+                    )
+                    .map_err(|_| MaskError::InvalidBeamArea)?,
+                );
+            }
         }
     }
     if beams.is_empty() {
@@ -622,15 +629,92 @@ mod tests {
         let with_blank = with_blank.unwrap();
         let mut filled = psfs[..10].to_vec();
         filled[1] = Some(broad);
-        let with_explicit_broad = block_beam(&filled, largest, 0.1, coordinate).unwrap();
-        let without_blank = block_beam(&psfs[2..10], largest, 0.1, coordinate).unwrap();
+        let with_explicit_broad = block_beam(&filled, 1, largest, 0.1, coordinate).unwrap();
+        let without_blank = block_beam(&psfs[2..10], 1, largest, 0.1, coordinate).unwrap();
         assert_eq!(with_blank, with_explicit_broad);
         assert_ne!(with_blank, without_blank);
         assert!(
-            block_beam(&[None], None, 0.1, coordinate)
+            block_beam(&[None], 1, None, 0.1, coordinate)
                 .unwrap()
                 .is_none()
         );
+    }
+
+    /// CASA's common-beam iteration visits every channel of a Stokes plane
+    /// before the next Stokes plane, regardless of our plane storage order.
+    #[test]
+    fn a_multistokes_block_uses_casas_beam_matrix_order() {
+        use crate::plane::PlaneShape;
+        use casa_imaging_model::{DirectionFrame, Projection, SkyDirection};
+
+        let shape = PlaneShape::new(64, 64);
+        let psf = (0..shape.len())
+            .map(|index| {
+                let [x, y] = shape.pixel(index);
+                let r2 = (x as f64 - 32.0).powi(2) + (y as f64 - 32.0).powi(2);
+                (-r2 / 8.0).exp()
+            })
+            .collect::<Vec<_>>();
+        let template = PsfSummary::new(&psf, shape).expect("a PSF");
+        let axes = [
+            (
+                0.000_659_920_363_505_466_7,
+                0.000_277_714_375_479_345_24,
+                -1.006_629_886_598_266_8,
+            ),
+            (
+                0.000_489_199_949_523_298_2,
+                0.000_332_711_701_991_262_23,
+                0.534_970_100_282_602_5,
+            ),
+            (
+                0.000_575_668_982_898_358_4,
+                0.000_251_585_111_889_876_9,
+                0.498_537_038_391_696_7,
+            ),
+            (
+                0.000_445_553_375_482_662,
+                0.000_232_902_929_545_132_06,
+                0.677_320_743_101_792_8,
+            ),
+        ];
+        let summaries = axes.map(|(major, minor, pa)| {
+            template.with_domain_beam(&psf, shape, RestoringBeam::new(major, minor, pa).unwrap())
+        });
+        let mut psfs = vec![Some(summaries[3]); 22];
+        psfs[0] = None;
+        psfs[1] = Some(summaries[1]);
+        psfs[2] = Some(summaries[2]);
+        psfs[20] = Some(summaries[0]);
+        let coordinate = DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(DirectionFrame::J2000, 1.0, 0.5),
+            [1.0, 1.0],
+            [-1.0, 1.0],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 90.0],
+        );
+        let mut blocks = block_beams(&psfs, 2, [900, 900], 0.1, coordinate);
+        let (_, actual) = blocks.next().expect("first block");
+        let actual = actual.expect("the block beam");
+        let mut casa_order = Vec::with_capacity(20);
+        for polarization in 0..2 {
+            for channel in 0..10 {
+                casa_order.push(
+                    psfs[channel * 2 + polarization]
+                        .unwrap_or(summaries[0])
+                        .beam(),
+                );
+            }
+        }
+        let expected = RestoringBeam::common_enclosing(&casa_order).unwrap();
+        let expected = AutoMaskBeam::new(
+            expected.major_fwhm_rad(),
+            expected.minor_fwhm_rad(),
+            expected.position_angle_rad(),
+            0.1,
+        );
+        assert_eq!(actual, Some(expected));
     }
 
     #[test]

@@ -64,6 +64,10 @@ impl Error for EllipticalGaussianError {}
 /// Wrap a CASA beam position angle into `(-pi/2, pi/2]`.
 #[must_use]
 pub fn normalize_position_angle(angle: f64) -> f64 {
+    // GaussianBeam::_unwrap returns an already canonical angle unchanged.
+    if angle > -std::f64::consts::FRAC_PI_2 && angle <= std::f64::consts::FRAC_PI_2 {
+        return angle;
+    }
     let mut wrapped = normalize_angle_pi(angle);
     if wrapped <= -std::f64::consts::FRAC_PI_2 {
         wrapped += std::f64::consts::PI;
@@ -154,16 +158,25 @@ fn valid(gaussian: EllipticalGaussian) -> bool {
         && gaussian.major >= gaussian.minor
 }
 
+/// `ImageBeamSet` keeps the first beam when two have the same area.
+fn largest_area(gaussians: &[EllipticalGaussian]) -> Option<(usize, &EllipticalGaussian)> {
+    gaussians
+        .iter()
+        .enumerate()
+        .max_by(|(left_index, lhs), (right_index, rhs)| {
+            lhs.area()
+                .total_cmp(&rhs.area())
+                .then_with(|| right_index.cmp(left_index))
+        })
+}
+
 fn common_enclosing_iterative(
     gaussians: &[EllipticalGaussian],
 ) -> Result<EllipticalGaussian, EllipticalGaussianError> {
     let mut gaussians = gaussians.to_vec();
     loop {
-        let (max_index, &max_gaussian) = gaussians
-            .iter()
-            .enumerate()
-            .max_by(|(_, lhs), (_, rhs)| lhs.area().total_cmp(&rhs.area()))
-            .ok_or(EllipticalGaussianError::EmptySet)?;
+        let (max_index, &max_gaussian) =
+            largest_area(&gaussians).ok_or(EllipticalGaussianError::EmptySet)?;
 
         // CASA skips every beam equal to the largest (`*iBeam != maxBeam`),
         // not only the largest itself: a duplicate (Stokes planes share a
@@ -175,7 +188,7 @@ fn common_enclosing_iterative(
             .enumerate()
             .filter(|(index, gaussian)| *index != max_index && *gaussian != max_gaussian)
             .map(|(_, gaussian)| gaussian)
-            .find(|gaussian| !encloses(max_gaussian, *gaussian));
+            .rfind(|gaussian| !encloses(max_gaussian, *gaussian));
         let Some(problem) = problem else {
             return Ok(max_gaussian);
         };
@@ -204,12 +217,18 @@ fn common_enclosing_iterative(
             ));
         }
 
-        let equal_area_axis = (max_gaussian.major * max_gaussian.minor).sqrt();
-        let x_scale = equal_area_axis / max_gaussian.major;
-        let y_scale = equal_area_axis / max_gaussian.minor;
+        // CASA constructs the enclosing ellipse in arcseconds before its
+        // Gaussian deconvolution checks convert those axes back to radians.
+        let arcseconds_per_radian = 180.0 * 3_600.0 / std::f64::consts::PI;
+        let radians_per_arcsecond = std::f64::consts::PI / (180.0 * 3_600.0);
+        let max_major = max_gaussian.major * arcseconds_per_radian;
+        let max_minor = max_gaussian.minor * arcseconds_per_radian;
+        let equal_area_axis = (max_major * max_minor).sqrt();
+        let x_scale = equal_area_axis / max_major;
+        let y_scale = equal_area_axis / max_minor;
         let (problem_major, _, problem_angle) = transform_ellipse_by_scaling(
-            problem.major,
-            problem.minor,
+            problem.major * arcseconds_per_radian,
+            problem.minor * arcseconds_per_radian,
             relative_angle,
             x_scale,
             y_scale,
@@ -230,13 +249,18 @@ fn common_enclosing_iterative(
         {
             return Err(EllipticalGaussianError::InvalidGaussian);
         }
-        let mut enclosing =
-            EllipticalGaussian::new(major, minor, normalize_position_angle(position_angle));
+        let gaussian = |major, minor| {
+            EllipticalGaussian::new(
+                major * radians_per_arcsecond,
+                minor * radians_per_arcsecond,
+                normalize_position_angle(position_angle),
+            )
+        };
+        let mut enclosing = gaussian(major, minor);
         while !(encloses(enclosing, max_gaussian) && encloses(enclosing, problem)) {
             major *= 1.001;
             minor *= 1.001;
-            enclosing =
-                EllipticalGaussian::new(major, minor, normalize_position_angle(position_angle));
+            enclosing = gaussian(major, minor);
         }
 
         gaussians[max_index] = enclosing;
@@ -370,6 +394,25 @@ fn transform_ellipse_by_scaling(
 mod tests {
     use super::*;
 
+    /// Casacore's `minMax` keeps the first maximum, even when the equal-area
+    /// beams differ in shape and can produce different enclosing ellipses.
+    #[test]
+    fn the_first_equal_area_beam_is_the_maximum() {
+        let beams = [
+            EllipticalGaussian::new(4.0, 2.0, 0.0),
+            EllipticalGaussian::new(8.0, 1.0, 0.0),
+        ];
+        assert_eq!(largest_area(&beams).map(|(index, _)| index), Some(0));
+    }
+
+    /// GaussianBeam::_unwrap leaves an angle inside its canonical interval
+    /// unchanged, avoiding a lossy round trip through a full turn.
+    #[test]
+    fn canonical_position_angles_are_left_unchanged() {
+        let angle = -0.349_065_850_398_865_9;
+        assert_eq!(normalize_position_angle(angle), angle);
+    }
+
     #[test]
     fn common_envelope_reuses_one_working_set_for_many_planes() {
         let pair = [
@@ -379,6 +422,56 @@ mod tests {
         let expected = common_enclosing_gaussian(&pair).unwrap();
         let repeated = pair.into_iter().cycle().take(16_384).collect::<Vec<_>>();
         assert_eq!(common_enclosing_gaussian(&repeated).unwrap(), expected);
+    }
+
+    /// CASA 6.7.6.14 `image.commonbeam()` for a 10-channel, two-Stokes
+    /// image with a blank PSF replaced by the image's largest beam. CASA's
+    /// beam matrix visits channels first within each polarization.
+    #[test]
+    fn common_envelope_matches_casas_multistokes_beam_matrix() {
+        let values = [
+            (
+                0.000_659_920_363_505_466_7,
+                0.000_277_714_375_479_345_24,
+                -1.006_629_886_598_266_8,
+            ),
+            (
+                0.000_489_199_949_523_298_2,
+                0.000_332_711_701_991_262_23,
+                0.534_970_100_282_602_5,
+            ),
+            (
+                0.000_575_668_982_898_358_4,
+                0.000_251_585_111_889_876_9,
+                0.498_537_038_391_696_7,
+            ),
+            (
+                0.000_445_553_375_482_662,
+                0.000_232_902_929_545_132_06,
+                0.677_320_743_101_792_8,
+            ),
+        ];
+        let beams = values.map(|(major, minor, pa)| EllipticalGaussian::new(major, minor, pa));
+        let mut channel_major = vec![beams[0], beams[1], beams[2], beams[3]];
+        channel_major.extend([beams[3]; 16]);
+        let matrix = (0..2)
+            .flat_map(|pol| (0..10).map(move |channel| channel * 2 + pol))
+            .map(|index| channel_major[index])
+            .collect::<Vec<_>>();
+        let common = common_enclosing_gaussian(&matrix).expect("a common beam");
+        let arcsec = std::f64::consts::PI / (180.0 * 3_600.0);
+        assert!(
+            (common.major / arcsec - 137.588_692_242_4).abs() < 1.0e-4,
+            "{common:?}"
+        );
+        assert!(
+            (common.minor / arcsec - 118.268_296_464_4).abs() < 1.0e-4,
+            "{common:?}"
+        );
+        assert!(
+            (common.position_angle.to_degrees() + 49.863_390_056_5).abs() < 1.0e-4,
+            "{common:?}"
+        );
     }
 
     #[test]
