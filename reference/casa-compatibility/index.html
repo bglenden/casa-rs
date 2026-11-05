@@ -1745,6 +1745,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#common-beam-platform-20261105" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        common-beam-platform-20261105
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#blank-mask-beam-20261105" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        blank-mask-beam-20261105
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#joint-clark-20261104" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2447,6 +2469,17 @@
     <span class="md-ellipsis">
       
         trigonometry-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logarithms-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        logarithms-casa
       
     </span>
   </a>
@@ -5254,6 +5287,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#common-beam-platform-20261105" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        common-beam-platform-20261105
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#blank-mask-beam-20261105" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        blank-mask-beam-20261105
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#joint-clark-20261104" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5956,6 +6011,17 @@
     <span class="md-ellipsis">
       
         trigonometry-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#logarithms-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        logarithms-casa
       
     </span>
   </a>
@@ -8687,7 +8753,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'hogbom'</code>; <code>deconvolver</code> → <code>deconvolver</code></td>
 <td>Partial</td>
 <td>hogbom/clark/multiscale/mtmfs pass; asp refused with issue 223; other CASA algorithms refused with issue 823. mtmfs with specmode cube or cubedata is refused, as CASA's tclean warns and images nothing. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>asp</code>, <code>clark</code>, <code>clark_exp</code>, <code>clarkstokes</code>, <code>clarkstokes_exp</code>, <code>hogbom</code>, <code>mem</code>, <code>mtmfs</code>, <code>multiscale</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-mtmfs-nterms1-polarized-20261103">mtmfs-nterms1-polarized-20261103</a>, <a href="#tclean-evidence-mtmfs-polarized-review-20261103">mtmfs-polarized-review-20261103</a></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-mtmfs-nterms1-polarized-20261103">mtmfs-nterms1-polarized-20261103</a>, <a href="#tclean-evidence-mtmfs-polarized-review-20261103">mtmfs-polarized-review-20261103</a>, <a href="#tclean-evidence-blank-mask-beam-20261105">blank-mask-beam-20261105</a>, <a href="#tclean-evidence-common-beam-platform-20261105">common-beam-platform-20261105</a></td>
 </tr>
 <tr>
 <td><code>scales</code></td>
@@ -8831,7 +8897,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>0.0</code>; <code>nsigma</code> → <code>nsigma</code></td>
 <td>Implemented</td>
 <td>Copied; request requires non-negative value. The noise is SIImageStore::calcRobustRMS's: of the pixels where the .pb exceeds pbmask, so at pbmask 0 inside the primary beam above |pblimit| (the weight image's under a response, the telescope's analytic beam otherwise, #1078), or of every valid pixel of an image the beam leaves none of above pbmask (CAS-13318). Under auto-multithresh the threshold takes the automatic mask's median and noise. A run without a .pb (casa-rs's write_pb=False and pbcor=False) measures every valid pixel. <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>float</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-pb-statistics-20261103">pb-statistics-20261103</a>, <a href="#tclean-evidence-pb-masks-20261103">pb-masks-20261103</a></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-pb-statistics-20261103">pb-statistics-20261103</a>, <a href="#tclean-evidence-pb-masks-20261103">pb-masks-20261103</a>, <a href="#tclean-evidence-blank-mask-beam-20261105">blank-mask-beam-20261105</a>, <a href="#tclean-evidence-common-beam-platform-20261105">common-beam-platform-20261105</a></td>
 </tr>
 <tr>
 <td><code>cycleniter</code></td>
@@ -8894,7 +8960,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'user'</code></td>
 <td><code>'user'</code>; <code>usemask</code> → <code>usemask</code></td>
 <td>Implemented</td>
-<td>user, pb and auto-multithresh pass; controls whether user mask is read. usemask='pb' keeps, in every channel and polarization, the pixels whose .pb exceeds pbmask (SDMaskHandler::makePBMask), formed once at the first boundary from the weight image's beam under a response and the telescope's analytic beam otherwise; mask is not read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold plane by plane, every channel and Stokes plane of its own: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube is masked in tclean's serial channel blocks, each smoothed by the common beam of its planes' PSF beams, every plane thresholded by the image's PSF sidelobe level, and a channel's planes stop together (skipChannels); a plane with no data keeps its mask. Its statistics, peak, pruned regions and support read only the pixels the residual's pixel mask keeps, the .pb's above pblimit where pblimit is not negative (SDMaskHandler::autoMask, #1079), for every gridder: the weight image's beam under a response, the telescope's analytic beam otherwise. At the first boundary of a run with nsigma its median and noise are calcRobustRMS's, inside the .pb above pbmask. Under a pbmask above zero its pixel mask is pb &gt; pbmask, whatever pblimit's sign, which also bounds the mask it makes (SDMaskHandler::autoMaskWithinPB). <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>auto-multithresh</code>, <code>pb</code>, <code>user</code></td>
+<td>user, pb and auto-multithresh pass; controls whether user mask is read. usemask='pb' keeps, in every channel and polarization, the pixels whose .pb exceeds pbmask (SDMaskHandler::makePBMask), formed once at the first boundary from the weight image's beam under a response and the telescope's analytic beam otherwise; mask is not read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold plane by plane, every channel and Stokes plane of its own: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube is masked in tclean's serial channel blocks, each smoothed by the common beam of its planes' PSF beams after blank PSFs inherit the largest fitted beam in the full image domain, even across blocks; every plane thresholded by the image's PSF sidelobe level, and a channel's planes stop together (skipChannels); a plane with no data keeps its mask. Its statistics, peak, pruned regions and support read only the pixels the residual's pixel mask keeps, the .pb's above pblimit where pblimit is not negative (SDMaskHandler::autoMask, #1079), for every gridder: the weight image's beam under a response, the telescope's analytic beam otherwise. At the first boundary of a run with nsigma its median and noise are calcRobustRMS's, inside the .pb above pbmask. Under a pbmask above zero its pixel mask is pb &gt; pbmask, whatever pblimit's sign, which also bounds the mask it makes (SDMaskHandler::autoMaskWithinPB). <a href="#tclean-behavior-deconvolution">deconvolution</a><br>Catalog domain: <code>auto-multithresh</code>, <code>pb</code>, <code>user</code></td>
 <td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-pb-statistics-20261103">pb-statistics-20261103</a>, <a href="#tclean-evidence-pb-masks-20261103">pb-masks-20261103</a></td>
 </tr>
 <tr>
@@ -9677,6 +9743,29 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Command: <code>tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with tclean-casa-test-cases.json (#1065's 14 cases, --include-skipped) and tclean-mtmfs-polarized-cases.json</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-mtmfs-polarized-review-20261103.json</code>.</li>
 </ul>
+<p><a id="tclean-evidence-common-beam-platform-20261105"></a></p>
+<h5 id="common-beam-platform-20261105">common-beam-platform-20261105<a class="headerlink" href="#common-beam-platform-20261105" title="Permanent link">&para;</a></h5>
+<p><strong>Common-beam quantity conversion against CASA on macOS and Linux — measured: source-confirmed conversion matches CASA references on both platforms.</strong> The enclosing ellipse uses casacore Quantum::getValue's division by the unit ratio. Separate CASA cases on both platforms verify that division order and arcsecond construction, and each law fails its targeted mutation on both. One other CASA result differs between platforms because of its iterative floating-point enclosure; the native result is compared with the local platform's CASA.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/585223403b91d078a938c33450bc057f12a19110/resources/casa-compat/evidence/tclean-common-beam-cross-platform-1140-20261105.json">resources/casa-compat/evidence/tclean-common-beam-cross-platform-1140-20261105.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/585223403b91d078a938c33450bc057f12a19110/crates/casa-numerics/src/elliptical_gaussian.rs">crates/casa-numerics/src/elliptical_gaussian.rs</a></li>
+<li>Revision: <code>a6ca516704cac66508d43ac56494c75268ed8c37</code>; CASA: <code>casatools 6.7.6.14</code>.</li>
+<li>Command: <code>Run image.commonbeam on the recorded synthetic beam sets on macOS arm64 and Linux x86_64; mutate the unit-conversion laws on each platform</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-common-beam-cross-platform-1140-20261105.json</code>.</li>
+</ul>
+<p><a id="tclean-evidence-blank-mask-beam-20261105"></a></p>
+<h5 id="blank-mask-beam-20261105">blank-mask-beam-20261105<a class="headerlink" href="#blank-mask-beam-20261105" title="Permanent link">&para;</a></h5>
+<p><strong>Blank PSF beams and common-beam automasking against CASA — measured: full 11-channel CASA and native mask cubes match; the parent differs.</strong> Blank PSF planes inherit the largest fitted beam from the full image domain before a channel block finds its common beam. CASA and native match all 8,910,000 mask pixels in the cross-block restart; the parent differs at 177. CASA common-beam matrix order and ellipse construction are tested, including polarized and unit-sensitive cases. A fresh T1.5 case and representative T2 numerical comparison pass; T2 raw beam metadata differs from CASA within tolerance and is unchanged from the parent. Issue 1140 records the review and mutation proofs.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/6d7093f861c0371230d6b9727fd75604ad3ec372/resources/casa-compat/evidence/tclean-blank-mask-beam-1140-20261105.json">resources/casa-compat/evidence/tclean-blank-mask-beam-1140-20261105.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/6d7093f861c0371230d6b9727fd75604ad3ec372/crates/casa-imaging-deconvolution/src/mask/auto_planes.rs">crates/casa-imaging-deconvolution/src/mask/auto_planes.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/6d7093f861c0371230d6b9727fd75604ad3ec372/crates/casa-numerics/src/elliptical_gaussian.rs">crates/casa-numerics/src/elliptical_gaussian.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/6d7093f861c0371230d6b9727fd75604ad3ec372/crates/casa-images/src/beam.rs">crates/casa-images/src/beam.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/6d7093f861c0371230d6b9727fd75604ad3ec372/crates/casa-imaging-deconvolution/tests/auto_mask_memory.rs">crates/casa-imaging-deconvolution/tests/auto_mask_memory.rs</a></li>
+<li>Revision: <code>cd462a3b4e61e809b59a9049b7dba43dbef79b66</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>Synthetic 900x900x11 automask restart and representative T1.5 and T2 comparisons, recorded on issue 1140 and in the receipt</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-blank-mask-beam-1140-20261105.json</code>.</li>
+</ul>
 <p><a id="tclean-evidence-joint-clark-20261104"></a></p>
 <h5 id="joint-clark-20261104">joint-clark-20261104<a class="headerlink" href="#joint-clark-20261104" title="Permanent link">&para;</a></h5>
 <p><strong>Joint Clark polarization components, rows and image products against CASA — measured: five of five I, IV, IQUV and blank-channel cases pass.</strong> Clark selects and updates a joint polarization vector in each channel, including blank channels and blank polarizations. Five CASA-paired cases pass products, selected scalars and iteration counts; synthetic restarts check component selection, masks and start-model flux. A fresh T1.5 Clark case and representative T2 numerical comparison pass; the T2 raw beam metadata differs from CASA within measured tolerances and is unchanged from the parent. Issue 1140 records the review and mutation proofs.</p>
@@ -9861,9 +9950,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">57</td>
 <td>yes</td>
-<td style="text-align: right;">35</td>
+<td style="text-align: right;">38</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">22</td>
+<td style="text-align: right;">19</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10950,7 +11039,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="quanta">quanta<a class="headerlink" href="#quanta" title="Permanent link">&para;</a></h3>
 <h4 id="quanta-method-implementation">quanta method implementation<a class="headerlink" href="#quanta-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 35, Partial: 0, Not implemented: 22, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 38, Partial: 0, Not implemented: 19, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -11119,9 +11208,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>exp</code></td>
 <td><code>v=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-logarithms-casa">logarithms-casa</a></td>
 </tr>
 <tr>
 <td><code>fits</code></td>
@@ -11203,16 +11292,16 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>log</code></td>
 <td><code>v=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-logarithms-casa">logarithms-casa</a></td>
 </tr>
 <tr>
 <td><code>log10</code></td>
 <td><code>v=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-logarithms-casa">logarithms-casa</a></td>
 </tr>
 <tr>
 <td><code>lt</code></td>
@@ -11439,6 +11528,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad/tools/simulation/quanta_trigonometry_oracle.py">tools/simulation/quanta_trigonometry_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad/crates/casars-python/python/tests/data/casa_quanta_trigonometry.json">crates/casars-python/python/tests/data/casa_quanta_trigonometry.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad/crates/casars-python/python/tests/test_tools_quanta.py">crates/casars-python/python/tests/test_tools_quanta.py</a></li>
+</ul>
+<p><a id="quanta-evidence-logarithms-casa"></a></p>
+<h5 id="logarithms-casa">logarithms-casa<a class="headerlink" href="#logarithms-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 57 CASA 6.7.6-14 cases cover dimensionless and scaled inputs, units, non-finite results and errors for all three functions. quanta.exp, log and log10.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/83c3308ca779c3ca84f29d47fa4203e2f7ae5a50/tools/simulation/quanta_logarithms_oracle.py">tools/simulation/quanta_logarithms_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/83c3308ca779c3ca84f29d47fa4203e2f7ae5a50/crates/casars-python/python/tests/data/casa_quanta_logarithms.json">crates/casars-python/python/tests/data/casa_quanta_logarithms.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/83c3308ca779c3ca84f29d47fa4203e2f7ae5a50/crates/casars-python/python/tests/test_tools_quanta.py">crates/casars-python/python/tests/test_tools_quanta.py</a></li>
 </ul>
 <h3 id="simulator">simulator<a class="headerlink" href="#simulator" title="Permanent link">&para;</a></h3>
 <h4 id="simulator-method-implementation">simulator method implementation<a class="headerlink" href="#simulator-method-implementation" title="Permanent link">&para;</a></h4>

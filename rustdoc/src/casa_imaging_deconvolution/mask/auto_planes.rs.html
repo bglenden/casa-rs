@@ -14,8 +14,8 @@
 <a href=#14 id=14 data-nosnippet>14</a>//! * the beam its masks are smoothed and pruned by: the common beam of the
 <a href=#15 id=15 data-nosnippet>15</a>//!   block's PSF beams (`CasaImageBeamSet::getCommonBeam`), each CASA's fit
 <a href=#16 id=16 data-nosnippet>16</a>//!   of its plane's PSF. A plane with no data holds the largest beam of
-<a href=#17 id=17 data-nosnippet>17</a>//!   the set (`SIImageStore::makeImageBeamSet`), which leaves the common
-<a href=#18 id=18 data-nosnippet>18</a>//!   beam as it is;
+<a href=#17 id=17 data-nosnippet>17</a>//!   the whole image domain (`SIImageStore::makeImageBeamSet`), even when that
+<a href=#18 id=18 data-nosnippet>18</a>//!   beam belongs to a different channel block;
 <a href=#19 id=19 data-nosnippet>19</a>//! * whether its robust noise ignores the mask: when the inherited mask
 <a href=#20 id=20 data-nosnippet>20</a>//!   covers the block's whole first plane, every plane of the block takes
 <a href=#21 id=21 data-nosnippet>21</a>//!   Chauvenet statistics (`calcRobustImageStatistics`).
@@ -281,279 +281,540 @@
 <a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(MaskError::ShapeMismatch.into());
 <a href=#282 id=282 data-nosnippet>282</a>    }
 <a href=#283 id=283 data-nosnippet>283</a>    <span class="kw">let </span>polarizations = planes.polarizations();
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span>psfs = (<span class="number">0</span>..planes.channels())
-<a href=#285 id=285 data-nosnippet>285</a>        .flat_map(|channel| {
-<a href=#286 id=286 data-nosnippet>286</a>            (<span class="number">0</span>..polarizations).map(<span class="kw">move </span>|polarization| MaskPlaneKey {
-<a href=#287 id=287 data-nosnippet>287</a>                domain,
-<a href=#288 id=288 data-nosnippet>288</a>                channel,
-<a href=#289 id=289 data-nosnippet>289</a>                polarization,
-<a href=#290 id=290 data-nosnippet>290</a>            })
-<a href=#291 id=291 data-nosnippet>291</a>        })
-<a href=#292 id=292 data-nosnippet>292</a>        .map(source.psf)
-<a href=#293 id=293 data-nosnippet>293</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">let </span>sidelobe = psfs
-<a href=#295 id=295 data-nosnippet>295</a>        .iter()
-<a href=#296 id=296 data-nosnippet>296</a>        .flatten()
-<a href=#297 id=297 data-nosnippet>297</a>        .map(PsfSummary::sidelobe)
-<a href=#298 id=298 data-nosnippet>298</a>        .fold(<span class="number">0.0_f64</span>, f64::max);
-<a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">let </span>nothing = <span class="macro">vec!</span>[<span class="bool-val">false</span>; cells];
-<a href=#300 id=300 data-nosnippet>300</a>    <span class="comment">// One allocation each, written in place: the support is shared as it
-<a href=#301 id=301 data-nosnippet>301</a>    // is by the mask (a trusted-length iterator collects into the `Arc`
-<a href=#302 id=302 data-nosnippet>302</a>    // without a staging copy).
-<a href=#303 id=303 data-nosnippet>303</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>support = (<span class="number">0</span>..planes.count() * cells)
-<a href=#304 id=304 data-nosnippet>304</a>        .map(|<span class="kw">_</span>| <span class="bool-val">false</span>)
-<a href=#305 id=305 data-nosnippet>305</a>        .collect::&lt;Arc&lt;[bool]&gt;&gt;();
-<a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="macro">vec!</span>[UNMASKED; planes.count()];
-<a href=#307 id=307 data-nosnippet>307</a>    <span class="kw">let </span>slots = Arc::get_mut(<span class="kw-2">&amp;mut </span>support).expect(<span class="string">"a support no one else holds yet"</span>);
-<a href=#308 id=308 data-nosnippet>308</a>    <span class="kw">let </span>per_channel = polarizations * cells;
-<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">for </span>block <span class="kw">in </span>channel_blocks(planes.channels(), shape) {
-<a href=#310 id=310 data-nosnippet>310</a>        <span class="kw">let </span>masking = Block {
-<a href=#311 id=311 data-nosnippet>311</a>            state,
-<a href=#312 id=312 data-nosnippet>312</a>            source,
-<a href=#313 id=313 data-nosnippet>313</a>            domain,
-<a href=#314 id=314 data-nosnippet>314</a>            shape,
-<a href=#315 id=315 data-nosnippet>315</a>            polarizations,
-<a href=#316 id=316 data-nosnippet>316</a>            beam: block_beam(
-<a href=#317 id=317 data-nosnippet>317</a>                <span class="kw-2">&amp;</span>psfs[block.start * polarizations..block.end * polarizations],
-<a href=#318 id=318 data-nosnippet>318</a>                sidelobe,
-<a href=#319 id=319 data-nosnippet>319</a>                state.coordinate,
-<a href=#320 id=320 data-nosnippet>320</a>            )<span class="question-mark">?</span>,
-<a href=#321 id=321 data-nosnippet>321</a>            first_plane_full: state
-<a href=#322 id=322 data-nosnippet>322</a>                .previous
-<a href=#323 id=323 data-nosnippet>323</a>                .and_then(|mask| mask.plane(block.start, <span class="number">0</span>))
-<a href=#324 id=324 data-nosnippet>324</a>                .is_some_and(|plane| plane.iter().all(|set| <span class="kw-2">*</span>set)),
-<a href=#325 id=325 data-nosnippet>325</a>            nothing: <span class="kw-2">&amp;</span>nothing,
-<a href=#326 id=326 data-nosnippet>326</a>        };
-<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">let </span>block_support = <span class="kw-2">&amp;mut </span>slots[block.start * per_channel..block.end * per_channel];
-<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw">let </span>block_rows = <span class="kw-2">&amp;mut </span>rows[block.start * polarizations..block.end * polarizations];
-<a href=#329 id=329 data-nosnippet>329</a>        <span class="kw">let </span>positive = <span class="kw">if </span>source.workers &gt; <span class="number">1 </span>{
-<a href=#330 id=330 data-nosnippet>330</a>            block_support
-<a href=#331 id=331 data-nosnippet>331</a>                .par_chunks_mut(per_channel)
-<a href=#332 id=332 data-nosnippet>332</a>                .zip(block_rows.par_chunks_mut(polarizations))
-<a href=#333 id=333 data-nosnippet>333</a>                .zip(block.clone().into_par_iter())
-<a href=#334 id=334 data-nosnippet>334</a>                .map(|((support, rows), channel)| {
-<a href=#335 id=335 data-nosnippet>335</a>                    masking.channel(ChannelSlots {
-<a href=#336 id=336 data-nosnippet>336</a>                        channel,
-<a href=#337 id=337 data-nosnippet>337</a>                        support,
-<a href=#338 id=338 data-nosnippet>338</a>                        rows,
-<a href=#339 id=339 data-nosnippet>339</a>                    })
-<a href=#340 id=340 data-nosnippet>340</a>                })
-<a href=#341 id=341 data-nosnippet>341</a>                .try_reduce(|| <span class="bool-val">false</span>, |left, right| <span class="prelude-val">Ok</span>(left || right))<span class="question-mark">?
-<a href=#342 id=342 data-nosnippet>342</a>        </span>} <span class="kw">else </span>{
-<a href=#343 id=343 data-nosnippet>343</a>            <span class="kw">let </span><span class="kw-2">mut </span>positive = <span class="bool-val">false</span>;
-<a href=#344 id=344 data-nosnippet>344</a>            <span class="kw">for </span>((support, rows), channel) <span class="kw">in </span>block_support
-<a href=#345 id=345 data-nosnippet>345</a>                .chunks_mut(per_channel)
-<a href=#346 id=346 data-nosnippet>346</a>                .zip(block_rows.chunks_mut(polarizations))
-<a href=#347 id=347 data-nosnippet>347</a>                .zip(block.clone())
-<a href=#348 id=348 data-nosnippet>348</a>            {
-<a href=#349 id=349 data-nosnippet>349</a>                positive |= masking.channel(ChannelSlots {
-<a href=#350 id=350 data-nosnippet>350</a>                    channel,
-<a href=#351 id=351 data-nosnippet>351</a>                    support,
-<a href=#352 id=352 data-nosnippet>352</a>                    rows,
-<a href=#353 id=353 data-nosnippet>353</a>                })<span class="question-mark">?</span>;
-<a href=#354 id=354 data-nosnippet>354</a>            }
-<a href=#355 id=355 data-nosnippet>355</a>            positive
-<a href=#356 id=356 data-nosnippet>356</a>        };
-<a href=#357 id=357 data-nosnippet>357</a>        report_block(
-<a href=#358 id=358 data-nosnippet>358</a>            state,
-<a href=#359 id=359 data-nosnippet>359</a>            block.start,
-<a href=#360 id=360 data-nosnippet>360</a>            <span class="kw-2">&amp;</span>rows[block.start * polarizations..block.end * polarizations],
-<a href=#361 id=361 data-nosnippet>361</a>            positive,
-<a href=#362 id=362 data-nosnippet>362</a>            polarizations,
-<a href=#363 id=363 data-nosnippet>363</a>        );
-<a href=#364 id=364 data-nosnippet>364</a>    }
-<a href=#365 id=365 data-nosnippet>365</a>    <span class="prelude-val">Ok</span>((
-<a href=#366 id=366 data-nosnippet>366</a>        ReconstructionMask::from_plane_support(state.coordinate, shape, planes, support)<span class="question-mark">?</span>,
-<a href=#367 id=367 data-nosnippet>367</a>        AutoMaskEvidence {
-<a href=#368 id=368 data-nosnippet>368</a>            polarizations,
-<a href=#369 id=369 data-nosnippet>369</a>            planes: rows.into_boxed_slice(),
-<a href=#370 id=370 data-nosnippet>370</a>        },
-<a href=#371 id=371 data-nosnippet>371</a>    ))
-<a href=#372 id=372 data-nosnippet>372</a>}
-<a href=#373 id=373 data-nosnippet>373</a>
-<a href=#374 id=374 data-nosnippet>374</a><span class="doccomment">/// The blocks of channels tclean masks a cube in on one process
-<a href=#375 id=375 data-nosnippet>375</a>/// (`SynthesisDeconvolver::numblockchans`): blocks of `8e6` pixels divided
-<a href=#376 id=376 data-nosnippet>376</a>/// by the plane's, at least ten channels, or the whole cube when it has no
-<a href=#377 id=377 data-nosnippet>377</a>/// more channels than that; the last block holds what remains.
-<a href=#378 id=378 data-nosnippet>378</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>channel_blocks(channels: usize, shape: [usize; <span class="number">2</span>]) -&gt; Vec&lt;Range&lt;usize&gt;&gt; {
-<a href=#379 id=379 data-nosnippet>379</a>    <span class="kw">let </span>optimum = ((<span class="number">8.0e6 </span>/ shape[<span class="number">0</span>] <span class="kw">as </span>f64 / shape[<span class="number">1</span>] <span class="kw">as </span>f64) <span class="kw">as </span>usize).max(<span class="number">10</span>);
-<a href=#380 id=380 data-nosnippet>380</a>    <span class="kw">let </span>size = <span class="kw">if </span>channels &gt; optimum {
-<a href=#381 id=381 data-nosnippet>381</a>        optimum
-<a href=#382 id=382 data-nosnippet>382</a>    } <span class="kw">else </span>{
-<a href=#383 id=383 data-nosnippet>383</a>        channels
-<a href=#384 id=384 data-nosnippet>384</a>    }
-<a href=#385 id=385 data-nosnippet>385</a>    .max(<span class="number">1</span>);
-<a href=#386 id=386 data-nosnippet>386</a>    (<span class="number">0</span>..channels)
-<a href=#387 id=387 data-nosnippet>387</a>        .step_by(size)
-<a href=#388 id=388 data-nosnippet>388</a>        .map(|start| start..(start + size).min(channels))
-<a href=#389 id=389 data-nosnippet>389</a>        .collect()
-<a href=#390 id=390 data-nosnippet>390</a>}
-<a href=#391 id=391 data-nosnippet>391</a>
-<a href=#392 id=392 data-nosnippet>392</a><span class="doccomment">/// The beam a block's masks are smoothed and pruned by, with the image's
-<a href=#393 id=393 data-nosnippet>393</a>/// sidelobe level: the common beam of its planes' PSF beams; `None` when no
-<a href=#394 id=394 data-nosnippet>394</a>/// plane of the block has data. CASA converts the beam to pixels by the
-<a href=#395 id=395 data-nosnippet>395</a>/// first direction axis's increment; the common beam is found in radians,
-<a href=#396 id=396 data-nosnippet>396</a>/// as for restoration.
-<a href=#397 id=397 data-nosnippet>397</a></span><span class="kw">fn </span>block_beam(
-<a href=#398 id=398 data-nosnippet>398</a>    psfs: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;PsfSummary&gt;],
-<a href=#399 id=399 data-nosnippet>399</a>    sidelobe: f64,
-<a href=#400 id=400 data-nosnippet>400</a>    coordinate: DirectionCoordinateSpec,
-<a href=#401 id=401 data-nosnippet>401</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;AutoMaskBeam&gt;, MaskError&gt; {
-<a href=#402 id=402 data-nosnippet>402</a>    <span class="kw">let </span>cell = coordinate.increment_rad()[<span class="number">0</span>].abs();
-<a href=#403 id=403 data-nosnippet>403</a>    <span class="kw">let </span>beams = psfs
-<a href=#404 id=404 data-nosnippet>404</a>        .iter()
-<a href=#405 id=405 data-nosnippet>405</a>        .flatten()
-<a href=#406 id=406 data-nosnippet>406</a>        .map(|summary| {
-<a href=#407 id=407 data-nosnippet>407</a>            <span class="kw">let </span>beam = summary.beam();
-<a href=#408 id=408 data-nosnippet>408</a>            RestoringBeam::new(
-<a href=#409 id=409 data-nosnippet>409</a>                beam.major_fwhm_rad() * cell,
-<a href=#410 id=410 data-nosnippet>410</a>                beam.minor_fwhm_rad() * cell,
-<a href=#411 id=411 data-nosnippet>411</a>                beam.position_angle_rad(),
-<a href=#412 id=412 data-nosnippet>412</a>            )
-<a href=#413 id=413 data-nosnippet>413</a>        })
-<a href=#414 id=414 data-nosnippet>414</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
-<a href=#415 id=415 data-nosnippet>415</a>        .map_err(|<span class="kw">_</span>| MaskError::InvalidBeamArea)<span class="question-mark">?</span>;
-<a href=#416 id=416 data-nosnippet>416</a>    <span class="kw">if </span>beams.is_empty() {
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-<a href=#418 id=418 data-nosnippet>418</a>    }
-<a href=#419 id=419 data-nosnippet>419</a>    <span class="kw">let </span>common = RestoringBeam::common_enclosing(<span class="kw-2">&amp;</span>beams).map_err(|<span class="kw">_</span>| MaskError::InvalidBeamArea)<span class="question-mark">?</span>;
-<a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">let </span>beam = AutoMaskBeam::new(
-<a href=#421 id=421 data-nosnippet>421</a>        common.major_fwhm_rad() / cell,
-<a href=#422 id=422 data-nosnippet>422</a>        common.minor_fwhm_rad() / cell,
-<a href=#423 id=423 data-nosnippet>423</a>        common.position_angle_rad(),
-<a href=#424 id=424 data-nosnippet>424</a>        sidelobe,
-<a href=#425 id=425 data-nosnippet>425</a>    );
-<a href=#426 id=426 data-nosnippet>426</a>    validate_beam(<span class="kw-2">&amp;</span>beam)<span class="question-mark">?</span>;
-<a href=#427 id=427 data-nosnippet>427</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(beam))
-<a href=#428 id=428 data-nosnippet>428</a>}
-<a href=#429 id=429 data-nosnippet>429</a>
-<a href=#430 id=430 data-nosnippet>430</a><span class="doccomment">/// What tclean logs of one block's mask, its `rows` channel-major from
-<a href=#431 id=431 data-nosnippet>431</a>/// channel `first`: at the first boundary its warnings
-<a href=#432 id=432 data-nosnippet>432</a>/// (`autoMaskByMultiThreshold`, `noMaskCheck`) when it added no positive
-<a href=#433 id=433 data-nosnippet>433</a>/// region, and with `verbose` CASA's automask summary, a row per channel
-<a href=#434 id=434 data-nosnippet>434</a>/// (`printAutomaskSummary`).
-<a href=#435 id=435 data-nosnippet>435</a></span><span class="kw">fn </span>report_block(
-<a href=#436 id=436 data-nosnippet>436</a>    state: <span class="kw-2">&amp;</span>AutoMaskState&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#437 id=437 data-nosnippet>437</a>    first: usize,
-<a href=#438 id=438 data-nosnippet>438</a>    rows: <span class="kw-2">&amp;</span>[AutoMultithreshEvidence],
-<a href=#439 id=439 data-nosnippet>439</a>    positive: bool,
-<a href=#440 id=440 data-nosnippet>440</a>    polarizations: usize,
-<a href=#441 id=441 data-nosnippet>441</a>) {
-<a href=#442 id=442 data-nosnippet>442</a>    <span class="kw">let </span>channels = rows.len() / polarizations;
-<a href=#443 id=443 data-nosnippet>443</a>    <span class="kw">if </span>state.completed_major_cycles == <span class="number">0 </span>{
-<a href=#444 id=444 data-nosnippet>444</a>        <span class="kw">if </span>state.controls.cut_threshold &gt;= <span class="number">0.2 </span>{
-<a href=#445 id=445 data-nosnippet>445</a>            <span class="macro">tracing::warn!</span>(
-<a href=#446 id=446 data-nosnippet>446</a>                <span class="string">"Faint regions may not be included in the final mask. Consider decreasing \
-<a href=#447 id=447 data-nosnippet>447</a>                 cutthreshold."
-<a href=#448 id=448 data-nosnippet>448</a>            </span>);
-<a href=#449 id=449 data-nosnippet>449</a>        }
-<a href=#450 id=450 data-nosnippet>450</a>        <span class="kw">if </span>!positive {
-<a href=#451 id=451 data-nosnippet>451</a>            warn_no_regions(rows);
-<a href=#452 id=452 data-nosnippet>452</a>            <span class="kw">let </span>pruned = rows
-<a href=#453 id=453 data-nosnippet>453</a>                .iter()
-<a href=#454 id=454 data-nosnippet>454</a>                .filter(|row| row.regions &gt; <span class="number">0 </span>&amp;&amp; row.pruned_regions == row.regions)
-<a href=#455 id=455 data-nosnippet>455</a>                .count();
-<a href=#456 id=456 data-nosnippet>456</a>            <span class="kw">if </span>pruned &gt; <span class="number">0 </span>{
-<a href=#457 id=457 data-nosnippet>457</a>                <span class="macro">tracing::warn!</span>(
-<a href=#458 id=458 data-nosnippet>458</a>                    <span class="string">"{pruned} of {channels} channels had all regions removed by pruning. Try \
-<a href=#459 id=459 data-nosnippet>459</a>                     decreasing minbeamfrac to remove fewer regions"
-<a href=#460 id=460 data-nosnippet>460</a>                </span>);
-<a href=#461 id=461 data-nosnippet>461</a>            }
-<a href=#462 id=462 data-nosnippet>462</a>        }
-<a href=#463 id=463 data-nosnippet>463</a>    }
-<a href=#464 id=464 data-nosnippet>464</a>    <span class="kw">if </span>state.controls.verbose {
-<a href=#465 id=465 data-nosnippet>465</a>        log_summary(first, rows, polarizations);
-<a href=#466 id=466 data-nosnippet>466</a>    }
-<a href=#467 id=467 data-nosnippet>467</a>}
-<a href=#468 id=468 data-nosnippet>468</a>
-<a href=#469 id=469 data-nosnippet>469</a><span class="doccomment">/// `SDMaskHandler::noMaskCheck` of a block whose positive mask is empty.
-<a href=#470 id=470 data-nosnippet>470</a></span><span class="kw">fn </span>warn_no_regions(rows: <span class="kw-2">&amp;</span>[AutoMultithreshEvidence]) {
-<a href=#471 id=471 data-nosnippet>471</a>    <span class="macro">tracing::warn!</span>(<span class="string">"No regions found by automasking"</span>);
-<a href=#472 id=472 data-nosnippet>472</a>    <span class="kw">let </span>[first, ..] = rows <span class="kw">else </span>{
-<a href=#473 id=473 data-nosnippet>473</a>        <span class="kw">return</span>;
-<a href=#474 id=474 data-nosnippet>474</a>    };
-<a href=#475 id=475 data-nosnippet>475</a>    <span class="kw">if </span>rows.len() == <span class="number">1 </span>{
-<a href=#476 id=476 data-nosnippet>476</a>        <span class="kw">let </span>kind = first.threshold.name();
-<a href=#477 id=477 data-nosnippet>477</a>        <span class="macro">tracing::warn!</span>(
-<a href=#478 id=478 data-nosnippet>478</a>            <span class="string">"Used {kind} threshold to mask, but no emission was found.Try decreasing your \
-<a href=#479 id=479 data-nosnippet>479</a>             {kind}threshold parameter if you want to capture emission in these channels."
-<a href=#480 id=480 data-nosnippet>480</a>        </span>);
-<a href=#481 id=481 data-nosnippet>481</a>        <span class="kw">return</span>;
-<a href=#482 id=482 data-nosnippet>482</a>    }
-<a href=#483 id=483 data-nosnippet>483</a>    <span class="kw">for </span>kind <span class="kw">in </span>[AutoMaskThreshold::Sidelobe, AutoMaskThreshold::Noise] {
-<a href=#484 id=484 data-nosnippet>484</a>        <span class="kw">let </span>count = rows.iter().filter(|row| row.threshold == kind).count();
-<a href=#485 id=485 data-nosnippet>485</a>        <span class="kw">if </span>count &gt; <span class="number">0 </span>{
-<a href=#486 id=486 data-nosnippet>486</a>            <span class="kw">let </span>name = kind.name();
-<a href=#487 id=487 data-nosnippet>487</a>            <span class="macro">tracing::warn!</span>(
-<a href=#488 id=488 data-nosnippet>488</a>                <span class="string">"{count} of {} channels used the {name} threshold to mask, but no emission was \
-<a href=#489 id=489 data-nosnippet>489</a>                 found. Try decreasing your {name}threshold parameter if you want to capture \
-<a href=#490 id=490 data-nosnippet>490</a>                 emission in these channels."</span>,
-<a href=#491 id=491 data-nosnippet>491</a>                rows.len()
-<a href=#492 id=492 data-nosnippet>492</a>            );
-<a href=#493 id=493 data-nosnippet>493</a>        }
-<a href=#494 id=494 data-nosnippet>494</a>    }
-<a href=#495 id=495 data-nosnippet>495</a>}
-<a href=#496 id=496 data-nosnippet>496</a>
-<a href=#497 id=497 data-nosnippet>497</a><span class="doccomment">/// CASA's `printAutomaskSummary` of one block's `rows` from channel
-<a href=#498 id=498 data-nosnippet>498</a>/// `first_channel`, through `tracing`: a row per channel, each value a list
-<a href=#499 id=499 data-nosnippet>499</a>/// over its polarizations when it has several.
-<a href=#500 id=500 data-nosnippet>500</a></span><span class="kw">fn </span>log_summary(first_channel: usize, rows: <span class="kw-2">&amp;</span>[AutoMultithreshEvidence], polarizations: usize) {
-<a href=#501 id=501 data-nosnippet>501</a>    <span class="kw">let </span>list = |values: Vec&lt;String&gt;| {
-<a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">if </span>polarizations == <span class="number">1 </span>{
-<a href=#503 id=503 data-nosnippet>503</a>            values.into_iter().next().unwrap_or_default()
-<a href=#504 id=504 data-nosnippet>504</a>        } <span class="kw">else </span>{
-<a href=#505 id=505 data-nosnippet>505</a>            <span class="macro">format!</span>(<span class="string">"[{}]"</span>, values.join(<span class="string">", "</span>))
-<a href=#506 id=506 data-nosnippet>506</a>        }
-<a href=#507 id=507 data-nosnippet>507</a>    };
-<a href=#508 id=508 data-nosnippet>508</a>    <span class="macro">tracing::info!</span>(<span class="string">"========== automask summary =========="</span>);
-<a href=#509 id=509 data-nosnippet>509</a>    <span class="macro">tracing::info!</span>(
-<a href=#510 id=510 data-nosnippet>510</a>        <span class="string">"chan masking? median   RMS         peak   thresh_type   thresh_value   N_reg N_pruned \
-<a href=#511 id=511 data-nosnippet>511</a>         N_grow N_grow_pruned N_neg_pix"
-<a href=#512 id=512 data-nosnippet>512</a>    </span>);
-<a href=#513 id=513 data-nosnippet>513</a>    <span class="kw">for </span>(offset, rows) <span class="kw">in </span>rows.chunks(polarizations).enumerate() {
-<a href=#514 id=514 data-nosnippet>514</a>        <span class="kw">let </span>column =
-<a href=#515 id=515 data-nosnippet>515</a>            |value: <span class="kw">fn</span>(<span class="kw-2">&amp;</span>AutoMultithreshEvidence) -&gt; String| list(rows.iter().map(value).collect());
-<a href=#516 id=516 data-nosnippet>516</a>        <span class="comment">// A stopped channel was skipped before this boundary: CASA prints
-<a href=#517 id=517 data-nosnippet>517</a>        // its median, RMS and threshold as `--`.
-<a href=#518 id=518 data-nosnippet>518</a>        </span><span class="kw">let </span>masked = rows[<span class="number">0</span>].masked;
-<a href=#519 id=519 data-nosnippet>519</a>        <span class="kw">let </span>skipped = |text: String| <span class="kw">if </span>masked { text } <span class="kw">else </span>{ <span class="string">"--"</span>.to_string() };
-<a href=#520 id=520 data-nosnippet>520</a>        <span class="macro">tracing::info!</span>(
-<a href=#521 id=521 data-nosnippet>521</a>            <span class="string">"[C{}] {}        {}  {}  {}  {}  {}        {}  {}  {}  {}  {}"</span>,
-<a href=#522 id=522 data-nosnippet>522</a>            first_channel + offset,
-<a href=#523 id=523 data-nosnippet>523</a>            <span class="kw">if </span>masked { <span class="string">"T" </span>} <span class="kw">else </span>{ <span class="string">"F" </span>},
-<a href=#524 id=524 data-nosnippet>524</a>            skipped(column(|row| row.median.to_string())),
-<a href=#525 id=525 data-nosnippet>525</a>            skipped(column(|row| row.robust_rms.to_string())),
-<a href=#526 id=526 data-nosnippet>526</a>            column(|row| row.peak.to_string()),
-<a href=#527 id=527 data-nosnippet>527</a>            column(|row| row.threshold.name().to_string()),
-<a href=#528 id=528 data-nosnippet>528</a>            skipped(column(|row| row.positive_threshold.to_string())),
-<a href=#529 id=529 data-nosnippet>529</a>            column(|row| row.regions.to_string()),
-<a href=#530 id=530 data-nosnippet>530</a>            column(|row| row.pruned_regions.to_string()),
-<a href=#531 id=531 data-nosnippet>531</a>            column(|row| row.grow_regions.to_string()),
-<a href=#532 id=532 data-nosnippet>532</a>            column(|row| row.grow_pruned_regions.to_string()),
-<a href=#533 id=533 data-nosnippet>533</a>            column(|row| row.negative_pixels.to_string()),
-<a href=#534 id=534 data-nosnippet>534</a>        );
-<a href=#535 id=535 data-nosnippet>535</a>    }
-<a href=#536 id=536 data-nosnippet>536</a>    <span class="macro">tracing::info!</span>(<span class="string">"========== END of automask summary =========="</span>);
-<a href=#537 id=537 data-nosnippet>537</a>}
-<a href=#538 id=538 data-nosnippet>538</a>
-<a href=#539 id=539 data-nosnippet>539</a><span class="attr">#[cfg(test)]
-<a href=#540 id=540 data-nosnippet>540</a></span><span class="kw">mod </span>tests {
-<a href=#541 id=541 data-nosnippet>541</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#542 id=542 data-nosnippet>542</a>
-<a href=#543 id=543 data-nosnippet>543</a>    <span class="attr">#[test]
-<a href=#544 id=544 data-nosnippet>544</a>    </span><span class="kw">fn </span>a_cube_is_masked_in_casa_channel_blocks() {
-<a href=#545 id=545 data-nosnippet>545</a>        <span class="comment">// 100 by 100: blocks of 800 channels, so a small cube is one block.
-<a href=#546 id=546 data-nosnippet>546</a>        </span><span class="macro">assert_eq!</span>(channel_blocks(<span class="number">3</span>, [<span class="number">100</span>, <span class="number">100</span>]), <span class="macro">vec!</span>[<span class="number">0</span>..<span class="number">3</span>]);
-<a href=#547 id=547 data-nosnippet>547</a>        <span class="macro">assert_eq!</span>(channel_blocks(<span class="number">1</span>, [<span class="number">100</span>, <span class="number">100</span>]), <span class="macro">vec!</span>[<span class="number">0</span>..<span class="number">1</span>]);
-<a href=#548 id=548 data-nosnippet>548</a>        <span class="comment">// 2000 by 2000: 2 channels by size, at least ten.
-<a href=#549 id=549 data-nosnippet>549</a>        </span><span class="macro">assert_eq!</span>(channel_blocks(<span class="number">25</span>, [<span class="number">2000</span>, <span class="number">2000</span>]), [<span class="number">0</span>..<span class="number">10</span>, <span class="number">10</span>..<span class="number">20</span>, <span class="number">20</span>..<span class="number">25</span>]);
-<a href=#550 id=550 data-nosnippet>550</a>        <span class="macro">assert_eq!</span>(channel_blocks(<span class="number">10</span>, [<span class="number">2000</span>, <span class="number">2000</span>]), <span class="macro">vec!</span>[<span class="number">0</span>..<span class="number">10</span>]);
-<a href=#551 id=551 data-nosnippet>551</a>        <span class="comment">// 1000 by 1000: eight channels by size, so ten.
-<a href=#552 id=552 data-nosnippet>552</a>        </span><span class="macro">assert_eq!</span>(channel_blocks(<span class="number">21</span>, [<span class="number">1000</span>, <span class="number">1000</span>]), [<span class="number">0</span>..<span class="number">10</span>, <span class="number">10</span>..<span class="number">20</span>, <span class="number">20</span>..<span class="number">21</span>]);
-<a href=#553 id=553 data-nosnippet>553</a>        <span class="comment">// 900 by 900: 9.87 truncates to nine, so ten.
-<a href=#554 id=554 data-nosnippet>554</a>        </span><span class="macro">assert_eq!</span>(channel_blocks(<span class="number">11</span>, [<span class="number">900</span>, <span class="number">900</span>]), [<span class="number">0</span>..<span class="number">10</span>, <span class="number">10</span>..<span class="number">11</span>]);
-<a href=#555 id=555 data-nosnippet>555</a>        <span class="comment">// 400 by 400: blocks of fifty.
-<a href=#556 id=556 data-nosnippet>556</a>        </span><span class="macro">assert_eq!</span>(channel_blocks(<span class="number">120</span>, [<span class="number">400</span>, <span class="number">400</span>]), [<span class="number">0</span>..<span class="number">50</span>, <span class="number">50</span>..<span class="number">100</span>, <span class="number">100</span>..<span class="number">120</span>]);
-<a href=#557 id=557 data-nosnippet>557</a>    }
-<a href=#558 id=558 data-nosnippet>558</a>}
+<a href=#284 id=284 data-nosnippet>284</a>    <span class="comment">// The materialization charge covers exactly one entry per plane.
+<a href=#285 id=285 data-nosnippet>285</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>psfs = Vec::with_capacity(planes.count());
+<a href=#286 id=286 data-nosnippet>286</a>    <span class="kw">for </span>channel <span class="kw">in </span><span class="number">0</span>..planes.channels() {
+<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">for </span>polarization <span class="kw">in </span><span class="number">0</span>..polarizations {
+<a href=#288 id=288 data-nosnippet>288</a>            psfs.push((source.psf)(MaskPlaneKey {
+<a href=#289 id=289 data-nosnippet>289</a>                domain,
+<a href=#290 id=290 data-nosnippet>290</a>                channel,
+<a href=#291 id=291 data-nosnippet>291</a>                polarization,
+<a href=#292 id=292 data-nosnippet>292</a>            }));
+<a href=#293 id=293 data-nosnippet>293</a>        }
+<a href=#294 id=294 data-nosnippet>294</a>    }
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">let </span>sidelobe = psfs
+<a href=#296 id=296 data-nosnippet>296</a>        .iter()
+<a href=#297 id=297 data-nosnippet>297</a>        .flatten()
+<a href=#298 id=298 data-nosnippet>298</a>        .map(PsfSummary::sidelobe)
+<a href=#299 id=299 data-nosnippet>299</a>        .fold(<span class="number">0.0_f64</span>, f64::max);
+<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">let </span>nothing = <span class="macro">vec!</span>[<span class="bool-val">false</span>; cells];
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="comment">// One allocation each, written in place: the support is shared as it
+<a href=#302 id=302 data-nosnippet>302</a>    // is by the mask (a trusted-length iterator collects into the `Arc`
+<a href=#303 id=303 data-nosnippet>303</a>    // without a staging copy).
+<a href=#304 id=304 data-nosnippet>304</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>support = (<span class="number">0</span>..planes.count() * cells)
+<a href=#305 id=305 data-nosnippet>305</a>        .map(|<span class="kw">_</span>| <span class="bool-val">false</span>)
+<a href=#306 id=306 data-nosnippet>306</a>        .collect::&lt;Arc&lt;[bool]&gt;&gt;();
+<a href=#307 id=307 data-nosnippet>307</a>    <span class="kw">let </span><span class="kw-2">mut </span>rows = <span class="macro">vec!</span>[UNMASKED; planes.count()];
+<a href=#308 id=308 data-nosnippet>308</a>    <span class="kw">let </span>slots = Arc::get_mut(<span class="kw-2">&amp;mut </span>support).expect(<span class="string">"a support no one else holds yet"</span>);
+<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">let </span>per_channel = polarizations * cells;
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">for </span>(block, beam) <span class="kw">in </span>block_beams(<span class="kw-2">&amp;</span>psfs, polarizations, shape, sidelobe, state.coordinate) {
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span>masking = Block {
+<a href=#312 id=312 data-nosnippet>312</a>            state,
+<a href=#313 id=313 data-nosnippet>313</a>            source,
+<a href=#314 id=314 data-nosnippet>314</a>            domain,
+<a href=#315 id=315 data-nosnippet>315</a>            shape,
+<a href=#316 id=316 data-nosnippet>316</a>            polarizations,
+<a href=#317 id=317 data-nosnippet>317</a>            beam: beam<span class="question-mark">?</span>,
+<a href=#318 id=318 data-nosnippet>318</a>            first_plane_full: state
+<a href=#319 id=319 data-nosnippet>319</a>                .previous
+<a href=#320 id=320 data-nosnippet>320</a>                .and_then(|mask| mask.plane(block.start, <span class="number">0</span>))
+<a href=#321 id=321 data-nosnippet>321</a>                .is_some_and(|plane| plane.iter().all(|set| <span class="kw-2">*</span>set)),
+<a href=#322 id=322 data-nosnippet>322</a>            nothing: <span class="kw-2">&amp;</span>nothing,
+<a href=#323 id=323 data-nosnippet>323</a>        };
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span>block_support = <span class="kw-2">&amp;mut </span>slots[block.start * per_channel..block.end * per_channel];
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">let </span>block_rows = <span class="kw-2">&amp;mut </span>rows[block.start * polarizations..block.end * polarizations];
+<a href=#326 id=326 data-nosnippet>326</a>        <span class="kw">let </span>positive = <span class="kw">if </span>source.workers &gt; <span class="number">1 </span>{
+<a href=#327 id=327 data-nosnippet>327</a>            block_support
+<a href=#328 id=328 data-nosnippet>328</a>                .par_chunks_mut(per_channel)
+<a href=#329 id=329 data-nosnippet>329</a>                .zip(block_rows.par_chunks_mut(polarizations))
+<a href=#330 id=330 data-nosnippet>330</a>                .zip(block.clone().into_par_iter())
+<a href=#331 id=331 data-nosnippet>331</a>                .map(|((support, rows), channel)| {
+<a href=#332 id=332 data-nosnippet>332</a>                    masking.channel(ChannelSlots {
+<a href=#333 id=333 data-nosnippet>333</a>                        channel,
+<a href=#334 id=334 data-nosnippet>334</a>                        support,
+<a href=#335 id=335 data-nosnippet>335</a>                        rows,
+<a href=#336 id=336 data-nosnippet>336</a>                    })
+<a href=#337 id=337 data-nosnippet>337</a>                })
+<a href=#338 id=338 data-nosnippet>338</a>                .try_reduce(|| <span class="bool-val">false</span>, |left, right| <span class="prelude-val">Ok</span>(left || right))<span class="question-mark">?
+<a href=#339 id=339 data-nosnippet>339</a>        </span>} <span class="kw">else </span>{
+<a href=#340 id=340 data-nosnippet>340</a>            <span class="kw">let </span><span class="kw-2">mut </span>positive = <span class="bool-val">false</span>;
+<a href=#341 id=341 data-nosnippet>341</a>            <span class="kw">for </span>((support, rows), channel) <span class="kw">in </span>block_support
+<a href=#342 id=342 data-nosnippet>342</a>                .chunks_mut(per_channel)
+<a href=#343 id=343 data-nosnippet>343</a>                .zip(block_rows.chunks_mut(polarizations))
+<a href=#344 id=344 data-nosnippet>344</a>                .zip(block.clone())
+<a href=#345 id=345 data-nosnippet>345</a>            {
+<a href=#346 id=346 data-nosnippet>346</a>                positive |= masking.channel(ChannelSlots {
+<a href=#347 id=347 data-nosnippet>347</a>                    channel,
+<a href=#348 id=348 data-nosnippet>348</a>                    support,
+<a href=#349 id=349 data-nosnippet>349</a>                    rows,
+<a href=#350 id=350 data-nosnippet>350</a>                })<span class="question-mark">?</span>;
+<a href=#351 id=351 data-nosnippet>351</a>            }
+<a href=#352 id=352 data-nosnippet>352</a>            positive
+<a href=#353 id=353 data-nosnippet>353</a>        };
+<a href=#354 id=354 data-nosnippet>354</a>        report_block(
+<a href=#355 id=355 data-nosnippet>355</a>            state,
+<a href=#356 id=356 data-nosnippet>356</a>            block.start,
+<a href=#357 id=357 data-nosnippet>357</a>            <span class="kw-2">&amp;</span>rows[block.start * polarizations..block.end * polarizations],
+<a href=#358 id=358 data-nosnippet>358</a>            positive,
+<a href=#359 id=359 data-nosnippet>359</a>            polarizations,
+<a href=#360 id=360 data-nosnippet>360</a>        );
+<a href=#361 id=361 data-nosnippet>361</a>    }
+<a href=#362 id=362 data-nosnippet>362</a>    <span class="prelude-val">Ok</span>((
+<a href=#363 id=363 data-nosnippet>363</a>        ReconstructionMask::from_plane_support(state.coordinate, shape, planes, support)<span class="question-mark">?</span>,
+<a href=#364 id=364 data-nosnippet>364</a>        AutoMaskEvidence {
+<a href=#365 id=365 data-nosnippet>365</a>            polarizations,
+<a href=#366 id=366 data-nosnippet>366</a>            planes: rows.into_boxed_slice(),
+<a href=#367 id=367 data-nosnippet>367</a>        },
+<a href=#368 id=368 data-nosnippet>368</a>    ))
+<a href=#369 id=369 data-nosnippet>369</a>}
+<a href=#370 id=370 data-nosnippet>370</a>
+<a href=#371 id=371 data-nosnippet>371</a><span class="doccomment">/// The blocks of channels tclean masks a cube in on one process
+<a href=#372 id=372 data-nosnippet>372</a>/// (`SynthesisDeconvolver::numblockchans`): blocks of `8e6` pixels divided
+<a href=#373 id=373 data-nosnippet>373</a>/// by the plane's, at least ten channels, or the whole cube when it has no
+<a href=#374 id=374 data-nosnippet>374</a>/// more channels than that; the last block holds what remains.
+<a href=#375 id=375 data-nosnippet>375</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>channel_blocks(channels: usize, shape: [usize; <span class="number">2</span>]) -&gt; Vec&lt;Range&lt;usize&gt;&gt; {
+<a href=#376 id=376 data-nosnippet>376</a>    <span class="kw">let </span>size = block_size(channels, shape);
+<a href=#377 id=377 data-nosnippet>377</a>    (<span class="number">0</span>..channels)
+<a href=#378 id=378 data-nosnippet>378</a>        .step_by(size)
+<a href=#379 id=379 data-nosnippet>379</a>        .map(|start| start..(start + size).min(channels))
+<a href=#380 id=380 data-nosnippet>380</a>        .collect()
+<a href=#381 id=381 data-nosnippet>381</a>}
+<a href=#382 id=382 data-nosnippet>382</a>
+<a href=#383 id=383 data-nosnippet>383</a><span class="doccomment">/// The largest block, in channels, CASA forms for an image of `shape`.
+<a href=#384 id=384 data-nosnippet>384</a></span><span class="kw">fn </span>block_size(channels: usize, shape: [usize; <span class="number">2</span>]) -&gt; usize {
+<a href=#385 id=385 data-nosnippet>385</a>    <span class="kw">let </span>optimum = ((<span class="number">8.0e6 </span>/ shape[<span class="number">0</span>] <span class="kw">as </span>f64 / shape[<span class="number">1</span>] <span class="kw">as </span>f64) <span class="kw">as </span>usize).max(<span class="number">10</span>);
+<a href=#386 id=386 data-nosnippet>386</a>    channels.min(optimum).max(<span class="number">1</span>)
+<a href=#387 id=387 data-nosnippet>387</a>}
+<a href=#388 id=388 data-nosnippet>388</a>
+<a href=#389 id=389 data-nosnippet>389</a><span class="doccomment">/// The peak three simultaneously held beam arrays for one channel block:
+<a href=#390 id=390 data-nosnippet>390</a>/// fitted beams, their numerical forms and the common-beam working copy.
+<a href=#391 id=391 data-nosnippet>391</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>block_beam_bytes(channels: usize, polarizations: usize, shape: [usize; <span class="number">2</span>]) -&gt; u64 {
+<a href=#392 id=392 data-nosnippet>392</a>    <span class="kw">let </span>planes = channels.min(block_size(channels, shape)) * polarizations;
+<a href=#393 id=393 data-nosnippet>393</a>    <span class="kw">let </span>blocks = channels.div_ceil(block_size(channels, shape));
+<a href=#394 id=394 data-nosnippet>394</a>    (planes * (size_of::&lt;RestoringBeam&gt;() + <span class="number">2 </span>* size_of::&lt;casa_numerics::EllipticalGaussian&gt;())
+<a href=#395 id=395 data-nosnippet>395</a>        + blocks * size_of::&lt;Range&lt;usize&gt;&gt;()) <span class="kw">as </span>u64
+<a href=#396 id=396 data-nosnippet>396</a>}
+<a href=#397 id=397 data-nosnippet>397</a>
+<a href=#398 id=398 data-nosnippet>398</a><span class="doccomment">/// Plan each channel block's beam from the complete image domain's beam set.
+<a href=#399 id=399 data-nosnippet>399</a></span><span class="kw">fn </span>block_beams(
+<a href=#400 id=400 data-nosnippet>400</a>    psfs: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;PsfSummary&gt;],
+<a href=#401 id=401 data-nosnippet>401</a>    polarizations: usize,
+<a href=#402 id=402 data-nosnippet>402</a>    shape: [usize; <span class="number">2</span>],
+<a href=#403 id=403 data-nosnippet>403</a>    sidelobe: f64,
+<a href=#404 id=404 data-nosnippet>404</a>    coordinate: DirectionCoordinateSpec,
+<a href=#405 id=405 data-nosnippet>405</a>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (Range&lt;usize&gt;, <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;AutoMaskBeam&gt;, MaskError&gt;)&gt; + <span class="lifetime">'_ </span>{
+<a href=#406 id=406 data-nosnippet>406</a>    <span class="kw">let </span>largest = largest_beam(psfs);
+<a href=#407 id=407 data-nosnippet>407</a>    channel_blocks(psfs.len() / polarizations, shape)
+<a href=#408 id=408 data-nosnippet>408</a>        .into_iter()
+<a href=#409 id=409 data-nosnippet>409</a>        .map(<span class="kw">move </span>|block| {
+<a href=#410 id=410 data-nosnippet>410</a>            <span class="kw">let </span>beam = block_beam(
+<a href=#411 id=411 data-nosnippet>411</a>                <span class="kw-2">&amp;</span>psfs[block.start * polarizations..block.end * polarizations],
+<a href=#412 id=412 data-nosnippet>412</a>                polarizations,
+<a href=#413 id=413 data-nosnippet>413</a>                largest,
+<a href=#414 id=414 data-nosnippet>414</a>                sidelobe,
+<a href=#415 id=415 data-nosnippet>415</a>                coordinate,
+<a href=#416 id=416 data-nosnippet>416</a>            );
+<a href=#417 id=417 data-nosnippet>417</a>            (block, beam)
+<a href=#418 id=418 data-nosnippet>418</a>        })
+<a href=#419 id=419 data-nosnippet>419</a>}
+<a href=#420 id=420 data-nosnippet>420</a>
+<a href=#421 id=421 data-nosnippet>421</a><span class="doccomment">/// The largest fitted beam of the image domain, which CASA puts into each
+<a href=#422 id=422 data-nosnippet>422</a>/// blank plane before it forms channel-block image stores.
+<a href=#423 id=423 data-nosnippet>423</a></span><span class="kw">fn </span>largest_beam(psfs: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;PsfSummary&gt;]) -&gt; <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt; {
+<a href=#424 id=424 data-nosnippet>424</a>    psfs.iter().flatten().map(PsfSummary::beam).fold(
+<a href=#425 id=425 data-nosnippet>425</a>        <span class="prelude-val">None</span>,
+<a href=#426 id=426 data-nosnippet>426</a>        |largest: <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt;, beam| <span class="kw">match </span>largest {
+<a href=#427 id=427 data-nosnippet>427</a>            <span class="prelude-val">Some</span>(current) <span class="kw">if </span>current.area_sr() &gt;= beam.area_sr() =&gt; <span class="prelude-val">Some</span>(current),
+<a href=#428 id=428 data-nosnippet>428</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">Some</span>(beam),
+<a href=#429 id=429 data-nosnippet>429</a>        },
+<a href=#430 id=430 data-nosnippet>430</a>    )
+<a href=#431 id=431 data-nosnippet>431</a>}
+<a href=#432 id=432 data-nosnippet>432</a>
+<a href=#433 id=433 data-nosnippet>433</a><span class="doccomment">/// The beam a block's masks are smoothed and pruned by: the common beam of
+<a href=#434 id=434 data-nosnippet>434</a>/// its PSF beams, with blank planes holding the domain's largest. `None`
+<a href=#435 id=435 data-nosnippet>435</a>/// means the whole domain has no fitted beam. CASA converts by the first
+<a href=#436 id=436 data-nosnippet>436</a>/// direction axis's increment; the common beam is found in radians.
+<a href=#437 id=437 data-nosnippet>437</a></span><span class="kw">fn </span>block_beam(
+<a href=#438 id=438 data-nosnippet>438</a>    psfs: <span class="kw-2">&amp;</span>[<span class="prelude-ty">Option</span>&lt;PsfSummary&gt;],
+<a href=#439 id=439 data-nosnippet>439</a>    polarizations: usize,
+<a href=#440 id=440 data-nosnippet>440</a>    largest: <span class="prelude-ty">Option</span>&lt;RestoringBeam&gt;,
+<a href=#441 id=441 data-nosnippet>441</a>    sidelobe: f64,
+<a href=#442 id=442 data-nosnippet>442</a>    coordinate: DirectionCoordinateSpec,
+<a href=#443 id=443 data-nosnippet>443</a>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;AutoMaskBeam&gt;, MaskError&gt; {
+<a href=#444 id=444 data-nosnippet>444</a>    <span class="kw">let </span>cell = coordinate.increment_rad()[<span class="number">0</span>].abs();
+<a href=#445 id=445 data-nosnippet>445</a>    <span class="kw">let </span><span class="kw-2">mut </span>beams = Vec::with_capacity(psfs.len());
+<a href=#446 id=446 data-nosnippet>446</a>    <span class="comment">// CASA iterates its channel-by-polarization beam matrix with channel
+<a href=#447 id=447 data-nosnippet>447</a>    // varying fastest, even though our plane list is channel-major.
+<a href=#448 id=448 data-nosnippet>448</a>    </span><span class="kw">for </span>polarization <span class="kw">in </span><span class="number">0</span>..polarizations {
+<a href=#449 id=449 data-nosnippet>449</a>        <span class="kw">for </span>channel <span class="kw">in </span><span class="number">0</span>..psfs.len() / polarizations {
+<a href=#450 id=450 data-nosnippet>450</a>            <span class="kw">let </span>summary = psfs[channel * polarizations + polarization];
+<a href=#451 id=451 data-nosnippet>451</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(beam) = summary.map(|summary| summary.beam()).or(largest) {
+<a href=#452 id=452 data-nosnippet>452</a>                beams.push(
+<a href=#453 id=453 data-nosnippet>453</a>                    RestoringBeam::new(
+<a href=#454 id=454 data-nosnippet>454</a>                        beam.major_fwhm_rad() * cell,
+<a href=#455 id=455 data-nosnippet>455</a>                        beam.minor_fwhm_rad() * cell,
+<a href=#456 id=456 data-nosnippet>456</a>                        beam.position_angle_rad(),
+<a href=#457 id=457 data-nosnippet>457</a>                    )
+<a href=#458 id=458 data-nosnippet>458</a>                    .map_err(|<span class="kw">_</span>| MaskError::InvalidBeamArea)<span class="question-mark">?</span>,
+<a href=#459 id=459 data-nosnippet>459</a>                );
+<a href=#460 id=460 data-nosnippet>460</a>            }
+<a href=#461 id=461 data-nosnippet>461</a>        }
+<a href=#462 id=462 data-nosnippet>462</a>    }
+<a href=#463 id=463 data-nosnippet>463</a>    <span class="kw">if </span>beams.is_empty() {
+<a href=#464 id=464 data-nosnippet>464</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+<a href=#465 id=465 data-nosnippet>465</a>    }
+<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">let </span>common = RestoringBeam::common_enclosing(<span class="kw-2">&amp;</span>beams).map_err(|<span class="kw">_</span>| MaskError::InvalidBeamArea)<span class="question-mark">?</span>;
+<a href=#467 id=467 data-nosnippet>467</a>    <span class="kw">let </span>beam = AutoMaskBeam::new(
+<a href=#468 id=468 data-nosnippet>468</a>        common.major_fwhm_rad() / cell,
+<a href=#469 id=469 data-nosnippet>469</a>        common.minor_fwhm_rad() / cell,
+<a href=#470 id=470 data-nosnippet>470</a>        common.position_angle_rad(),
+<a href=#471 id=471 data-nosnippet>471</a>        sidelobe,
+<a href=#472 id=472 data-nosnippet>472</a>    );
+<a href=#473 id=473 data-nosnippet>473</a>    validate_beam(<span class="kw-2">&amp;</span>beam)<span class="question-mark">?</span>;
+<a href=#474 id=474 data-nosnippet>474</a>    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(beam))
+<a href=#475 id=475 data-nosnippet>475</a>}
+<a href=#476 id=476 data-nosnippet>476</a>
+<a href=#477 id=477 data-nosnippet>477</a><span class="doccomment">/// What tclean logs of one block's mask, its `rows` channel-major from
+<a href=#478 id=478 data-nosnippet>478</a>/// channel `first`: at the first boundary its warnings
+<a href=#479 id=479 data-nosnippet>479</a>/// (`autoMaskByMultiThreshold`, `noMaskCheck`) when it added no positive
+<a href=#480 id=480 data-nosnippet>480</a>/// region, and with `verbose` CASA's automask summary, a row per channel
+<a href=#481 id=481 data-nosnippet>481</a>/// (`printAutomaskSummary`).
+<a href=#482 id=482 data-nosnippet>482</a></span><span class="kw">fn </span>report_block(
+<a href=#483 id=483 data-nosnippet>483</a>    state: <span class="kw-2">&amp;</span>AutoMaskState&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#484 id=484 data-nosnippet>484</a>    first: usize,
+<a href=#485 id=485 data-nosnippet>485</a>    rows: <span class="kw-2">&amp;</span>[AutoMultithreshEvidence],
+<a href=#486 id=486 data-nosnippet>486</a>    positive: bool,
+<a href=#487 id=487 data-nosnippet>487</a>    polarizations: usize,
+<a href=#488 id=488 data-nosnippet>488</a>) {
+<a href=#489 id=489 data-nosnippet>489</a>    <span class="kw">let </span>channels = rows.len() / polarizations;
+<a href=#490 id=490 data-nosnippet>490</a>    <span class="kw">if </span>state.completed_major_cycles == <span class="number">0 </span>{
+<a href=#491 id=491 data-nosnippet>491</a>        <span class="kw">if </span>state.controls.cut_threshold &gt;= <span class="number">0.2 </span>{
+<a href=#492 id=492 data-nosnippet>492</a>            <span class="macro">tracing::warn!</span>(
+<a href=#493 id=493 data-nosnippet>493</a>                <span class="string">"Faint regions may not be included in the final mask. Consider decreasing \
+<a href=#494 id=494 data-nosnippet>494</a>                 cutthreshold."
+<a href=#495 id=495 data-nosnippet>495</a>            </span>);
+<a href=#496 id=496 data-nosnippet>496</a>        }
+<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">if </span>!positive {
+<a href=#498 id=498 data-nosnippet>498</a>            warn_no_regions(rows);
+<a href=#499 id=499 data-nosnippet>499</a>            <span class="kw">let </span>pruned = rows
+<a href=#500 id=500 data-nosnippet>500</a>                .iter()
+<a href=#501 id=501 data-nosnippet>501</a>                .filter(|row| row.regions &gt; <span class="number">0 </span>&amp;&amp; row.pruned_regions == row.regions)
+<a href=#502 id=502 data-nosnippet>502</a>                .count();
+<a href=#503 id=503 data-nosnippet>503</a>            <span class="kw">if </span>pruned &gt; <span class="number">0 </span>{
+<a href=#504 id=504 data-nosnippet>504</a>                <span class="macro">tracing::warn!</span>(
+<a href=#505 id=505 data-nosnippet>505</a>                    <span class="string">"{pruned} of {channels} channels had all regions removed by pruning. Try \
+<a href=#506 id=506 data-nosnippet>506</a>                     decreasing minbeamfrac to remove fewer regions"
+<a href=#507 id=507 data-nosnippet>507</a>                </span>);
+<a href=#508 id=508 data-nosnippet>508</a>            }
+<a href=#509 id=509 data-nosnippet>509</a>        }
+<a href=#510 id=510 data-nosnippet>510</a>    }
+<a href=#511 id=511 data-nosnippet>511</a>    <span class="kw">if </span>state.controls.verbose {
+<a href=#512 id=512 data-nosnippet>512</a>        log_summary(first, rows, polarizations);
+<a href=#513 id=513 data-nosnippet>513</a>    }
+<a href=#514 id=514 data-nosnippet>514</a>}
+<a href=#515 id=515 data-nosnippet>515</a>
+<a href=#516 id=516 data-nosnippet>516</a><span class="doccomment">/// `SDMaskHandler::noMaskCheck` of a block whose positive mask is empty.
+<a href=#517 id=517 data-nosnippet>517</a></span><span class="kw">fn </span>warn_no_regions(rows: <span class="kw-2">&amp;</span>[AutoMultithreshEvidence]) {
+<a href=#518 id=518 data-nosnippet>518</a>    <span class="macro">tracing::warn!</span>(<span class="string">"No regions found by automasking"</span>);
+<a href=#519 id=519 data-nosnippet>519</a>    <span class="kw">let </span>[first, ..] = rows <span class="kw">else </span>{
+<a href=#520 id=520 data-nosnippet>520</a>        <span class="kw">return</span>;
+<a href=#521 id=521 data-nosnippet>521</a>    };
+<a href=#522 id=522 data-nosnippet>522</a>    <span class="kw">if </span>rows.len() == <span class="number">1 </span>{
+<a href=#523 id=523 data-nosnippet>523</a>        <span class="kw">let </span>kind = first.threshold.name();
+<a href=#524 id=524 data-nosnippet>524</a>        <span class="macro">tracing::warn!</span>(
+<a href=#525 id=525 data-nosnippet>525</a>            <span class="string">"Used {kind} threshold to mask, but no emission was found.Try decreasing your \
+<a href=#526 id=526 data-nosnippet>526</a>             {kind}threshold parameter if you want to capture emission in these channels."
+<a href=#527 id=527 data-nosnippet>527</a>        </span>);
+<a href=#528 id=528 data-nosnippet>528</a>        <span class="kw">return</span>;
+<a href=#529 id=529 data-nosnippet>529</a>    }
+<a href=#530 id=530 data-nosnippet>530</a>    <span class="kw">for </span>kind <span class="kw">in </span>[AutoMaskThreshold::Sidelobe, AutoMaskThreshold::Noise] {
+<a href=#531 id=531 data-nosnippet>531</a>        <span class="kw">let </span>count = rows.iter().filter(|row| row.threshold == kind).count();
+<a href=#532 id=532 data-nosnippet>532</a>        <span class="kw">if </span>count &gt; <span class="number">0 </span>{
+<a href=#533 id=533 data-nosnippet>533</a>            <span class="kw">let </span>name = kind.name();
+<a href=#534 id=534 data-nosnippet>534</a>            <span class="macro">tracing::warn!</span>(
+<a href=#535 id=535 data-nosnippet>535</a>                <span class="string">"{count} of {} channels used the {name} threshold to mask, but no emission was \
+<a href=#536 id=536 data-nosnippet>536</a>                 found. Try decreasing your {name}threshold parameter if you want to capture \
+<a href=#537 id=537 data-nosnippet>537</a>                 emission in these channels."</span>,
+<a href=#538 id=538 data-nosnippet>538</a>                rows.len()
+<a href=#539 id=539 data-nosnippet>539</a>            );
+<a href=#540 id=540 data-nosnippet>540</a>        }
+<a href=#541 id=541 data-nosnippet>541</a>    }
+<a href=#542 id=542 data-nosnippet>542</a>}
+<a href=#543 id=543 data-nosnippet>543</a>
+<a href=#544 id=544 data-nosnippet>544</a><span class="doccomment">/// CASA's `printAutomaskSummary` of one block's `rows` from channel
+<a href=#545 id=545 data-nosnippet>545</a>/// `first_channel`, through `tracing`: a row per channel, each value a list
+<a href=#546 id=546 data-nosnippet>546</a>/// over its polarizations when it has several.
+<a href=#547 id=547 data-nosnippet>547</a></span><span class="kw">fn </span>log_summary(first_channel: usize, rows: <span class="kw-2">&amp;</span>[AutoMultithreshEvidence], polarizations: usize) {
+<a href=#548 id=548 data-nosnippet>548</a>    <span class="kw">let </span>list = |values: Vec&lt;String&gt;| {
+<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">if </span>polarizations == <span class="number">1 </span>{
+<a href=#550 id=550 data-nosnippet>550</a>            values.into_iter().next().unwrap_or_default()
+<a href=#551 id=551 data-nosnippet>551</a>        } <span class="kw">else </span>{
+<a href=#552 id=552 data-nosnippet>552</a>            <span class="macro">format!</span>(<span class="string">"[{}]"</span>, values.join(<span class="string">", "</span>))
+<a href=#553 id=553 data-nosnippet>553</a>        }
+<a href=#554 id=554 data-nosnippet>554</a>    };
+<a href=#555 id=555 data-nosnippet>555</a>    <span class="macro">tracing::info!</span>(<span class="string">"========== automask summary =========="</span>);
+<a href=#556 id=556 data-nosnippet>556</a>    <span class="macro">tracing::info!</span>(
+<a href=#557 id=557 data-nosnippet>557</a>        <span class="string">"chan masking? median   RMS         peak   thresh_type   thresh_value   N_reg N_pruned \
+<a href=#558 id=558 data-nosnippet>558</a>         N_grow N_grow_pruned N_neg_pix"
+<a href=#559 id=559 data-nosnippet>559</a>    </span>);
+<a href=#560 id=560 data-nosnippet>560</a>    <span class="kw">for </span>(offset, rows) <span class="kw">in </span>rows.chunks(polarizations).enumerate() {
+<a href=#561 id=561 data-nosnippet>561</a>        <span class="kw">let </span>column =
+<a href=#562 id=562 data-nosnippet>562</a>            |value: <span class="kw">fn</span>(<span class="kw-2">&amp;</span>AutoMultithreshEvidence) -&gt; String| list(rows.iter().map(value).collect());
+<a href=#563 id=563 data-nosnippet>563</a>        <span class="comment">// A stopped channel was skipped before this boundary: CASA prints
+<a href=#564 id=564 data-nosnippet>564</a>        // its median, RMS and threshold as `--`.
+<a href=#565 id=565 data-nosnippet>565</a>        </span><span class="kw">let </span>masked = rows[<span class="number">0</span>].masked;
+<a href=#566 id=566 data-nosnippet>566</a>        <span class="kw">let </span>skipped = |text: String| <span class="kw">if </span>masked { text } <span class="kw">else </span>{ <span class="string">"--"</span>.to_string() };
+<a href=#567 id=567 data-nosnippet>567</a>        <span class="macro">tracing::info!</span>(
+<a href=#568 id=568 data-nosnippet>568</a>            <span class="string">"[C{}] {}        {}  {}  {}  {}  {}        {}  {}  {}  {}  {}"</span>,
+<a href=#569 id=569 data-nosnippet>569</a>            first_channel + offset,
+<a href=#570 id=570 data-nosnippet>570</a>            <span class="kw">if </span>masked { <span class="string">"T" </span>} <span class="kw">else </span>{ <span class="string">"F" </span>},
+<a href=#571 id=571 data-nosnippet>571</a>            skipped(column(|row| row.median.to_string())),
+<a href=#572 id=572 data-nosnippet>572</a>            skipped(column(|row| row.robust_rms.to_string())),
+<a href=#573 id=573 data-nosnippet>573</a>            column(|row| row.peak.to_string()),
+<a href=#574 id=574 data-nosnippet>574</a>            column(|row| row.threshold.name().to_string()),
+<a href=#575 id=575 data-nosnippet>575</a>            skipped(column(|row| row.positive_threshold.to_string())),
+<a href=#576 id=576 data-nosnippet>576</a>            column(|row| row.regions.to_string()),
+<a href=#577 id=577 data-nosnippet>577</a>            column(|row| row.pruned_regions.to_string()),
+<a href=#578 id=578 data-nosnippet>578</a>            column(|row| row.grow_regions.to_string()),
+<a href=#579 id=579 data-nosnippet>579</a>            column(|row| row.grow_pruned_regions.to_string()),
+<a href=#580 id=580 data-nosnippet>580</a>            column(|row| row.negative_pixels.to_string()),
+<a href=#581 id=581 data-nosnippet>581</a>        );
+<a href=#582 id=582 data-nosnippet>582</a>    }
+<a href=#583 id=583 data-nosnippet>583</a>    <span class="macro">tracing::info!</span>(<span class="string">"========== END of automask summary =========="</span>);
+<a href=#584 id=584 data-nosnippet>584</a>}
+<a href=#585 id=585 data-nosnippet>585</a>
+<a href=#586 id=586 data-nosnippet>586</a><span class="attr">#[cfg(test)]
+<a href=#587 id=587 data-nosnippet>587</a></span><span class="kw">mod </span>tests {
+<a href=#588 id=588 data-nosnippet>588</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#589 id=589 data-nosnippet>589</a>
+<a href=#590 id=590 data-nosnippet>590</a>    <span class="doccomment">/// A blank plane inherits the largest beam in the image, even when that
+<a href=#591 id=591 data-nosnippet>591</a>    /// beam is in another channel block (`SIImageStore::makeImageBeamSet`).
+<a href=#592 id=592 data-nosnippet>592</a>    </span><span class="attr">#[test]
+<a href=#593 id=593 data-nosnippet>593</a>    </span><span class="kw">fn </span>a_blank_plane_uses_the_image_domains_largest_beam_in_its_block() {
+<a href=#594 id=594 data-nosnippet>594</a>        <span class="kw">use </span><span class="kw">crate</span>::plane::PlaneShape;
+<a href=#595 id=595 data-nosnippet>595</a>        <span class="kw">use </span>casa_imaging_model::{DirectionFrame, Projection, SkyDirection};
+<a href=#596 id=596 data-nosnippet>596</a>
+<a href=#597 id=597 data-nosnippet>597</a>        <span class="kw">let </span>shape = PlaneShape::new(<span class="number">64</span>, <span class="number">64</span>);
+<a href=#598 id=598 data-nosnippet>598</a>        <span class="kw">let </span>psf = (<span class="number">0</span>..shape.len())
+<a href=#599 id=599 data-nosnippet>599</a>            .map(|index| {
+<a href=#600 id=600 data-nosnippet>600</a>                <span class="kw">let </span>[x, y] = shape.pixel(index);
+<a href=#601 id=601 data-nosnippet>601</a>                <span class="kw">let </span>r2 = (x <span class="kw">as </span>f64 - <span class="number">32.0</span>).powi(<span class="number">2</span>) + (y <span class="kw">as </span>f64 - <span class="number">32.0</span>).powi(<span class="number">2</span>);
+<a href=#602 id=602 data-nosnippet>602</a>                (-r2 / <span class="number">8.0</span>).exp()
+<a href=#603 id=603 data-nosnippet>603</a>            })
+<a href=#604 id=604 data-nosnippet>604</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#605 id=605 data-nosnippet>605</a>        <span class="kw">let </span>narrow = PsfSummary::new(<span class="kw-2">&amp;</span>psf, shape).expect(<span class="string">"narrow beam"</span>);
+<a href=#606 id=606 data-nosnippet>606</a>        <span class="kw">let </span>broad = narrow.with_domain_beam(
+<a href=#607 id=607 data-nosnippet>607</a>            <span class="kw-2">&amp;</span>psf,
+<a href=#608 id=608 data-nosnippet>608</a>            shape,
+<a href=#609 id=609 data-nosnippet>609</a>            RestoringBeam::new(<span class="number">10.0</span>, <span class="number">8.0</span>, <span class="number">0.0</span>).expect(<span class="string">"broad beam"</span>),
+<a href=#610 id=610 data-nosnippet>610</a>        );
+<a href=#611 id=611 data-nosnippet>611</a>        <span class="kw">let </span>coordinate = DirectionCoordinateSpec::new(
+<a href=#612 id=612 data-nosnippet>612</a>            Projection::Sin,
+<a href=#613 id=613 data-nosnippet>613</a>            SkyDirection::new(DirectionFrame::J2000, <span class="number">1.0</span>, <span class="number">0.5</span>),
+<a href=#614 id=614 data-nosnippet>614</a>            [<span class="number">1.0</span>, <span class="number">1.0</span>],
+<a href=#615 id=615 data-nosnippet>615</a>            [-<span class="number">1.0e-4</span>, <span class="number">1.0e-4</span>],
+<a href=#616 id=616 data-nosnippet>616</a>            [[<span class="number">1.0</span>, <span class="number">0.0</span>], [<span class="number">0.0</span>, <span class="number">1.0</span>]],
+<a href=#617 id=617 data-nosnippet>617</a>            [<span class="number">180.0</span>, <span class="number">90.0</span>],
+<a href=#618 id=618 data-nosnippet>618</a>        );
+<a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">let </span><span class="kw-2">mut </span>psfs = <span class="macro">vec!</span>[<span class="prelude-val">Some</span>(narrow); <span class="number">11</span>];
+<a href=#620 id=620 data-nosnippet>620</a>        psfs[<span class="number">1</span>] = <span class="prelude-val">None</span>;
+<a href=#621 id=621 data-nosnippet>621</a>        psfs[<span class="number">10</span>] = <span class="prelude-val">Some</span>(broad);
+<a href=#622 id=622 data-nosnippet>622</a>        <span class="kw">let </span>largest = largest_beam(<span class="kw-2">&amp;</span>psfs);
+<a href=#623 id=623 data-nosnippet>623</a>        <span class="macro">assert_eq!</span>(largest, <span class="prelude-val">Some</span>(broad.beam()));
+<a href=#624 id=624 data-nosnippet>624</a>        <span class="kw">let </span><span class="kw-2">mut </span>blocks = block_beams(<span class="kw-2">&amp;</span>psfs, <span class="number">1</span>, [<span class="number">900</span>, <span class="number">900</span>], <span class="number">0.1</span>, coordinate);
+<a href=#625 id=625 data-nosnippet>625</a>        <span class="kw">let </span>(first, with_blank) = blocks.next().expect(<span class="string">"first block"</span>);
+<a href=#626 id=626 data-nosnippet>626</a>        <span class="kw">let </span>(second, <span class="kw">_</span>) = blocks.next().expect(<span class="string">"second block"</span>);
+<a href=#627 id=627 data-nosnippet>627</a>        <span class="macro">assert_eq!</span>((first, second), (<span class="number">0</span>..<span class="number">10</span>, <span class="number">10</span>..<span class="number">11</span>));
+<a href=#628 id=628 data-nosnippet>628</a>        <span class="macro">assert!</span>(blocks.next().is_none());
+<a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">let </span>with_blank = with_blank.unwrap();
+<a href=#630 id=630 data-nosnippet>630</a>        <span class="kw">let </span><span class="kw-2">mut </span>filled = psfs[..<span class="number">10</span>].to_vec();
+<a href=#631 id=631 data-nosnippet>631</a>        filled[<span class="number">1</span>] = <span class="prelude-val">Some</span>(broad);
+<a href=#632 id=632 data-nosnippet>632</a>        <span class="kw">let </span>with_explicit_broad = block_beam(<span class="kw-2">&amp;</span>filled, <span class="number">1</span>, largest, <span class="number">0.1</span>, coordinate).unwrap();
+<a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span>without_blank = block_beam(<span class="kw-2">&amp;</span>psfs[<span class="number">2</span>..<span class="number">10</span>], <span class="number">1</span>, largest, <span class="number">0.1</span>, coordinate).unwrap();
+<a href=#634 id=634 data-nosnippet>634</a>        <span class="macro">assert_eq!</span>(with_blank, with_explicit_broad);
+<a href=#635 id=635 data-nosnippet>635</a>        <span class="macro">assert_ne!</span>(with_blank, without_blank);
+<a href=#636 id=636 data-nosnippet>636</a>        <span class="macro">assert!</span>(
+<a href=#637 id=637 data-nosnippet>637</a>            block_beam(<span class="kw-2">&amp;</span>[<span class="prelude-val">None</span>], <span class="number">1</span>, <span class="prelude-val">None</span>, <span class="number">0.1</span>, coordinate)
+<a href=#638 id=638 data-nosnippet>638</a>                .unwrap()
+<a href=#639 id=639 data-nosnippet>639</a>                .is_none()
+<a href=#640 id=640 data-nosnippet>640</a>        );
+<a href=#641 id=641 data-nosnippet>641</a>    }
+<a href=#642 id=642 data-nosnippet>642</a>
+<a href=#643 id=643 data-nosnippet>643</a>    <span class="doccomment">/// A narrow 25-pixel island survives its own beam, but CASA prunes it
+<a href=#644 id=644 data-nosnippet>644</a>    /// when a blank plane brings in a larger beam from the next block.
+<a href=#645 id=645 data-nosnippet>645</a>    </span><span class="attr">#[test]
+<a href=#646 id=646 data-nosnippet>646</a>    </span><span class="kw">fn </span>a_blank_plane_changes_the_materialized_mask_through_its_block_beam() {
+<a href=#647 id=647 data-nosnippet>647</a>        <span class="kw">use </span><span class="kw">crate</span>::plane::PlaneShape;
+<a href=#648 id=648 data-nosnippet>648</a>        <span class="kw">use </span>casa_imaging_model::{DirectionFrame, NoiseEstimate, Projection, SkyDirection};
+<a href=#649 id=649 data-nosnippet>649</a>
+<a href=#650 id=650 data-nosnippet>650</a>        <span class="kw">let </span>psf_shape = PlaneShape::new(<span class="number">64</span>, <span class="number">64</span>);
+<a href=#651 id=651 data-nosnippet>651</a>        <span class="kw">let </span>psf = (<span class="number">0</span>..psf_shape.len())
+<a href=#652 id=652 data-nosnippet>652</a>            .map(|index| {
+<a href=#653 id=653 data-nosnippet>653</a>                <span class="kw">let </span>[x, y] = psf_shape.pixel(index);
+<a href=#654 id=654 data-nosnippet>654</a>                <span class="kw">let </span>r2 = (x <span class="kw">as </span>f64 - <span class="number">32.0</span>).powi(<span class="number">2</span>) + (y <span class="kw">as </span>f64 - <span class="number">32.0</span>).powi(<span class="number">2</span>);
+<a href=#655 id=655 data-nosnippet>655</a>                (-r2 / <span class="number">8.0</span>).exp()
+<a href=#656 id=656 data-nosnippet>656</a>            })
+<a href=#657 id=657 data-nosnippet>657</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#658 id=658 data-nosnippet>658</a>        <span class="kw">let </span>narrow = PsfSummary::new(<span class="kw-2">&amp;</span>psf, psf_shape).unwrap();
+<a href=#659 id=659 data-nosnippet>659</a>        <span class="kw">let </span>broad =
+<a href=#660 id=660 data-nosnippet>660</a>            narrow.with_domain_beam(<span class="kw-2">&amp;</span>psf, psf_shape, RestoringBeam::new(<span class="number">10.0</span>, <span class="number">8.0</span>, <span class="number">0.0</span>).unwrap());
+<a href=#661 id=661 data-nosnippet>661</a>        <span class="kw">let </span>coordinate = DirectionCoordinateSpec::new(
+<a href=#662 id=662 data-nosnippet>662</a>            Projection::Sin,
+<a href=#663 id=663 data-nosnippet>663</a>            SkyDirection::new(DirectionFrame::J2000, <span class="number">1.0</span>, <span class="number">0.5</span>),
+<a href=#664 id=664 data-nosnippet>664</a>            [<span class="number">450.0</span>, <span class="number">450.0</span>],
+<a href=#665 id=665 data-nosnippet>665</a>            [-<span class="number">1.0e-4</span>, <span class="number">1.0e-4</span>],
+<a href=#666 id=666 data-nosnippet>666</a>            [[<span class="number">1.0</span>, <span class="number">0.0</span>], [<span class="number">0.0</span>, <span class="number">1.0</span>]],
+<a href=#667 id=667 data-nosnippet>667</a>            [<span class="number">180.0</span>, <span class="number">90.0</span>],
+<a href=#668 id=668 data-nosnippet>668</a>        );
+<a href=#669 id=669 data-nosnippet>669</a>        <span class="kw">let </span>controls = AutoMultithreshControls {
+<a href=#670 id=670 data-nosnippet>670</a>            sidelobe_factor: <span class="number">2.0</span>,
+<a href=#671 id=671 data-nosnippet>671</a>            noise_factor: <span class="number">4.25</span>,
+<a href=#672 id=672 data-nosnippet>672</a>            low_noise_factor: <span class="number">1.5</span>,
+<a href=#673 id=673 data-nosnippet>673</a>            negative_factor: <span class="number">0.0</span>,
+<a href=#674 id=674 data-nosnippet>674</a>            minimum_beam_fraction: <span class="number">0.5</span>,
+<a href=#675 id=675 data-nosnippet>675</a>            smooth_factor: <span class="number">1.0</span>,
+<a href=#676 id=676 data-nosnippet>676</a>            cut_threshold: <span class="number">0.01</span>,
+<a href=#677 id=677 data-nosnippet>677</a>            grow_iterations: <span class="number">0</span>,
+<a href=#678 id=678 data-nosnippet>678</a>            grow_prune: <span class="bool-val">true</span>,
+<a href=#679 id=679 data-nosnippet>679</a>            minimum_percent_change: -<span class="number">1.0</span>,
+<a href=#680 id=680 data-nosnippet>680</a>            noise: NoiseEstimate::Fast,
+<a href=#681 id=681 data-nosnippet>681</a>            verbose: <span class="bool-val">false</span>,
+<a href=#682 id=682 data-nosnippet>682</a>        };
+<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span>shape = [<span class="number">900</span>, <span class="number">900</span>];
+<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span>read = |key: MaskPlaneKey| {
+<a href=#685 id=685 data-nosnippet>685</a>            <span class="kw">if </span>!<span class="macro">matches!</span>(key.channel, <span class="number">0 </span>| <span class="number">10</span>) {
+<a href=#686 id=686 data-nosnippet>686</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, MaskError&gt;(<span class="prelude-val">None</span>);
+<a href=#687 id=687 data-nosnippet>687</a>            }
+<a href=#688 id=688 data-nosnippet>688</a>            <span class="kw">let </span><span class="kw-2">mut </span>residual = <span class="macro">vec!</span>[<span class="number">0.0</span>; shape[<span class="number">0</span>] * shape[<span class="number">1</span>]];
+<a href=#689 id=689 data-nosnippet>689</a>            <span class="kw">if </span>key.channel == <span class="number">0 </span>{
+<a href=#690 id=690 data-nosnippet>690</a>                <span class="kw">for </span>x <span class="kw">in </span><span class="number">448</span>..<span class="number">453 </span>{
+<a href=#691 id=691 data-nosnippet>691</a>                    <span class="kw">for </span>y <span class="kw">in </span><span class="number">448</span>..<span class="number">453 </span>{
+<a href=#692 id=692 data-nosnippet>692</a>                        residual[x * shape[<span class="number">1</span>] + y] = <span class="number">10.0</span>;
+<a href=#693 id=693 data-nosnippet>693</a>                    }
+<a href=#694 id=694 data-nosnippet>694</a>                }
+<a href=#695 id=695 data-nosnippet>695</a>            }
+<a href=#696 id=696 data-nosnippet>696</a>            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(AutoMaskPlane {
+<a href=#697 id=697 data-nosnippet>697</a>                residual,
+<a href=#698 id=698 data-nosnippet>698</a>                valid: <span class="macro">vec!</span>[<span class="bool-val">true</span>; shape[<span class="number">0</span>] * shape[<span class="number">1</span>]],
+<a href=#699 id=699 data-nosnippet>699</a>                statistics: <span class="prelude-val">None</span>,
+<a href=#700 id=700 data-nosnippet>700</a>            }))
+<a href=#701 id=701 data-nosnippet>701</a>        };
+<a href=#702 id=702 data-nosnippet>702</a>        <span class="kw">let </span>psfs = |key: MaskPlaneKey| <span class="kw">match </span>key.channel {
+<a href=#703 id=703 data-nosnippet>703</a>            <span class="number">0 </span>=&gt; <span class="prelude-val">Some</span>(narrow),
+<a href=#704 id=704 data-nosnippet>704</a>            <span class="number">10 </span>=&gt; <span class="prelude-val">Some</span>(broad),
+<a href=#705 id=705 data-nosnippet>705</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#706 id=706 data-nosnippet>706</a>        };
+<a href=#707 id=707 data-nosnippet>707</a>        <span class="kw">let </span>source = AutoMaskSource {
+<a href=#708 id=708 data-nosnippet>708</a>            read: <span class="kw-2">&amp;</span>read,
+<a href=#709 id=709 data-nosnippet>709</a>            psf: <span class="kw-2">&amp;</span>psfs,
+<a href=#710 id=710 data-nosnippet>710</a>            workers: <span class="number">1</span>,
+<a href=#711 id=711 data-nosnippet>711</a>        };
+<a href=#712 id=712 data-nosnippet>712</a>        <span class="kw">let </span>state = AutoMaskState {
+<a href=#713 id=713 data-nosnippet>713</a>            coordinate,
+<a href=#714 id=714 data-nosnippet>714</a>            controls: <span class="kw-2">&amp;</span>controls,
+<a href=#715 id=715 data-nosnippet>715</a>            completed_major_cycles: <span class="number">0</span>,
+<a href=#716 id=716 data-nosnippet>716</a>            threshold_reached: <span class="bool-val">false</span>,
+<a href=#717 id=717 data-nosnippet>717</a>            previous: <span class="prelude-val">None</span>,
+<a href=#718 id=718 data-nosnippet>718</a>            stopped_channels: <span class="kw-2">&amp;</span>[],
+<a href=#719 id=719 data-nosnippet>719</a>        };
+<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">let </span>(mask, evidence) =
+<a href=#721 id=721 data-nosnippet>721</a>            auto_mask_domain(<span class="kw-2">&amp;</span>state, <span class="number">0</span>, shape, MaskPlanes::new(<span class="number">11</span>, <span class="number">1</span>).unwrap(), <span class="kw-2">&amp;</span>source).unwrap();
+<a href=#722 id=722 data-nosnippet>722</a>        <span class="kw">let </span>row = evidence.plane(<span class="number">0</span>, <span class="number">0</span>).unwrap();
+<a href=#723 id=723 data-nosnippet>723</a>        <span class="macro">assert_eq!</span>((row.regions, row.pruned_regions), (<span class="number">1</span>, <span class="number">1</span>));
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="macro">assert!</span>(!mask.plane(<span class="number">0</span>, <span class="number">0</span>).unwrap().iter().any(|pixel| <span class="kw-2">*</span>pixel));
+<a href=#725 id=725 data-nosnippet>725</a>    }
+<a href=#726 id=726 data-nosnippet>726</a>
+<a href=#727 id=727 data-nosnippet>727</a>    <span class="doccomment">/// CASA's common-beam iteration visits every channel of a Stokes plane
+<a href=#728 id=728 data-nosnippet>728</a>    /// before the next Stokes plane, regardless of our plane storage order.
+<a href=#729 id=729 data-nosnippet>729</a>    </span><span class="attr">#[test]
+<a href=#730 id=730 data-nosnippet>730</a>    </span><span class="kw">fn </span>a_multistokes_block_uses_casas_beam_matrix_order() {
+<a href=#731 id=731 data-nosnippet>731</a>        <span class="kw">use </span><span class="kw">crate</span>::plane::PlaneShape;
+<a href=#732 id=732 data-nosnippet>732</a>        <span class="kw">use </span>casa_imaging_model::{DirectionFrame, Projection, SkyDirection};
+<a href=#733 id=733 data-nosnippet>733</a>
+<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">let </span>shape = PlaneShape::new(<span class="number">64</span>, <span class="number">64</span>);
+<a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">let </span>psf = (<span class="number">0</span>..shape.len())
+<a href=#736 id=736 data-nosnippet>736</a>            .map(|index| {
+<a href=#737 id=737 data-nosnippet>737</a>                <span class="kw">let </span>[x, y] = shape.pixel(index);
+<a href=#738 id=738 data-nosnippet>738</a>                <span class="kw">let </span>r2 = (x <span class="kw">as </span>f64 - <span class="number">32.0</span>).powi(<span class="number">2</span>) + (y <span class="kw">as </span>f64 - <span class="number">32.0</span>).powi(<span class="number">2</span>);
+<a href=#739 id=739 data-nosnippet>739</a>                (-r2 / <span class="number">8.0</span>).exp()
+<a href=#740 id=740 data-nosnippet>740</a>            })
+<a href=#741 id=741 data-nosnippet>741</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#742 id=742 data-nosnippet>742</a>        <span class="kw">let </span>template = PsfSummary::new(<span class="kw-2">&amp;</span>psf, shape).expect(<span class="string">"a PSF"</span>);
+<a href=#743 id=743 data-nosnippet>743</a>        <span class="kw">let </span>axes = [
+<a href=#744 id=744 data-nosnippet>744</a>            (
+<a href=#745 id=745 data-nosnippet>745</a>                <span class="number">0.000_659_920_363_505_466_7</span>,
+<a href=#746 id=746 data-nosnippet>746</a>                <span class="number">0.000_277_714_375_479_345_24</span>,
+<a href=#747 id=747 data-nosnippet>747</a>                -<span class="number">1.006_629_886_598_266_8</span>,
+<a href=#748 id=748 data-nosnippet>748</a>            ),
+<a href=#749 id=749 data-nosnippet>749</a>            (
+<a href=#750 id=750 data-nosnippet>750</a>                <span class="number">0.000_489_199_949_523_298_2</span>,
+<a href=#751 id=751 data-nosnippet>751</a>                <span class="number">0.000_332_711_701_991_262_23</span>,
+<a href=#752 id=752 data-nosnippet>752</a>                <span class="number">0.534_970_100_282_602_5</span>,
+<a href=#753 id=753 data-nosnippet>753</a>            ),
+<a href=#754 id=754 data-nosnippet>754</a>            (
+<a href=#755 id=755 data-nosnippet>755</a>                <span class="number">0.000_575_668_982_898_358_4</span>,
+<a href=#756 id=756 data-nosnippet>756</a>                <span class="number">0.000_251_585_111_889_876_9</span>,
+<a href=#757 id=757 data-nosnippet>757</a>                <span class="number">0.498_537_038_391_696_7</span>,
+<a href=#758 id=758 data-nosnippet>758</a>            ),
+<a href=#759 id=759 data-nosnippet>759</a>            (
+<a href=#760 id=760 data-nosnippet>760</a>                <span class="number">0.000_445_553_375_482_662</span>,
+<a href=#761 id=761 data-nosnippet>761</a>                <span class="number">0.000_232_902_929_545_132_06</span>,
+<a href=#762 id=762 data-nosnippet>762</a>                <span class="number">0.677_320_743_101_792_8</span>,
+<a href=#763 id=763 data-nosnippet>763</a>            ),
+<a href=#764 id=764 data-nosnippet>764</a>        ];
+<a href=#765 id=765 data-nosnippet>765</a>        <span class="kw">let </span>summaries = axes.map(|(major, minor, pa)| {
+<a href=#766 id=766 data-nosnippet>766</a>            template.with_domain_beam(<span class="kw-2">&amp;</span>psf, shape, RestoringBeam::new(major, minor, pa).unwrap())
+<a href=#767 id=767 data-nosnippet>767</a>        });
+<a href=#768 id=768 data-nosnippet>768</a>        <span class="kw">let </span><span class="kw-2">mut </span>psfs = <span class="macro">vec!</span>[<span class="prelude-val">Some</span>(summaries[<span class="number">3</span>]); <span class="number">22</span>];
+<a href=#769 id=769 data-nosnippet>769</a>        psfs[<span class="number">0</span>] = <span class="prelude-val">None</span>;
+<a href=#770 id=770 data-nosnippet>770</a>        psfs[<span class="number">1</span>] = <span class="prelude-val">Some</span>(summaries[<span class="number">1</span>]);
+<a href=#771 id=771 data-nosnippet>771</a>        psfs[<span class="number">2</span>] = <span class="prelude-val">Some</span>(summaries[<span class="number">2</span>]);
+<a href=#772 id=772 data-nosnippet>772</a>        psfs[<span class="number">20</span>] = <span class="prelude-val">Some</span>(summaries[<span class="number">0</span>]);
+<a href=#773 id=773 data-nosnippet>773</a>        <span class="kw">let </span>coordinate = DirectionCoordinateSpec::new(
+<a href=#774 id=774 data-nosnippet>774</a>            Projection::Sin,
+<a href=#775 id=775 data-nosnippet>775</a>            SkyDirection::new(DirectionFrame::J2000, <span class="number">1.0</span>, <span class="number">0.5</span>),
+<a href=#776 id=776 data-nosnippet>776</a>            [<span class="number">1.0</span>, <span class="number">1.0</span>],
+<a href=#777 id=777 data-nosnippet>777</a>            [-<span class="number">1.0</span>, <span class="number">1.0</span>],
+<a href=#778 id=778 data-nosnippet>778</a>            [[<span class="number">1.0</span>, <span class="number">0.0</span>], [<span class="number">0.0</span>, <span class="number">1.0</span>]],
+<a href=#779 id=779 data-nosnippet>779</a>            [<span class="number">180.0</span>, <span class="number">90.0</span>],
+<a href=#780 id=780 data-nosnippet>780</a>        );
+<a href=#781 id=781 data-nosnippet>781</a>        <span class="kw">let </span><span class="kw-2">mut </span>blocks = block_beams(<span class="kw-2">&amp;</span>psfs, <span class="number">2</span>, [<span class="number">900</span>, <span class="number">900</span>], <span class="number">0.1</span>, coordinate);
+<a href=#782 id=782 data-nosnippet>782</a>        <span class="kw">let </span>(<span class="kw">_</span>, actual) = blocks.next().expect(<span class="string">"first block"</span>);
+<a href=#783 id=783 data-nosnippet>783</a>        <span class="kw">let </span>actual = actual.expect(<span class="string">"the block beam"</span>);
+<a href=#784 id=784 data-nosnippet>784</a>        <span class="kw">let </span><span class="kw-2">mut </span>casa_order = Vec::with_capacity(<span class="number">20</span>);
+<a href=#785 id=785 data-nosnippet>785</a>        <span class="kw">for </span>polarization <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
+<a href=#786 id=786 data-nosnippet>786</a>            <span class="kw">for </span>channel <span class="kw">in </span><span class="number">0</span>..<span class="number">10 </span>{
+<a href=#787 id=787 data-nosnippet>787</a>                casa_order.push(
+<a href=#788 id=788 data-nosnippet>788</a>                    psfs[channel * <span class="number">2 </span>+ polarization]
+<a href=#789 id=789 data-nosnippet>789</a>                        .unwrap_or(summaries[<span class="number">0</span>])
+<a href=#790 id=790 data-nosnippet>790</a>                        .beam(),
+<a href=#791 id=791 data-nosnippet>791</a>                );
+<a href=#792 id=792 data-nosnippet>792</a>            }
+<a href=#793 id=793 data-nosnippet>793</a>        }
+<a href=#794 id=794 data-nosnippet>794</a>        <span class="kw">let </span>expected = RestoringBeam::common_enclosing(<span class="kw-2">&amp;</span>casa_order).unwrap();
+<a href=#795 id=795 data-nosnippet>795</a>        <span class="kw">let </span>expected = AutoMaskBeam::new(
+<a href=#796 id=796 data-nosnippet>796</a>            expected.major_fwhm_rad(),
+<a href=#797 id=797 data-nosnippet>797</a>            expected.minor_fwhm_rad(),
+<a href=#798 id=798 data-nosnippet>798</a>            expected.position_angle_rad(),
+<a href=#799 id=799 data-nosnippet>799</a>            <span class="number">0.1</span>,
+<a href=#800 id=800 data-nosnippet>800</a>        );
+<a href=#801 id=801 data-nosnippet>801</a>        <span class="macro">assert_eq!</span>(actual, <span class="prelude-val">Some</span>(expected));
+<a href=#802 id=802 data-nosnippet>802</a>    }
+<a href=#803 id=803 data-nosnippet>803</a>
+<a href=#804 id=804 data-nosnippet>804</a>    <span class="attr">#[test]
+<a href=#805 id=805 data-nosnippet>805</a>    </span><span class="kw">fn </span>a_cube_is_masked_in_casa_channel_blocks() {
+<a href=#806 id=806 data-nosnippet>806</a>        <span class="comment">// 100 by 100: blocks of 800 channels, so a small cube is one block.
+<a href=#807 id=807 data-nosnippet>807</a>        </span><span class="macro">assert_eq!</span>(channel_blocks(<span class="number">3</span>, [<span class="number">100</span>, <span class="number">100</span>]), <span class="macro">vec!</span>[<span class="number">0</span>..<span class="number">3</span>]);
+<a href=#808 id=808 data-nosnippet>808</a>        <span class="macro">assert_eq!</span>(channel_blocks(<span class="number">1</span>, [<span class="number">100</span>, <span class="number">100</span>]), <span class="macro">vec!</span>[<span class="number">0</span>..<span class="number">1</span>]);
+<a href=#809 id=809 data-nosnippet>809</a>        <span class="comment">// 2000 by 2000: 2 channels by size, at least ten.
+<a href=#810 id=810 data-nosnippet>810</a>        </span><span class="macro">assert_eq!</span>(channel_blocks(<span class="number">25</span>, [<span class="number">2000</span>, <span class="number">2000</span>]), [<span class="number">0</span>..<span class="number">10</span>, <span class="number">10</span>..<span class="number">20</span>, <span class="number">20</span>..<span class="number">25</span>]);
+<a href=#811 id=811 data-nosnippet>811</a>        <span class="macro">assert_eq!</span>(channel_blocks(<span class="number">10</span>, [<span class="number">2000</span>, <span class="number">2000</span>]), <span class="macro">vec!</span>[<span class="number">0</span>..<span class="number">10</span>]);
+<a href=#812 id=812 data-nosnippet>812</a>        <span class="comment">// 1000 by 1000: eight channels by size, so ten.
+<a href=#813 id=813 data-nosnippet>813</a>        </span><span class="macro">assert_eq!</span>(channel_blocks(<span class="number">21</span>, [<span class="number">1000</span>, <span class="number">1000</span>]), [<span class="number">0</span>..<span class="number">10</span>, <span class="number">10</span>..<span class="number">20</span>, <span class="number">20</span>..<span class="number">21</span>]);
+<a href=#814 id=814 data-nosnippet>814</a>        <span class="comment">// 900 by 900: 9.87 truncates to nine, so ten.
+<a href=#815 id=815 data-nosnippet>815</a>        </span><span class="macro">assert_eq!</span>(channel_blocks(<span class="number">11</span>, [<span class="number">900</span>, <span class="number">900</span>]), [<span class="number">0</span>..<span class="number">10</span>, <span class="number">10</span>..<span class="number">11</span>]);
+<a href=#816 id=816 data-nosnippet>816</a>        <span class="comment">// 400 by 400: blocks of fifty.
+<a href=#817 id=817 data-nosnippet>817</a>        </span><span class="macro">assert_eq!</span>(channel_blocks(<span class="number">120</span>, [<span class="number">400</span>, <span class="number">400</span>]), [<span class="number">0</span>..<span class="number">50</span>, <span class="number">50</span>..<span class="number">100</span>, <span class="number">100</span>..<span class="number">120</span>]);
+<a href=#818 id=818 data-nosnippet>818</a>    }
+<a href=#819 id=819 data-nosnippet>819</a>}
 </code></pre></div></section></main></body></html>
