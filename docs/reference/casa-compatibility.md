@@ -10,7 +10,7 @@ Each casa-rs task that mimics a CASA task (#931) against that task as CASA 6.7.6
 
 The CASA parameters casa-rs lacks or accepts only at their defaults are tracked by family: images in #977, MeasurementSet and flagging in #978, calibration in #979 and `tclean` in #980.
 
-For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the recorded coercions, a value both implementations reject for type reports CASA's wording, unless a narrower unimplemented-form diagnostic applies. Required paths, unions, vectors and variants retain casa-rs's diagnostics (#1099). CASA accepts booleans as integers and coerces them to floats; where casa-rs refuses one, it keeps its own message. Exception classes follow the casa-rs Python contract.
+For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the recorded coercions, a value both implementations reject for type reports CASA's wording, unless a narrower unimplemented-form diagnostic applies. Direct `cBoolVec`, `cFloatVec`, `cIntVec`, `cPathVec` and `cStrVec` schemas are also covered where the recorded vector coercions apply. Float-shaped `cIntVec` inputs keep the native diagnostic because a JSON integer outside the native range may lose its original spelling. For explicit scalar inputs checked by the task, a missing absolute or explicitly relative path gets CASA's wording when the schema has one direct required path. Other required-path cases, unions and variants retain casa-rs's diagnostics (#1099). CASA accepts booleans as integers and coerces them to floats; where casa-rs refuses one, it keeps its own message. Exception classes follow the casa-rs Python contract.
 
 ## Summary
 
@@ -1581,13 +1581,13 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 19 | 0 | 42 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 24 | 0 | 37 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
-| [quanta](#quanta) | `casars.tools` | 57 | yes | 26 | 0 | 31 | 0 | 0 | 0 |
+| [quanta](#quanta) | `casars.tools` | 57 | yes | 45 | 0 | 12 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 18 | 11 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 46 | 2 | 9 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
@@ -1598,7 +1598,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 19, Partial: 0, Not implemented: 42, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 24, Partial: 0, Not implemented: 37, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1617,8 +1617,8 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `edit` | `which, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `fromrecord` | `record={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `getcomponent` | `which, iknow=False` | Implemented | CASA's record of one component, with CASA's index errors. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `getfluxerror` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `getfluxpol` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getfluxerror` | `which` | Implemented | Returns the real parts of the four stored component flux errors, with CASA index handling. | [signature](#componentlist-evidence-signature), [fluxerror-casa](#componentlist-evidence-fluxerror-casa) |
+| `getfluxpol` | `which` | Implemented | Matches CASA 6.7.6.14's unimplemented placeholder: warns and returns an empty string; the component polarization is not exposed. | [signature](#componentlist-evidence-signature), [fluxpol-placeholder-casa](#componentlist-evidence-fluxpol-placeholder-casa) |
 | `getfluxunit` | `which` | Implemented | A component's flux unit. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getfluxvalue` | `which` | Implemented | A component's flux values. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getfreq` | `which` | Implemented | Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency. | [signature](#componentlist-evidence-signature), [frequency-placeholders-casa](#componentlist-evidence-frequency-placeholders-casa) |
@@ -1628,9 +1628,9 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `getkeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `getlabel` | `which` | Implemented | A component's label. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getrefdir` | `which` | Implemented | A component's reference direction as a measure record. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `getrefdirdec` | `which, unit='deg', precision=6` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `getrefdirframe` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `getrefdirra` | `which, unit='deg', precision=6` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getrefdirdec` | `which, unit='deg', precision=6` | Implemented | CASA's own placeholder logs a warning and returns an empty string, including for out-of-range indices. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `getrefdirframe` | `which` | Implemented | The component reference direction's CASA frame name, with CASA's C-int index conversion; missing indices produce an error without CASA's installation-specific C++ source path. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `getrefdirra` | `which, unit='deg', precision=6` | Implemented | CASA's own placeholder logs a warning and returns an empty string, including for out-of-range indices. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getshape` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `getspectrum` | `which` | Implemented | A component's spectrum record. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `haskeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
@@ -1803,6 +1803,25 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/componentlist_frequency_oracle.py](https://github.com/bglenden/casa-rs/blob/dc3b03557db594b85c1745440a648f3419d01c50/tools/simulation/componentlist_frequency_oracle.py)
 - [crates/casars-python/python/tests/data/casa_componentlist_frequency.json](https://github.com/bglenden/casa-rs/blob/dc3b03557db594b85c1745440a648f3419d01c50/crates/casars-python/python/tests/data/casa_componentlist_frequency.json)
 - [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/dc3b03557db594b85c1745440a648f3419d01c50/crates/casars-python/python/tests/test_tools_componentlist.py)
+
+<a id="componentlist-evidence-fluxpol-placeholder-casa"></a>
+##### fluxpol-placeholder-casa
+
+**CASA-recorded values — measured.** Nine CASA 6.7.6-14 calls cover the empty-string placeholder, warning, index types and errors. Empty and populated lists return the same placeholder. componentlist.getfluxpol.
+
+- [tools/simulation/componentlist_fluxpol_oracle.py](https://github.com/bglenden/casa-rs/blob/64562dde202cd6201e8205a0bc4ee30e1ef1cf0e/tools/simulation/componentlist_fluxpol_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_fluxpol.json](https://github.com/bglenden/casa-rs/blob/64562dde202cd6201e8205a0bc4ee30e1ef1cf0e/crates/casars-python/python/tests/data/casa_componentlist_fluxpol.json)
+- [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/64562dde202cd6201e8205a0bc4ee30e1ef1cf0e/crates/casars-python/python/tests/test_tools_componentlist.py)
+
+<a id="componentlist-evidence-fluxerror-casa"></a>
+##### fluxerror-casa
+
+**CASA-recorded values — measured.** Twelve CASA 6.7.6-14 calls cover nonzero real and complex errors, index narrowing and argument errors; the CASA-created table is retained. componentlist.getfluxerror.
+
+- [tools/simulation/componentlist_fluxerror_oracle.py](https://github.com/bglenden/casa-rs/blob/5074e93e7172c2d348f11beaa04daf83895a6e62/tools/simulation/componentlist_fluxerror_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_fluxerror.json](https://github.com/bglenden/casa-rs/blob/5074e93e7172c2d348f11beaa04daf83895a6e62/crates/casars-python/python/tests/data/casa_componentlist_fluxerror.json)
+- [crates/casars-python/python/tests/data/casa_fluxerrors.cl.tgz](https://github.com/bglenden/casa-rs/blob/5074e93e7172c2d348f11beaa04daf83895a6e62/crates/casars-python/python/tests/data/casa_fluxerrors.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_fluxerror.py](https://github.com/bglenden/casa-rs/blob/5074e93e7172c2d348f11beaa04daf83895a6e62/crates/casars-python/python/tests/test_componentlist_fluxerror.py)
 
 ### measures
 
@@ -1987,61 +2006,61 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 26, Partial: 0, Not implemented: 31, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 45, Partial: 0, Not implemented: 12, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
 | `abs` | `v=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
-| `acos` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `acos` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
 | `add` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `angle` | `v=[], prec=0, form=[], showform=False` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
-| `asin` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
-| `atan` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
-| `atan2` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `asin` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
+| `atan` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
+| `atan2` | `v=[], a=[]` | Implemented | Scalar two-argument arctangent in radians, with CASA dimensionless-unit conversion and errors. | [signature](#quanta-evidence-signature), [atan2-casa](#quanta-evidence-atan2-casa) |
 | `canon` | `v=[]` | Implemented | Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance). | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `canonical` | `v=[]` | Implemented | Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance). | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
-| `ceil` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `ceil` | `v=[]` | Implemented | Rounds a scalar quantity in its own unit, preserving CASA conversion errors. | [signature](#quanta-evidence-signature), [rounding-casa](#quanta-evidence-rounding-casa) |
 | `check` | `v` | Implemented | Answers as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
-| `checkfreq` | `cm=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `checkfreq` | `cm=[]` | Implemented | Tests whether a scalar quantity has a frequency-compatible dimension, with CASA conversion errors. | [signature](#quanta-evidence-signature), [checkfreq-casa](#quanta-evidence-checkfreq-casa) |
 | `compare` | `v=[], a=[]` | Implemented | Answers as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `constants` | `v='pi'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
 | `convert` | `v=[], outunit=[]` | Implemented | Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance). | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `convertdop` | `v=[], outunit='km/s'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
 | `convertfreq` | `v=[], outunit='Hz'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
-| `cos` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `cos` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
 | `define` | `name, v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
 | `div` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `done` | `kill=False` | Implemented | As CASA's. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
-| `eq` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
-| `exp` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `eq` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
+| `exp` | `v=[]` | Implemented | Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors. | [signature](#quanta-evidence-signature), [logarithms-casa](#quanta-evidence-logarithms-casa) |
 | `fits` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
-| `floor` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `floor` | `v=[]` | Implemented | Rounds a scalar quantity in its own unit, preserving CASA conversion errors. | [signature](#quanta-evidence-signature), [rounding-casa](#quanta-evidence-rounding-casa) |
 | `formxxx` | `v=[], format='dms', prec=2` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
-| `ge` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `ge` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
 | `getformat` | `t=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
 | `getunit` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `getvalue` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
-| `gt` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `gt` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
 | `isangle` | `v=[]` | Implemented | Tests whether a scalar quantity has angle or time dimensions, with CASA conversion errors. | [signature](#quanta-evidence-signature), [isangle-casa](#quanta-evidence-isangle-casa) |
 | `isquantity` | `v=[]` | Implemented | Answers as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
-| `le` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
-| `log` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
-| `log10` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
-| `lt` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `le` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
+| `log` | `v=[]` | Implemented | Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors. | [signature](#quanta-evidence-signature), [logarithms-casa](#quanta-evidence-logarithms-casa) |
+| `log10` | `v=[]` | Implemented | Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors. | [signature](#quanta-evidence-signature), [logarithms-casa](#quanta-evidence-logarithms-casa) |
+| `lt` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
 | `map` | `v='all'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
 | `maprec` | `v='all'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
 | `mul` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
-| `ne` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `ne` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
 | `neg` | `v=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `norm` | `v=[], a=-0.5` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
 | `pow` | `v=[], a=1` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
 | `quantity` | `v=[], unitname='', keepshape=False` | Implemented | Builds quantities and quantity arrays from strings, numbers and records, as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `setformat` | `t='', v='F'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
-| `sin` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `sin` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
 | `splitdate` | `v=[]` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `sqrt` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
 | `sub` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
-| `tan` | `v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `tan` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
 | `time` | `v=[], prec=0, form=[], showform=False` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `toangle` | `v=[]` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `tos` | `v=[], prec=9` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
@@ -2102,6 +2121,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 - [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
+<a id="quanta-evidence-checkfreq-casa"></a>
+##### checkfreq-casa
+
+**CASA-recorded values — measured.** Thirty-two CASA 6.7.6-14 cases cover frequency, period, wavelength, energy, other dimensions and scalar conversion errors. quanta.checkfreq.
+
+- [tools/simulation/quanta_checkfreq_oracle.py](https://github.com/bglenden/casa-rs/blob/119771e30d19558740b3b799e5bd519b1a060ba7/tools/simulation/quanta_checkfreq_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_checkfreq.json](https://github.com/bglenden/casa-rs/blob/119771e30d19558740b3b799e5bd519b1a060ba7/crates/casars-python/python/tests/data/casa_quanta_checkfreq.json)
+- [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/119771e30d19558740b3b799e5bd519b1a060ba7/crates/casars-python/python/tests/test_tools_quanta.py)
+
 <a id="quanta-evidence-isangle-casa"></a>
 ##### isangle-casa
 
@@ -2110,6 +2138,51 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/quanta_isangle_oracle.py](https://github.com/bglenden/casa-rs/blob/88e8c2fd7b7742de78eeb75e16164b5b40367c90/tools/simulation/quanta_isangle_oracle.py)
 - [crates/casars-python/python/tests/data/casa_quanta_isangle.json](https://github.com/bglenden/casa-rs/blob/88e8c2fd7b7742de78eeb75e16164b5b40367c90/crates/casars-python/python/tests/data/casa_quanta_isangle.json)
 - [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/88e8c2fd7b7742de78eeb75e16164b5b40367c90/crates/casars-python/python/tests/test_tools_quanta.py)
+
+<a id="quanta-evidence-rounding-casa"></a>
+##### rounding-casa
+
+**CASA-recorded values — measured.** Forty cases recorded with CASA 6.7.6-14 cover both rounding directions, scalar units, signed zero, records and errors. quanta.ceil and quanta.floor.
+
+- [tools/simulation/quanta_rounding_oracle.py](https://github.com/bglenden/casa-rs/blob/a05f4c2dbdfdff1a6a46575c02d4c714875281c6/tools/simulation/quanta_rounding_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_rounding.json](https://github.com/bglenden/casa-rs/blob/a05f4c2dbdfdff1a6a46575c02d4c714875281c6/crates/casars-python/python/tests/data/casa_quanta_rounding.json)
+- [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/a05f4c2dbdfdff1a6a46575c02d4c714875281c6/crates/casars-python/python/tests/test_tools_quanta.py)
+
+<a id="quanta-evidence-trigonometry-casa"></a>
+##### trigonometry-casa
+
+**CASA-recorded values — measured.** 108 CASA 6.7.6-14 cases cover angle and dimensionless inputs, scaled units, out-of-domain results and errors for all six functions. quanta.sin, cos, tan, asin, acos and atan.
+
+- [tools/simulation/quanta_trigonometry_oracle.py](https://github.com/bglenden/casa-rs/blob/6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad/tools/simulation/quanta_trigonometry_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_trigonometry.json](https://github.com/bglenden/casa-rs/blob/6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad/crates/casars-python/python/tests/data/casa_quanta_trigonometry.json)
+- [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad/crates/casars-python/python/tests/test_tools_quanta.py)
+
+<a id="quanta-evidence-logarithms-casa"></a>
+##### logarithms-casa
+
+**CASA-recorded values — measured.** 57 CASA 6.7.6-14 cases cover dimensionless and scaled inputs, units, non-finite results and errors for all three functions. quanta.exp, log and log10.
+
+- [tools/simulation/quanta_logarithms_oracle.py](https://github.com/bglenden/casa-rs/blob/83c3308ca779c3ca84f29d47fa4203e2f7ae5a50/tools/simulation/quanta_logarithms_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_logarithms.json](https://github.com/bglenden/casa-rs/blob/83c3308ca779c3ca84f29d47fa4203e2f7ae5a50/crates/casars-python/python/tests/data/casa_quanta_logarithms.json)
+- [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/83c3308ca779c3ca84f29d47fa4203e2f7ae5a50/crates/casars-python/python/tests/test_tools_quanta.py)
+
+<a id="quanta-evidence-relational-casa"></a>
+##### relational-casa
+
+**CASA-recorded values — measured.** 168 CASA 6.7.6-14 comparisons cover units, incompatible dimensions, numeric edge cases, arrays and errors. quanta.eq, ne, lt, le, gt and ge.
+
+- [tools/simulation/quanta_relational_oracle.py](https://github.com/bglenden/casa-rs/blob/1bc8a2fca31e5ac5361cf95fc12705fea6954a94/tools/simulation/quanta_relational_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_relational.json](https://github.com/bglenden/casa-rs/blob/1bc8a2fca31e5ac5361cf95fc12705fea6954a94/crates/casars-python/python/tests/data/casa_quanta_relational.json)
+- [crates/casars-python/python/tests/test_quanta_relational.py](https://github.com/bglenden/casa-rs/blob/1bc8a2fca31e5ac5361cf95fc12705fea6954a94/crates/casars-python/python/tests/test_quanta_relational.py)
+
+<a id="quanta-evidence-atan2-casa"></a>
+##### atan2-casa
+
+**CASA-recorded values — measured.** 144 CASA 6.7.6-14 cases cover signed zero, scaled dimensionless inputs, invalid units, arrays and conversion errors. quanta.atan2.
+
+- [tools/simulation/quanta_atan2_oracle.py](https://github.com/bglenden/casa-rs/blob/4d86ba7a97255eaafab86a745b660adc694aa3c7/tools/simulation/quanta_atan2_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_atan2.json](https://github.com/bglenden/casa-rs/blob/4d86ba7a97255eaafab86a745b660adc694aa3c7/crates/casars-python/python/tests/data/casa_quanta_atan2.json)
+- [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/4d86ba7a97255eaafab86a745b660adc694aa3c7/crates/casars-python/python/tests/test_tools_quanta.py)
 
 ### simulator
 

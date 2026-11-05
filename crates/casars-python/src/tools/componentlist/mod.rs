@@ -33,6 +33,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pyo3::exceptions::{PyOverflowError, PyRuntimeWarning, PySystemError, PyTypeError};
 use pyo3::prelude::*;
+use pyo3::types::PyString;
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, DoubleList, Variant};
@@ -43,6 +44,14 @@ use ops::State;
 /// The Python logger CASA's `cl` messages go to.
 const LOGGER: &str = "casars.tools.componentlist";
 
+/// Keep a supplied Python `None` distinct from an omitted argument.
+fn supplied<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
+    value
+        .extract::<Bound<'py, PyAny>>()
+        .map(Some)
+        .map_err(Into::into)
+}
+
 /// CASA's `componentlist` tool.
 #[pyclass(name = "componentlist", module = "casars.tools", frozen)]
 pub(crate) struct PyComponentList {
@@ -50,8 +59,54 @@ pub(crate) struct PyComponentList {
 }
 
 impl PyComponentList {
-    /// CASA's frequency getters currently log a warning and return placeholders.
-    fn frequency_placeholder(
+    fn refdir_placeholder(
+        &self,
+        py: Python<'_>,
+        which: &Bound<'_, PyAny>,
+        unit: Option<&Bound<'_, PyAny>>,
+        precision: Option<&Bound<'_, PyAny>>,
+        method: &'static str,
+    ) -> PyResult<Py<PyAny>> {
+        let index = which.extract::<i64>();
+        let mut system_error = which.is_none()
+            || index
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.is_instance_of::<PyOverflowError>(py));
+        if index.is_err() && !system_error {
+            return Err(PyTypeError::new_err("argument _which must be an integer"));
+        }
+        if unit.is_some_and(|value| !value.is_instance_of::<PyString>()) {
+            return Err(PyTypeError::new_err("argument _unit must be a string"));
+        }
+        if let Some(precision) = precision {
+            let extracted = precision.extract::<i64>();
+            let precision_system_error = precision.is_none()
+                || extracted
+                    .as_ref()
+                    .err()
+                    .is_some_and(|e| e.is_instance_of::<PyOverflowError>(py));
+            if extracted.is_err() && !precision_system_error {
+                return Err(PyTypeError::new_err(
+                    "argument _precision must be an integer",
+                ));
+            }
+            system_error |= precision_system_error;
+        }
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning(format!("{method} not implemented yet")));
+            Ok(CasaValue::Text(String::new()))
+        })?;
+        if system_error {
+            return Err(PySystemError::new_err(format!(
+                "<built-in function componentlist_{method}> returned a result with an exception set"
+            )));
+        }
+        Ok(result)
+    }
+
+    /// CASA's unimplemented getters log a warning and return placeholders.
+    fn getter_placeholder(
         &self,
         py: Python<'_>,
         which: &Bound<'_, PyAny>,
@@ -328,16 +383,38 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// The real parts of component `which`'s four flux errors.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn getfluxerror(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getfluxerror")
+    fn getfluxerror(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let which = match which.extract::<i64>() {
+            Ok(index) => i64::from(index as i32),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => -1,
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        self.call(py, move |state, lines| match state.checked(which) {
+            Ok(component) => Ok(CasaValue::floats(
+                component
+                    .flux()
+                    .errors()
+                    .iter()
+                    .map(|value| value.re)
+                    .collect(),
+            )),
+            Err(_) => {
+                let message = format!(
+                    "Exception: Index out of range. The component number must be between 0 and {}.",
+                    state.length() - 1
+                );
+                lines.push(LogLine::error(format!("Exception Reported: {message}")));
+                Err(crate::convert::ConvertError::runtime(message))
+            }
+        })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns an empty string.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn getfluxpol(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getfluxpol")
+    fn getfluxpol(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        self.getter_placeholder(py, which, "getfluxpol", CasaValue::Text(String::new()))
     }
 
     /// The name of component `which`'s flux unit.
@@ -364,25 +441,25 @@ impl PyComponentList {
     /// CASA's placeholder: logs a warning and returns an empty record.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
     fn getfreq(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.frequency_placeholder(py, which, "getfreq", CasaValue::empty_record())
+        self.getter_placeholder(py, which, "getfreq", CasaValue::empty_record())
     }
 
     /// CASA's placeholder: logs a warning and returns an empty string.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
     fn getfreqframe(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.frequency_placeholder(py, which, "getfreqframe", CasaValue::Text(String::new()))
+        self.getter_placeholder(py, which, "getfreqframe", CasaValue::Text(String::new()))
     }
 
     /// CASA's placeholder: logs a warning and returns an empty string.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
     fn getfrequnit(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.frequency_placeholder(py, which, "getfrequnit", CasaValue::Text(String::new()))
+        self.getter_placeholder(py, which, "getfrequnit", CasaValue::Text(String::new()))
     }
 
     /// CASA's placeholder: logs a warning and returns zero.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
     fn getfreqvalue(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.frequency_placeholder(py, which, "getfreqvalue", CasaValue::Float(0.0))
+        self.getter_placeholder(py, which, "getfreqvalue", CasaValue::Float(0.0))
     }
 
     /// Not yet implemented in casa-rs.
@@ -405,32 +482,57 @@ impl PyComponentList {
         self.call(py, move |state, _| state.getrefdir(which))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns an empty string.
     #[pyo3(signature = (which, unit = None, precision = None), text_signature = "($self, which, unit='deg', precision=6)")]
     fn getrefdirdec(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
-        precision: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] unit: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] precision: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("getrefdirdec")
+        self.refdir_placeholder(py, which, unit.as_ref(), precision.as_ref(), "getrefdirdec")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// The reference frame of component `which`'s direction.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn getrefdirframe(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getrefdirframe")
+    fn getrefdirframe(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let which = match which.extract::<i64>() {
+            // CASA's binding passes a C int to the underlying tool.
+            Ok(index) => i64::from(index as i32),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => -1,
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        self.call(py, move |state, lines| match state.checked(which) {
+            Ok(component) => Ok(CasaValue::Text(
+                component
+                    .shape()
+                    .reference_direction()
+                    .refer()
+                    .as_str()
+                    .into(),
+            )),
+            Err(_) => {
+                let message = format!(
+                    "Exception: Index out of range. The component number must be between 0 and {}.",
+                    state.length() - 1
+                );
+                lines.push(LogLine::error(format!("Exception Reported: {message}")));
+                Err(crate::convert::ConvertError::runtime(message))
+            }
+        })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns an empty string.
     #[pyo3(signature = (which, unit = None, precision = None), text_signature = "($self, which, unit='deg', precision=6)")]
     fn getrefdirra(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
-        precision: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] unit: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] precision: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("getrefdirra")
+        self.refdir_placeholder(py, which, unit.as_ref(), precision.as_ref(), "getrefdirra")
     }
 
     /// Not yet implemented in casa-rs.

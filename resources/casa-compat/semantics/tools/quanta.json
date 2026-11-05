@@ -13,12 +13,11 @@
    ]
   },
   "acos": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
    "evidence": [
     "signature",
-    "refusals"
+    "trigonometry-casa"
    ]
   },
   "add": {
@@ -38,30 +37,27 @@
    ]
   },
   "asin": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
    "evidence": [
     "signature",
-    "refusals"
+    "trigonometry-casa"
    ]
   },
   "atan": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
    "evidence": [
     "signature",
-    "refusals"
+    "trigonometry-casa"
    ]
   },
   "atan2": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar two-argument arctangent in radians, with CASA dimensionless-unit conversion and errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "atan2-casa"
    ]
   },
   "canon": {
@@ -81,12 +77,11 @@
    ]
   },
   "ceil": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Rounds a scalar quantity in its own unit, preserving CASA conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "rounding-casa"
    ]
   },
   "check": {
@@ -98,12 +93,11 @@
    ]
   },
   "checkfreq": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Tests whether a scalar quantity has a frequency-compatible dimension, with CASA conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "checkfreq-casa"
    ]
   },
   "compare": {
@@ -150,12 +144,11 @@
    ]
   },
   "cos": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
    "evidence": [
     "signature",
-    "refusals"
+    "trigonometry-casa"
    ]
   },
   "define": {
@@ -184,21 +177,19 @@
    ]
   },
   "eq": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
    "evidence": [
     "signature",
-    "refusals"
+    "relational-casa"
    ]
   },
   "exp": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "logarithms-casa"
    ]
   },
   "fits": {
@@ -211,12 +202,11 @@
    ]
   },
   "floor": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Rounds a scalar quantity in its own unit, preserving CASA conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "rounding-casa"
    ]
   },
   "formxxx": {
@@ -228,12 +218,11 @@
    ]
   },
   "ge": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
    "evidence": [
     "signature",
-    "refusals"
+    "relational-casa"
    ]
   },
   "getformat": {
@@ -262,12 +251,11 @@
    ]
   },
   "gt": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
    "evidence": [
     "signature",
-    "refusals"
+    "relational-casa"
    ]
   },
   "isangle": {
@@ -287,39 +275,35 @@
    ]
   },
   "le": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
    "evidence": [
     "signature",
-    "refusals"
+    "relational-casa"
    ]
   },
   "log": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "logarithms-casa"
    ]
   },
   "log10": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "logarithms-casa"
    ]
   },
   "lt": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
    "evidence": [
     "signature",
-    "refusals"
+    "relational-casa"
    ]
   },
   "map": {
@@ -349,12 +333,11 @@
    ]
   },
   "ne": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
    "evidence": [
     "signature",
-    "refusals"
+    "relational-casa"
    ]
   },
   "neg": {
@@ -401,12 +384,11 @@
    ]
   },
   "sin": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
    "evidence": [
     "signature",
-    "refusals"
+    "trigonometry-casa"
    ]
   },
   "splitdate": {
@@ -435,12 +417,11 @@
    ]
   },
   "tan": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
    "evidence": [
     "signature",
-    "refusals"
+    "trigonometry-casa"
    ]
   },
   "time": {
@@ -550,6 +531,18 @@
     "docs/CASA (C++) bugs.md"
    ]
   },
+  "checkfreq-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Thirty-two CASA 6.7.6-14 cases cover frequency, period, wavelength, energy, other dimensions and scalar conversion errors.",
+   "scope": "quanta.checkfreq.",
+   "links": [
+    "tools/simulation/quanta_checkfreq_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_checkfreq.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "119771e30d19558740b3b799e5bd519b1a060ba7"
+  },
   "isangle-casa": {
    "kind": "CASA-recorded values",
    "state": "measured",
@@ -561,6 +554,66 @@
     "crates/casars-python/python/tests/test_tools_quanta.py"
    ],
    "source_revision": "88e8c2fd7b7742de78eeb75e16164b5b40367c90"
+  },
+  "rounding-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Forty cases recorded with CASA 6.7.6-14 cover both rounding directions, scalar units, signed zero, records and errors.",
+   "scope": "quanta.ceil and quanta.floor.",
+   "links": [
+    "tools/simulation/quanta_rounding_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_rounding.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "a05f4c2dbdfdff1a6a46575c02d4c714875281c6"
+  },
+  "trigonometry-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "108 CASA 6.7.6-14 cases cover angle and dimensionless inputs, scaled units, out-of-domain results and errors for all six functions.",
+   "scope": "quanta.sin, cos, tan, asin, acos and atan.",
+   "links": [
+    "tools/simulation/quanta_trigonometry_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_trigonometry.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad"
+  },
+  "logarithms-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "57 CASA 6.7.6-14 cases cover dimensionless and scaled inputs, units, non-finite results and errors for all three functions.",
+   "scope": "quanta.exp, log and log10.",
+   "links": [
+    "tools/simulation/quanta_logarithms_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_logarithms.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "83c3308ca779c3ca84f29d47fa4203e2f7ae5a50"
+  },
+  "relational-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "168 CASA 6.7.6-14 comparisons cover units, incompatible dimensions, numeric edge cases, arrays and errors.",
+   "scope": "quanta.eq, ne, lt, le, gt and ge.",
+   "links": [
+    "tools/simulation/quanta_relational_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_relational.json",
+    "crates/casars-python/python/tests/test_quanta_relational.py"
+   ],
+   "source_revision": "1bc8a2fca31e5ac5361cf95fc12705fea6954a94"
+  },
+  "atan2-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "144 CASA 6.7.6-14 cases cover signed zero, scaled dimensionless inputs, invalid units, arrays and conversion errors.",
+   "scope": "quanta.atan2.",
+   "links": [
+    "tools/simulation/quanta_atan2_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_atan2.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "4d86ba7a97255eaafab86a745b660adc694aa3c7"
   }
  }
 }

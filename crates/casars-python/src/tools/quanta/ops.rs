@@ -145,11 +145,135 @@ pub(super) fn abs(value: &Variant) -> ConvertResult<CasaValue> {
     )))
 }
 
+/// `qa.ceil(v)` and `qa.floor(v)` preserve the input quantity's unit.
+pub(super) fn round_integer(value: &Variant, upward: bool) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    let rounded = if upward {
+        value.value().ceil()
+    } else {
+        value.value().floor()
+    };
+    Ok(record(&Quantity::with_unit(rounded, value.unit().clone())))
+}
+
+/// CASA's scalar exponential and logarithmic functions.
+pub(super) fn logarithm(value: &Variant, method: &str) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    if value.unit().val().dim != UnitDim::NODIM {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::{method} illegal unit type '{}'",
+            value.unit().name()
+        )));
+    }
+    let number = value.get_si_value();
+    let result = match method {
+        "exp" => number.exp(),
+        "log" => number.ln(),
+        "log10" => number.log10(),
+        _ => unreachable!("the binding selects an exponential or logarithmic method"),
+    };
+    Ok(record(&Quantity::dimensionless(result)))
+}
+
+/// CASA's scalar trigonometric functions, with angular unit checking.
+pub(super) fn trigonometry(value: &Variant, method: &str) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    let inverse = matches!(method, "asin" | "acos" | "atan");
+    let valid = if inverse {
+        value.unit().val().dim == UnitDim::NODIM
+    } else {
+        has(&value, Dimension::Angle)
+    };
+    if !valid {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::{method} illegal unit type '{}'",
+            value.unit().name()
+        )));
+    }
+    let number = value.get_si_value();
+    let result = match method {
+        "sin" => number.sin(),
+        "cos" => number.cos(),
+        "tan" => number.tan(),
+        "asin" => number.asin(),
+        "acos" => number.acos(),
+        "atan" => number.atan(),
+        _ => unreachable!("the binding selects a trigonometric method"),
+    };
+    Ok(record(&if inverse {
+        Quantity::with_unit(result, unit("rad"))
+    } else {
+        Quantity::dimensionless(result)
+    }))
+}
+
+/// `qa.atan2(v, a)`: convert both dimensionless quantities before computing.
+pub(super) fn atan2(value: &Variant, other: &Variant) -> ConvertResult<CasaValue> {
+    let (value, other) = (quantity(value)?, quantity(other)?);
+    if value.unit().val().dim != UnitDim::NODIM || other.unit().val().dim != UnitDim::NODIM {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::atan2 illegal unit type '{}'",
+            value.unit().name()
+        )));
+    }
+    Ok(record(&Quantity::with_unit(
+        value.get_si_value().atan2(other.get_si_value()),
+        unit("rad"),
+    )))
+}
+
 /// `qa.compare(v, a)`: whether the units have the same dimensions.
 pub(super) fn compare(left: &Variant, right: &Variant) -> ConvertResult<CasaValue> {
     Ok(CasaValue::Bool(
         quantity(left)?.unit().val().dim == quantity(right)?.unit().val().dim,
     ))
+}
+
+/// The six scalar relational operators convert the right value into the left
+/// unit. Equality allows unlike dimensions; ordered comparisons reject them.
+pub(super) fn relational(left: &Variant, right: &Variant, op: &str) -> ConvertResult<CasaValue> {
+    let (left, right) = (quantity(left)?, quantity(right)?);
+    let conformant = left.unit().val().dim == right.unit().val().dim;
+    if !conformant && !matches!(op, "eq" | "ne") {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::operator< unequal units '{}, '{}'",
+            left.unit().name(),
+            right.unit().name()
+        )));
+    }
+    let scaled = right.value() * (right.unit().val().factor / left.unit().val().factor);
+    let order = left.value().partial_cmp(&scaled);
+    let equal = conformant && order == Some(std::cmp::Ordering::Equal);
+    let result = match op {
+        "eq" => equal,
+        "ne" => !equal,
+        "lt" => order == Some(std::cmp::Ordering::Less),
+        "gt" => order == Some(std::cmp::Ordering::Greater),
+        // casacore defines <= as !(>) and >= as !(<), including for NaN.
+        "le" => order != Some(std::cmp::Ordering::Greater),
+        "ge" => order != Some(std::cmp::Ordering::Less),
+        _ => unreachable!("unknown quantity comparison"),
+    };
+    Ok(CasaValue::Bool(result))
+}
+
+/// `qa.checkfreq(cm)`: the dimensions accepted by casacore's MVFrequency.
+pub(super) fn checkfreq(value: &Variant) -> ConvertResult<CasaValue> {
+    let dimension = quantity(value)?.unit().val().dim;
+    let time = UnitDim::basis(Dimension::Time);
+    let angle = UnitDim::basis(Dimension::Angle);
+    let length = UnitDim::basis(Dimension::Length);
+    let mass = UnitDim::basis(Dimension::Mass);
+    let accepted = [
+        time,
+        UnitDim::NODIM / time,
+        angle / time,
+        length,
+        UnitDim::NODIM / length,
+        mass * length * length / time / time,
+        mass * length,
+    ];
+    Ok(CasaValue::Bool(accepted.contains(&dimension)))
 }
 
 /// `qa.isangle(v)`: angles and times are accepted by casacore's angle form.

@@ -229,50 +229,40 @@ impl PyQuanta {
         "quanta"
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn acos(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("acos")
+    /// CASA's scalar acos of a quantity.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn acos(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::trigonometry(&v, "acos"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn asin(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("asin")
+    /// CASA's scalar asin of a quantity.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn asin(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::trigonometry(&v, "asin"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn atan(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("atan")
+    /// CASA's scalar atan of a quantity.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn atan(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::trigonometry(&v, "atan"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn atan2(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("atan2")
+    /// CASA's scalar two-argument arctangent, in radians.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn atan2(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::atan2(&v, &a))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn ceil(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("ceil")
+    /// Round a scalar quantity upward in its own unit.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn ceil(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::round_integer(&v, true))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (cm = None), text_signature = "($self, cm=[])")]
-    fn checkfreq(&self, cm: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("checkfreq")
+    /// Whether a scalar quantity can represent a frequency.
+    #[pyo3(signature = (cm = Variant::Empty), text_signature = "($self, cm=[])")]
+    fn checkfreq(&self, py: Python<'_>, cm: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::checkfreq(&cm))
     }
 
     /// Not yet implemented in casa-rs.
@@ -304,11 +294,10 @@ impl PyQuanta {
         stub("convertfreq")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn cos(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("cos")
+    /// CASA's scalar cos of a quantity.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn cos(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::trigonometry(&v, "cos"))
     }
 
     /// Not yet implemented in casa-rs.
@@ -318,22 +307,16 @@ impl PyQuanta {
         stub("define")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn eq(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("eq")
+    /// CASA's scalar quantity comparison.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn eq(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::relational(&v, &a, "eq"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn exp(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("exp")
+    /// CASA's scalar exp of a dimensionless quantity.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn exp(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::logarithm(&v, "exp"))
     }
 
     /// Not yet implemented in casa-rs.
@@ -341,11 +324,10 @@ impl PyQuanta {
         stub("fits")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn floor(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("floor")
+    /// Round a scalar quantity downward in its own unit.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn floor(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::round_integer(&v, false))
     }
 
     /// An angle or time as text: `hms`, `dms`, `deg`, `rad` or `+deg`. Any
@@ -372,15 +354,10 @@ impl PyQuanta {
         CasaValue::Text(written.unwrap_or_default()).into_python(py)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn ge(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("ge")
+    /// CASA's scalar quantity comparison.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn ge(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::relational(&v, &a, "ge"))
     }
 
     /// Not yet implemented in casa-rs.
@@ -390,15 +367,10 @@ impl PyQuanta {
         stub("getformat")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn gt(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("gt")
+    /// CASA's scalar quantity comparison.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn gt(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::relational(&v, &a, "gt"))
     }
 
     /// Whether a scalar quantity has angle or time dimensions.
@@ -407,40 +379,28 @@ impl PyQuanta {
         call(py, || ops::isangle(&v))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn le(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("le")
+    /// CASA's scalar quantity comparison.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn le(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::relational(&v, &a, "le"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn log(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("log")
+    /// CASA's scalar log of a dimensionless quantity.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn log(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::logarithm(&v, "log"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn log10(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("log10")
+    /// CASA's scalar log10 of a dimensionless quantity.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn log10(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::logarithm(&v, "log10"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn lt(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("lt")
+    /// CASA's scalar quantity comparison.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn lt(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::relational(&v, &a, "lt"))
     }
 
     /// Not yet implemented in casa-rs.
@@ -457,15 +417,10 @@ impl PyQuanta {
         stub("maprec")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn ne(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("ne")
+    /// CASA's scalar quantity comparison.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn ne(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::relational(&v, &a, "ne"))
     }
 
     /// Not yet implemented in casa-rs.
@@ -501,11 +456,10 @@ impl PyQuanta {
         stub("setformat")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn sin(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("sin")
+    /// CASA's scalar sin of a quantity.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn sin(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::trigonometry(&v, "sin"))
     }
 
     /// Not yet implemented in casa-rs.
@@ -515,11 +469,10 @@ impl PyQuanta {
         stub("sqrt")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn tan(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("tan")
+    /// CASA's scalar tan of a quantity.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn tan(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::trigonometry(&v, "tan"))
     }
 
     /// A quantity as text: the value with `prec` decimals, then the unit.

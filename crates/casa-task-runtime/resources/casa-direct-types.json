@@ -10,6 +10,10 @@
     "msselect": "cStr",
     "docallib": "cBool",
     "callib": "cStr",
+    "gaintable": "cPathVec",
+    "gainfield": "cStrVec",
+    "interp": "cStrVec",
+    "calwt": "cBoolVec",
     "parang": "cBool",
     "applymode": "cStr",
     "flagbackup": "cBool"
@@ -30,6 +34,7 @@
     "minsnr": "cFloat",
     "solnorm": "cBool",
     "bandtype": "cStr",
+    "smodel": "cFloatVec",
     "corrdepflags": "cBool",
     "append": "cBool",
     "fillgaps": "cInt",
@@ -40,6 +45,9 @@
     "maskedge": "cInt",
     "docallib": "cBool",
     "callib": "cStr",
+    "gaintable": "cStrVec",
+    "gainfield": "cStrVec",
+    "interp": "cStrVec",
     "parang": "cBool"
   },
   "exportfits": {
@@ -62,6 +70,7 @@
   "flagdata": {
     "mode": "cStr",
     "autocorr": "cBool",
+    "clipminmax": "cFloatVec",
     "timebin": "cStr",
     "clipzeros": "cBool",
     "tolerance": "cFloat",
@@ -118,8 +127,11 @@
   "fluxscale": {
     "caltable": "cStr",
     "fluxtable": "cStr",
+    "reference": "cStrVec",
+    "transfer": "cStrVec",
     "listfile": "cStr",
     "append": "cBool",
+    "refspwmap": "cIntVec",
     "gainthreshold": "cFloat",
     "antenna": "cStr",
     "timerange": "cStr",
@@ -147,8 +159,10 @@
     "solnorm": "cBool",
     "normtype": "cStr",
     "gaintype": "cStr",
+    "smodel": "cFloatVec",
     "calmode": "cStr",
     "solmode": "cStr",
+    "rmsthresh": "cFloatVec",
     "corrdepflags": "cBool",
     "append": "cBool",
     "splinetime": "cFloat",
@@ -156,6 +170,9 @@
     "phasewrap": "cFloat",
     "docallib": "cBool",
     "callib": "cStr",
+    "gaintable": "cStrVec",
+    "gainfield": "cStrVec",
+    "interp": "cStrVec",
     "parang": "cBool"
   },
   "gencal": {
@@ -170,6 +187,7 @@
     "spw": "cStr",
     "antenna": "cStr",
     "pol": "cStr",
+    "parameter": "cFloatVec",
     "uniform": "cBool"
   },
   "imhead": {
@@ -193,6 +211,7 @@
     "prec": "cStr"
   },
   "immoments": {
+    "moments": "cIntVec",
     "box": "cStr",
     "chans": "cStr",
     "stokes": "cStr",
@@ -244,6 +263,8 @@
   "imregrid": {
     "output": "cStr",
     "asvelocity": "cBool",
+    "axes": "cIntVec",
+    "shape": "cIntVec",
     "interpolation": "cStr",
     "decimate": "cInt",
     "replicate": "cBool",
@@ -277,12 +298,14 @@
     "dropdeg": "cBool",
     "overwrite": "cBool",
     "verbose": "cBool",
-    "stretch": "cBool"
+    "stretch": "cBool",
+    "keepaxes": "cIntVec"
   },
   "mstransform": {
     "outputvis": "cStr",
     "createmms": "cBool",
     "separationaxis": "cStr",
+    "tileshape": "cIntVec",
     "datacolumn": "cStr",
     "realmodelcol": "cBool",
     "keepflags": "cBool",
@@ -369,6 +392,7 @@
     "coloraxis": "cStr",
     "xconnector": "cStr",
     "timeconnector": "cBool",
+    "plotrange": "cFloatVec",
     "title": "cStr",
     "titlefont": "cInt",
     "xlabel": "cStr",
@@ -396,6 +420,7 @@
     "overwrite": "cBool",
     "showgui": "cBool",
     "clearplots": "cBool",
+    "callib": "cStrVec",
     "headeritems": "cStr",
     "showatm": "cBool",
     "showtsky": "cBool",
@@ -416,6 +441,8 @@
     "setpointings": "cBool",
     "ptgfile": "cStr",
     "integration": "cStr",
+    "direction": "cStrVec",
+    "mapsize": "cStrVec",
     "maptype": "cStr",
     "pointingspacing": "cStr",
     "caldirection": "cStr",
@@ -484,6 +511,7 @@
     "weighting": "cStr",
     "robust": "cFloat",
     "npixels": "cInt",
+    "uvtaper": "cStrVec",
     "niter": "cInt",
     "gain": "cFloat",
     "nsigma": "cFloat",

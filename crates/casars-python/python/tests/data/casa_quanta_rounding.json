@@ -1,0 +1,349 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "ceil",
+      "input": "1.6m",
+      "result": {
+        "unit": "m",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": "-1.6m",
+      "result": {
+        "unit": "m",
+        "value": -1.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": "-0.1m",
+      "result": {
+        "unit": "m",
+        "value": -0.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": "0m",
+      "result": {
+        "unit": "m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": "1.0m",
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": "1.2deg",
+      "result": {
+        "unit": "deg",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": "-3.25s",
+      "result": {
+        "unit": "s",
+        "value": -3.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": "2.5Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 3.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": "1e20km",
+      "result": {
+        "unit": "km",
+        "value": 1e+20
+      }
+    },
+    {
+      "method": "ceil",
+      "input": 2.5,
+      "result": {
+        "unit": "",
+        "value": 3.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": -2.5,
+      "result": {
+        "unit": "",
+        "value": -2.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": 0.0,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": true,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": null,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": [],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": [
+        1.2,
+        2.3
+      ],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "ceil",
+      "input": {},
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "ceil",
+      "input": {
+        "value": 1.6,
+        "unit": "km"
+      },
+      "result": {
+        "unit": "km",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "ceil",
+      "input": {
+        "value": [
+          -1.5,
+          1.5
+        ],
+        "unit": "deg"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "floor",
+      "input": "1.6m",
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": "-1.6m",
+      "result": {
+        "unit": "m",
+        "value": -2.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": "-0.1m",
+      "result": {
+        "unit": "m",
+        "value": -1.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": "0m",
+      "result": {
+        "unit": "m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": "1.0m",
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": "1.2deg",
+      "result": {
+        "unit": "deg",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": "-3.25s",
+      "result": {
+        "unit": "s",
+        "value": -4.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": "2.5Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": "1e20km",
+      "result": {
+        "unit": "km",
+        "value": 1e+20
+      }
+    },
+    {
+      "method": "floor",
+      "input": 2.5,
+      "result": {
+        "unit": "",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": -2.5,
+      "result": {
+        "unit": "",
+        "value": -3.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": 0.0,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": true,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": null,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": [],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": [
+        1.2,
+        2.3
+      ],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "floor",
+      "input": {},
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "floor",
+      "input": {
+        "value": 1.6,
+        "unit": "km"
+      },
+      "result": {
+        "unit": "km",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "floor",
+      "input": {
+        "value": [
+          -1.5,
+          1.5
+        ],
+        "unit": "deg"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    }
+  ]
+}

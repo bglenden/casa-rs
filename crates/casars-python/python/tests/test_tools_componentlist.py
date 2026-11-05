@@ -59,15 +59,16 @@ TOOL = json.loads((DATA / "casa_componentlist_tool.json").read_text(encoding="ut
 
 IMPLEMENTED = {
     "addcomponent", "close", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
-    "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
-    "getrefdir", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
+    "getfluxerror", "getfluxpol", "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
+    "getrefdir", "getrefdirra", "getrefdirdec", "getrefdirframe", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
     "torecord",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 
 
-def test_frequency_getter_placeholders_match_casa(caplog: pytest.LogCaptureFixture) -> None:
-    fixture = json.loads((DATA / "casa_componentlist_frequency.json").read_text())
+@pytest.mark.parametrize("fixture_name", ["casa_componentlist_frequency.json", "casa_componentlist_fluxpol.json"])
+def test_getter_placeholders_match_casa(fixture_name: str, caplog: pytest.LogCaptureFixture) -> None:
+    fixture = json.loads((DATA / fixture_name).read_text())
     cl = componentlist()
     with caplog.at_level(logging.WARNING, logger=LOGGER):
         for case in fixture["cases"]:
@@ -88,6 +89,47 @@ def test_frequency_getter_placeholders_match_casa(caplog: pytest.LogCaptureFixtu
         # CASA also accepts NumPy integer scalars and zero-dimensional arrays.
         for value in (np.int32(2), np.int64(2), np.array(2)):
             assert cl.getfreq(value) == {}
+
+
+def test_refdir_string_placeholders_match_casa(caplog: pytest.LogCaptureFixture) -> None:
+    fixture = json.loads((DATA / "casa_componentlist_refdir_placeholders.json").read_text())
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        for populated in (False, True):
+            cl = componentlist()
+            if populated:
+                assert cl.addcomponent(flux=1, freq="1.4 GHz")
+            for case in fixture["cases"]:
+                if case["populated"] != populated:
+                    continue
+                caplog.clear()
+                method = getattr(cl, case["method"])
+                if "error" in case:
+                    expected = case["error"]
+                    error_type = {"TypeError": TypeError, "SystemError": SystemError}[expected["type"]]
+                    with pytest.raises(error_type) as error:
+                        method(*case["args"], **case["kwargs"])
+                    assert str(error.value) == expected["message"]
+                else:
+                    result = method(*case["args"], **case["kwargs"])
+                    assert result == case["result"] and type(result) is str
+                expected_warning = "error" not in case or case["error"]["type"] == "SystemError"
+                assert caplog.messages == ([f"{case['method']} not implemented yet"] if expected_warning else [])
+
+
+def test_refdirframe_matches_casa() -> None:
+    fixture = json.loads((DATA / "casa_componentlist_refdirframe.json").read_text())
+    for case in fixture["cases"]:
+        cl = componentlist()
+        for direction in case["directions"]:
+            assert cl.addcomponent(flux=1, dir=direction, freq="1GHz")
+        if "error" in case:
+            expected = case["error"]
+            error_type = {"TypeError": TypeError, "RuntimeError": RuntimeError}[expected["type"]]
+            with pytest.raises(error_type) as error:
+                cl.getrefdirframe(case["which"])
+            assert str(error.value) == expected["message"]
+        else:
+            assert cl.getrefdirframe(case["which"]) == case["result"]
 
 #: Radians, hertz or janskys in each unit the records use.
 SI = {

@@ -460,7 +460,7 @@ pub(crate) fn quantity(value: &Variant) -> ConvertResult<Quantity> {
         )),
         // A record of several values reads, then fails to be one quantity.
         Variant::Record(record) => quantity_record(record).map_err(|error| {
-            if error.starts_with("Wrong") {
+            if error.starts_with("Wrong") || error.starts_with("Unit::check Illegal unit string ") {
                 ConvertError::runtime(error)
             } else {
                 ConvertError::runtime(format!("Error {error} in converting quantity"))
@@ -557,7 +557,19 @@ pub(crate) fn quantity_record(record: &BTreeMap<String, Variant>) -> Result<Quan
     let value = match value {
         Variant::Number(number) => *number,
         Variant::Numbers(numbers) if numbers.len() == 1 => numbers[0],
-        _ => return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string()),
+        // Numeric arrays and complex values are valid QuantumHolders, so
+        // CASA checks their unit before a scalar operation refuses them.
+        Variant::Numbers(_)
+        | Variant::Array { .. }
+        | Variant::Complex(_)
+        | Variant::Complexes(_) => {
+            casacore_unit(unit)?;
+            return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string());
+        }
+        Variant::Other(_) => {
+            return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string());
+        }
+        _ => return Err("Illegal Quantum record in QuantumHolder::fromRecord\n".to_string()),
     };
     Ok(Quantity::with_unit(value, casacore_unit(unit)?))
 }
