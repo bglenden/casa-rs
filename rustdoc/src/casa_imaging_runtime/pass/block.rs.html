@@ -81,7 +81,7 @@
 <a href=#81 id=81 data-nosnippet>81</a>            + size_of::&lt;u32&gt;()
 <a href=#82 id=82 data-nosnippet>82</a>            + <span class="self">self</span>.domains * size_of::&lt;DomainProjection&gt;()
 <a href=#83 id=83 data-nosnippet>83</a>            + channels * size_of::&lt;f64&gt;()
-<a href=#84 id=84 data-nosnippet>84</a>            + cells * (size_of::&lt;Complex32&gt;() + size_of::&lt;f32&gt;() + size_of::&lt;bool&gt;());
+<a href=#84 id=84 data-nosnippet>84</a>            + cells * (size_of::&lt;Complex32&gt;() + size_of::&lt;f32&gt;() + <span class="number">2 </span>* size_of::&lt;bool&gt;());
 <a href=#85 id=85 data-nosnippet>85</a>        (<span class="self">self</span>.rows * per_row + (channels + <span class="self">self</span>.correlations) * size_of::&lt;u32&gt;()) <span class="kw">as </span>u64
 <a href=#86 id=86 data-nosnippet>86</a>    }
 <a href=#87 id=87 data-nosnippet>87</a>
@@ -133,425 +133,515 @@
 <a href=#133 id=133 data-nosnippet>133</a>    values: Vec&lt;Complex32&gt;,
 <a href=#134 id=134 data-nosnippet>134</a>    weights: Vec&lt;f32&gt;,
 <a href=#135 id=135 data-nosnippet>135</a>    flags: Vec&lt;bool&gt;,
-<a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// Whether every row reads the first row's frequencies, values, weights
-<a href=#137 id=137 data-nosnippet>137</a>    /// and flags ([`Self::reset_shared`]).
-<a href=#138 id=138 data-nosnippet>138</a>    </span>shared: bool,
-<a href=#139 id=139 data-nosnippet>139</a>}
-<a href=#140 id=140 data-nosnippet>140</a>
-<a href=#141 id=141 data-nosnippet>141</a><span class="kw">impl </span>NativeBlock {
-<a href=#142 id=142 data-nosnippet>142</a>    <span class="doccomment">/// An empty block with room for every block of `shape`, so filling it
-<a href=#143 id=143 data-nosnippet>143</a>    /// never grows it beyond [`BlockShape::bytes`].
-<a href=#144 id=144 data-nosnippet>144</a>    </span><span class="attr">#[must_use]
-<a href=#145 id=145 data-nosnippet>145</a>    </span><span class="kw">pub fn </span>with_capacity(shape: BlockShape) -&gt; <span class="self">Self </span>{
-<a href=#146 id=146 data-nosnippet>146</a>        <span class="self">Self</span>::sized(shape, shape.rows)
-<a href=#147 id=147 data-nosnippet>147</a>    }
-<a href=#148 id=148 data-nosnippet>148</a>
-<a href=#149 id=149 data-nosnippet>149</a>    <span class="doccomment">/// An empty block with room for every block of `shape` whose rows share
-<a href=#150 id=150 data-nosnippet>150</a>    /// their spectrum and samples ([`Self::reset_shared`]), so filling it
-<a href=#151 id=151 data-nosnippet>151</a>    /// never grows it beyond [`BlockShape::shared_bytes`].
-<a href=#152 id=152 data-nosnippet>152</a>    </span><span class="attr">#[must_use]
-<a href=#153 id=153 data-nosnippet>153</a>    </span><span class="kw">pub fn </span>shared_with_capacity(shape: BlockShape) -&gt; <span class="self">Self </span>{
-<a href=#154 id=154 data-nosnippet>154</a>        <span class="self">Self</span>::sized(shape, <span class="number">1</span>)
-<a href=#155 id=155 data-nosnippet>155</a>    }
-<a href=#156 id=156 data-nosnippet>156</a>
-<a href=#157 id=157 data-nosnippet>157</a>    <span class="doccomment">/// An empty block with room for `shape`'s rows and the spectra and
-<a href=#158 id=158 data-nosnippet>158</a>    /// samples of `sample_rows` of them.
-<a href=#159 id=159 data-nosnippet>159</a>    </span><span class="kw">fn </span>sized(shape: BlockShape, sample_rows: usize) -&gt; <span class="self">Self </span>{
-<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">let </span>channels = shape.channels();
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">let </span>cells = sample_rows * channels * shape.correlations;
-<a href=#162 id=162 data-nosnippet>162</a>        <span class="self">Self </span>{
-<a href=#163 id=163 data-nosnippet>163</a>            domains: shape.domains,
-<a href=#164 id=164 data-nosnippet>164</a>            rows: Vec::with_capacity(shape.rows),
-<a href=#165 id=165 data-nosnippet>165</a>            order: Vec::with_capacity(shape.rows),
-<a href=#166 id=166 data-nosnippet>166</a>            projections: Vec::with_capacity(shape.rows * shape.domains),
-<a href=#167 id=167 data-nosnippet>167</a>            channel_indices: Vec::with_capacity(channels),
-<a href=#168 id=168 data-nosnippet>168</a>            correlation_indices: Vec::with_capacity(shape.correlations),
-<a href=#169 id=169 data-nosnippet>169</a>            frequencies_hz: Vec::with_capacity(sample_rows * channels),
-<a href=#170 id=170 data-nosnippet>170</a>            values: Vec::with_capacity(cells),
-<a href=#171 id=171 data-nosnippet>171</a>            weights: Vec::with_capacity(cells),
-<a href=#172 id=172 data-nosnippet>172</a>            flags: Vec::with_capacity(cells),
-<a href=#173 id=173 data-nosnippet>173</a>            shared: <span class="bool-val">false</span>,
-<a href=#174 id=174 data-nosnippet>174</a>        }
-<a href=#175 id=175 data-nosnippet>175</a>    }
-<a href=#176 id=176 data-nosnippet>176</a>
-<a href=#177 id=177 data-nosnippet>177</a>    <span class="doccomment">/// Bytes the block holds now, from its capacities: at most
-<a href=#178 id=178 data-nosnippet>178</a>    /// [`BlockShape::bytes`] for a block [`Self::with_capacity`] made and
-<a href=#179 id=179 data-nosnippet>179</a>    /// filled within its shape.
-<a href=#180 id=180 data-nosnippet>180</a>    </span><span class="attr">#[must_use]
-<a href=#181 id=181 data-nosnippet>181</a>    </span><span class="kw">pub fn </span>capacity_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
-<a href=#182 id=182 data-nosnippet>182</a>        (<span class="self">self</span>.rows.capacity() * size_of::&lt;NativeRowHeader&gt;()
-<a href=#183 id=183 data-nosnippet>183</a>            + <span class="self">self</span>.projections.capacity() * size_of::&lt;DomainProjection&gt;()
-<a href=#184 id=184 data-nosnippet>184</a>            + (<span class="self">self</span>.order.capacity()
-<a href=#185 id=185 data-nosnippet>185</a>                + <span class="self">self</span>.channel_indices.capacity()
-<a href=#186 id=186 data-nosnippet>186</a>                + <span class="self">self</span>.correlation_indices.capacity())
-<a href=#187 id=187 data-nosnippet>187</a>                * size_of::&lt;u32&gt;()
-<a href=#188 id=188 data-nosnippet>188</a>            + <span class="self">self</span>.frequencies_hz.capacity() * size_of::&lt;f64&gt;()
-<a href=#189 id=189 data-nosnippet>189</a>            + <span class="self">self</span>.values.capacity() * size_of::&lt;Complex32&gt;()
-<a href=#190 id=190 data-nosnippet>190</a>            + <span class="self">self</span>.weights.capacity() * size_of::&lt;f32&gt;()
-<a href=#191 id=191 data-nosnippet>191</a>            + <span class="self">self</span>.flags.capacity() * size_of::&lt;bool&gt;()) <span class="kw">as </span>u64
-<a href=#192 id=192 data-nosnippet>192</a>    }
-<a href=#193 id=193 data-nosnippet>193</a>
-<a href=#194 id=194 data-nosnippet>194</a>    <span class="doccomment">/// Empty the block and set the layout of the rows that follow: the
-<a href=#195 id=195 data-nosnippet>195</a>    /// number of image domains each row is projected on, and the native
-<a href=#196 id=196 data-nosnippet>196</a>    /// channel and correlation indices every row selects.
-<a href=#197 id=197 data-nosnippet>197</a>    </span><span class="kw">pub fn </span>reset(<span class="kw-2">&amp;mut </span><span class="self">self</span>, domains: usize, channel_indices: <span class="kw-2">&amp;</span>[u32], correlation_indices: <span class="kw-2">&amp;</span>[u32]) {
-<a href=#198 id=198 data-nosnippet>198</a>        <span class="macro">assert!</span>(
-<a href=#199 id=199 data-nosnippet>199</a>            domains &gt; <span class="number">0 </span>&amp;&amp; !channel_indices.is_empty() &amp;&amp; !correlation_indices.is_empty(),
-<a href=#200 id=200 data-nosnippet>200</a>            <span class="string">"a native block projects on one domain and selects one channel and correlation"
-<a href=#201 id=201 data-nosnippet>201</a>        </span>);
-<a href=#202 id=202 data-nosnippet>202</a>        <span class="self">self</span>.domains = domains;
-<a href=#203 id=203 data-nosnippet>203</a>        <span class="self">self</span>.shared = <span class="bool-val">false</span>;
-<a href=#204 id=204 data-nosnippet>204</a>        <span class="self">self</span>.rows.clear();
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="self">self</span>.order.clear();
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="self">self</span>.projections.clear();
-<a href=#207 id=207 data-nosnippet>207</a>        <span class="self">self</span>.frequencies_hz.clear();
-<a href=#208 id=208 data-nosnippet>208</a>        <span class="self">self</span>.values.clear();
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="self">self</span>.weights.clear();
-<a href=#210 id=210 data-nosnippet>210</a>        <span class="self">self</span>.flags.clear();
-<a href=#211 id=211 data-nosnippet>211</a>        <span class="self">self</span>.channel_indices.clear();
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="self">self</span>.channel_indices.extend_from_slice(channel_indices);
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="self">self</span>.correlation_indices.clear();
-<a href=#214 id=214 data-nosnippet>214</a>        <span class="self">self</span>.correlation_indices
-<a href=#215 id=215 data-nosnippet>215</a>            .extend_from_slice(correlation_indices);
-<a href=#216 id=216 data-nosnippet>216</a>    }
-<a href=#217 id=217 data-nosnippet>217</a>
-<a href=#218 id=218 data-nosnippet>218</a>    <span class="doccomment">/// [`Self::reset`] for rows that all have `frequencies_hz` and, in
-<a href=#219 id=219 data-nosnippet>219</a>    /// every channel and correlation, a zero value, a unit weight and no
-<a href=#220 id=220 data-nosnippet>220</a>    /// flag: the block keeps them once, and the rows that follow come from
-<a href=#221 id=221 data-nosnippet>221</a>    /// [`Self::push_shared_row`]. Each row then reads exactly as
-<a href=#222 id=222 data-nosnippet>222</a>    /// [`Self::push_row`] would have made it with those samples.
-<a href=#223 id=223 data-nosnippet>223</a>    </span><span class="kw">pub fn </span>reset_shared(
-<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#225 id=225 data-nosnippet>225</a>        domains: usize,
-<a href=#226 id=226 data-nosnippet>226</a>        channel_indices: <span class="kw-2">&amp;</span>[u32],
-<a href=#227 id=227 data-nosnippet>227</a>        correlation_indices: <span class="kw-2">&amp;</span>[u32],
-<a href=#228 id=228 data-nosnippet>228</a>        frequencies_hz: <span class="kw-2">&amp;</span>[f64],
-<a href=#229 id=229 data-nosnippet>229</a>    ) {
-<a href=#230 id=230 data-nosnippet>230</a>        <span class="self">self</span>.reset(domains, channel_indices, correlation_indices);
-<a href=#231 id=231 data-nosnippet>231</a>        <span class="macro">assert_eq!</span>(
-<a href=#232 id=232 data-nosnippet>232</a>            frequencies_hz.len(),
-<a href=#233 id=233 data-nosnippet>233</a>            channel_indices.len(),
-<a href=#234 id=234 data-nosnippet>234</a>            <span class="string">"frequencies per row"
-<a href=#235 id=235 data-nosnippet>235</a>        </span>);
-<a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">let </span>cells = channel_indices.len() * correlation_indices.len();
-<a href=#237 id=237 data-nosnippet>237</a>        <span class="self">self</span>.frequencies_hz.extend_from_slice(frequencies_hz);
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="self">self</span>.values.resize(cells, Complex32::default());
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="self">self</span>.weights.resize(cells, <span class="number">1.0</span>);
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="self">self</span>.flags.resize(cells, <span class="bool-val">false</span>);
-<a href=#241 id=241 data-nosnippet>241</a>        <span class="self">self</span>.shared = <span class="bool-val">true</span>;
-<a href=#242 id=242 data-nosnippet>242</a>    }
-<a href=#243 id=243 data-nosnippet>243</a>
-<a href=#244 id=244 data-nosnippet>244</a>    <span class="doccomment">/// Append one row of the shared spectrum and samples
-<a href=#245 id=245 data-nosnippet>245</a>    /// ([`Self::reset_shared`]): its header and its projection on every
-<a href=#246 id=246 data-nosnippet>246</a>    /// domain.
-<a href=#247 id=247 data-nosnippet>247</a>    </span><span class="kw">pub fn </span>push_shared_row(<span class="kw-2">&amp;mut </span><span class="self">self</span>, header: NativeRowHeader, projections: <span class="kw-2">&amp;</span>[DomainProjection]) {
-<a href=#248 id=248 data-nosnippet>248</a>        <span class="macro">assert!</span>(<span class="self">self</span>.shared, <span class="string">"shared rows follow reset_shared"</span>);
-<a href=#249 id=249 data-nosnippet>249</a>        <span class="macro">assert_eq!</span>(projections.len(), <span class="self">self</span>.domains, <span class="string">"one projection per domain"</span>);
-<a href=#250 id=250 data-nosnippet>250</a>        <span class="self">self</span>.rows.push(header);
-<a href=#251 id=251 data-nosnippet>251</a>        <span class="self">self</span>.order.clear();
-<a href=#252 id=252 data-nosnippet>252</a>        <span class="self">self</span>.projections.extend_from_slice(projections);
-<a href=#253 id=253 data-nosnippet>253</a>    }
-<a href=#254 id=254 data-nosnippet>254</a>
-<a href=#255 id=255 data-nosnippet>255</a>    <span class="doccomment">/// Append one row: its projection on every domain, `frequencies_hz` per
-<a href=#256 id=256 data-nosnippet>256</a>    /// channel, `values`, `weights` and `flags` per channel and correlation.
-<a href=#257 id=257 data-nosnippet>257</a>    </span><span class="kw">pub fn </span>push_row(
-<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#259 id=259 data-nosnippet>259</a>        header: NativeRowHeader,
-<a href=#260 id=260 data-nosnippet>260</a>        projections: <span class="kw-2">&amp;</span>[DomainProjection],
-<a href=#261 id=261 data-nosnippet>261</a>        frequencies_hz: <span class="kw-2">&amp;</span>[f64],
-<a href=#262 id=262 data-nosnippet>262</a>        values: <span class="kw-2">&amp;</span>[Complex32],
-<a href=#263 id=263 data-nosnippet>263</a>        weights: <span class="kw-2">&amp;</span>[f32],
-<a href=#264 id=264 data-nosnippet>264</a>        flags: <span class="kw-2">&amp;</span>[bool],
-<a href=#265 id=265 data-nosnippet>265</a>    ) {
-<a href=#266 id=266 data-nosnippet>266</a>        <span class="kw">let </span>cells = <span class="self">self</span>.channels() * <span class="self">self</span>.correlations();
-<a href=#267 id=267 data-nosnippet>267</a>        <span class="macro">assert!</span>(
-<a href=#268 id=268 data-nosnippet>268</a>            values.len() == cells &amp;&amp; weights.len() == cells &amp;&amp; flags.len() == cells,
-<a href=#269 id=269 data-nosnippet>269</a>            <span class="string">"values, weights and flags per row must be channels × correlations"
-<a href=#270 id=270 data-nosnippet>270</a>        </span>);
-<a href=#271 id=271 data-nosnippet>271</a>        <span class="self">self</span>.push_row_with(header, projections, frequencies_hz, |v, w, f| {
-<a href=#272 id=272 data-nosnippet>272</a>            v.copy_from_slice(values);
-<a href=#273 id=273 data-nosnippet>273</a>            w.copy_from_slice(weights);
-<a href=#274 id=274 data-nosnippet>274</a>            f.copy_from_slice(flags);
-<a href=#275 id=275 data-nosnippet>275</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, std::convert::Infallible&gt;(())
-<a href=#276 id=276 data-nosnippet>276</a>        })
-<a href=#277 id=277 data-nosnippet>277</a>        .unwrap_or_else(|never| <span class="kw">match </span>never {});
-<a href=#278 id=278 data-nosnippet>278</a>    }
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a>    <span class="doccomment">/// [`Self::push_row`], with `fill` writing the row's values, weights and
-<a href=#281 id=281 data-nosnippet>281</a>    /// flags in place: it receives them zeroed, `channels × correlations`
-<a href=#282 id=282 data-nosnippet>282</a>    /// each, so a source copies each sample once. When `fill` fails the
-<a href=#283 id=283 data-nosnippet>283</a>    /// block is left as it was and the error returned.
-<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="kw">pub fn </span>push_row_with&lt;E&gt;(
-<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#286 id=286 data-nosnippet>286</a>        header: NativeRowHeader,
-<a href=#287 id=287 data-nosnippet>287</a>        projections: <span class="kw-2">&amp;</span>[DomainProjection],
-<a href=#288 id=288 data-nosnippet>288</a>        frequencies_hz: <span class="kw-2">&amp;</span>[f64],
-<a href=#289 id=289 data-nosnippet>289</a>        fill: <span class="kw">impl </span>FnOnce(<span class="kw-2">&amp;mut </span>[Complex32], <span class="kw-2">&amp;mut </span>[f32], <span class="kw-2">&amp;mut </span>[bool]) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt;,
-<a href=#290 id=290 data-nosnippet>290</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt; {
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="macro">assert!</span>(!<span class="self">self</span>.shared, <span class="string">"a block of shared rows takes push_shared_row"</span>);
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">let </span>cells = <span class="self">self</span>.channels() * <span class="self">self</span>.correlations();
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="macro">assert_eq!</span>(projections.len(), <span class="self">self</span>.domains, <span class="string">"one projection per domain"</span>);
-<a href=#294 id=294 data-nosnippet>294</a>        <span class="macro">assert_eq!</span>(frequencies_hz.len(), <span class="self">self</span>.channels(), <span class="string">"frequencies per row"</span>);
-<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">let </span>start = <span class="self">self</span>.values.len();
-<a href=#296 id=296 data-nosnippet>296</a>        <span class="self">self</span>.values.resize(start + cells, Complex32::default());
-<a href=#297 id=297 data-nosnippet>297</a>        <span class="self">self</span>.weights.resize(start + cells, <span class="number">0.0</span>);
-<a href=#298 id=298 data-nosnippet>298</a>        <span class="self">self</span>.flags.resize(start + cells, <span class="bool-val">false</span>);
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = fill(
-<a href=#300 id=300 data-nosnippet>300</a>            <span class="kw-2">&amp;mut </span><span class="self">self</span>.values[start..],
-<a href=#301 id=301 data-nosnippet>301</a>            <span class="kw-2">&amp;mut </span><span class="self">self</span>.weights[start..],
-<a href=#302 id=302 data-nosnippet>302</a>            <span class="kw-2">&amp;mut </span><span class="self">self</span>.flags[start..],
-<a href=#303 id=303 data-nosnippet>303</a>        ) {
-<a href=#304 id=304 data-nosnippet>304</a>            <span class="self">self</span>.values.truncate(start);
-<a href=#305 id=305 data-nosnippet>305</a>            <span class="self">self</span>.weights.truncate(start);
-<a href=#306 id=306 data-nosnippet>306</a>            <span class="self">self</span>.flags.truncate(start);
-<a href=#307 id=307 data-nosnippet>307</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(error);
-<a href=#308 id=308 data-nosnippet>308</a>        }
-<a href=#309 id=309 data-nosnippet>309</a>        <span class="self">self</span>.rows.push(header);
-<a href=#310 id=310 data-nosnippet>310</a>        <span class="self">self</span>.order.clear();
-<a href=#311 id=311 data-nosnippet>311</a>        <span class="self">self</span>.projections.extend_from_slice(projections);
-<a href=#312 id=312 data-nosnippet>312</a>        <span class="self">self</span>.frequencies_hz.extend_from_slice(frequencies_hz);
-<a href=#313 id=313 data-nosnippet>313</a>        <span class="prelude-val">Ok</span>(())
-<a href=#314 id=314 data-nosnippet>314</a>    }
-<a href=#315 id=315 data-nosnippet>315</a>
-<a href=#316 id=316 data-nosnippet>316</a>    <span class="doccomment">/// Order the rows for locality: by antenna pair, a baseline's rows in
-<a href=#317 id=317 data-nosnippet>317</a>    /// arrival order (time order for a MeasurementSet). Appending a row
-<a href=#318 id=318 data-nosnippet>318</a>    /// returns the block to arrival order.
-<a href=#319 id=319 data-nosnippet>319</a>    </span><span class="kw">pub fn </span>order_rows_by_baseline(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-<a href=#320 id=320 data-nosnippet>320</a>        <span class="kw">let </span>rows = <span class="kw-2">&amp;</span><span class="self">self</span>.rows;
-<a href=#321 id=321 data-nosnippet>321</a>        <span class="self">self</span>.order.clear();
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="self">self</span>.order.extend(<span class="number">0</span>..rows.len() <span class="kw">as </span>u32);
-<a href=#323 id=323 data-nosnippet>323</a>        <span class="self">self</span>.order
-<a href=#324 id=324 data-nosnippet>324</a>            .sort_unstable_by_key(|<span class="kw-2">&amp;</span>index| (rows[index <span class="kw">as </span>usize].context.antennas, index));
-<a href=#325 id=325 data-nosnippet>325</a>    }
-<a href=#326 id=326 data-nosnippet>326</a>
-<a href=#327 id=327 data-nosnippet>327</a>    <span class="doccomment">/// The index of the row at `position` of the locality order: the row
-<a href=#328 id=328 data-nosnippet>328</a>    /// itself in arrival order.
-<a href=#329 id=329 data-nosnippet>329</a>    </span><span class="attr">#[must_use]
-<a href=#330 id=330 data-nosnippet>330</a>    </span><span class="kw">pub fn </span>ordered_row(<span class="kw-2">&amp;</span><span class="self">self</span>, position: usize) -&gt; usize {
-<a href=#331 id=331 data-nosnippet>331</a>        <span class="self">self</span>.order
-<a href=#332 id=332 data-nosnippet>332</a>            .get(position)
-<a href=#333 id=333 data-nosnippet>333</a>            .map_or(position, |<span class="kw-2">&amp;</span>index| index <span class="kw">as </span>usize)
-<a href=#334 id=334 data-nosnippet>334</a>    }
-<a href=#335 id=335 data-nosnippet>335</a>
-<a href=#336 id=336 data-nosnippet>336</a>    <span class="doccomment">/// Number of rows.
-<a href=#337 id=337 data-nosnippet>337</a>    </span><span class="attr">#[must_use]
-<a href=#338 id=338 data-nosnippet>338</a>    </span><span class="kw">pub fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="self">self</span>.rows.len()
-<a href=#340 id=340 data-nosnippet>340</a>    }
-<a href=#341 id=341 data-nosnippet>341</a>
-<a href=#342 id=342 data-nosnippet>342</a>    <span class="doccomment">/// Whether the block holds no rows.
-<a href=#343 id=343 data-nosnippet>343</a>    </span><span class="attr">#[must_use]
-<a href=#344 id=344 data-nosnippet>344</a>    </span><span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="self">self</span>.rows.is_empty()
-<a href=#346 id=346 data-nosnippet>346</a>    }
-<a href=#347 id=347 data-nosnippet>347</a>
-<a href=#348 id=348 data-nosnippet>348</a>    <span class="doccomment">/// Image domains each row is projected on.
-<a href=#349 id=349 data-nosnippet>349</a>    </span><span class="attr">#[must_use]
-<a href=#350 id=350 data-nosnippet>350</a>    </span><span class="kw">pub fn </span>domains(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#351 id=351 data-nosnippet>351</a>        <span class="self">self</span>.domains
-<a href=#352 id=352 data-nosnippet>352</a>    }
-<a href=#353 id=353 data-nosnippet>353</a>
-<a href=#354 id=354 data-nosnippet>354</a>    <span class="doccomment">/// Selected channels per row.
-<a href=#355 id=355 data-nosnippet>355</a>    </span><span class="attr">#[must_use]
-<a href=#356 id=356 data-nosnippet>356</a>    </span><span class="kw">pub fn </span>channels(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#357 id=357 data-nosnippet>357</a>        <span class="self">self</span>.channel_indices.len()
-<a href=#358 id=358 data-nosnippet>358</a>    }
-<a href=#359 id=359 data-nosnippet>359</a>
-<a href=#360 id=360 data-nosnippet>360</a>    <span class="doccomment">/// Selected correlations per row.
-<a href=#361 id=361 data-nosnippet>361</a>    </span><span class="attr">#[must_use]
-<a href=#362 id=362 data-nosnippet>362</a>    </span><span class="kw">pub fn </span>correlations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#363 id=363 data-nosnippet>363</a>        <span class="self">self</span>.correlation_indices.len()
-<a href=#364 id=364 data-nosnippet>364</a>    }
-<a href=#365 id=365 data-nosnippet>365</a>
-<a href=#366 id=366 data-nosnippet>366</a>    <span class="doccomment">/// Native channel index of each selected channel.
-<a href=#367 id=367 data-nosnippet>367</a>    </span><span class="attr">#[must_use]
-<a href=#368 id=368 data-nosnippet>368</a>    </span><span class="kw">pub fn </span>channel_indices(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[u32] {
-<a href=#369 id=369 data-nosnippet>369</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.channel_indices
-<a href=#370 id=370 data-nosnippet>370</a>    }
-<a href=#371 id=371 data-nosnippet>371</a>
-<a href=#372 id=372 data-nosnippet>372</a>    <span class="doccomment">/// Correlation index of each selected correlation.
-<a href=#373 id=373 data-nosnippet>373</a>    </span><span class="attr">#[must_use]
-<a href=#374 id=374 data-nosnippet>374</a>    </span><span class="kw">pub fn </span>correlation_indices(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[u32] {
-<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.correlation_indices
-<a href=#376 id=376 data-nosnippet>376</a>    }
-<a href=#377 id=377 data-nosnippet>377</a>
-<a href=#378 id=378 data-nosnippet>378</a>    <span class="doccomment">/// Header of row `index`.
-<a href=#379 id=379 data-nosnippet>379</a>    </span><span class="attr">#[must_use]
-<a href=#380 id=380 data-nosnippet>380</a>    </span><span class="kw">pub fn </span>header(<span class="kw-2">&amp;</span><span class="self">self</span>, index: usize) -&gt; <span class="kw-2">&amp;</span>NativeRowHeader {
-<a href=#381 id=381 data-nosnippet>381</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.rows[index]
-<a href=#382 id=382 data-nosnippet>382</a>    }
-<a href=#383 id=383 data-nosnippet>383</a>
-<a href=#384 id=384 data-nosnippet>384</a>    <span class="doccomment">/// Row `index` as the operator of image domain `domain` reads it.
-<a href=#385 id=385 data-nosnippet>385</a>    </span><span class="attr">#[must_use]
-<a href=#386 id=386 data-nosnippet>386</a>    </span><span class="kw">pub fn </span>row(<span class="kw-2">&amp;</span><span class="self">self</span>, domain: usize, index: usize) -&gt; NativeRow&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#387 id=387 data-nosnippet>387</a>        <span class="macro">assert!</span>(
-<a href=#388 id=388 data-nosnippet>388</a>            domain &lt; <span class="self">self</span>.domains,
-<a href=#389 id=389 data-nosnippet>389</a>            <span class="string">"the block projects on {} domains"</span>,
-<a href=#390 id=390 data-nosnippet>390</a>            <span class="self">self</span>.domains
-<a href=#391 id=391 data-nosnippet>391</a>        );
-<a href=#392 id=392 data-nosnippet>392</a>        <span class="kw">let </span>header = <span class="kw-2">&amp;</span><span class="self">self</span>.rows[index];
-<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">let </span>projection = <span class="kw-2">&amp;</span><span class="self">self</span>.projections[index * <span class="self">self</span>.domains + domain];
-<a href=#394 id=394 data-nosnippet>394</a>        <span class="kw">let </span>channels = <span class="self">self</span>.channels();
-<a href=#395 id=395 data-nosnippet>395</a>        <span class="kw">let </span>cells = channels * <span class="self">self</span>.correlations();
-<a href=#396 id=396 data-nosnippet>396</a>        <span class="comment">// Shared rows all read the one row of samples the block keeps.
-<a href=#397 id=397 data-nosnippet>397</a>        </span><span class="kw">let </span>samples = <span class="kw">if </span><span class="self">self</span>.shared { <span class="number">0 </span>} <span class="kw">else </span>{ index };
-<a href=#398 id=398 data-nosnippet>398</a>        NativeRow {
-<a href=#399 id=399 data-nosnippet>399</a>            uvw_m: projection.uvw_m,
-<a href=#400 id=400 data-nosnippet>400</a>            phase_shift_m: projection.phase_shift_m,
-<a href=#401 id=401 data-nosnippet>401</a>            pointing_offset_rad: projection.pointing_offset_rad,
-<a href=#402 id=402 data-nosnippet>402</a>            frequencies_hz: <span class="kw-2">&amp;</span><span class="self">self</span>.frequencies_hz[samples * channels..(samples + <span class="number">1</span>) * channels],
-<a href=#403 id=403 data-nosnippet>403</a>            values: <span class="kw-2">&amp;</span><span class="self">self</span>.values[samples * cells..(samples + <span class="number">1</span>) * cells],
-<a href=#404 id=404 data-nosnippet>404</a>            weights: <span class="kw-2">&amp;</span><span class="self">self</span>.weights[samples * cells..(samples + <span class="number">1</span>) * cells],
-<a href=#405 id=405 data-nosnippet>405</a>            flags: <span class="kw-2">&amp;</span><span class="self">self</span>.flags[samples * cells..(samples + <span class="number">1</span>) * cells],
-<a href=#406 id=406 data-nosnippet>406</a>            row_flag: header.row_flag,
-<a href=#407 id=407 data-nosnippet>407</a>            context: header.context,
-<a href=#408 id=408 data-nosnippet>408</a>        }
-<a href=#409 id=409 data-nosnippet>409</a>    }
-<a href=#410 id=410 data-nosnippet>410</a>}
-<a href=#411 id=411 data-nosnippet>411</a>
-<a href=#412 id=412 data-nosnippet>412</a><span class="doccomment">/// The row at `position`: of the block's locality order when `ordered`
-<a href=#413 id=413 data-nosnippet>413</a>/// ([`NativeBlock::ordered_row`]), else the row itself.
-<a href=#414 id=414 data-nosnippet>414</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>row_at(block: <span class="kw-2">&amp;</span>NativeBlock, ordered: bool, position: usize) -&gt; usize {
-<a href=#415 id=415 data-nosnippet>415</a>    <span class="kw">if </span>ordered {
-<a href=#416 id=416 data-nosnippet>416</a>        block.ordered_row(position)
-<a href=#417 id=417 data-nosnippet>417</a>    } <span class="kw">else </span>{
-<a href=#418 id=418 data-nosnippet>418</a>        position
-<a href=#419 id=419 data-nosnippet>419</a>    }
-<a href=#420 id=420 data-nosnippet>420</a>}
-<a href=#421 id=421 data-nosnippet>421</a>
-<a href=#422 id=422 data-nosnippet>422</a><span class="doccomment">/// The first native cell of the row at `position` of a block of `channels`
-<a href=#423 id=423 data-nosnippet>423</a>/// channels.
-<a href=#424 id=424 data-nosnippet>424</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>cell_of(position: usize, channels: usize) -&gt; u32 {
-<a href=#425 id=425 data-nosnippet>425</a>    u32::try_from(position * channels).expect(<span class="string">"a block's native cells fit u32 indices"</span>)
-<a href=#426 id=426 data-nosnippet>426</a>}
-<a href=#427 id=427 data-nosnippet>427</a>
-<a href=#428 id=428 data-nosnippet>428</a><span class="attr">#[cfg(test)]
-<a href=#429 id=429 data-nosnippet>429</a></span><span class="kw">mod </span>tests {
-<a href=#430 id=430 data-nosnippet>430</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#431 id=431 data-nosnippet>431</a>
-<a href=#432 id=432 data-nosnippet>432</a>    <span class="kw">fn </span>header(antennas: [u32; <span class="number">2</span>], row: u64) -&gt; NativeRowHeader {
-<a href=#433 id=433 data-nosnippet>433</a>        NativeRowHeader {
-<a href=#434 id=434 data-nosnippet>434</a>            row_flag: <span class="bool-val">false</span>,
-<a href=#435 id=435 data-nosnippet>435</a>            context: RowContext {
-<a href=#436 id=436 data-nosnippet>436</a>                original_uvw_m: <span class="prelude-val">None</span>,
-<a href=#437 id=437 data-nosnippet>437</a>                time_s: row <span class="kw">as </span>f64,
-<a href=#438 id=438 data-nosnippet>438</a>                antennas,
-<a href=#439 id=439 data-nosnippet>439</a>                antenna_types: [<span class="number">0</span>, <span class="number">0</span>],
-<a href=#440 id=440 data-nosnippet>440</a>                parallactic_angle_rad: [<span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#441 id=441 data-nosnippet>441</a>                field: <span class="number">0</span>,
-<a href=#442 id=442 data-nosnippet>442</a>                spectral_window: <span class="number">0</span>,
-<a href=#443 id=443 data-nosnippet>443</a>            },
-<a href=#444 id=444 data-nosnippet>444</a>            address: RowAddress {
-<a href=#445 id=445 data-nosnippet>445</a>                physical_row: row,
-<a href=#446 id=446 data-nosnippet>446</a>                data_description: <span class="number">0</span>,
-<a href=#447 id=447 data-nosnippet>447</a>            },
-<a href=#448 id=448 data-nosnippet>448</a>        }
-<a href=#449 id=449 data-nosnippet>449</a>    }
-<a href=#450 id=450 data-nosnippet>450</a>
-<a href=#451 id=451 data-nosnippet>451</a>    <span class="doccomment">/// The locality order is a permutation of the rows that groups each
-<a href=#452 id=452 data-nosnippet>452</a>    /// baseline and keeps its rows in arrival order; appending a row
-<a href=#453 id=453 data-nosnippet>453</a>    /// returns the block to arrival order.
-<a href=#454 id=454 data-nosnippet>454</a>    </span><span class="attr">#[test]
-<a href=#455 id=455 data-nosnippet>455</a>    </span><span class="kw">fn </span>rows_ordered_by_baseline_keep_each_baselines_arrival_order() {
-<a href=#456 id=456 data-nosnippet>456</a>        <span class="kw">let </span>baselines = [[<span class="number">0</span>, <span class="number">1</span>], [<span class="number">0</span>, <span class="number">2</span>], [<span class="number">1</span>, <span class="number">2</span>]];
-<a href=#457 id=457 data-nosnippet>457</a>        <span class="kw">let </span><span class="kw-2">mut </span>block = NativeBlock::default();
-<a href=#458 id=458 data-nosnippet>458</a>        block.reset(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0</span>], <span class="kw-2">&amp;</span>[<span class="number">0</span>]);
-<a href=#459 id=459 data-nosnippet>459</a>        <span class="kw">let </span>projection = DomainProjection {
-<a href=#460 id=460 data-nosnippet>460</a>            uvw_m: [<span class="number">0.0</span>; <span class="number">3</span>],
-<a href=#461 id=461 data-nosnippet>461</a>            phase_shift_m: <span class="number">0.0</span>,
-<a href=#462 id=462 data-nosnippet>462</a>            pointing_offset_rad: [<span class="number">0.0</span>; <span class="number">2</span>],
-<a href=#463 id=463 data-nosnippet>463</a>        };
-<a href=#464 id=464 data-nosnippet>464</a>        <span class="kw">let </span>push = |block: <span class="kw-2">&amp;mut </span>NativeBlock, row: u64| {
-<a href=#465 id=465 data-nosnippet>465</a>            block.push_row(
-<a href=#466 id=466 data-nosnippet>466</a>                header(baselines[row <span class="kw">as </span>usize % <span class="number">3</span>], row),
-<a href=#467 id=467 data-nosnippet>467</a>                <span class="kw-2">&amp;</span>[projection],
-<a href=#468 id=468 data-nosnippet>468</a>                <span class="kw-2">&amp;</span>[<span class="number">1.0e9</span>],
-<a href=#469 id=469 data-nosnippet>469</a>                <span class="kw-2">&amp;</span>[Complex32::default()],
-<a href=#470 id=470 data-nosnippet>470</a>                <span class="kw-2">&amp;</span>[<span class="number">1.0</span>],
-<a href=#471 id=471 data-nosnippet>471</a>                <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>],
-<a href=#472 id=472 data-nosnippet>472</a>            );
-<a href=#473 id=473 data-nosnippet>473</a>        };
-<a href=#474 id=474 data-nosnippet>474</a>        <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..<span class="number">9 </span>{
-<a href=#475 id=475 data-nosnippet>475</a>            push(<span class="kw-2">&amp;mut </span>block, row);
-<a href=#476 id=476 data-nosnippet>476</a>        }
-<a href=#477 id=477 data-nosnippet>477</a>        <span class="macro">assert_eq!</span>(block.ordered_row(<span class="number">4</span>), <span class="number">4</span>, <span class="string">"arrival order until ordered"</span>);
-<a href=#478 id=478 data-nosnippet>478</a>        block.order_rows_by_baseline();
-<a href=#479 id=479 data-nosnippet>479</a>        <span class="kw">let </span>ordered = (<span class="number">0</span>..<span class="number">9</span>)
-<a href=#480 id=480 data-nosnippet>480</a>            .map(|position| block.ordered_row(position))
-<a href=#481 id=481 data-nosnippet>481</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#482 id=482 data-nosnippet>482</a>        <span class="macro">assert_eq!</span>(ordered, [<span class="number">0</span>, <span class="number">3</span>, <span class="number">6</span>, <span class="number">1</span>, <span class="number">4</span>, <span class="number">7</span>, <span class="number">2</span>, <span class="number">5</span>, <span class="number">8</span>]);
-<a href=#483 id=483 data-nosnippet>483</a>        push(<span class="kw-2">&amp;mut </span>block, <span class="number">9</span>);
-<a href=#484 id=484 data-nosnippet>484</a>        <span class="macro">assert_eq!</span>(block.ordered_row(<span class="number">1</span>), <span class="number">1</span>, <span class="string">"appending restores arrival order"</span>);
-<a href=#485 id=485 data-nosnippet>485</a>    }
-<a href=#486 id=486 data-nosnippet>486</a>
-<a href=#487 id=487 data-nosnippet>487</a>    <span class="doccomment">/// Rows that share the spectrum and samples read exactly as the same
-<a href=#488 id=488 data-nosnippet>488</a>    /// rows pushed whole, on every domain, and a block made for them holds
-<a href=#489 id=489 data-nosnippet>489</a>    /// no more than [`BlockShape::shared_bytes`] however many it takes.
-<a href=#490 id=490 data-nosnippet>490</a>    </span><span class="attr">#[test]
-<a href=#491 id=491 data-nosnippet>491</a>    </span><span class="kw">fn </span>shared_rows_read_as_rows_pushed_whole() {
-<a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">let </span>(channels, correlations, domains, rows) = (<span class="number">5</span>, <span class="number">2</span>, <span class="number">2</span>, <span class="number">7</span>);
-<a href=#493 id=493 data-nosnippet>493</a>        <span class="kw">let </span>frequencies = [<span class="number">1.0e9</span>, <span class="number">1.1e9</span>, <span class="number">1.2e9</span>, <span class="number">1.3e9</span>, <span class="number">1.4e9</span>];
-<a href=#494 id=494 data-nosnippet>494</a>        <span class="kw">let </span>channel_indices = [<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>];
-<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">let </span>correlation_indices = [<span class="number">0</span>, <span class="number">3</span>];
-<a href=#496 id=496 data-nosnippet>496</a>        <span class="kw">let </span>cells = channels * correlations;
-<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">let </span>shape = BlockShape {
-<a href=#498 id=498 data-nosnippet>498</a>            rows,
-<a href=#499 id=499 data-nosnippet>499</a>            spectrum: RowSpectrum::evenly_spaced(channels),
-<a href=#500 id=500 data-nosnippet>500</a>            correlations,
-<a href=#501 id=501 data-nosnippet>501</a>            domains,
-<a href=#502 id=502 data-nosnippet>502</a>        };
-<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span>projections = |row: usize| {
-<a href=#504 id=504 data-nosnippet>504</a>            [<span class="number">0</span>, <span class="number">1</span>].map(|domain| DomainProjection {
-<a href=#505 id=505 data-nosnippet>505</a>                uvw_m: [row <span class="kw">as </span>f64, domain <span class="kw">as </span>f64, <span class="number">0.5</span>],
-<a href=#506 id=506 data-nosnippet>506</a>                phase_shift_m: <span class="number">0.25 </span>* domain <span class="kw">as </span>f64,
-<a href=#507 id=507 data-nosnippet>507</a>                pointing_offset_rad: [<span class="number">0.0</span>; <span class="number">2</span>],
-<a href=#508 id=508 data-nosnippet>508</a>            })
-<a href=#509 id=509 data-nosnippet>509</a>        };
-<a href=#510 id=510 data-nosnippet>510</a>        <span class="kw">let </span><span class="kw-2">mut </span>whole = NativeBlock::with_capacity(shape);
-<a href=#511 id=511 data-nosnippet>511</a>        whole.reset(domains, <span class="kw-2">&amp;</span>channel_indices, <span class="kw-2">&amp;</span>correlation_indices);
-<a href=#512 id=512 data-nosnippet>512</a>        <span class="kw">let </span><span class="kw-2">mut </span>shared = NativeBlock::shared_with_capacity(shape);
-<a href=#513 id=513 data-nosnippet>513</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">2 </span>{
-<a href=#514 id=514 data-nosnippet>514</a>            shared.reset_shared(
-<a href=#515 id=515 data-nosnippet>515</a>                domains,
-<a href=#516 id=516 data-nosnippet>516</a>                <span class="kw-2">&amp;</span>channel_indices,
-<a href=#517 id=517 data-nosnippet>517</a>                <span class="kw-2">&amp;</span>correlation_indices,
-<a href=#518 id=518 data-nosnippet>518</a>                <span class="kw-2">&amp;</span>frequencies,
-<a href=#519 id=519 data-nosnippet>519</a>            );
-<a href=#520 id=520 data-nosnippet>520</a>            <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..rows {
-<a href=#521 id=521 data-nosnippet>521</a>                shared.push_shared_row(header([<span class="number">0</span>, row <span class="kw">as </span>u32 + <span class="number">1</span>], row <span class="kw">as </span>u64), <span class="kw-2">&amp;</span>projections(row));
-<a href=#522 id=522 data-nosnippet>522</a>            }
-<a href=#523 id=523 data-nosnippet>523</a>        }
-<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..rows {
-<a href=#525 id=525 data-nosnippet>525</a>            whole.push_row(
-<a href=#526 id=526 data-nosnippet>526</a>                header([<span class="number">0</span>, row <span class="kw">as </span>u32 + <span class="number">1</span>], row <span class="kw">as </span>u64),
-<a href=#527 id=527 data-nosnippet>527</a>                <span class="kw-2">&amp;</span>projections(row),
-<a href=#528 id=528 data-nosnippet>528</a>                <span class="kw-2">&amp;</span>frequencies,
-<a href=#529 id=529 data-nosnippet>529</a>                <span class="kw-2">&amp;</span><span class="macro">vec!</span>[Complex32::default(); cells],
-<a href=#530 id=530 data-nosnippet>530</a>                <span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">1.0</span>; cells],
-<a href=#531 id=531 data-nosnippet>531</a>                <span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="bool-val">false</span>; cells],
-<a href=#532 id=532 data-nosnippet>532</a>            );
-<a href=#533 id=533 data-nosnippet>533</a>        }
-<a href=#534 id=534 data-nosnippet>534</a>        <span class="macro">assert_eq!</span>(shared.len(), rows);
-<a href=#535 id=535 data-nosnippet>535</a>        <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..rows {
-<a href=#536 id=536 data-nosnippet>536</a>            <span class="kw">for </span>domain <span class="kw">in </span><span class="number">0</span>..domains {
-<a href=#537 id=537 data-nosnippet>537</a>                <span class="kw">let </span>(a, b) = (whole.row(domain, row), shared.row(domain, row));
-<a href=#538 id=538 data-nosnippet>538</a>                <span class="macro">assert_eq!</span>(a.uvw_m, b.uvw_m, <span class="string">"row {row}, domain {domain}"</span>);
-<a href=#539 id=539 data-nosnippet>539</a>                <span class="macro">assert_eq!</span>(a.phase_shift_m, b.phase_shift_m);
-<a href=#540 id=540 data-nosnippet>540</a>                <span class="macro">assert_eq!</span>(a.frequencies_hz, b.frequencies_hz);
-<a href=#541 id=541 data-nosnippet>541</a>                <span class="macro">assert_eq!</span>(a.values, b.values);
-<a href=#542 id=542 data-nosnippet>542</a>                <span class="macro">assert_eq!</span>(a.weights, b.weights);
-<a href=#543 id=543 data-nosnippet>543</a>                <span class="macro">assert_eq!</span>(a.flags, b.flags);
-<a href=#544 id=544 data-nosnippet>544</a>                <span class="macro">assert_eq!</span>(a.context.antennas, b.context.antennas);
-<a href=#545 id=545 data-nosnippet>545</a>                <span class="macro">assert_eq!</span>(a.row_flag, b.row_flag);
-<a href=#546 id=546 data-nosnippet>546</a>            }
-<a href=#547 id=547 data-nosnippet>547</a>        }
-<a href=#548 id=548 data-nosnippet>548</a>        <span class="macro">assert!</span>(
-<a href=#549 id=549 data-nosnippet>549</a>            shared.capacity_bytes() &lt;= shape.shared_bytes(),
-<a href=#550 id=550 data-nosnippet>550</a>            <span class="string">"{} against {}"</span>,
-<a href=#551 id=551 data-nosnippet>551</a>            shared.capacity_bytes(),
-<a href=#552 id=552 data-nosnippet>552</a>            shape.shared_bytes()
-<a href=#553 id=553 data-nosnippet>553</a>        );
-<a href=#554 id=554 data-nosnippet>554</a>        <span class="macro">assert!</span>(shape.shared_bytes() &lt; shape.bytes());
-<a href=#555 id=555 data-nosnippet>555</a>    }
-<a href=#556 id=556 data-nosnippet>556</a>}
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// Original flags, with the parent selection, for an untuned model write.
+<a href=#137 id=137 data-nosnippet>137</a>    </span>prediction_flags: Vec&lt;bool&gt;,
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="doccomment">/// Whether every row reads the first row's frequencies, values, weights
+<a href=#139 id=139 data-nosnippet>139</a>    /// and flags ([`Self::reset_shared`]).
+<a href=#140 id=140 data-nosnippet>140</a>    </span>shared: bool,
+<a href=#141 id=141 data-nosnippet>141</a>}
+<a href=#142 id=142 data-nosnippet>142</a>
+<a href=#143 id=143 data-nosnippet>143</a><span class="kw">impl </span>NativeBlock {
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="doccomment">/// An empty block with room for every block of `shape`, so filling it
+<a href=#145 id=145 data-nosnippet>145</a>    /// never grows it beyond [`BlockShape::bytes`].
+<a href=#146 id=146 data-nosnippet>146</a>    </span><span class="attr">#[must_use]
+<a href=#147 id=147 data-nosnippet>147</a>    </span><span class="kw">pub fn </span>with_capacity(shape: BlockShape) -&gt; <span class="self">Self </span>{
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="self">Self</span>::sized(shape, shape.rows)
+<a href=#149 id=149 data-nosnippet>149</a>    }
+<a href=#150 id=150 data-nosnippet>150</a>
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="doccomment">/// An empty block with room for every block of `shape` whose rows share
+<a href=#152 id=152 data-nosnippet>152</a>    /// their spectrum and samples ([`Self::reset_shared`]), so filling it
+<a href=#153 id=153 data-nosnippet>153</a>    /// never grows it beyond [`BlockShape::shared_bytes`].
+<a href=#154 id=154 data-nosnippet>154</a>    </span><span class="attr">#[must_use]
+<a href=#155 id=155 data-nosnippet>155</a>    </span><span class="kw">pub fn </span>shared_with_capacity(shape: BlockShape) -&gt; <span class="self">Self </span>{
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="self">Self</span>::sized(shape, <span class="number">1</span>)
+<a href=#157 id=157 data-nosnippet>157</a>    }
+<a href=#158 id=158 data-nosnippet>158</a>
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="doccomment">/// An empty block with room for `shape`'s rows and the spectra and
+<a href=#160 id=160 data-nosnippet>160</a>    /// samples of `sample_rows` of them.
+<a href=#161 id=161 data-nosnippet>161</a>    </span><span class="kw">fn </span>sized(shape: BlockShape, sample_rows: usize) -&gt; <span class="self">Self </span>{
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">let </span>channels = shape.channels();
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="kw">let </span>cells = sample_rows * channels * shape.correlations;
+<a href=#164 id=164 data-nosnippet>164</a>        <span class="self">Self </span>{
+<a href=#165 id=165 data-nosnippet>165</a>            domains: shape.domains,
+<a href=#166 id=166 data-nosnippet>166</a>            rows: Vec::with_capacity(shape.rows),
+<a href=#167 id=167 data-nosnippet>167</a>            order: Vec::with_capacity(shape.rows),
+<a href=#168 id=168 data-nosnippet>168</a>            projections: Vec::with_capacity(shape.rows * shape.domains),
+<a href=#169 id=169 data-nosnippet>169</a>            channel_indices: Vec::with_capacity(channels),
+<a href=#170 id=170 data-nosnippet>170</a>            correlation_indices: Vec::with_capacity(shape.correlations),
+<a href=#171 id=171 data-nosnippet>171</a>            frequencies_hz: Vec::with_capacity(sample_rows * channels),
+<a href=#172 id=172 data-nosnippet>172</a>            values: Vec::with_capacity(cells),
+<a href=#173 id=173 data-nosnippet>173</a>            weights: Vec::with_capacity(cells),
+<a href=#174 id=174 data-nosnippet>174</a>            flags: Vec::with_capacity(cells),
+<a href=#175 id=175 data-nosnippet>175</a>            prediction_flags: Vec::new(),
+<a href=#176 id=176 data-nosnippet>176</a>            shared: <span class="bool-val">false</span>,
+<a href=#177 id=177 data-nosnippet>177</a>        }
+<a href=#178 id=178 data-nosnippet>178</a>    }
+<a href=#179 id=179 data-nosnippet>179</a>
+<a href=#180 id=180 data-nosnippet>180</a>    <span class="doccomment">/// Bytes the block holds now, from its capacities: at most
+<a href=#181 id=181 data-nosnippet>181</a>    /// [`BlockShape::bytes`] for a block [`Self::with_capacity`] made and
+<a href=#182 id=182 data-nosnippet>182</a>    /// filled within its shape.
+<a href=#183 id=183 data-nosnippet>183</a>    </span><span class="attr">#[must_use]
+<a href=#184 id=184 data-nosnippet>184</a>    </span><span class="kw">pub fn </span>capacity_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
+<a href=#185 id=185 data-nosnippet>185</a>        (<span class="self">self</span>.rows.capacity() * size_of::&lt;NativeRowHeader&gt;()
+<a href=#186 id=186 data-nosnippet>186</a>            + <span class="self">self</span>.projections.capacity() * size_of::&lt;DomainProjection&gt;()
+<a href=#187 id=187 data-nosnippet>187</a>            + (<span class="self">self</span>.order.capacity()
+<a href=#188 id=188 data-nosnippet>188</a>                + <span class="self">self</span>.channel_indices.capacity()
+<a href=#189 id=189 data-nosnippet>189</a>                + <span class="self">self</span>.correlation_indices.capacity())
+<a href=#190 id=190 data-nosnippet>190</a>                * size_of::&lt;u32&gt;()
+<a href=#191 id=191 data-nosnippet>191</a>            + <span class="self">self</span>.frequencies_hz.capacity() * size_of::&lt;f64&gt;()
+<a href=#192 id=192 data-nosnippet>192</a>            + <span class="self">self</span>.values.capacity() * size_of::&lt;Complex32&gt;()
+<a href=#193 id=193 data-nosnippet>193</a>            + <span class="self">self</span>.weights.capacity() * size_of::&lt;f32&gt;()
+<a href=#194 id=194 data-nosnippet>194</a>            + (<span class="self">self</span>.flags.capacity() + <span class="self">self</span>.prediction_flags.capacity()) * size_of::&lt;bool&gt;())
+<a href=#195 id=195 data-nosnippet>195</a>            <span class="kw">as </span>u64
+<a href=#196 id=196 data-nosnippet>196</a>    }
+<a href=#197 id=197 data-nosnippet>197</a>
+<a href=#198 id=198 data-nosnippet>198</a>    <span class="doccomment">/// Empty the block and set the layout of the rows that follow: the
+<a href=#199 id=199 data-nosnippet>199</a>    /// number of image domains each row is projected on, and the native
+<a href=#200 id=200 data-nosnippet>200</a>    /// channel and correlation indices every row selects.
+<a href=#201 id=201 data-nosnippet>201</a>    </span><span class="kw">pub fn </span>reset(<span class="kw-2">&amp;mut </span><span class="self">self</span>, domains: usize, channel_indices: <span class="kw-2">&amp;</span>[u32], correlation_indices: <span class="kw-2">&amp;</span>[u32]) {
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="macro">assert!</span>(
+<a href=#203 id=203 data-nosnippet>203</a>            domains &gt; <span class="number">0 </span>&amp;&amp; !channel_indices.is_empty() &amp;&amp; !correlation_indices.is_empty(),
+<a href=#204 id=204 data-nosnippet>204</a>            <span class="string">"a native block projects on one domain and selects one channel and correlation"
+<a href=#205 id=205 data-nosnippet>205</a>        </span>);
+<a href=#206 id=206 data-nosnippet>206</a>        <span class="self">self</span>.domains = domains;
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="self">self</span>.shared = <span class="bool-val">false</span>;
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="self">self</span>.rows.clear();
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="self">self</span>.order.clear();
+<a href=#210 id=210 data-nosnippet>210</a>        <span class="self">self</span>.projections.clear();
+<a href=#211 id=211 data-nosnippet>211</a>        <span class="self">self</span>.frequencies_hz.clear();
+<a href=#212 id=212 data-nosnippet>212</a>        <span class="self">self</span>.values.clear();
+<a href=#213 id=213 data-nosnippet>213</a>        <span class="self">self</span>.weights.clear();
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="self">self</span>.flags.clear();
+<a href=#215 id=215 data-nosnippet>215</a>        <span class="self">self</span>.prediction_flags.clear();
+<a href=#216 id=216 data-nosnippet>216</a>        <span class="self">self</span>.channel_indices.clear();
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="self">self</span>.channel_indices.extend_from_slice(channel_indices);
+<a href=#218 id=218 data-nosnippet>218</a>        <span class="self">self</span>.correlation_indices.clear();
+<a href=#219 id=219 data-nosnippet>219</a>        <span class="self">self</span>.correlation_indices
+<a href=#220 id=220 data-nosnippet>220</a>            .extend_from_slice(correlation_indices);
+<a href=#221 id=221 data-nosnippet>221</a>    }
+<a href=#222 id=222 data-nosnippet>222</a>
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="doccomment">/// [`Self::reset`] for rows that all have `frequencies_hz` and, in
+<a href=#224 id=224 data-nosnippet>224</a>    /// every channel and correlation, a zero value, a unit weight and no
+<a href=#225 id=225 data-nosnippet>225</a>    /// flag: the block keeps them once, and the rows that follow come from
+<a href=#226 id=226 data-nosnippet>226</a>    /// [`Self::push_shared_row`]. Each row then reads exactly as
+<a href=#227 id=227 data-nosnippet>227</a>    /// [`Self::push_row`] would have made it with those samples.
+<a href=#228 id=228 data-nosnippet>228</a>    </span><span class="kw">pub fn </span>reset_shared(
+<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#230 id=230 data-nosnippet>230</a>        domains: usize,
+<a href=#231 id=231 data-nosnippet>231</a>        channel_indices: <span class="kw-2">&amp;</span>[u32],
+<a href=#232 id=232 data-nosnippet>232</a>        correlation_indices: <span class="kw-2">&amp;</span>[u32],
+<a href=#233 id=233 data-nosnippet>233</a>        frequencies_hz: <span class="kw-2">&amp;</span>[f64],
+<a href=#234 id=234 data-nosnippet>234</a>    ) {
+<a href=#235 id=235 data-nosnippet>235</a>        <span class="self">self</span>.reset(domains, channel_indices, correlation_indices);
+<a href=#236 id=236 data-nosnippet>236</a>        <span class="macro">assert_eq!</span>(
+<a href=#237 id=237 data-nosnippet>237</a>            frequencies_hz.len(),
+<a href=#238 id=238 data-nosnippet>238</a>            channel_indices.len(),
+<a href=#239 id=239 data-nosnippet>239</a>            <span class="string">"frequencies per row"
+<a href=#240 id=240 data-nosnippet>240</a>        </span>);
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span>cells = channel_indices.len() * correlation_indices.len();
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="self">self</span>.frequencies_hz.extend_from_slice(frequencies_hz);
+<a href=#243 id=243 data-nosnippet>243</a>        <span class="self">self</span>.values.resize(cells, Complex32::default());
+<a href=#244 id=244 data-nosnippet>244</a>        <span class="self">self</span>.weights.resize(cells, <span class="number">1.0</span>);
+<a href=#245 id=245 data-nosnippet>245</a>        <span class="self">self</span>.flags.resize(cells, <span class="bool-val">false</span>);
+<a href=#246 id=246 data-nosnippet>246</a>        <span class="self">self</span>.shared = <span class="bool-val">true</span>;
+<a href=#247 id=247 data-nosnippet>247</a>    }
+<a href=#248 id=248 data-nosnippet>248</a>
+<a href=#249 id=249 data-nosnippet>249</a>    <span class="doccomment">/// Append one row of the shared spectrum and samples
+<a href=#250 id=250 data-nosnippet>250</a>    /// ([`Self::reset_shared`]): its header and its projection on every
+<a href=#251 id=251 data-nosnippet>251</a>    /// domain.
+<a href=#252 id=252 data-nosnippet>252</a>    </span><span class="kw">pub fn </span>push_shared_row(<span class="kw-2">&amp;mut </span><span class="self">self</span>, header: NativeRowHeader, projections: <span class="kw-2">&amp;</span>[DomainProjection]) {
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="macro">assert!</span>(<span class="self">self</span>.shared, <span class="string">"shared rows follow reset_shared"</span>);
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="macro">assert_eq!</span>(projections.len(), <span class="self">self</span>.domains, <span class="string">"one projection per domain"</span>);
+<a href=#255 id=255 data-nosnippet>255</a>        <span class="self">self</span>.rows.push(header);
+<a href=#256 id=256 data-nosnippet>256</a>        <span class="self">self</span>.order.clear();
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="self">self</span>.projections.extend_from_slice(projections);
+<a href=#258 id=258 data-nosnippet>258</a>    }
+<a href=#259 id=259 data-nosnippet>259</a>
+<a href=#260 id=260 data-nosnippet>260</a>    <span class="doccomment">/// Append one row: its projection on every domain, `frequencies_hz` per
+<a href=#261 id=261 data-nosnippet>261</a>    /// channel, `values`, `weights` and `flags` per channel and correlation.
+<a href=#262 id=262 data-nosnippet>262</a>    </span><span class="kw">pub fn </span>push_row(
+<a href=#263 id=263 data-nosnippet>263</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#264 id=264 data-nosnippet>264</a>        header: NativeRowHeader,
+<a href=#265 id=265 data-nosnippet>265</a>        projections: <span class="kw-2">&amp;</span>[DomainProjection],
+<a href=#266 id=266 data-nosnippet>266</a>        frequencies_hz: <span class="kw-2">&amp;</span>[f64],
+<a href=#267 id=267 data-nosnippet>267</a>        values: <span class="kw-2">&amp;</span>[Complex32],
+<a href=#268 id=268 data-nosnippet>268</a>        weights: <span class="kw-2">&amp;</span>[f32],
+<a href=#269 id=269 data-nosnippet>269</a>        flags: <span class="kw-2">&amp;</span>[bool],
+<a href=#270 id=270 data-nosnippet>270</a>    ) {
+<a href=#271 id=271 data-nosnippet>271</a>        <span class="kw">let </span>cells = <span class="self">self</span>.channels() * <span class="self">self</span>.correlations();
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="macro">assert!</span>(
+<a href=#273 id=273 data-nosnippet>273</a>            values.len() == cells &amp;&amp; weights.len() == cells &amp;&amp; flags.len() == cells,
+<a href=#274 id=274 data-nosnippet>274</a>            <span class="string">"values, weights and flags per row must be channels × correlations"
+<a href=#275 id=275 data-nosnippet>275</a>        </span>);
+<a href=#276 id=276 data-nosnippet>276</a>        <span class="self">self</span>.push_row_with(header, projections, frequencies_hz, |v, w, f| {
+<a href=#277 id=277 data-nosnippet>277</a>            v.copy_from_slice(values);
+<a href=#278 id=278 data-nosnippet>278</a>            w.copy_from_slice(weights);
+<a href=#279 id=279 data-nosnippet>279</a>            f.copy_from_slice(flags);
+<a href=#280 id=280 data-nosnippet>280</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, std::convert::Infallible&gt;(())
+<a href=#281 id=281 data-nosnippet>281</a>        })
+<a href=#282 id=282 data-nosnippet>282</a>        .unwrap_or_else(|never| <span class="kw">match </span>never {});
+<a href=#283 id=283 data-nosnippet>283</a>    }
+<a href=#284 id=284 data-nosnippet>284</a>
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="doccomment">/// [`Self::push_row`], with `fill` writing the row's values, weights and
+<a href=#286 id=286 data-nosnippet>286</a>    /// flags in place: it receives them zeroed, `channels × correlations`
+<a href=#287 id=287 data-nosnippet>287</a>    /// each, so a source copies each sample once. When `fill` fails the
+<a href=#288 id=288 data-nosnippet>288</a>    /// block is left as it was and the error returned.
+<a href=#289 id=289 data-nosnippet>289</a>    </span><span class="kw">pub fn </span>push_row_with&lt;E&gt;(
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#291 id=291 data-nosnippet>291</a>        header: NativeRowHeader,
+<a href=#292 id=292 data-nosnippet>292</a>        projections: <span class="kw-2">&amp;</span>[DomainProjection],
+<a href=#293 id=293 data-nosnippet>293</a>        frequencies_hz: <span class="kw-2">&amp;</span>[f64],
+<a href=#294 id=294 data-nosnippet>294</a>        fill: <span class="kw">impl </span>FnOnce(<span class="kw-2">&amp;mut </span>[Complex32], <span class="kw-2">&amp;mut </span>[f32], <span class="kw-2">&amp;mut </span>[bool]) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt;,
+<a href=#295 id=295 data-nosnippet>295</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), E&gt; {
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="macro">assert!</span>(!<span class="self">self</span>.shared, <span class="string">"a block of shared rows takes push_shared_row"</span>);
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span>cells = <span class="self">self</span>.channels() * <span class="self">self</span>.correlations();
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="macro">assert_eq!</span>(projections.len(), <span class="self">self</span>.domains, <span class="string">"one projection per domain"</span>);
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="macro">assert_eq!</span>(frequencies_hz.len(), <span class="self">self</span>.channels(), <span class="string">"frequencies per row"</span>);
+<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span>start = <span class="self">self</span>.values.len();
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="self">self</span>.values.resize(start + cells, Complex32::default());
+<a href=#302 id=302 data-nosnippet>302</a>        <span class="self">self</span>.weights.resize(start + cells, <span class="number">0.0</span>);
+<a href=#303 id=303 data-nosnippet>303</a>        <span class="self">self</span>.flags.resize(start + cells, <span class="bool-val">false</span>);
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = fill(
+<a href=#305 id=305 data-nosnippet>305</a>            <span class="kw-2">&amp;mut </span><span class="self">self</span>.values[start..],
+<a href=#306 id=306 data-nosnippet>306</a>            <span class="kw-2">&amp;mut </span><span class="self">self</span>.weights[start..],
+<a href=#307 id=307 data-nosnippet>307</a>            <span class="kw-2">&amp;mut </span><span class="self">self</span>.flags[start..],
+<a href=#308 id=308 data-nosnippet>308</a>        ) {
+<a href=#309 id=309 data-nosnippet>309</a>            <span class="self">self</span>.values.truncate(start);
+<a href=#310 id=310 data-nosnippet>310</a>            <span class="self">self</span>.weights.truncate(start);
+<a href=#311 id=311 data-nosnippet>311</a>            <span class="self">self</span>.flags.truncate(start);
+<a href=#312 id=312 data-nosnippet>312</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(error);
+<a href=#313 id=313 data-nosnippet>313</a>        }
+<a href=#314 id=314 data-nosnippet>314</a>        <span class="self">self</span>.rows.push(header);
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="self">self</span>.order.clear();
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="self">self</span>.projections.extend_from_slice(projections);
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="self">self</span>.frequencies_hz.extend_from_slice(frequencies_hz);
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="prelude-val">Ok</span>(())
+<a href=#319 id=319 data-nosnippet>319</a>    }
+<a href=#320 id=320 data-nosnippet>320</a>
+<a href=#321 id=321 data-nosnippet>321</a>    <span class="doccomment">/// Give the most recently appended row separate per-channel grid and
+<a href=#322 id=322 data-nosnippet>322</a>    /// prediction selections. Each mask is true for a selected channel.
+<a href=#323 id=323 data-nosnippet>323</a>    </span><span class="kw">pub fn </span>separate_last_row_selection(<span class="kw-2">&amp;mut </span><span class="self">self</span>, grid: <span class="kw-2">&amp;</span>[bool], prediction: <span class="kw-2">&amp;</span>[bool]) {
+<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">let </span>channels = <span class="self">self</span>.channels();
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">let </span>products = <span class="self">self</span>.correlations();
+<a href=#326 id=326 data-nosnippet>326</a>        <span class="macro">assert!</span>(!<span class="self">self</span>.shared &amp;&amp; grid.len() == channels &amp;&amp; prediction.len() == channels);
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">let </span>cells = channels * products;
+<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw">let </span>start = <span class="self">self</span>.flags.len() - cells;
+<a href=#329 id=329 data-nosnippet>329</a>        <span class="macro">assert_eq!</span>(<span class="self">self</span>.prediction_flags.len(), start);
+<a href=#330 id=330 data-nosnippet>330</a>        <span class="kw">if </span><span class="self">self</span>.prediction_flags.capacity() == <span class="number">0 </span>{
+<a href=#331 id=331 data-nosnippet>331</a>            <span class="self">self</span>.prediction_flags.reserve_exact(<span class="self">self</span>.flags.capacity());
+<a href=#332 id=332 data-nosnippet>332</a>        }
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="self">self</span>.prediction_flags
+<a href=#334 id=334 data-nosnippet>334</a>            .extend_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.flags[start..]);
+<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">for </span>channel <span class="kw">in </span><span class="number">0</span>..channels {
+<a href=#336 id=336 data-nosnippet>336</a>            <span class="kw">if </span>!grid[channel] {
+<a href=#337 id=337 data-nosnippet>337</a>                <span class="self">self</span>.flags[start + channel * products..start + (channel + <span class="number">1</span>) * products].fill(<span class="bool-val">true</span>);
+<a href=#338 id=338 data-nosnippet>338</a>            }
+<a href=#339 id=339 data-nosnippet>339</a>            <span class="kw">if </span>!prediction[channel] {
+<a href=#340 id=340 data-nosnippet>340</a>                <span class="self">self</span>.prediction_flags[start + channel * products..start + (channel + <span class="number">1</span>) * products]
+<a href=#341 id=341 data-nosnippet>341</a>                    .fill(<span class="bool-val">true</span>);
+<a href=#342 id=342 data-nosnippet>342</a>            }
+<a href=#343 id=343 data-nosnippet>343</a>        }
+<a href=#344 id=344 data-nosnippet>344</a>    }
+<a href=#345 id=345 data-nosnippet>345</a>
+<a href=#346 id=346 data-nosnippet>346</a>    <span class="doccomment">/// The row as the final model predictor reads it.
+<a href=#347 id=347 data-nosnippet>347</a>    </span><span class="attr">#[must_use]
+<a href=#348 id=348 data-nosnippet>348</a>    </span><span class="kw">pub fn </span>prediction_row(<span class="kw-2">&amp;</span><span class="self">self</span>, domain: usize, index: usize) -&gt; NativeRow&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">let </span><span class="kw-2">mut </span>row = <span class="self">self</span>.row(domain, index);
+<a href=#350 id=350 data-nosnippet>350</a>        <span class="kw">if </span>!<span class="self">self</span>.prediction_flags.is_empty() {
+<a href=#351 id=351 data-nosnippet>351</a>            <span class="kw">let </span>cells = <span class="self">self</span>.channels() * <span class="self">self</span>.correlations();
+<a href=#352 id=352 data-nosnippet>352</a>            row.flags = <span class="kw-2">&amp;</span><span class="self">self</span>.prediction_flags[index * cells..(index + <span class="number">1</span>) * cells];
+<a href=#353 id=353 data-nosnippet>353</a>        }
+<a href=#354 id=354 data-nosnippet>354</a>        row
+<a href=#355 id=355 data-nosnippet>355</a>    }
+<a href=#356 id=356 data-nosnippet>356</a>
+<a href=#357 id=357 data-nosnippet>357</a>    <span class="doccomment">/// Order the rows for locality: by antenna pair, a baseline's rows in
+<a href=#358 id=358 data-nosnippet>358</a>    /// arrival order (time order for a MeasurementSet). Appending a row
+<a href=#359 id=359 data-nosnippet>359</a>    /// returns the block to arrival order.
+<a href=#360 id=360 data-nosnippet>360</a>    </span><span class="kw">pub fn </span>order_rows_by_baseline(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#361 id=361 data-nosnippet>361</a>        <span class="kw">let </span>rows = <span class="kw-2">&amp;</span><span class="self">self</span>.rows;
+<a href=#362 id=362 data-nosnippet>362</a>        <span class="self">self</span>.order.clear();
+<a href=#363 id=363 data-nosnippet>363</a>        <span class="self">self</span>.order.extend(<span class="number">0</span>..rows.len() <span class="kw">as </span>u32);
+<a href=#364 id=364 data-nosnippet>364</a>        <span class="self">self</span>.order
+<a href=#365 id=365 data-nosnippet>365</a>            .sort_unstable_by_key(|<span class="kw-2">&amp;</span>index| (rows[index <span class="kw">as </span>usize].context.antennas, index));
+<a href=#366 id=366 data-nosnippet>366</a>    }
+<a href=#367 id=367 data-nosnippet>367</a>
+<a href=#368 id=368 data-nosnippet>368</a>    <span class="doccomment">/// The index of the row at `position` of the locality order: the row
+<a href=#369 id=369 data-nosnippet>369</a>    /// itself in arrival order.
+<a href=#370 id=370 data-nosnippet>370</a>    </span><span class="attr">#[must_use]
+<a href=#371 id=371 data-nosnippet>371</a>    </span><span class="kw">pub fn </span>ordered_row(<span class="kw-2">&amp;</span><span class="self">self</span>, position: usize) -&gt; usize {
+<a href=#372 id=372 data-nosnippet>372</a>        <span class="self">self</span>.order
+<a href=#373 id=373 data-nosnippet>373</a>            .get(position)
+<a href=#374 id=374 data-nosnippet>374</a>            .map_or(position, |<span class="kw-2">&amp;</span>index| index <span class="kw">as </span>usize)
+<a href=#375 id=375 data-nosnippet>375</a>    }
+<a href=#376 id=376 data-nosnippet>376</a>
+<a href=#377 id=377 data-nosnippet>377</a>    <span class="doccomment">/// Number of rows.
+<a href=#378 id=378 data-nosnippet>378</a>    </span><span class="attr">#[must_use]
+<a href=#379 id=379 data-nosnippet>379</a>    </span><span class="kw">pub fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#380 id=380 data-nosnippet>380</a>        <span class="self">self</span>.rows.len()
+<a href=#381 id=381 data-nosnippet>381</a>    }
+<a href=#382 id=382 data-nosnippet>382</a>
+<a href=#383 id=383 data-nosnippet>383</a>    <span class="doccomment">/// Whether the block holds no rows.
+<a href=#384 id=384 data-nosnippet>384</a>    </span><span class="attr">#[must_use]
+<a href=#385 id=385 data-nosnippet>385</a>    </span><span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="self">self</span>.rows.is_empty()
+<a href=#387 id=387 data-nosnippet>387</a>    }
+<a href=#388 id=388 data-nosnippet>388</a>
+<a href=#389 id=389 data-nosnippet>389</a>    <span class="doccomment">/// Image domains each row is projected on.
+<a href=#390 id=390 data-nosnippet>390</a>    </span><span class="attr">#[must_use]
+<a href=#391 id=391 data-nosnippet>391</a>    </span><span class="kw">pub fn </span>domains(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#392 id=392 data-nosnippet>392</a>        <span class="self">self</span>.domains
+<a href=#393 id=393 data-nosnippet>393</a>    }
+<a href=#394 id=394 data-nosnippet>394</a>
+<a href=#395 id=395 data-nosnippet>395</a>    <span class="doccomment">/// Selected channels per row.
+<a href=#396 id=396 data-nosnippet>396</a>    </span><span class="attr">#[must_use]
+<a href=#397 id=397 data-nosnippet>397</a>    </span><span class="kw">pub fn </span>channels(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#398 id=398 data-nosnippet>398</a>        <span class="self">self</span>.channel_indices.len()
+<a href=#399 id=399 data-nosnippet>399</a>    }
+<a href=#400 id=400 data-nosnippet>400</a>
+<a href=#401 id=401 data-nosnippet>401</a>    <span class="doccomment">/// Selected correlations per row.
+<a href=#402 id=402 data-nosnippet>402</a>    </span><span class="attr">#[must_use]
+<a href=#403 id=403 data-nosnippet>403</a>    </span><span class="kw">pub fn </span>correlations(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#404 id=404 data-nosnippet>404</a>        <span class="self">self</span>.correlation_indices.len()
+<a href=#405 id=405 data-nosnippet>405</a>    }
+<a href=#406 id=406 data-nosnippet>406</a>
+<a href=#407 id=407 data-nosnippet>407</a>    <span class="doccomment">/// Native channel index of each selected channel.
+<a href=#408 id=408 data-nosnippet>408</a>    </span><span class="attr">#[must_use]
+<a href=#409 id=409 data-nosnippet>409</a>    </span><span class="kw">pub fn </span>channel_indices(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[u32] {
+<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.channel_indices
+<a href=#411 id=411 data-nosnippet>411</a>    }
+<a href=#412 id=412 data-nosnippet>412</a>
+<a href=#413 id=413 data-nosnippet>413</a>    <span class="doccomment">/// Correlation index of each selected correlation.
+<a href=#414 id=414 data-nosnippet>414</a>    </span><span class="attr">#[must_use]
+<a href=#415 id=415 data-nosnippet>415</a>    </span><span class="kw">pub fn </span>correlation_indices(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[u32] {
+<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.correlation_indices
+<a href=#417 id=417 data-nosnippet>417</a>    }
+<a href=#418 id=418 data-nosnippet>418</a>
+<a href=#419 id=419 data-nosnippet>419</a>    <span class="doccomment">/// Header of row `index`.
+<a href=#420 id=420 data-nosnippet>420</a>    </span><span class="attr">#[must_use]
+<a href=#421 id=421 data-nosnippet>421</a>    </span><span class="kw">pub fn </span>header(<span class="kw-2">&amp;</span><span class="self">self</span>, index: usize) -&gt; <span class="kw-2">&amp;</span>NativeRowHeader {
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.rows[index]
+<a href=#423 id=423 data-nosnippet>423</a>    }
+<a href=#424 id=424 data-nosnippet>424</a>
+<a href=#425 id=425 data-nosnippet>425</a>    <span class="doccomment">/// Row `index` as the operator of image domain `domain` reads it.
+<a href=#426 id=426 data-nosnippet>426</a>    </span><span class="attr">#[must_use]
+<a href=#427 id=427 data-nosnippet>427</a>    </span><span class="kw">pub fn </span>row(<span class="kw-2">&amp;</span><span class="self">self</span>, domain: usize, index: usize) -&gt; NativeRow&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="macro">assert!</span>(
+<a href=#429 id=429 data-nosnippet>429</a>            domain &lt; <span class="self">self</span>.domains,
+<a href=#430 id=430 data-nosnippet>430</a>            <span class="string">"the block projects on {} domains"</span>,
+<a href=#431 id=431 data-nosnippet>431</a>            <span class="self">self</span>.domains
+<a href=#432 id=432 data-nosnippet>432</a>        );
+<a href=#433 id=433 data-nosnippet>433</a>        <span class="kw">let </span>header = <span class="kw-2">&amp;</span><span class="self">self</span>.rows[index];
+<a href=#434 id=434 data-nosnippet>434</a>        <span class="kw">let </span>projection = <span class="kw-2">&amp;</span><span class="self">self</span>.projections[index * <span class="self">self</span>.domains + domain];
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="kw">let </span>channels = <span class="self">self</span>.channels();
+<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">let </span>cells = channels * <span class="self">self</span>.correlations();
+<a href=#437 id=437 data-nosnippet>437</a>        <span class="comment">// Shared rows all read the one row of samples the block keeps.
+<a href=#438 id=438 data-nosnippet>438</a>        </span><span class="kw">let </span>samples = <span class="kw">if </span><span class="self">self</span>.shared { <span class="number">0 </span>} <span class="kw">else </span>{ index };
+<a href=#439 id=439 data-nosnippet>439</a>        NativeRow {
+<a href=#440 id=440 data-nosnippet>440</a>            uvw_m: projection.uvw_m,
+<a href=#441 id=441 data-nosnippet>441</a>            phase_shift_m: projection.phase_shift_m,
+<a href=#442 id=442 data-nosnippet>442</a>            pointing_offset_rad: projection.pointing_offset_rad,
+<a href=#443 id=443 data-nosnippet>443</a>            frequencies_hz: <span class="kw-2">&amp;</span><span class="self">self</span>.frequencies_hz[samples * channels..(samples + <span class="number">1</span>) * channels],
+<a href=#444 id=444 data-nosnippet>444</a>            values: <span class="kw-2">&amp;</span><span class="self">self</span>.values[samples * cells..(samples + <span class="number">1</span>) * cells],
+<a href=#445 id=445 data-nosnippet>445</a>            weights: <span class="kw-2">&amp;</span><span class="self">self</span>.weights[samples * cells..(samples + <span class="number">1</span>) * cells],
+<a href=#446 id=446 data-nosnippet>446</a>            flags: <span class="kw-2">&amp;</span><span class="self">self</span>.flags[samples * cells..(samples + <span class="number">1</span>) * cells],
+<a href=#447 id=447 data-nosnippet>447</a>            row_flag: header.row_flag,
+<a href=#448 id=448 data-nosnippet>448</a>            context: header.context,
+<a href=#449 id=449 data-nosnippet>449</a>        }
+<a href=#450 id=450 data-nosnippet>450</a>    }
+<a href=#451 id=451 data-nosnippet>451</a>}
+<a href=#452 id=452 data-nosnippet>452</a>
+<a href=#453 id=453 data-nosnippet>453</a><span class="doccomment">/// The row at `position`: of the block's locality order when `ordered`
+<a href=#454 id=454 data-nosnippet>454</a>/// ([`NativeBlock::ordered_row`]), else the row itself.
+<a href=#455 id=455 data-nosnippet>455</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>row_at(block: <span class="kw-2">&amp;</span>NativeBlock, ordered: bool, position: usize) -&gt; usize {
+<a href=#456 id=456 data-nosnippet>456</a>    <span class="kw">if </span>ordered {
+<a href=#457 id=457 data-nosnippet>457</a>        block.ordered_row(position)
+<a href=#458 id=458 data-nosnippet>458</a>    } <span class="kw">else </span>{
+<a href=#459 id=459 data-nosnippet>459</a>        position
+<a href=#460 id=460 data-nosnippet>460</a>    }
+<a href=#461 id=461 data-nosnippet>461</a>}
+<a href=#462 id=462 data-nosnippet>462</a>
+<a href=#463 id=463 data-nosnippet>463</a><span class="doccomment">/// The first native cell of the row at `position` of a block of `channels`
+<a href=#464 id=464 data-nosnippet>464</a>/// channels.
+<a href=#465 id=465 data-nosnippet>465</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>cell_of(position: usize, channels: usize) -&gt; u32 {
+<a href=#466 id=466 data-nosnippet>466</a>    u32::try_from(position * channels).expect(<span class="string">"a block's native cells fit u32 indices"</span>)
+<a href=#467 id=467 data-nosnippet>467</a>}
+<a href=#468 id=468 data-nosnippet>468</a>
+<a href=#469 id=469 data-nosnippet>469</a><span class="attr">#[cfg(test)]
+<a href=#470 id=470 data-nosnippet>470</a></span><span class="kw">mod </span>tests {
+<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#472 id=472 data-nosnippet>472</a>
+<a href=#473 id=473 data-nosnippet>473</a>    <span class="kw">fn </span>header(antennas: [u32; <span class="number">2</span>], row: u64) -&gt; NativeRowHeader {
+<a href=#474 id=474 data-nosnippet>474</a>        NativeRowHeader {
+<a href=#475 id=475 data-nosnippet>475</a>            row_flag: <span class="bool-val">false</span>,
+<a href=#476 id=476 data-nosnippet>476</a>            context: RowContext {
+<a href=#477 id=477 data-nosnippet>477</a>                original_uvw_m: <span class="prelude-val">None</span>,
+<a href=#478 id=478 data-nosnippet>478</a>                time_s: row <span class="kw">as </span>f64,
+<a href=#479 id=479 data-nosnippet>479</a>                antennas,
+<a href=#480 id=480 data-nosnippet>480</a>                antenna_types: [<span class="number">0</span>, <span class="number">0</span>],
+<a href=#481 id=481 data-nosnippet>481</a>                parallactic_angle_rad: [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#482 id=482 data-nosnippet>482</a>                field: <span class="number">0</span>,
+<a href=#483 id=483 data-nosnippet>483</a>                spectral_window: <span class="number">0</span>,
+<a href=#484 id=484 data-nosnippet>484</a>            },
+<a href=#485 id=485 data-nosnippet>485</a>            address: RowAddress {
+<a href=#486 id=486 data-nosnippet>486</a>                physical_row: row,
+<a href=#487 id=487 data-nosnippet>487</a>                data_description: <span class="number">0</span>,
+<a href=#488 id=488 data-nosnippet>488</a>            },
+<a href=#489 id=489 data-nosnippet>489</a>        }
+<a href=#490 id=490 data-nosnippet>490</a>    }
+<a href=#491 id=491 data-nosnippet>491</a>
+<a href=#492 id=492 data-nosnippet>492</a>    <span class="doccomment">/// The locality order is a permutation of the rows that groups each
+<a href=#493 id=493 data-nosnippet>493</a>    /// baseline and keeps its rows in arrival order; appending a row
+<a href=#494 id=494 data-nosnippet>494</a>    /// returns the block to arrival order.
+<a href=#495 id=495 data-nosnippet>495</a>    </span><span class="attr">#[test]
+<a href=#496 id=496 data-nosnippet>496</a>    </span><span class="kw">fn </span>rows_ordered_by_baseline_keep_each_baselines_arrival_order() {
+<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">let </span>baselines = [[<span class="number">0</span>, <span class="number">1</span>], [<span class="number">0</span>, <span class="number">2</span>], [<span class="number">1</span>, <span class="number">2</span>]];
+<a href=#498 id=498 data-nosnippet>498</a>        <span class="kw">let </span><span class="kw-2">mut </span>block = NativeBlock::default();
+<a href=#499 id=499 data-nosnippet>499</a>        block.reset(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0</span>], <span class="kw-2">&amp;</span>[<span class="number">0</span>]);
+<a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">let </span>projection = DomainProjection {
+<a href=#501 id=501 data-nosnippet>501</a>            uvw_m: [<span class="number">0.0</span>; <span class="number">3</span>],
+<a href=#502 id=502 data-nosnippet>502</a>            phase_shift_m: <span class="number">0.0</span>,
+<a href=#503 id=503 data-nosnippet>503</a>            pointing_offset_rad: [<span class="number">0.0</span>; <span class="number">2</span>],
+<a href=#504 id=504 data-nosnippet>504</a>        };
+<a href=#505 id=505 data-nosnippet>505</a>        <span class="kw">let </span>push = |block: <span class="kw-2">&amp;mut </span>NativeBlock, row: u64| {
+<a href=#506 id=506 data-nosnippet>506</a>            block.push_row(
+<a href=#507 id=507 data-nosnippet>507</a>                header(baselines[row <span class="kw">as </span>usize % <span class="number">3</span>], row),
+<a href=#508 id=508 data-nosnippet>508</a>                <span class="kw-2">&amp;</span>[projection],
+<a href=#509 id=509 data-nosnippet>509</a>                <span class="kw-2">&amp;</span>[<span class="number">1.0e9</span>],
+<a href=#510 id=510 data-nosnippet>510</a>                <span class="kw-2">&amp;</span>[Complex32::default()],
+<a href=#511 id=511 data-nosnippet>511</a>                <span class="kw-2">&amp;</span>[<span class="number">1.0</span>],
+<a href=#512 id=512 data-nosnippet>512</a>                <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>],
+<a href=#513 id=513 data-nosnippet>513</a>            );
+<a href=#514 id=514 data-nosnippet>514</a>        };
+<a href=#515 id=515 data-nosnippet>515</a>        <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..<span class="number">9 </span>{
+<a href=#516 id=516 data-nosnippet>516</a>            push(<span class="kw-2">&amp;mut </span>block, row);
+<a href=#517 id=517 data-nosnippet>517</a>        }
+<a href=#518 id=518 data-nosnippet>518</a>        <span class="macro">assert_eq!</span>(block.ordered_row(<span class="number">4</span>), <span class="number">4</span>, <span class="string">"arrival order until ordered"</span>);
+<a href=#519 id=519 data-nosnippet>519</a>        block.order_rows_by_baseline();
+<a href=#520 id=520 data-nosnippet>520</a>        <span class="kw">let </span>ordered = (<span class="number">0</span>..<span class="number">9</span>)
+<a href=#521 id=521 data-nosnippet>521</a>            .map(|position| block.ordered_row(position))
+<a href=#522 id=522 data-nosnippet>522</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#523 id=523 data-nosnippet>523</a>        <span class="macro">assert_eq!</span>(ordered, [<span class="number">0</span>, <span class="number">3</span>, <span class="number">6</span>, <span class="number">1</span>, <span class="number">4</span>, <span class="number">7</span>, <span class="number">2</span>, <span class="number">5</span>, <span class="number">8</span>]);
+<a href=#524 id=524 data-nosnippet>524</a>        push(<span class="kw-2">&amp;mut </span>block, <span class="number">9</span>);
+<a href=#525 id=525 data-nosnippet>525</a>        <span class="macro">assert_eq!</span>(block.ordered_row(<span class="number">1</span>), <span class="number">1</span>, <span class="string">"appending restores arrival order"</span>);
+<a href=#526 id=526 data-nosnippet>526</a>    }
+<a href=#527 id=527 data-nosnippet>527</a>
+<a href=#528 id=528 data-nosnippet>528</a>    <span class="doccomment">/// A writing block grids and predicts the same rows under separate
+<a href=#529 id=529 data-nosnippet>529</a>    /// channel selections, and both flag buffers fit its admitted shape.
+<a href=#530 id=530 data-nosnippet>530</a>    </span><span class="attr">#[test]
+<a href=#531 id=531 data-nosnippet>531</a>    </span><span class="kw">fn </span>prediction_and_gridding_selections_are_separate_and_charged() {
+<a href=#532 id=532 data-nosnippet>532</a>        <span class="kw">let </span>shape = BlockShape {
+<a href=#533 id=533 data-nosnippet>533</a>            rows: <span class="number">16</span>,
+<a href=#534 id=534 data-nosnippet>534</a>            spectrum: RowSpectrum::evenly_spaced(<span class="number">4</span>),
+<a href=#535 id=535 data-nosnippet>535</a>            correlations: <span class="number">2</span>,
+<a href=#536 id=536 data-nosnippet>536</a>            domains: <span class="number">1</span>,
+<a href=#537 id=537 data-nosnippet>537</a>        };
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="kw">let </span><span class="kw-2">mut </span>block = NativeBlock::with_capacity(shape);
+<a href=#539 id=539 data-nosnippet>539</a>        <span class="kw">let </span>projection = DomainProjection {
+<a href=#540 id=540 data-nosnippet>540</a>            uvw_m: [<span class="number">0.0</span>; <span class="number">3</span>],
+<a href=#541 id=541 data-nosnippet>541</a>            phase_shift_m: <span class="number">0.0</span>,
+<a href=#542 id=542 data-nosnippet>542</a>            pointing_offset_rad: [<span class="number">0.0</span>; <span class="number">2</span>],
+<a href=#543 id=543 data-nosnippet>543</a>        };
+<a href=#544 id=544 data-nosnippet>544</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">2 </span>{
+<a href=#545 id=545 data-nosnippet>545</a>            block.reset(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>], <span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">1</span>]);
+<a href=#546 id=546 data-nosnippet>546</a>            <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..shape.rows {
+<a href=#547 id=547 data-nosnippet>547</a>                block.push_row(
+<a href=#548 id=548 data-nosnippet>548</a>                    header([<span class="number">0</span>, <span class="number">1</span>], index <span class="kw">as </span>u64),
+<a href=#549 id=549 data-nosnippet>549</a>                    <span class="kw-2">&amp;</span>[projection],
+<a href=#550 id=550 data-nosnippet>550</a>                    <span class="kw-2">&amp;</span>[<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>, <span class="number">4.0</span>],
+<a href=#551 id=551 data-nosnippet>551</a>                    <span class="kw-2">&amp;</span>[Complex32::default(); <span class="number">8</span>],
+<a href=#552 id=552 data-nosnippet>552</a>                    <span class="kw-2">&amp;</span>[<span class="number">1.0</span>; <span class="number">8</span>],
+<a href=#553 id=553 data-nosnippet>553</a>                    <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>],
+<a href=#554 id=554 data-nosnippet>554</a>                );
+<a href=#555 id=555 data-nosnippet>555</a>                block.separate_last_row_selection(
+<a href=#556 id=556 data-nosnippet>556</a>                    <span class="kw-2">&amp;</span>[<span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>],
+<a href=#557 id=557 data-nosnippet>557</a>                    <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>],
+<a href=#558 id=558 data-nosnippet>558</a>                );
+<a href=#559 id=559 data-nosnippet>559</a>            }
+<a href=#560 id=560 data-nosnippet>560</a>            <span class="macro">assert_eq!</span>(
+<a href=#561 id=561 data-nosnippet>561</a>                block.row(<span class="number">0</span>, <span class="number">0</span>).flags,
+<a href=#562 id=562 data-nosnippet>562</a>                <span class="kw-2">&amp;</span>[<span class="bool-val">false</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>]
+<a href=#563 id=563 data-nosnippet>563</a>            );
+<a href=#564 id=564 data-nosnippet>564</a>            <span class="macro">assert_eq!</span>(
+<a href=#565 id=565 data-nosnippet>565</a>                block.prediction_row(<span class="number">0</span>, <span class="number">0</span>).flags,
+<a href=#566 id=566 data-nosnippet>566</a>                <span class="kw-2">&amp;</span>[<span class="bool-val">true</span>, <span class="bool-val">true</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">false</span>, <span class="bool-val">true</span>, <span class="bool-val">true</span>]
+<a href=#567 id=567 data-nosnippet>567</a>            );
+<a href=#568 id=568 data-nosnippet>568</a>            <span class="macro">assert!</span>(
+<a href=#569 id=569 data-nosnippet>569</a>                block.capacity_bytes() &lt;= shape.bytes(),
+<a href=#570 id=570 data-nosnippet>570</a>                <span class="string">"{} &gt; {}"</span>,
+<a href=#571 id=571 data-nosnippet>571</a>                block.capacity_bytes(),
+<a href=#572 id=572 data-nosnippet>572</a>                shape.bytes()
+<a href=#573 id=573 data-nosnippet>573</a>            );
+<a href=#574 id=574 data-nosnippet>574</a>        }
+<a href=#575 id=575 data-nosnippet>575</a>    }
+<a href=#576 id=576 data-nosnippet>576</a>
+<a href=#577 id=577 data-nosnippet>577</a>    <span class="doccomment">/// Rows that share the spectrum and samples read exactly as the same
+<a href=#578 id=578 data-nosnippet>578</a>    /// rows pushed whole, on every domain, and a block made for them holds
+<a href=#579 id=579 data-nosnippet>579</a>    /// no more than [`BlockShape::shared_bytes`] however many it takes.
+<a href=#580 id=580 data-nosnippet>580</a>    </span><span class="attr">#[test]
+<a href=#581 id=581 data-nosnippet>581</a>    </span><span class="kw">fn </span>shared_rows_read_as_rows_pushed_whole() {
+<a href=#582 id=582 data-nosnippet>582</a>        <span class="kw">let </span>(channels, correlations, domains, rows) = (<span class="number">5</span>, <span class="number">2</span>, <span class="number">2</span>, <span class="number">7</span>);
+<a href=#583 id=583 data-nosnippet>583</a>        <span class="kw">let </span>frequencies = [<span class="number">1.0e9</span>, <span class="number">1.1e9</span>, <span class="number">1.2e9</span>, <span class="number">1.3e9</span>, <span class="number">1.4e9</span>];
+<a href=#584 id=584 data-nosnippet>584</a>        <span class="kw">let </span>channel_indices = [<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>];
+<a href=#585 id=585 data-nosnippet>585</a>        <span class="kw">let </span>correlation_indices = [<span class="number">0</span>, <span class="number">3</span>];
+<a href=#586 id=586 data-nosnippet>586</a>        <span class="kw">let </span>cells = channels * correlations;
+<a href=#587 id=587 data-nosnippet>587</a>        <span class="kw">let </span>shape = BlockShape {
+<a href=#588 id=588 data-nosnippet>588</a>            rows,
+<a href=#589 id=589 data-nosnippet>589</a>            spectrum: RowSpectrum::evenly_spaced(channels),
+<a href=#590 id=590 data-nosnippet>590</a>            correlations,
+<a href=#591 id=591 data-nosnippet>591</a>            domains,
+<a href=#592 id=592 data-nosnippet>592</a>        };
+<a href=#593 id=593 data-nosnippet>593</a>        <span class="kw">let </span>projections = |row: usize| {
+<a href=#594 id=594 data-nosnippet>594</a>            [<span class="number">0</span>, <span class="number">1</span>].map(|domain| DomainProjection {
+<a href=#595 id=595 data-nosnippet>595</a>                uvw_m: [row <span class="kw">as </span>f64, domain <span class="kw">as </span>f64, <span class="number">0.5</span>],
+<a href=#596 id=596 data-nosnippet>596</a>                phase_shift_m: <span class="number">0.25 </span>* domain <span class="kw">as </span>f64,
+<a href=#597 id=597 data-nosnippet>597</a>                pointing_offset_rad: [<span class="number">0.0</span>; <span class="number">2</span>],
+<a href=#598 id=598 data-nosnippet>598</a>            })
+<a href=#599 id=599 data-nosnippet>599</a>        };
+<a href=#600 id=600 data-nosnippet>600</a>        <span class="kw">let </span><span class="kw-2">mut </span>whole = NativeBlock::with_capacity(shape);
+<a href=#601 id=601 data-nosnippet>601</a>        whole.reset(domains, <span class="kw-2">&amp;</span>channel_indices, <span class="kw-2">&amp;</span>correlation_indices);
+<a href=#602 id=602 data-nosnippet>602</a>        <span class="kw">let </span><span class="kw-2">mut </span>shared = NativeBlock::shared_with_capacity(shape);
+<a href=#603 id=603 data-nosnippet>603</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">2 </span>{
+<a href=#604 id=604 data-nosnippet>604</a>            shared.reset_shared(
+<a href=#605 id=605 data-nosnippet>605</a>                domains,
+<a href=#606 id=606 data-nosnippet>606</a>                <span class="kw-2">&amp;</span>channel_indices,
+<a href=#607 id=607 data-nosnippet>607</a>                <span class="kw-2">&amp;</span>correlation_indices,
+<a href=#608 id=608 data-nosnippet>608</a>                <span class="kw-2">&amp;</span>frequencies,
+<a href=#609 id=609 data-nosnippet>609</a>            );
+<a href=#610 id=610 data-nosnippet>610</a>            <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..rows {
+<a href=#611 id=611 data-nosnippet>611</a>                shared.push_shared_row(header([<span class="number">0</span>, row <span class="kw">as </span>u32 + <span class="number">1</span>], row <span class="kw">as </span>u64), <span class="kw-2">&amp;</span>projections(row));
+<a href=#612 id=612 data-nosnippet>612</a>            }
+<a href=#613 id=613 data-nosnippet>613</a>        }
+<a href=#614 id=614 data-nosnippet>614</a>        <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..rows {
+<a href=#615 id=615 data-nosnippet>615</a>            whole.push_row(
+<a href=#616 id=616 data-nosnippet>616</a>                header([<span class="number">0</span>, row <span class="kw">as </span>u32 + <span class="number">1</span>], row <span class="kw">as </span>u64),
+<a href=#617 id=617 data-nosnippet>617</a>                <span class="kw-2">&amp;</span>projections(row),
+<a href=#618 id=618 data-nosnippet>618</a>                <span class="kw-2">&amp;</span>frequencies,
+<a href=#619 id=619 data-nosnippet>619</a>                <span class="kw-2">&amp;</span><span class="macro">vec!</span>[Complex32::default(); cells],
+<a href=#620 id=620 data-nosnippet>620</a>                <span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">1.0</span>; cells],
+<a href=#621 id=621 data-nosnippet>621</a>                <span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="bool-val">false</span>; cells],
+<a href=#622 id=622 data-nosnippet>622</a>            );
+<a href=#623 id=623 data-nosnippet>623</a>        }
+<a href=#624 id=624 data-nosnippet>624</a>        <span class="macro">assert_eq!</span>(shared.len(), rows);
+<a href=#625 id=625 data-nosnippet>625</a>        <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..rows {
+<a href=#626 id=626 data-nosnippet>626</a>            <span class="kw">for </span>domain <span class="kw">in </span><span class="number">0</span>..domains {
+<a href=#627 id=627 data-nosnippet>627</a>                <span class="kw">let </span>(a, b) = (whole.row(domain, row), shared.row(domain, row));
+<a href=#628 id=628 data-nosnippet>628</a>                <span class="macro">assert_eq!</span>(a.uvw_m, b.uvw_m, <span class="string">"row {row}, domain {domain}"</span>);
+<a href=#629 id=629 data-nosnippet>629</a>                <span class="macro">assert_eq!</span>(a.phase_shift_m, b.phase_shift_m);
+<a href=#630 id=630 data-nosnippet>630</a>                <span class="macro">assert_eq!</span>(a.frequencies_hz, b.frequencies_hz);
+<a href=#631 id=631 data-nosnippet>631</a>                <span class="macro">assert_eq!</span>(a.values, b.values);
+<a href=#632 id=632 data-nosnippet>632</a>                <span class="macro">assert_eq!</span>(a.weights, b.weights);
+<a href=#633 id=633 data-nosnippet>633</a>                <span class="macro">assert_eq!</span>(a.flags, b.flags);
+<a href=#634 id=634 data-nosnippet>634</a>                <span class="macro">assert_eq!</span>(a.context.antennas, b.context.antennas);
+<a href=#635 id=635 data-nosnippet>635</a>                <span class="macro">assert_eq!</span>(a.row_flag, b.row_flag);
+<a href=#636 id=636 data-nosnippet>636</a>            }
+<a href=#637 id=637 data-nosnippet>637</a>        }
+<a href=#638 id=638 data-nosnippet>638</a>        <span class="macro">assert!</span>(
+<a href=#639 id=639 data-nosnippet>639</a>            shared.capacity_bytes() &lt;= shape.shared_bytes(),
+<a href=#640 id=640 data-nosnippet>640</a>            <span class="string">"{} against {}"</span>,
+<a href=#641 id=641 data-nosnippet>641</a>            shared.capacity_bytes(),
+<a href=#642 id=642 data-nosnippet>642</a>            shape.shared_bytes()
+<a href=#643 id=643 data-nosnippet>643</a>        );
+<a href=#644 id=644 data-nosnippet>644</a>        <span class="macro">assert!</span>(shape.shared_bytes() &lt; shape.bytes());
+<a href=#645 id=645 data-nosnippet>645</a>    }
+<a href=#646 id=646 data-nosnippet>646</a>}
 </code></pre></div></section></main></body></html>

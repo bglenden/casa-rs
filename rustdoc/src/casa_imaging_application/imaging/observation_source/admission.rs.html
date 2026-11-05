@@ -109,179 +109,186 @@
 <a href=#109 id=109 data-nosnippet>109</a>        .iter()
 <a href=#110 id=110 data-nosnippet>110</a>        .map(|partition| {
 <a href=#111 id=111 data-nosnippet>111</a>            <span class="kw">let </span>entry = observation.catalogue().partition(partition.id);
-<a href=#112 id=112 data-nosnippet>112</a>            <span class="kw">let </span>first = partition.channels[<span class="number">0</span>] <span class="kw">as </span>usize;
-<a href=#113 id=113 data-nosnippet>113</a>            <span class="kw">let </span>last = <span class="kw-2">*</span>partition.channels.last().expect(<span class="string">"a selected channel"</span>) <span class="kw">as </span>usize;
-<a href=#114 id=114 data-nosnippet>114</a>            <span class="kw">let </span>payload = estimate(
-<a href=#115 id=115 data-nosnippet>115</a>                observation,
-<a href=#116 id=116 data-nosnippet>116</a>                <span class="kw-2">&amp;</span>requests::payload(
-<a href=#117 id=117 data-nosnippet>117</a>                    (selection, plan),
-<a href=#118 id=118 data-nosnippet>118</a>                    entry,
-<a href=#119 id=119 data-nosnippet>119</a>                    partition,
-<a href=#120 id=120 data-nosnippet>120</a>                    first..last + <span class="number">1</span>,
-<a href=#121 id=121 data-nosnippet>121</a>                    <span class="bool-val">true</span>,
-<a href=#122 id=122 data-nosnippet>122</a>                    usize::MAX,
-<a href=#123 id=123 data-nosnippet>123</a>                ),
-<a href=#124 id=124 data-nosnippet>124</a>            )<span class="question-mark">?</span>;
-<a href=#125 id=125 data-nosnippet>125</a>            <span class="kw">let </span>survey = estimate(
-<a href=#126 id=126 data-nosnippet>126</a>                observation,
-<a href=#127 id=127 data-nosnippet>127</a>                <span class="kw-2">&amp;</span>requests::survey((selection, plan), entry, partition, usize::MAX),
-<a href=#128 id=128 data-nosnippet>128</a>            )<span class="question-mark">?</span>;
-<a href=#129 id=129 data-nosnippet>129</a>            <span class="prelude-val">Ok</span>(PartitionCost {
-<a href=#130 id=130 data-nosnippet>130</a>                held_per_time: payload.held_bytes_per_time(),
-<a href=#131 id=131 data-nosnippet>131</a>                survey_per_time: survey.held_bytes_per_time(),
-<a href=#132 id=132 data-nosnippet>132</a>                baselines: payload.baselines.max(<span class="number">1</span>),
-<a href=#133 id=133 data-nosnippet>133</a>                channels: last + <span class="number">1 </span>- first,
-<a href=#134 id=134 data-nosnippet>134</a>                times: payload.times,
-<a href=#135 id=135 data-nosnippet>135</a>            })
-<a href=#136 id=136 data-nosnippet>136</a>        })
-<a href=#137 id=137 data-nosnippet>137</a>        .collect()
-<a href=#138 id=138 data-nosnippet>138</a>}
-<a href=#139 id=139 data-nosnippet>139</a>
-<a href=#140 id=140 data-nosnippet>140</a><span class="doccomment">/// The batches of every store of `stores` for `problem`, and the admitted
-<a href=#141 id=141 data-nosnippet>141</a>/// charge of what the source holds for them beside the passes' blocks.
-<a href=#142 id=142 data-nosnippet>142</a>///
-<a href=#143 id=143 data-nosnippet>143</a>/// The batches hold at least one time of each partition, and grow beyond
-<a href=#144 id=144 data-nosnippet>144</a>/// one time by at most the bootstrap budget ([`BOOTSTRAP_SOURCE_BYTES`])
-<a href=#145 id=145 data-nosnippet>145</a>/// or the source's share of a quarter of what `policy` leaves free on
-<a href=#146 id=146 data-nosnippet>146</a>/// `host`, shared with the passes' per-row storage in proportion to their
-<a href=#147 id=147 data-nosnippet>147</a>/// bytes per sample. They
-<a href=#148 id=148 data-nosnippet>148</a>/// hold at most one part in [`OVERLAPPED_BLOCKS`] of a partition's selected
-<a href=#149 id=149 data-nosnippet>149</a>/// times, so a pass streams in several batches and reads the next while it
-<a href=#150 id=150 data-nosnippet>150</a>/// grids one. A row of [`row_layout`] produces at most `row` samples. The
-<a href=#151 id=151 data-nosnippet>151</a>/// source reads one store at a time into the same buffers, so the charge
-<a href=#152 id=152 data-nosnippet>152</a>/// holds the largest batch's buffers and geometry over every store; each
-<a href=#153 id=153 data-nosnippet>153</a>/// store's plan keeps its parallactic cache at every selected (time, field)
-<a href=#154 id=154 data-nosnippet>154</a>/// and its selection its predicates, and the source keeps each store's
-<a href=#155 id=155 data-nosnippet>155</a>/// pointing answers within its `pointing_budget` bytes when its geometry
-<a href=#156 id=156 data-nosnippet>156</a>/// reads pointing; with the survey's buffers and conversions, and the
-<a href=#157 id=157 data-nosnippet>157</a>/// passes' blocks. The run keeps the charge while the source is open. What
-<a href=#158 id=158 data-nosnippet>158</a>/// opening the stores holds is the caller's to charge.
-<a href=#159 id=159 data-nosnippet>159</a>///
-<a href=#160 id=160 data-nosnippet>160</a>/// # Errors
-<a href=#161 id=161 data-nosnippet>161</a>///
-<a href=#162 id=162 data-nosnippet>162</a>/// When an estimate fails, or the charge does not fit the policy.
-<a href=#163 id=163 data-nosnippet>163</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>admit_batches(
-<a href=#164 id=164 data-nosnippet>164</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
-<a href=#165 id=165 data-nosnippet>165</a>    stores: <span class="kw-2">&amp;</span>[StoreBatches&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#166 id=166 data-nosnippet>166</a>    row: RowSamples,
-<a href=#167 id=167 data-nosnippet>167</a>    (host, policy): (<span class="kw-2">&amp;</span>HostResources, <span class="kw-2">&amp;</span>ResourcePolicy),
-<a href=#168 id=168 data-nosnippet>168</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Admitted&lt;Batching&gt;, ImagingError&gt; {
-<a href=#169 id=169 data-nosnippet>169</a>    <span class="kw">let </span>store_costs = stores
-<a href=#170 id=170 data-nosnippet>170</a>        .iter()
-<a href=#171 id=171 data-nosnippet>171</a>        .map(partition_costs)
-<a href=#172 id=172 data-nosnippet>172</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, ImagingError&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#173 id=173 data-nosnippet>173</a>    <span class="kw">let </span>costs = store_costs.iter().flatten().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#174 id=174 data-nosnippet>174</a>    <span class="kw">let </span>layout = row_layout(problem);
-<a href=#175 id=175 data-nosnippet>175</a>    <span class="comment">// Per sample: the batch's share and the cursor's scratch, its
-<a href=#176 id=176 data-nosnippet>176</a>    // geometry, and the flag that keeps it.
-<a href=#177 id=177 data-nosnippet>177</a>    </span><span class="kw">let </span>geometry_per_row = stores
-<a href=#178 id=178 data-nosnippet>178</a>        .iter()
-<a href=#179 id=179 data-nosnippet>179</a>        .map(|store| store.plan.geometry_bytes(<span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>))
-<a href=#180 id=180 data-nosnippet>180</a>        .max()
-<a href=#181 id=181 data-nosnippet>181</a>        .unwrap_or(<span class="number">0</span>);
-<a href=#182 id=182 data-nosnippet>182</a>    <span class="kw">let </span>source_per_row = costs
-<a href=#183 id=183 data-nosnippet>183</a>        .iter()
-<a href=#184 id=184 data-nosnippet>184</a>        .map(|cost| cost.held_per_time.div_ceil(cost.baselines))
-<a href=#185 id=185 data-nosnippet>185</a>        .max()
-<a href=#186 id=186 data-nosnippet>186</a>        .unwrap_or(<span class="number">0</span>)
-<a href=#187 id=187 data-nosnippet>187</a>        + geometry_per_row
-<a href=#188 id=188 data-nosnippet>188</a>        + <span class="number">1</span>;
-<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">let </span>passes = |rows: usize| source_block_bytes(BlockShape { rows, ..layout });
-<a href=#190 id=190 data-nosnippet>190</a>    <span class="kw">let </span>workers = policy.cores(host).streaming_workers;
-<a href=#191 id=191 data-nosnippet>191</a>    <span class="kw">let </span>passes_per_row = passes(<span class="number">1</span>) - passes(<span class="number">0</span>) + chunk_bytes_per_row(layout, row, workers);
-<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">let </span>minimum_rows = costs.iter().map(|cost| cost.baselines).max().unwrap_or(<span class="number">1</span>);
-<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">let </span>minimum = minimum_rows <span class="kw">as </span>u64 * (source_per_row <span class="kw">as </span>u64 + passes_per_row);
-<a href=#194 id=194 data-nosnippet>194</a>    <span class="kw">let </span>free = free_memory(host, policy);
-<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">let </span>quarter = free.saturating_sub(minimum) / <span class="number">4</span>;
-<a href=#196 id=196 data-nosnippet>196</a>    <span class="kw">let </span>share = u128::from(source_per_row <span class="kw">as </span>u64) * u128::from(quarter)
-<a href=#197 id=197 data-nosnippet>197</a>        / u128::from((source_per_row <span class="kw">as </span>u64 + passes_per_row).max(<span class="number">1</span>));
-<a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">let </span>growth = BOOTSTRAP_SOURCE_BYTES.min(usize::try_from(share).unwrap_or(usize::MAX));
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">let </span>target = (minimum_rows * source_per_row + growth) / source_per_row.max(<span class="number">1</span>);
-<a href=#200 id=200 data-nosnippet>200</a>    <span class="comment">// A batch holds at most one part in OVERLAPPED_BLOCKS of its
-<a href=#201 id=201 data-nosnippet>201</a>    // partition's selected times, and at least one time.
-<a href=#202 id=202 data-nosnippet>202</a>    </span><span class="kw">let </span>times_per_batch = store_costs
-<a href=#203 id=203 data-nosnippet>203</a>        .iter()
-<a href=#204 id=204 data-nosnippet>204</a>        .map(|costs| {
-<a href=#205 id=205 data-nosnippet>205</a>            costs
-<a href=#206 id=206 data-nosnippet>206</a>                .iter()
-<a href=#207 id=207 data-nosnippet>207</a>                .map(|cost| {
-<a href=#208 id=208 data-nosnippet>208</a>                    (target / cost.baselines)
-<a href=#209 id=209 data-nosnippet>209</a>                        .min(cost.times.div_ceil(OVERLAPPED_BLOCKS))
-<a href=#210 id=210 data-nosnippet>210</a>                        .max(<span class="number">1</span>)
-<a href=#211 id=211 data-nosnippet>211</a>                })
-<a href=#212 id=212 data-nosnippet>212</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#213 id=213 data-nosnippet>213</a>        })
-<a href=#214 id=214 data-nosnippet>214</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#215 id=215 data-nosnippet>215</a>    <span class="kw">let </span>batches = costs
-<a href=#216 id=216 data-nosnippet>216</a>        .iter()
-<a href=#217 id=217 data-nosnippet>217</a>        .copied()
-<a href=#218 id=218 data-nosnippet>218</a>        .zip(times_per_batch.iter().flatten().copied())
-<a href=#219 id=219 data-nosnippet>219</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">let </span>rows = batches
-<a href=#221 id=221 data-nosnippet>221</a>        .iter()
-<a href=#222 id=222 data-nosnippet>222</a>        .map(|(cost, times)| times * cost.baselines)
-<a href=#223 id=223 data-nosnippet>223</a>        .max()
-<a href=#224 id=224 data-nosnippet>224</a>        .unwrap_or(<span class="number">0</span>);
-<a href=#225 id=225 data-nosnippet>225</a>    <span class="kw">let </span>longest = batches.iter().map(|(<span class="kw">_</span>, times)| <span class="kw-2">*</span>times).max().unwrap_or(<span class="number">0</span>);
-<a href=#226 id=226 data-nosnippet>226</a>    <span class="kw">let </span>widest = costs.iter().map(|cost| cost.channels).max().unwrap_or(<span class="number">0</span>);
-<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">let </span>buffers = batches
+<a href=#112 id=112 data-nosnippet>112</a>            <span class="kw">let </span>prediction = partition
+<a href=#113 id=113 data-nosnippet>113</a>                .prediction_channels
+<a href=#114 id=114 data-nosnippet>114</a>                .as_deref()
+<a href=#115 id=115 data-nosnippet>115</a>                .filter(|channels| !channels.is_empty())
+<a href=#116 id=116 data-nosnippet>116</a>                .unwrap_or(<span class="kw-2">&amp;</span>partition.channels);
+<a href=#117 id=117 data-nosnippet>117</a>            <span class="kw">let </span>first = (partition.channels[<span class="number">0</span>].min(prediction[<span class="number">0</span>])) <span class="kw">as </span>usize;
+<a href=#118 id=118 data-nosnippet>118</a>            <span class="kw">let </span>last = (<span class="kw-2">*</span>partition.channels.last().expect(<span class="string">"a selected channel"</span>))
+<a href=#119 id=119 data-nosnippet>119</a>                .max(<span class="kw-2">*</span>prediction.last().expect(<span class="string">"a selected channel"</span>))
+<a href=#120 id=120 data-nosnippet>120</a>                <span class="kw">as </span>usize;
+<a href=#121 id=121 data-nosnippet>121</a>            <span class="kw">let </span>payload = estimate(
+<a href=#122 id=122 data-nosnippet>122</a>                observation,
+<a href=#123 id=123 data-nosnippet>123</a>                <span class="kw-2">&amp;</span>requests::payload(
+<a href=#124 id=124 data-nosnippet>124</a>                    (selection, plan),
+<a href=#125 id=125 data-nosnippet>125</a>                    entry,
+<a href=#126 id=126 data-nosnippet>126</a>                    partition,
+<a href=#127 id=127 data-nosnippet>127</a>                    first..last + <span class="number">1</span>,
+<a href=#128 id=128 data-nosnippet>128</a>                    <span class="bool-val">true</span>,
+<a href=#129 id=129 data-nosnippet>129</a>                    usize::MAX,
+<a href=#130 id=130 data-nosnippet>130</a>                ),
+<a href=#131 id=131 data-nosnippet>131</a>            )<span class="question-mark">?</span>;
+<a href=#132 id=132 data-nosnippet>132</a>            <span class="kw">let </span>survey = estimate(
+<a href=#133 id=133 data-nosnippet>133</a>                observation,
+<a href=#134 id=134 data-nosnippet>134</a>                <span class="kw-2">&amp;</span>requests::survey((selection, plan), entry, partition, usize::MAX),
+<a href=#135 id=135 data-nosnippet>135</a>            )<span class="question-mark">?</span>;
+<a href=#136 id=136 data-nosnippet>136</a>            <span class="prelude-val">Ok</span>(PartitionCost {
+<a href=#137 id=137 data-nosnippet>137</a>                held_per_time: payload.held_bytes_per_time(),
+<a href=#138 id=138 data-nosnippet>138</a>                survey_per_time: survey.held_bytes_per_time(),
+<a href=#139 id=139 data-nosnippet>139</a>                baselines: payload.baselines.max(<span class="number">1</span>),
+<a href=#140 id=140 data-nosnippet>140</a>                channels: last + <span class="number">1 </span>- first,
+<a href=#141 id=141 data-nosnippet>141</a>                times: payload.times,
+<a href=#142 id=142 data-nosnippet>142</a>            })
+<a href=#143 id=143 data-nosnippet>143</a>        })
+<a href=#144 id=144 data-nosnippet>144</a>        .collect()
+<a href=#145 id=145 data-nosnippet>145</a>}
+<a href=#146 id=146 data-nosnippet>146</a>
+<a href=#147 id=147 data-nosnippet>147</a><span class="doccomment">/// The batches of every store of `stores` for `problem`, and the admitted
+<a href=#148 id=148 data-nosnippet>148</a>/// charge of what the source holds for them beside the passes' blocks.
+<a href=#149 id=149 data-nosnippet>149</a>///
+<a href=#150 id=150 data-nosnippet>150</a>/// The batches hold at least one time of each partition, and grow beyond
+<a href=#151 id=151 data-nosnippet>151</a>/// one time by at most the bootstrap budget ([`BOOTSTRAP_SOURCE_BYTES`])
+<a href=#152 id=152 data-nosnippet>152</a>/// or the source's share of a quarter of what `policy` leaves free on
+<a href=#153 id=153 data-nosnippet>153</a>/// `host`, shared with the passes' per-row storage in proportion to their
+<a href=#154 id=154 data-nosnippet>154</a>/// bytes per sample. They
+<a href=#155 id=155 data-nosnippet>155</a>/// hold at most one part in [`OVERLAPPED_BLOCKS`] of a partition's selected
+<a href=#156 id=156 data-nosnippet>156</a>/// times, so a pass streams in several batches and reads the next while it
+<a href=#157 id=157 data-nosnippet>157</a>/// grids one. A row of [`row_layout`] produces at most `row` samples. The
+<a href=#158 id=158 data-nosnippet>158</a>/// source reads one store at a time into the same buffers, so the charge
+<a href=#159 id=159 data-nosnippet>159</a>/// holds the largest batch's buffers and geometry over every store; each
+<a href=#160 id=160 data-nosnippet>160</a>/// store's plan keeps its parallactic cache at every selected (time, field)
+<a href=#161 id=161 data-nosnippet>161</a>/// and its selection its predicates, and the source keeps each store's
+<a href=#162 id=162 data-nosnippet>162</a>/// pointing answers within its `pointing_budget` bytes when its geometry
+<a href=#163 id=163 data-nosnippet>163</a>/// reads pointing; with the survey's buffers and conversions, and the
+<a href=#164 id=164 data-nosnippet>164</a>/// passes' blocks. The run keeps the charge while the source is open. What
+<a href=#165 id=165 data-nosnippet>165</a>/// opening the stores holds is the caller's to charge.
+<a href=#166 id=166 data-nosnippet>166</a>///
+<a href=#167 id=167 data-nosnippet>167</a>/// # Errors
+<a href=#168 id=168 data-nosnippet>168</a>///
+<a href=#169 id=169 data-nosnippet>169</a>/// When an estimate fails, or the charge does not fit the policy.
+<a href=#170 id=170 data-nosnippet>170</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>admit_batches(
+<a href=#171 id=171 data-nosnippet>171</a>    problem: <span class="kw-2">&amp;</span>CompiledProblem,
+<a href=#172 id=172 data-nosnippet>172</a>    stores: <span class="kw-2">&amp;</span>[StoreBatches&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#173 id=173 data-nosnippet>173</a>    row: RowSamples,
+<a href=#174 id=174 data-nosnippet>174</a>    (host, policy): (<span class="kw-2">&amp;</span>HostResources, <span class="kw-2">&amp;</span>ResourcePolicy),
+<a href=#175 id=175 data-nosnippet>175</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Admitted&lt;Batching&gt;, ImagingError&gt; {
+<a href=#176 id=176 data-nosnippet>176</a>    <span class="kw">let </span>store_costs = stores
+<a href=#177 id=177 data-nosnippet>177</a>        .iter()
+<a href=#178 id=178 data-nosnippet>178</a>        .map(partition_costs)
+<a href=#179 id=179 data-nosnippet>179</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, ImagingError&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#180 id=180 data-nosnippet>180</a>    <span class="kw">let </span>costs = store_costs.iter().flatten().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#181 id=181 data-nosnippet>181</a>    <span class="kw">let </span>layout = row_layout(problem);
+<a href=#182 id=182 data-nosnippet>182</a>    <span class="comment">// Per sample: the batch's share and the cursor's scratch, its
+<a href=#183 id=183 data-nosnippet>183</a>    // geometry, and the flag that keeps it.
+<a href=#184 id=184 data-nosnippet>184</a>    </span><span class="kw">let </span>geometry_per_row = stores
+<a href=#185 id=185 data-nosnippet>185</a>        .iter()
+<a href=#186 id=186 data-nosnippet>186</a>        .map(|store| store.plan.geometry_bytes(<span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>))
+<a href=#187 id=187 data-nosnippet>187</a>        .max()
+<a href=#188 id=188 data-nosnippet>188</a>        .unwrap_or(<span class="number">0</span>);
+<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">let </span>source_per_row = costs
+<a href=#190 id=190 data-nosnippet>190</a>        .iter()
+<a href=#191 id=191 data-nosnippet>191</a>        .map(|cost| cost.held_per_time.div_ceil(cost.baselines))
+<a href=#192 id=192 data-nosnippet>192</a>        .max()
+<a href=#193 id=193 data-nosnippet>193</a>        .unwrap_or(<span class="number">0</span>)
+<a href=#194 id=194 data-nosnippet>194</a>        + geometry_per_row
+<a href=#195 id=195 data-nosnippet>195</a>        + <span class="number">1</span>;
+<a href=#196 id=196 data-nosnippet>196</a>    <span class="kw">let </span>passes = |rows: usize| source_block_bytes(BlockShape { rows, ..layout });
+<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">let </span>workers = policy.cores(host).streaming_workers;
+<a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">let </span>passes_per_row = passes(<span class="number">1</span>) - passes(<span class="number">0</span>) + chunk_bytes_per_row(layout, row, workers);
+<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">let </span>minimum_rows = costs.iter().map(|cost| cost.baselines).max().unwrap_or(<span class="number">1</span>);
+<a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">let </span>minimum = minimum_rows <span class="kw">as </span>u64 * (source_per_row <span class="kw">as </span>u64 + passes_per_row);
+<a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">let </span>free = free_memory(host, policy);
+<a href=#202 id=202 data-nosnippet>202</a>    <span class="kw">let </span>quarter = free.saturating_sub(minimum) / <span class="number">4</span>;
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="kw">let </span>share = u128::from(source_per_row <span class="kw">as </span>u64) * u128::from(quarter)
+<a href=#204 id=204 data-nosnippet>204</a>        / u128::from((source_per_row <span class="kw">as </span>u64 + passes_per_row).max(<span class="number">1</span>));
+<a href=#205 id=205 data-nosnippet>205</a>    <span class="kw">let </span>growth = BOOTSTRAP_SOURCE_BYTES.min(usize::try_from(share).unwrap_or(usize::MAX));
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="kw">let </span>target = (minimum_rows * source_per_row + growth) / source_per_row.max(<span class="number">1</span>);
+<a href=#207 id=207 data-nosnippet>207</a>    <span class="comment">// A batch holds at most one part in OVERLAPPED_BLOCKS of its
+<a href=#208 id=208 data-nosnippet>208</a>    // partition's selected times, and at least one time.
+<a href=#209 id=209 data-nosnippet>209</a>    </span><span class="kw">let </span>times_per_batch = store_costs
+<a href=#210 id=210 data-nosnippet>210</a>        .iter()
+<a href=#211 id=211 data-nosnippet>211</a>        .map(|costs| {
+<a href=#212 id=212 data-nosnippet>212</a>            costs
+<a href=#213 id=213 data-nosnippet>213</a>                .iter()
+<a href=#214 id=214 data-nosnippet>214</a>                .map(|cost| {
+<a href=#215 id=215 data-nosnippet>215</a>                    (target / cost.baselines)
+<a href=#216 id=216 data-nosnippet>216</a>                        .min(cost.times.div_ceil(OVERLAPPED_BLOCKS))
+<a href=#217 id=217 data-nosnippet>217</a>                        .max(<span class="number">1</span>)
+<a href=#218 id=218 data-nosnippet>218</a>                })
+<a href=#219 id=219 data-nosnippet>219</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#220 id=220 data-nosnippet>220</a>        })
+<a href=#221 id=221 data-nosnippet>221</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#222 id=222 data-nosnippet>222</a>    <span class="kw">let </span>batches = costs
+<a href=#223 id=223 data-nosnippet>223</a>        .iter()
+<a href=#224 id=224 data-nosnippet>224</a>        .copied()
+<a href=#225 id=225 data-nosnippet>225</a>        .zip(times_per_batch.iter().flatten().copied())
+<a href=#226 id=226 data-nosnippet>226</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">let </span>rows = batches
 <a href=#228 id=228 data-nosnippet>228</a>        .iter()
-<a href=#229 id=229 data-nosnippet>229</a>        .map(|(cost, times)| times * cost.held_per_time)
+<a href=#229 id=229 data-nosnippet>229</a>        .map(|(cost, times)| times * cost.baselines)
 <a href=#230 id=230 data-nosnippet>230</a>        .max()
 <a href=#231 id=231 data-nosnippet>231</a>        .unwrap_or(<span class="number">0</span>);
-<a href=#232 id=232 data-nosnippet>232</a>    <span class="kw">let </span>survey_bytes = costs
-<a href=#233 id=233 data-nosnippet>233</a>        .iter()
-<a href=#234 id=234 data-nosnippet>234</a>        .map(|cost| cost.survey_per_time)
-<a href=#235 id=235 data-nosnippet>235</a>        .max()
-<a href=#236 id=236 data-nosnippet>236</a>        .unwrap_or(<span class="number">0</span>)
-<a href=#237 id=237 data-nosnippet>237</a>        .max(SURVEY_BATCH_BYTES);
-<a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">let </span><span class="kw-2">mut </span>keys = <span class="number">0</span>;
-<a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">let </span><span class="kw-2">mut </span>kept = <span class="number">0</span>;
-<a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">let </span><span class="kw-2">mut </span>pointing = <span class="number">0</span>;
-<a href=#241 id=241 data-nosnippet>241</a>    <span class="kw">for </span>(store, costs) <span class="kw">in </span>stores.iter().zip(<span class="kw-2">&amp;</span>store_costs) {
-<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">let </span>store_keys = costs.iter().map(|cost| cost.times).sum::&lt;usize&gt;();
-<a href=#243 id=243 data-nosnippet>243</a>        keys += store_keys;
-<a href=#244 id=244 data-nosnippet>244</a>        kept += store.plan.cache_bound(store_keys) + store.selection.predicate_bytes();
-<a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">if </span>store.plan.reads_pointing() {
-<a href=#246 id=246 data-nosnippet>246</a>            pointing += store.pointing_budget;
-<a href=#247 id=247 data-nosnippet>247</a>        }
-<a href=#248 id=248 data-nosnippet>248</a>    }
-<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">let </span>geometry = stores
-<a href=#250 id=250 data-nosnippet>250</a>        .iter()
-<a href=#251 id=251 data-nosnippet>251</a>        .map(|store| store.plan.geometry_bytes(rows, longest, widest))
-<a href=#252 id=252 data-nosnippet>252</a>        .max()
-<a href=#253 id=253 data-nosnippet>253</a>        .unwrap_or(<span class="number">0</span>);
-<a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">let </span>source = buffers
-<a href=#255 id=255 data-nosnippet>255</a>        + geometry
-<a href=#256 id=256 data-nosnippet>256</a>        + rows
-<a href=#257 id=257 data-nosnippet>257</a>        + kept
-<a href=#258 id=258 data-nosnippet>258</a>        + pointing
-<a href=#259 id=259 data-nosnippet>259</a>        + survey_bytes
-<a href=#260 id=260 data-nosnippet>260</a>        + keys * SURVEY_ENTRY_BYTES
-<a href=#261 id=261 data-nosnippet>261</a>        + PackScratch::bound(layout);
-<a href=#262 id=262 data-nosnippet>262</a>    <span class="macro">tracing::info!</span>(
-<a href=#263 id=263 data-nosnippet>263</a>        rows_per_block = rows,
-<a href=#264 id=264 data-nosnippet>264</a>        source_bytes = source,
-<a href=#265 id=265 data-nosnippet>265</a>        pass_bytes = passes(rows),
-<a href=#266 id=266 data-nosnippet>266</a>        pointing_bytes = pointing,
-<a href=#267 id=267 data-nosnippet>267</a>        survey_bytes,
-<a href=#268 id=268 data-nosnippet>268</a>        <span class="string">"observation-batch source plan"
-<a href=#269 id=269 data-nosnippet>269</a>    </span>);
-<a href=#270 id=270 data-nosnippet>270</a>    <span class="kw">let </span>reservation = admit(
-<a href=#271 id=271 data-nosnippet>271</a>        host,
-<a href=#272 id=272 data-nosnippet>272</a>        policy,
-<a href=#273 id=273 data-nosnippet>273</a>        <span class="kw-2">&amp;</span>Demand {
-<a href=#274 id=274 data-nosnippet>274</a>            phase: <span class="string">"observation-batch source"</span>,
-<a href=#275 id=275 data-nosnippet>275</a>            memory: source <span class="kw">as </span>u64 + passes(rows),
-<a href=#276 id=276 data-nosnippet>276</a>        },
-<a href=#277 id=277 data-nosnippet>277</a>    )<span class="question-mark">?</span>;
-<a href=#278 id=278 data-nosnippet>278</a>    <span class="prelude-val">Ok</span>(Admitted {
-<a href=#279 id=279 data-nosnippet>279</a>        value: Batching {
-<a href=#280 id=280 data-nosnippet>280</a>            times_per_batch,
-<a href=#281 id=281 data-nosnippet>281</a>            rows,
-<a href=#282 id=282 data-nosnippet>282</a>            survey_bytes,
+<a href=#232 id=232 data-nosnippet>232</a>    <span class="kw">let </span>longest = batches.iter().map(|(<span class="kw">_</span>, times)| <span class="kw-2">*</span>times).max().unwrap_or(<span class="number">0</span>);
+<a href=#233 id=233 data-nosnippet>233</a>    <span class="kw">let </span>widest = costs.iter().map(|cost| cost.channels).max().unwrap_or(<span class="number">0</span>);
+<a href=#234 id=234 data-nosnippet>234</a>    <span class="kw">let </span>buffers = batches
+<a href=#235 id=235 data-nosnippet>235</a>        .iter()
+<a href=#236 id=236 data-nosnippet>236</a>        .map(|(cost, times)| times * cost.held_per_time)
+<a href=#237 id=237 data-nosnippet>237</a>        .max()
+<a href=#238 id=238 data-nosnippet>238</a>        .unwrap_or(<span class="number">0</span>);
+<a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">let </span>survey_bytes = costs
+<a href=#240 id=240 data-nosnippet>240</a>        .iter()
+<a href=#241 id=241 data-nosnippet>241</a>        .map(|cost| cost.survey_per_time)
+<a href=#242 id=242 data-nosnippet>242</a>        .max()
+<a href=#243 id=243 data-nosnippet>243</a>        .unwrap_or(<span class="number">0</span>)
+<a href=#244 id=244 data-nosnippet>244</a>        .max(SURVEY_BATCH_BYTES);
+<a href=#245 id=245 data-nosnippet>245</a>    <span class="kw">let </span><span class="kw-2">mut </span>keys = <span class="number">0</span>;
+<a href=#246 id=246 data-nosnippet>246</a>    <span class="kw">let </span><span class="kw-2">mut </span>kept = <span class="number">0</span>;
+<a href=#247 id=247 data-nosnippet>247</a>    <span class="kw">let </span><span class="kw-2">mut </span>pointing = <span class="number">0</span>;
+<a href=#248 id=248 data-nosnippet>248</a>    <span class="kw">for </span>(store, costs) <span class="kw">in </span>stores.iter().zip(<span class="kw-2">&amp;</span>store_costs) {
+<a href=#249 id=249 data-nosnippet>249</a>        <span class="kw">let </span>store_keys = costs.iter().map(|cost| cost.times).sum::&lt;usize&gt;();
+<a href=#250 id=250 data-nosnippet>250</a>        keys += store_keys;
+<a href=#251 id=251 data-nosnippet>251</a>        kept += store.plan.cache_bound(store_keys) + store.selection.predicate_bytes();
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">if </span>store.plan.reads_pointing() {
+<a href=#253 id=253 data-nosnippet>253</a>            pointing += store.pointing_budget;
+<a href=#254 id=254 data-nosnippet>254</a>        }
+<a href=#255 id=255 data-nosnippet>255</a>    }
+<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">let </span>geometry = stores
+<a href=#257 id=257 data-nosnippet>257</a>        .iter()
+<a href=#258 id=258 data-nosnippet>258</a>        .map(|store| store.plan.geometry_bytes(rows, longest, widest))
+<a href=#259 id=259 data-nosnippet>259</a>        .max()
+<a href=#260 id=260 data-nosnippet>260</a>        .unwrap_or(<span class="number">0</span>);
+<a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">let </span>source = buffers
+<a href=#262 id=262 data-nosnippet>262</a>        + geometry
+<a href=#263 id=263 data-nosnippet>263</a>        + rows
+<a href=#264 id=264 data-nosnippet>264</a>        + kept
+<a href=#265 id=265 data-nosnippet>265</a>        + pointing
+<a href=#266 id=266 data-nosnippet>266</a>        + survey_bytes
+<a href=#267 id=267 data-nosnippet>267</a>        + keys * SURVEY_ENTRY_BYTES
+<a href=#268 id=268 data-nosnippet>268</a>        + PackScratch::bound(layout);
+<a href=#269 id=269 data-nosnippet>269</a>    <span class="macro">tracing::info!</span>(
+<a href=#270 id=270 data-nosnippet>270</a>        rows_per_block = rows,
+<a href=#271 id=271 data-nosnippet>271</a>        source_bytes = source,
+<a href=#272 id=272 data-nosnippet>272</a>        pass_bytes = passes(rows),
+<a href=#273 id=273 data-nosnippet>273</a>        pointing_bytes = pointing,
+<a href=#274 id=274 data-nosnippet>274</a>        survey_bytes,
+<a href=#275 id=275 data-nosnippet>275</a>        <span class="string">"observation-batch source plan"
+<a href=#276 id=276 data-nosnippet>276</a>    </span>);
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="kw">let </span>reservation = admit(
+<a href=#278 id=278 data-nosnippet>278</a>        host,
+<a href=#279 id=279 data-nosnippet>279</a>        policy,
+<a href=#280 id=280 data-nosnippet>280</a>        <span class="kw-2">&amp;</span>Demand {
+<a href=#281 id=281 data-nosnippet>281</a>            phase: <span class="string">"observation-batch source"</span>,
+<a href=#282 id=282 data-nosnippet>282</a>            memory: source <span class="kw">as </span>u64 + passes(rows),
 <a href=#283 id=283 data-nosnippet>283</a>        },
-<a href=#284 id=284 data-nosnippet>284</a>        reservation,
-<a href=#285 id=285 data-nosnippet>285</a>    })
-<a href=#286 id=286 data-nosnippet>286</a>}
+<a href=#284 id=284 data-nosnippet>284</a>    )<span class="question-mark">?</span>;
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="prelude-val">Ok</span>(Admitted {
+<a href=#286 id=286 data-nosnippet>286</a>        value: Batching {
+<a href=#287 id=287 data-nosnippet>287</a>            times_per_batch,
+<a href=#288 id=288 data-nosnippet>288</a>            rows,
+<a href=#289 id=289 data-nosnippet>289</a>            survey_bytes,
+<a href=#290 id=290 data-nosnippet>290</a>        },
+<a href=#291 id=291 data-nosnippet>291</a>        reservation,
+<a href=#292 id=292 data-nosnippet>292</a>    })
+<a href=#293 id=293 data-nosnippet>293</a>}
 </code></pre></div></section></main></body></html>
