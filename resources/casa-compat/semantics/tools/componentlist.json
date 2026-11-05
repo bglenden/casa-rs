@@ -329,12 +329,11 @@
    ]
   },
   "purge": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Discards the recovery bin and returns CASA's false result.",
    "evidence": [
     "signature",
-    "refusals"
+    "removal-casa"
    ]
   },
   "putkeyword": {
@@ -347,21 +346,19 @@
    ]
   },
   "recover": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Appends removed components in reverse removal order, preserving their values and in-memory shape units; returns CASA's false result.",
    "evidence": [
     "signature",
-    "refusals"
+    "removal-casa"
    ]
   },
   "remove": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Removes validated component indices and keeps a recovery bin; repeated indices remove once to preserve other components, and remove-all on an empty list raises instead of crashing.",
    "evidence": [
     "signature",
-    "refusals"
+    "removal-casa"
    ]
   },
   "rename": {
@@ -842,6 +839,19 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "465f7a87fc7acd6fc61d462d7d4056eb321b39d6"
+  },
+  "removal-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "34 CASA 6.7.6-14 calls in 12 scenarios cover removal, recovery, purge, selection, component values, shape units and errors; isolated empty-list calls crash. Duplicate indices lose a different component in CASA.",
+   "scope": "componentlist.remove, recover and purge.",
+   "links": [
+    "tools/casa-compat/componentlist_removal_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_removal.json",
+    "crates/casars-python/python/tests/test_componentlist_removal.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "61b8a7091c2c9e34933eca41448a7cad1e8cf2d1"
   }
  }
 }
