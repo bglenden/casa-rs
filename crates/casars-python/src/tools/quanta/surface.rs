@@ -145,7 +145,7 @@ const METHODS: &[Method] = &[
             param("a", K::Float, Float(-0.5)),
         ],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "pow",

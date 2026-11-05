@@ -93,7 +93,18 @@ fn parse_term(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
     // exponents and exponents on a parenthesized expression remain valid.
     let start = *pos;
     let parenthesized = bytes[start] == b'(';
-    let val = if bytes[*pos] == b'(' {
+    let val = if bytes[*pos].is_ascii_digit() {
+        // casacore accepts numeric fields as dimensionless, including a
+        // numeric prefix directly before a unit (for example `1m`).
+        while bytes.get(*pos).is_some_and(u8::is_ascii_digit) {
+            *pos += 1;
+        }
+        if scan_field(bytes, *pos) > *pos {
+            parse_term(bytes, pos)?
+        } else {
+            UnitVal::NODIM
+        }
+    } else if bytes[*pos] == b'(' {
         *pos += 1;
         let inner = parse_expr(bytes, pos)?;
         if *pos >= bytes.len() || bytes[*pos] != b')' {
@@ -277,6 +288,24 @@ mod tests {
         let val = parse_unit("").unwrap();
         assert_eq!(val.factor, 1.0);
         assert!(val.dim.is_dimensionless());
+    }
+
+    #[test]
+    fn parse_one_is_dimensionless() {
+        let val = parse_unit("1").unwrap();
+        assert_eq!(val.factor, 1.0);
+        assert!(val.dim.is_dimensionless());
+        for expression in ["1.m", "m.1", "1m", "(1).m", "2.m"] {
+            let actual = parse_unit(expression).unwrap();
+            let expected = parse_unit("m").unwrap();
+            assert_eq!(actual.dim, expected.dim, "{expression}");
+            assert_eq!(actual.factor, expected.factor, "{expression}");
+        }
+        assert_eq!(
+            parse_unit("1/m").unwrap().dim,
+            parse_unit("/m").unwrap().dim
+        );
+        assert!(parse_unit("(1)2").unwrap().dim.is_dimensionless());
     }
 
     #[test]
