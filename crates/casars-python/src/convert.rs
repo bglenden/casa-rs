@@ -38,7 +38,7 @@ use num_complex::Complex64;
 use numpy::{PyReadonlyArrayDyn, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyString};
+use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
 
 /// The speed of light, m/s (casacore's `C::c`).
 const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
@@ -85,6 +85,7 @@ pub(crate) type ConvertResult<T> = Result<T, ConvertError>;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum RecordScalarKind {
     NativeInteger(i64),
+    IntegerVector(Option<i32>),
     NumpyUnsupported,
 }
 
@@ -229,11 +230,14 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
                     ) =>
             {
                 let scalar = value.py().import("numpy")?.getattr("generic")?;
-                value
-                    .is_instance(&scalar)?
-                    .then_some(RecordScalarKind::NumpyUnsupported)
+                if value.is_instance(&scalar)? {
+                    Some(RecordScalarKind::NumpyUnsupported)
+                } else {
+                    record_vector_kind(&value)?
+                }
             }
-            _ => None,
+            Some(value) => record_vector_kind(&value)?,
+            None => None,
         };
         return Ok(Variant::Record(VariantRecord {
             fields: record,
@@ -256,6 +260,58 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
         return Ok(Variant::Number(number));
     }
     Ok(Variant::Other(object.repr()?.to_string()))
+}
+
+/// Keep the integer kind and low 32 bits of one-dimensional record arrays.
+fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarKind>> {
+    let array_kind = value
+        .getattr("dtype")
+        .and_then(|d| d.getattr("kind"))
+        .and_then(|k| k.extract::<String>());
+    let is_array = matches!(array_kind.as_deref(), Ok("i" | "u" | "b"))
+        && value
+            .getattr("ndim")
+            .and_then(|n| n.extract::<usize>())
+            .ok()
+            == Some(1)
+        && value.is_instance(&value.py().import("numpy")?.getattr("ndarray")?)?;
+    let values = if is_array {
+        if matches!(array_kind.as_deref(), Ok("b")) {
+            return Ok(Some(RecordScalarKind::NumpyUnsupported));
+        }
+        value.call_method0("tolist")?
+    } else if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
+        value.clone()
+    } else {
+        return Ok(None);
+    };
+    let values = values.try_iter()?.collect::<PyResult<Vec<_>>>()?;
+    if values.is_empty() {
+        return Ok(is_array.then_some(RecordScalarKind::IntegerVector(None)));
+    }
+    if values.iter().all(|v| v.is_instance_of::<PyBool>()) {
+        return Ok(Some(RecordScalarKind::NumpyUnsupported));
+    }
+    let native_integer =
+        |v: &Bound<'_, PyAny>| v.is_instance_of::<PyInt>() && !v.is_instance_of::<PyBool>();
+    if !values.iter().all(native_integer) {
+        let signed_integer = value.py().import("numpy")?.getattr("signedinteger")?;
+        for item in &values {
+            if !native_integer(item) && !item.is_instance(&signed_integer)? {
+                return Ok(None);
+            }
+        }
+    }
+    if values.len() > 1 {
+        return Ok(Some(RecordScalarKind::IntegerVector(None)));
+    }
+    let first = &values[0];
+    let narrowed = first.extract::<i64>().map(|n| n as i32).ok().or_else(|| {
+        is_array
+            .then(|| first.extract::<u64>().ok().map(|n| n as i32))
+            .flatten()
+    });
+    Ok(narrowed.map(|value| RecordScalarKind::IntegerVector(Some(value))))
 }
 
 /// A numeric NumPy array of two or more dimensions as [`Variant::Array`];
@@ -619,6 +675,13 @@ pub(crate) fn quantity_variant_record(record: &VariantRecord) -> Result<Quantity
             f64::from(value as i32),
             casacore_unit(unit)?,
         )),
+        Some(RecordScalarKind::IntegerVector(Some(value))) => {
+            Ok(Quantity::with_unit(f64::from(value), casacore_unit(unit)?))
+        }
+        Some(RecordScalarKind::IntegerVector(None)) => {
+            casacore_unit(unit)?;
+            Err("Wrong QuantumHolder to convert asQuantumDouble".to_string())
+        }
         Some(RecordScalarKind::NumpyUnsupported) => {
             Err("Illegal Quantum record in QuantumHolder::fromRecord\n".to_string())
         }
