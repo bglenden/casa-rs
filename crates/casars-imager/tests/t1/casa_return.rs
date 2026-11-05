@@ -1008,18 +1008,67 @@ fn tclean_automatic_restart_prefers_the_residual_beam() {
     let directory = observation.scratch("restart-mask-beam");
     std::fs::create_dir_all(&directory).unwrap();
     let cell = 0.012_f64.to_radians() / 3600.0;
-    for (name, psf_size, residual_size, recompute, recompute_psf, expected_mask) in [
-        ("residual-broad", 2.5, Some(10.0), false, false, false),
-        ("residual-narrow", 10.0, Some(2.5), false, false, true),
-        ("residual-absent", 10.0, None, false, false, false),
-        ("recomputed-broad", 2.5, Some(50.0), true, false, false),
-        ("recomputed-narrow", 2.5, Some(2.5), true, false, true),
-        ("both-recomputed-broad", 2.5, Some(50.0), true, true, false),
-        ("both-recomputed-narrow", 2.5, Some(2.5), true, true, true),
+    for (name, psf_size, residual_size, recompute, recompute_psf, rectangular, expected_mask) in [
+        (
+            "residual-broad",
+            2.5,
+            Some(10.0),
+            false,
+            false,
+            false,
+            false,
+        ),
+        (
+            "residual-narrow",
+            10.0,
+            Some(2.5),
+            false,
+            false,
+            false,
+            true,
+        ),
+        ("residual-absent", 10.0, None, false, false, false, false),
+        (
+            "recomputed-broad",
+            2.5,
+            Some(50.0),
+            true,
+            false,
+            false,
+            false,
+        ),
+        (
+            "recomputed-narrow",
+            2.5,
+            Some(2.5),
+            true,
+            false,
+            false,
+            true,
+        ),
+        (
+            "both-recomputed-broad",
+            2.5,
+            Some(50.0),
+            true,
+            true,
+            false,
+            false,
+        ),
+        (
+            "both-recomputed-narrow",
+            2.5,
+            Some(2.5),
+            true,
+            true,
+            false,
+            true,
+        ),
+        ("rectangular", 2.5, Some(9.0), false, false, true, true),
     ] {
         let mut values = json!({
             "vis": observation.measurement_set(), "imagename": directory.join(name),
-            "imsize": 64, "cell": "0.012arcsec", "backend": "cpu",
+            "imsize": 64, "cell": ["0.012arcsec", if rectangular { "0.024arcsec" } else { "0.012arcsec" }], "backend": "cpu",
             "specmode": "cube", "nchan": 1, "start": 0, "width": 1,
             "deconvolver": "hogbom", "niter": 0, "restoration": false,
         });
@@ -1063,7 +1112,7 @@ fn tclean_automatic_restart_prefers_the_residual_beam() {
         values["calcpsf"] = json!(recompute_psf);
         values["calcres"] = json!(recompute);
         values["usemask"] = json!("auto-multithresh");
-        values["sidelobethreshold"] = json!(if recompute { 0.01 } else { 2.0 });
+        values["sidelobethreshold"] = json!(if recompute || rectangular { 0.01 } else { 2.0 });
         values["noisethreshold"] = json!(4.25);
         values["lownoisethreshold"] = json!(1.5);
         values["minbeamfrac"] = json!(0.5);
