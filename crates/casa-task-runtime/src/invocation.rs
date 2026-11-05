@@ -47,6 +47,7 @@ pub fn project_provider_invocation_with_originals(
                 matches!(given, ParameterValue::String(path)
                     if std::path::Path::new(path).is_absolute()
                         || path.starts_with("./") || path.starts_with("../"))
+                    && matches!(value, ParameterValue::Array(_))
                     && crate::casa_type_diagnostics::single_required_path(
                         session.bundle().surface.id(),
                         name,

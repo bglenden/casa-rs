@@ -138,6 +138,11 @@ impl TaskInvocation<'_> {
         let casa_path = match original {
             Some(ParameterValue::String(value))
                 if override_origin
+                    // Scalar native path domains may already have been
+                    // normalized by a CLI or parameter editor before this
+                    // session was built. In that case `given` is not proof
+                    // of the caller's spelling.
+                    && matches!(self.value(name), Some(ParameterValue::Array(_)))
                     && (path.to_str() == Some(value.as_str())
                         || value
                             .strip_prefix("./")

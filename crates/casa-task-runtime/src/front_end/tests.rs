@@ -426,6 +426,36 @@ fn ambiguous_path_forms_keep_the_native_diagnostic() {
 }
 
 #[test]
+fn scalar_native_paths_do_not_claim_the_original_spelling() {
+    let surfaces = ["importfits"];
+    let front_end = TaskFrontEnd::new("test", contract_hosting(&surfaces), &surfaces, |run| {
+        run.input_path("fitsimage")?;
+        panic!("a missing input must not reach the task")
+    })
+    .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let missing = workspace.path().join("missing.fits");
+    let path = workspace.path().join("request.json");
+    for input in [
+        missing.display().to_string(),
+        format!(" {}", missing.display()),
+        format!("{}/link/../missing.fits", workspace.path().display()),
+    ] {
+        let request = json!({"surface": "importfits", "values": {"fitsimage": input}});
+        std::fs::write(&path, request.to_string()).unwrap();
+        let output = front_end.dispatch(&args(&["--json-run", path.to_str().unwrap()]));
+        let TaskReply::Failed { message, .. } = serde_json::from_str(&output.stdout).unwrap()
+        else {
+            panic!("{request}: expected a refusal");
+        };
+        assert!(
+            !message.contains("the fitsimage parameter must be a path that exists"),
+            "{request}: {message}"
+        );
+    }
+}
+
+#[test]
 fn the_first_word_selects_a_hosted_surface() {
     let calls = Calls::default();
     let front_end = front_end(&calls);
