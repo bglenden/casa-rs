@@ -18,6 +18,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[component labels containing invalid UTF-8](#casa-accepts-component-labels-it-cannot-return),
 [cyclic component-list type checks](#cyclic-component-list-type-checks-crash-casa),
 [complex quantity-array values](#casa-discards-the-values-of-bare-complex-quantity-arrays),
 [bare complex64 quantity values](#casa-discards-bare-numpy-complex64-quantity-values),
@@ -3850,6 +3851,19 @@ while an equivalent Python complex or NumPy complex128 value raises an error.
 CASA also treats the complex64 value as zero in other quantity operations.
 casa-rs preserves both parts and raises `Wrong QuantumHolder to convert
 asQuantumDouble` rather than silently discarding them.
+
+## CASA accepts component labels it cannot return
+
+- Date noted: 2026-11-05
+- Status: CASA accepts an unreadable label; casa-rs rejects the input and preserves the previous label (#1053).
+- Owner decision: Correct CASA data corruption as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/casa-compat/componentlist_setlabel_oracle.py`, CASA 6.7.6-14 on the Mac mini.
+
+After adding a component, `cl.setlabel(0, b'\xff')` returns `True` in CASA,
+but `cl.getlabel(0)` then raises `UnicodeDecodeError`: the previous readable
+label has been replaced by bytes the Python binding cannot return. casa-rs
+raises `UnicodeDecodeError` before changing the label. Valid UTF-8 byte strings
+and text are accepted, and both implementations stop at the first NUL byte.
 
 ## Cyclic component-list type checks crash CASA
 

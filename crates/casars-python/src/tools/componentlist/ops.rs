@@ -316,6 +316,19 @@ impl State {
             })
     }
 
+    /// Replace a label, using the index checks in casacore's `setLabel`.
+    pub(crate) fn setlabel(&mut self, which: i64, value: &str) -> ConvertResult<bool> {
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        component.set_label(value);
+        Ok(true)
+    }
+
     /// The component `which`, for the methods CASA does not check: casacore's
     /// `ComponentList::component` asserts the index.
     pub(crate) fn unchecked(&self, which: i64) -> ConvertResult<&SkyComponent> {
