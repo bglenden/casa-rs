@@ -4698,6 +4698,19 @@ terminates CASA's Python process with a segmentation fault before the
 placeholder can return. The method otherwise logs a warning and returns
 <code>False</code>. casa-rs detects cycles while inspecting the ignored argument and
 returns that same placeholder value without crashing.</p>
+<h2 id="casa-discards-zero-dimensional-floating-quantity-record-values">CASA discards zero-dimensional floating quantity-record values<a class="headerlink" href="#casa-discards-zero-dimensional-floating-quantity-record-values" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-05</li>
+<li>Status: CASA silently loses input values; casa-rs preserves them (#1170).</li>
+<li>Owner decision: Correct CASA data corruption as a class; see <code>docs/simulation/owner-decisions-20261105.md</code>.</li>
+<li>Evidence: <code>tools/casa-compat/quantity_record_zero_dim_oracle.py</code>, CASA 6.7.6-14 on the Mac mini.</li>
+</ul>
+<p>For <code>qa.quantity({'value': np.array(1.25, dtype='float64'), 'unit': 'm'})</code>,
+CASA returns a one-element array containing <code>0.0 m</code>. <code>qa.convert</code> likewise
+converts zero. CASA handles the same array correctly when passed without a
+record. casa-rs preserves <code>1.25 m</code> and converts it to <code>125 cm</code>, using the
+same one-element output shape. Its <code>getunit</code>, <code>getvalue</code> and scalar arithmetic
+still report CASA's wrong-holder error for the record.</p>
 
 
 
