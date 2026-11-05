@@ -345,6 +345,93 @@ fn json_run_reports_casas_direct_vector_type_refusals() {
 }
 
 #[test]
+fn json_run_reports_unambiguous_casa_missing_paths() {
+    let surfaces = [
+        "imstat",
+        "imhead",
+        "immoments",
+        "imsubimage",
+        "split",
+        "exportfits",
+    ];
+    let front_end = TaskFrontEnd::new("test", contract_hosting(&surfaces), &surfaces, |run| {
+        let parameter = if run.surface() == "split" {
+            "vis"
+        } else {
+            "imagename"
+        };
+        run.input_path(parameter)?;
+        panic!("a missing input must not reach the task")
+    })
+    .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let directory = workspace.path().to_str().unwrap();
+    let path = workspace.path().join("request.json");
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../casars-python/python/tests/data/casa_task_required_paths.json"
+    ))
+    .unwrap();
+    for case in fixture["cases"].as_array().unwrap() {
+        let mut values = case["args"].clone();
+        for value in values.as_object_mut().unwrap().values_mut() {
+            *value = match value.as_str() {
+                Some("$MISSING") => json!(format!("{directory}/missing")),
+                Some("$QUOTE") => json!(format!("{directory}/a'quote")),
+                Some("$OUTPUT") => json!(format!("{directory}/output")),
+                _ => value.clone(),
+            };
+        }
+        let request = json!({"surface": case["task"], "values": values});
+        std::fs::write(&path, request.to_string()).unwrap();
+        let output = front_end.dispatch(&in_workspace(
+            workspace.path(),
+            &["--json-run", path.to_str().unwrap()],
+        ));
+        let TaskReply::Failed { kind, message, .. } = serde_json::from_str(&output.stdout).unwrap()
+        else {
+            panic!("{request}: expected a refusal");
+        };
+        assert_eq!(kind, TaskFailureKind::Validation);
+        assert_eq!(
+            message,
+            case["message"].as_str().unwrap().replace("$TMP", directory),
+            "{request}"
+        );
+    }
+}
+
+#[test]
+fn ambiguous_path_forms_keep_the_native_diagnostic() {
+    let surfaces = ["imstat"];
+    let front_end = TaskFrontEnd::new("test", contract_hosting(&surfaces), &surfaces, |run| {
+        run.input_path("imagename")?;
+        panic!("a missing input must not reach the task")
+    })
+    .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("request.json");
+    for value in [
+        json!("bare-missing"),
+        json!([workspace.path().join("missing")]),
+    ] {
+        let request = json!({"surface": "imstat", "values": {"imagename": value}});
+        std::fs::write(&path, request.to_string()).unwrap();
+        let output = front_end.dispatch(&in_workspace(
+            workspace.path(),
+            &["--json-run", path.to_str().unwrap()],
+        ));
+        let TaskReply::Failed { message, .. } = serde_json::from_str(&output.stdout).unwrap()
+        else {
+            panic!("{request}: expected a refusal");
+        };
+        assert!(
+            !message.contains("the imagename parameter must be a path that exists"),
+            "{request}: {message}"
+        );
+    }
+}
+
+#[test]
 fn the_first_word_selects_a_hosted_surface() {
     let calls = Calls::default();
     let front_end = front_end(&calls);

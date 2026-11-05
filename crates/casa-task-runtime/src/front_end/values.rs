@@ -126,7 +126,37 @@ impl TaskInvocation<'_> {
         if self.workspace().join(path).exists() {
             return Ok(());
         }
-        Err(TaskFailure::validation(format!("{name} {:?} does not exist", path.display())).at(name))
+        // CASA expands bare relative names through its data resolver. Preserve
+        // our own message unless the caller's original scalar spelling makes
+        // the failed CASA required-path check unambiguous.
+        let original = self.session.given(name);
+        let override_origin = self
+            .session
+            .states()
+            .get(name)
+            .is_some_and(|state| state.origin == crate::ParameterOrigin::Override);
+        let casa_path = match original {
+            Some(ParameterValue::String(value))
+                if override_origin
+                    && path.to_str() == Some(value.as_str())
+                    && (path.is_absolute()
+                        || value.starts_with("./")
+                        || value.starts_with("../"))
+                    && crate::casa_type_diagnostics::single_required_path(self.surface(), name) =>
+            {
+                Some(value)
+            }
+            _ => None,
+        };
+        let message = casa_path.map_or_else(
+            || format!("{name} {:?} does not exist", path.display()),
+            |value| {
+                format!(
+                    "the {name} parameter must be a path that exists ('{value}' does not exist)"
+                )
+            },
+        );
+        Err(TaskFailure::validation(message).at(name))
     }
 
     /// `name` as a flag.
