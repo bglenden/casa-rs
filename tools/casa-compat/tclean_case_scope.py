@@ -2,8 +2,8 @@
 """Tag every CASA tclean test case NOW or LATER for the tclean work (#980).
 
 Evidence tooling, not a runtime dependency. NOW is what casa-rs's simulation
-tasks need plus very common imaging use; LATER is everything else, refused
-with an error naming its issue. The split was decided on 2026-11-02 and is
+tasks need plus very common imaging use; LATER is everything else. A LATER
+family may have since been implemented. The split was decided on 2026-11-02 and is
 listed under `Decisions:` on the pull request that adds this file.
 
 NOW by definition: every tclean parameter set CASA's simulation tasks can
@@ -158,9 +158,9 @@ LATER = [
         "specmode mvc: " + NOT_SIMULATION,
     ),
     (
-        "deconvolver-asp-mem-clarkstokes",
-        lambda v, p, c: p.get("deconvolver") in ("asp", "mem", "clarkstokes"),
-        "deconvolvers asp, mem and clarkstokes: " + NOT_SIMULATION,
+        "deconvolver-asp-mem",
+        lambda v, p, c: p.get("deconvolver") in ("asp", "mem"),
+        "deconvolvers asp and mem: " + NOT_SIMULATION,
     ),
     (
         "pb-mask",

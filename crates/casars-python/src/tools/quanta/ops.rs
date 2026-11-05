@@ -34,10 +34,11 @@ fn record(quantity: &Quantity) -> CasaValue {
 
 /// Define a user unit in casacore's process-wide unit registry.
 pub(super) fn define(name: &str, value: &Variant) -> ConvertResult<CasaValue> {
-    let quantity = quantity(value)?;
-    let unit = quantity.unit().val();
-    let definition = UnitVal::new(quantity.value() * unit.factor, unit.dim);
-    casa_types::quanta::registry::global_registry().put_user(name, definition, "User defined");
+    casa_types::quanta::registry::global_registry().define_user(name, "User defined", || {
+        let quantity = quantity(value)?;
+        let unit = quantity.unit().val();
+        Ok::<_, ConvertError>(UnitVal::new(quantity.value() * unit.factor, unit.dim))
+    })?;
     Ok(CasaValue::Bool(true))
 }
 
@@ -115,7 +116,10 @@ pub(super) fn quantity_of(
 
 /// A quantity record holding an array, else `None`.
 fn array_record(value: &Variant) -> ConvertResult<Option<Quantum>> {
-    if !matches!(value, Variant::Record(_)) {
+    let Variant::Record(record) = value else {
+        return Ok(None);
+    };
+    if matches!(record.get("value"), Some(Variant::Array { shape, .. }) if shape.is_empty()) {
         return Ok(None);
     }
     Ok(quantum_holder(value)?.filter(Quantum::is_array))

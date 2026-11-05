@@ -28,6 +28,11 @@ use crate::quanta::unit_val::UnitVal;
 /// On success the result is cached in the global registry for future lookups.
 /// Returns `Err(UnitError::InvalidUnit)` if the string cannot be parsed.
 pub fn parse_unit(input: &str) -> Result<UnitVal, UnitError> {
+    parse_unit_with_hook(input, || {})
+}
+
+/// `after_parse` permits a deterministic registration interleaving in tests.
+fn parse_unit_with_hook(input: &str, mut after_parse: impl FnMut()) -> Result<UnitVal, UnitError> {
     let input = input.trim();
     if input.is_empty() {
         return Ok(UnitVal::NODIM);
@@ -40,15 +45,15 @@ pub fn parse_unit(input: &str) -> Result<UnitVal, UnitError> {
     }
 
     loop {
-        // A single expression can contain several `S` fields. If FITS is
-        // installed during parsing, retry rather than return a mixture of
-        // siemens and seconds. Registration can occur only once.
-        let fits_enabled = reg.cache_fits_state(input);
+        // FITS may change the meaning of any matching alias. If registration
+        // or a user definition changes during parsing, retry.
+        let fits_enabled = reg.cache_fits_state();
         let user_generation = reg.user_generation();
         let bytes = input.as_bytes();
         let mut pos = 0;
         let result = parse_expr(bytes, &mut pos);
-        if fits_enabled != reg.cache_fits_state(input) || user_generation != reg.user_generation() {
+        after_parse();
+        if fits_enabled != reg.cache_fits_state() || user_generation != reg.user_generation() {
             continue;
         }
         let result = result?;
@@ -290,6 +295,26 @@ mod tests {
             "expected {a} ≈ {b} (rel diff {:.2e})",
             diff / scale,
         );
+    }
+
+    #[test]
+    fn a_non_s_expression_is_retried_if_fits_is_registered_during_parse() {
+        let reg = global_registry();
+        reg.put_user("IXEL", UnitVal::new(2.0, UnitVal::TIME.dim), "test");
+        let mut registered = false;
+        let value = parse_unit_with_hook("PIXEL.m", || {
+            if !registered {
+                reg.add_fits_units();
+                registered = true;
+            }
+        })
+        .unwrap();
+        assert_eq!(
+            (value.factor, value.dim),
+            (1.0, (UnitVal::UNDIM * UnitVal::LENGTH).dim)
+        );
+        let direct = parse_unit("PIXEL").unwrap();
+        assert_eq!((direct.factor, direct.dim), (1.0, UnitVal::UNDIM.dim));
     }
 
     #[test]

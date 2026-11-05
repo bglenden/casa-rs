@@ -164,6 +164,25 @@
     {
       "method": "define",
       "args": [
+        "S",
+        "4s"
+      ],
+      "result": true
+    },
+    {
+      "method": "convert",
+      "args": [
+        "1S",
+        "s"
+      ],
+      "result": {
+        "unit": "s",
+        "value": 4.0
+      }
+    },
+    {
+      "method": "define",
+      "args": [
         "m",
         "2s"
       ],
@@ -195,6 +214,17 @@
       "method": "fits",
       "args": [],
       "result": true
+    },
+    {
+      "method": "convert",
+      "args": [
+        "1S",
+        "s"
+      ],
+      "result": {
+        "unit": "s",
+        "value": 4.0
+      }
     },
     {
       "method": "convert",

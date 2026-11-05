@@ -143,7 +143,10 @@ impl PyComponentList {
         work: impl FnOnce(&mut State, &mut Vec<LogLine>) -> ConvertResult<CasaValue> + Send,
     ) -> PyResult<Py<PyAny>> {
         let mut lines = Vec::new();
-        let result = py.detach(|| work(&mut self.lock(), &mut lines));
+        let result = py.detach(|| {
+            casa_types::quanta::registry::global_registry()
+                .with_locked_units(|| work(&mut self.lock(), &mut lines))
+        });
         emit(py, LOGGER, &lines)?;
         result?.into_python(py)
     }

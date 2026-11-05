@@ -713,6 +713,39 @@ fn an_outlier_files_relative_name_reads_from_the_working_directory() {
     assert!(!directory.join("products/fields").exists());
 }
 
+/// CASA `clarkstokes` sends Stokes I and V to separate minor cycles,
+/// while `clark` sends them together (#1126).
+#[test]
+fn clarkstokes_cleans_polarization_planes_separately() {
+    use super::fixture::Setup;
+    use casa_ms::{SyntheticPolarizationBasis, SyntheticPolarizationSetup};
+
+    let observation = Observation::synthesise_polarized(
+        Setup::vla_q_band(1),
+        SyntheticPolarizationSetup {
+            basis: SyntheticPolarizationBasis::Linear,
+            correlation_count: 4,
+            source_stokes_fractional_quv: [0.0, 0.0, 0.4],
+        },
+        &[("point", POINT)],
+    );
+    let run = |name: &str, deconvolver: &str| {
+        observation
+            .image(
+                name,
+                json!({
+                    "stokes": "IV", "deconvolver": deconvolver, "niter": 1,
+                    "cycleniter": 1, "gain": 0.2, "weighting": "natural",
+                }),
+            )
+            .0
+    };
+    let joint = run("joint-clark", "clark");
+    let separate = run("separate-clark", "clarkstokes");
+    assert_eq!(joint.actual_minor_iterations, 1);
+    assert_eq!(separate.actual_minor_iterations, 2);
+}
+
 /// A requested main-lobe cutoff reaches the minor cycle's PSF sidelobe,
 /// not just the beam written in the final image metadata (#1140).
 #[test]

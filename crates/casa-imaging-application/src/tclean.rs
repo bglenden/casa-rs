@@ -340,8 +340,11 @@ impl<'a> Tclean<'a> {
         };
         self.set("gridder", gridder);
         let deconvolver = self.text("deconvolver")?;
-        if !matches!(deconvolver, "hogbom" | "clark" | "multiscale" | "mtmfs") {
-            // `asp` is #223's; mem and clarkstokes are #1060's.
+        if !matches!(
+            deconvolver,
+            "hogbom" | "clark" | "clarkstokes" | "multiscale" | "mtmfs"
+        ) {
+            // `asp` is #223's; mem is #1060's.
             let issue = if deconvolver == "asp" { 223 } else { 1060 };
             return Err(TcleanRefusal::not_yet(
                 "deconvolver",

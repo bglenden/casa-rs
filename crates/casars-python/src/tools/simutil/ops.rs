@@ -48,33 +48,68 @@ pub(super) fn listed(directions: Directions) -> Vec<String> {
     }
 }
 
-/// `calc_pointings2`'s `size`: one quantity (a string or a record) for
-/// both axes, or a sequence of them, the first two used (one repeated).
-pub(super) fn sizes(value: &Bound<'_, PyAny>) -> PyResult<[Quantity; 2]> {
-    let one = |item: &Bound<'_, PyAny>| quantity(&item.extract::<Variant>()?);
-    if value.is_instance_of::<PyString>() || value.is_instance_of::<PyDict>() {
+/// Capture and validate `calc_pointings2` sizes in CASA's input order.
+/// Keep the variants so later calculations can retry unit conversion without
+/// extracting Python objects or repeating their side effects.
+pub(super) fn size_values(
+    value: &Bound<'_, PyAny>,
+) -> PyResult<(
+    [Variant; 2],
+    [Quantity; 2],
+    casa_types::quanta::registry::UnitState,
+)> {
+    let registry = casa_types::quanta::registry::global_registry();
+    let before = registry.unit_state();
+    let one = |item: &Bound<'_, PyAny>| {
+        let value = item.extract::<Variant>()?;
+        let quantity = quantity(&value)?;
+        Ok::<_, PyErr>((value, quantity))
+    };
+    let (values, sizes) = if value.is_instance_of::<PyString>() || value.is_instance_of::<PyDict>()
+    {
         let size = one(value)?;
-        return Ok([size.clone(), size]);
-    }
-    let items: Vec<Bound<'_, PyAny>> = value
-        .try_iter()
-        .map_err(|_| {
-            PyTypeError::new_err(format!(
-                "can't interpret '{}' as a CASA quantity",
-                value.repr().map_or_else(|_| "?".into(), |r| r.to_string())
-            ))
-        })?
-        .collect::<PyResult<_>>()?;
-    match items.as_slice() {
-        [] => Err(PyRuntimeError::new_err(
-            "can't interpret '[]' as a CASA quantity",
-        )),
-        [only] => {
-            let size = one(only)?;
-            Ok([size.clone(), size])
+        ([size.0.clone(), size.0], [size.1.clone(), size.1])
+    } else {
+        let items: Vec<Bound<'_, PyAny>> = value
+            .try_iter()
+            .map_err(|_| {
+                PyTypeError::new_err(format!(
+                    "can't interpret '{}' as a CASA quantity",
+                    value.repr().map_or_else(|_| "?".into(), |r| r.to_string())
+                ))
+            })?
+            .collect::<PyResult<_>>()?;
+        match items.as_slice() {
+            [] => {
+                return Err(PyRuntimeError::new_err(
+                    "can't interpret '[]' as a CASA quantity",
+                ));
+            }
+            [only] => {
+                let size = one(only)?;
+                ([size.0.clone(), size.0], [size.1.clone(), size.1])
+            }
+            [x, y, ..] => {
+                let x = one(x)?;
+                let y = one(y)?;
+                ([x.0, y.0], [x.1, y.1])
+            }
         }
-        [x, y, ..] => Ok([one(x)?, one(y)?]),
+    };
+    let after = registry.unit_state();
+    if before == after {
+        Ok((values, sizes, after))
+    } else {
+        let (sizes, state) = registry.with_stable_units(|| {
+            size_quantities(&values).map(|sizes| (sizes, registry.unit_state()))
+        })?;
+        Ok((values, sizes, state))
     }
+}
+
+/// Convert both captured sizes against the current unit definitions.
+pub(super) fn size_quantities(values: &[Variant; 2]) -> PyResult<[Quantity; 2]> {
+    Ok([quantity(&values[0])?, quantity(&values[1])?])
 }
 
 /// `average_direction`'s and `median_direction`'s `(direction, offsets)`:
@@ -124,15 +159,13 @@ pub(super) fn texts(values: Vec<String>) -> CasaValue {
     CasaValue::List(values.into_iter().map(CasaValue::Text).collect())
 }
 
-/// Whether a value is a quantity as `simutil.isquantity` tests one: a
-/// non-empty string or record that casacore reads.
-pub(super) fn is_quantity(value: &Bound<'_, PyAny>) -> bool {
+/// Capture a non-empty string or record once for `simutil.isquantity`.
+pub(super) fn quantity_candidate(value: &Bound<'_, PyAny>) -> Option<Variant> {
     if value.len().map_or(true, |len| len == 0) {
-        return false;
+        return None;
     }
-    value.extract::<Variant>().is_ok_and(|variant| {
-        matches!(variant, Variant::Text(_) | Variant::Record(_)) && quantity(&variant).is_ok()
-    })
+    let variant = value.extract::<Variant>().ok()?;
+    matches!(variant, Variant::Text(_) | Variant::Record(_)).then_some(variant)
 }
 
 /// Python's `str()` of each time, as `write_pointings` writes them: a

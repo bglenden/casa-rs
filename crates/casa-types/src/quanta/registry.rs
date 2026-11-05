@@ -60,6 +60,13 @@ struct CachedUnit {
     user_generation: u64,
 }
 
+/// An opaque version of the process-wide unit definitions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnitState {
+    fits_enabled: bool,
+    user_generation: u64,
+}
+
 /// The global unit registry.
 ///
 /// Contains immutable built-in maps (defining, SI, customary, prefixes) and
@@ -84,6 +91,9 @@ pub struct UnitRegistry {
     has_builtin_overrides: AtomicBool,
     /// Changes whenever a user definition is inserted, replaced or removed.
     user_generation: AtomicU64,
+    /// Stateful operations hold a read lease while definitions mutate under a
+    /// write lease. Pure quanta operations can instead retry on a state change.
+    operation: RwLock<()>,
 }
 
 impl UnitRegistry {
@@ -142,6 +152,7 @@ impl UnitRegistry {
             fits_enabled: AtomicBool::new(false),
             has_builtin_overrides: AtomicBool::new(false),
             user_generation: AtomicU64::new(0),
+            operation: RwLock::new(()),
         }
     }
 
@@ -169,11 +180,10 @@ impl UnitRegistry {
             return Some(entry.val);
         }
         // A parse begun before FITS registration can finish after the cache
-        // is cleared. Its state tag prevents reusing stale `S` expressions.
+        // is cleared. Any FITS alias can change an expression's meaning.
         if let Some(cached) = self.cache.read().unwrap().get(name)
             && cached.user_generation == self.user_generation()
-            && (!name.contains('S')
-                || cached.fits_enabled == self.fits_enabled.load(Ordering::Acquire))
+            && cached.fits_enabled == self.fits_enabled.load(Ordering::Acquire)
         {
             return Some(cached.value);
         }
@@ -189,24 +199,51 @@ impl UnitRegistry {
         self.prefixes.get(name).map(|p| p.factor)
     }
 
-    /// Adds a parsed unit expression to the cache.
+    /// Adds a parsed unit expression to the cache, tagged with the current
+    /// FITS and user-definition state. The caller must ensure `val` was
+    /// computed in that state; the parser captures it before it begins.
     pub fn cache_put(&self, name: &str, val: UnitVal) {
-        self.cache_put_at_state(
-            name,
-            val,
-            self.cache_fits_state(name),
-            self.user_generation(),
-        );
+        self.cache_put_at_state(name, val, self.cache_fits_state(), self.user_generation());
     }
 
     /// Capture the relevant registry state before parsing a cache entry.
-    pub(crate) fn cache_fits_state(&self, name: &str) -> bool {
-        name.contains('S') && self.fits_enabled.load(Ordering::Acquire)
+    pub(crate) fn cache_fits_state(&self) -> bool {
+        self.fits_enabled.load(Ordering::Acquire)
     }
 
-    /// Cache the value with the state captured before its parse began.
+    /// Capture the current user-definition generation.
     pub(crate) fn user_generation(&self) -> u64 {
         self.user_generation.load(Ordering::Acquire)
+    }
+
+    /// Capture a version that changes when unit definitions change.
+    pub fn unit_state(&self) -> UnitState {
+        UnitState {
+            fits_enabled: self.cache_fits_state(),
+            user_generation: self.user_generation(),
+        }
+    }
+
+    /// Repeats a read-only operation if unit definitions changed while it ran.
+    ///
+    /// `work` must have no externally visible side effects because it may run
+    /// more than once. This keeps multiple parses in a single operation on one
+    /// registry generation, including a concurrent FITS registration.
+    pub fn with_stable_units<T>(&self, mut work: impl FnMut() -> T) -> T {
+        loop {
+            let state = self.unit_state();
+            let result = work();
+            if state == self.unit_state() {
+                return result;
+            }
+        }
+    }
+
+    /// Run a stateful operation while user definitions remain unchanged.
+    /// The closure must not mutate this unit registry.
+    pub fn with_locked_units<T>(&self, work: impl FnOnce() -> T) -> T {
+        let _operation = self.operation.read().unwrap();
+        work()
     }
 
     /// Cache the value with the registry state captured before its parse.
@@ -233,6 +270,7 @@ impl UnitRegistry {
     /// Unless already user-defined, `S` changes from SI siemens to seconds.
     pub fn add_fits_units(&self) {
         self.fits_once.call_once(|| {
+            let _operation = self.operation.write().unwrap();
             const ALIASES: &[(&str, &str, &str)] = &[
                 ("BEAM", "beam", "dimensionless beam"),
                 ("DAYS", "d", "day"),
@@ -277,7 +315,24 @@ impl UnitRegistry {
     /// If a unit with the same name already exists in the user map it is
     /// replaced. An explicit user definition takes precedence over a built-in.
     pub fn put_user(&self, name: impl Into<String>, val: UnitVal, desc: impl Into<String>) {
-        let name = name.into();
+        let _operation = self.operation.write().unwrap();
+        self.put_user_locked(name.into(), val, desc.into());
+    }
+
+    /// Evaluate and install a user definition as one serialized mutation.
+    /// The value-producing closure must not itself mutate this registry.
+    pub fn define_user<E>(
+        &self,
+        name: impl Into<String>,
+        desc: impl Into<String>,
+        value: impl FnOnce() -> Result<UnitVal, E>,
+    ) -> Result<(), E> {
+        let _operation = self.operation.write().unwrap();
+        self.put_user_locked(name.into(), value()?, desc.into());
+        Ok(())
+    }
+
+    fn put_user_locked(&self, name: String, val: UnitVal, desc: String) {
         let overrides_builtin = self.defining.contains_key(&name)
             || self.si.contains_key(&name)
             || self.customary.contains_key(&name);
@@ -296,6 +351,7 @@ impl UnitRegistry {
     ///
     /// Returns `true` if the unit existed and was removed.
     pub fn remove_user(&self, name: &str) -> bool {
+        let _operation = self.operation.write().unwrap();
         let mut user = self.user.write().unwrap();
         let removed = user.remove(name).is_some();
         if removed {
@@ -378,6 +434,115 @@ mod tests {
     }
 
     #[test]
+    fn a_read_operation_retries_if_a_definition_changes_between_its_inputs() {
+        let reg = UnitRegistry::from_builtin();
+        reg.put_user("sample", UnitVal::new(2.0, UnitDim::NODIM), "test");
+        let mut changed = false;
+        let ratio = reg.with_stable_units(|| {
+            let from = reg.lookup_unit("sample").unwrap().factor;
+            if !changed {
+                changed = true;
+                reg.put_user("sample", UnitVal::new(3.0, UnitDim::NODIM), "test");
+            }
+            let to = reg.lookup_unit("sample").unwrap().factor;
+            from / to
+        });
+        assert_eq!(ratio, 1.0);
+    }
+
+    #[test]
+    fn concurrent_definitions_resolve_and_publish_as_serial_transactions() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let reg = UnitRegistry::from_builtin();
+        reg.put_user("first", UnitVal::new(2.0, UnitDim::NODIM), "test");
+        reg.put_user("second", UnitVal::new(3.0, UnitDim::NODIM), "test");
+        let (first_read, wait_for_first) = mpsc::channel();
+        let (release_first, first_wait) = mpsc::channel();
+        let (attempt_second, wait_for_attempt) = mpsc::channel();
+        let (second_read, wait_for_second) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let first_registry = &reg;
+            scope.spawn(move || {
+                first_registry
+                    .define_user("first", "test", || {
+                        let value = first_registry.lookup_unit("second").unwrap();
+                        first_read.send(()).unwrap();
+                        first_wait.recv().unwrap();
+                        Ok::<_, ()>(value)
+                    })
+                    .unwrap();
+            });
+            wait_for_first.recv().unwrap();
+            let second_registry = &reg;
+            scope.spawn(move || {
+                attempt_second.send(()).unwrap();
+                second_registry
+                    .define_user("second", "test", || {
+                        let value = second_registry.lookup_unit("first").unwrap();
+                        second_read.send(()).unwrap();
+                        Ok::<_, ()>(value)
+                    })
+                    .unwrap();
+            });
+            wait_for_attempt.recv().unwrap();
+            let second_entered_early = wait_for_second
+                .recv_timeout(Duration::from_millis(100))
+                .is_ok();
+            release_first.send(()).unwrap();
+            if !second_entered_early {
+                wait_for_second.recv().unwrap();
+            }
+            assert!(!second_entered_early);
+        });
+        assert_eq!(reg.lookup_unit("first").unwrap().factor, 3.0);
+        assert_eq!(reg.lookup_unit("second").unwrap().factor, 3.0);
+    }
+
+    #[test]
+    fn a_stateful_operation_holds_one_definition_until_it_finishes() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let reg = UnitRegistry::from_builtin();
+        reg.put_user("sample", UnitVal::new(2.0, UnitDim::NODIM), "test");
+        let (reader_started, wait_for_reader) = mpsc::channel();
+        let (release_reader, reader_wait) = mpsc::channel();
+        let (writer_started, wait_for_writer) = mpsc::channel();
+        let (writer_done, wait_for_done) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let reader_registry = &reg;
+            scope.spawn(move || {
+                reader_registry.with_locked_units(|| {
+                    let first = reader_registry.lookup_unit("sample").unwrap().factor;
+                    reader_started.send(()).unwrap();
+                    reader_wait.recv().unwrap();
+                    let second = reader_registry.lookup_unit("sample").unwrap().factor;
+                    assert_eq!((first, second), (2.0, 2.0));
+                });
+            });
+            wait_for_reader.recv().unwrap();
+            let writer_registry = &reg;
+            scope.spawn(move || {
+                writer_started.send(()).unwrap();
+                writer_registry.put_user("sample", UnitVal::new(3.0, UnitDim::NODIM), "test");
+                writer_done.send(()).unwrap();
+            });
+            wait_for_writer.recv().unwrap();
+            let writer_finished_early = wait_for_done
+                .recv_timeout(Duration::from_millis(100))
+                .is_ok();
+            release_reader.send(()).unwrap();
+            if !writer_finished_early {
+                wait_for_done.recv().unwrap();
+            }
+            assert!(!writer_finished_early);
+        });
+        assert_eq!(reg.lookup_unit("sample").unwrap().factor, 3.0);
+    }
+
+    #[test]
     fn explicit_user_definition_overrides_a_builtin_and_removal_restores_it() {
         let reg = UnitRegistry::from_builtin();
         assert_eq!(reg.lookup_unit("m").unwrap().dim, UnitVal::LENGTH.dim);
@@ -386,6 +551,18 @@ mod tests {
         assert_eq!((value.factor, value.dim), (2.0, UnitVal::TIME.dim));
         assert!(reg.remove_user("m"));
         assert_eq!(reg.lookup_unit("m").unwrap().dim, UnitVal::LENGTH.dim);
+    }
+
+    #[test]
+    fn fits_registration_rejects_a_late_cache_write_for_other_aliases() {
+        let reg = UnitRegistry::from_builtin();
+        reg.put_user("IXEL", UnitVal::new(2.0, UnitVal::TIME.dim), "test");
+        // Before FITS, PIXEL can parse as peta-IXEL. A parse that began then
+        // may finish and write its result after the PIXEL alias is installed.
+        let stale = UnitVal::new(2.0e15, (UnitVal::TIME * UnitVal::LENGTH).dim);
+        reg.add_fits_units();
+        reg.cache_put_at_state("PIXEL.m", stale, false, reg.user_generation());
+        assert!(reg.lookup_unit("PIXEL.m").is_none());
     }
 
     #[test]

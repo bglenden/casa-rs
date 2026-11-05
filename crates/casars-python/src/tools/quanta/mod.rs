@@ -64,11 +64,9 @@ fn format_argument(value: Option<Bound<'_, PyAny>>, name: &str) -> PyResult<()> 
 pub(crate) struct PyQuanta;
 
 /// Runs `work` with the GIL released and returns its value as Python.
-fn call(
-    py: Python<'_>,
-    work: impl FnOnce() -> ConvertResult<CasaValue> + Send,
-) -> PyResult<Py<PyAny>> {
-    py.detach(work)?.into_python(py)
+fn call(py: Python<'_>, work: impl Fn() -> ConvertResult<CasaValue> + Send) -> PyResult<Py<PyAny>> {
+    py.detach(|| casa_types::quanta::registry::global_registry().with_stable_units(work))?
+        .into_python(py)
 }
 
 /// A method casa-rs does not implement yet, refused naming #1053, which
@@ -353,7 +351,7 @@ impl PyQuanta {
         } else {
             return Err(PyTypeError::new_err("argument _name must be a string"));
         };
-        call(py, || ops::define(&name, &v))
+        py.detach(|| ops::define(&name, &v))?.into_python(py)
     }
 
     /// CASA's scalar quantity comparison.
@@ -369,8 +367,8 @@ impl PyQuanta {
     }
 
     /// Register CASA's process-wide FITS unit aliases.
-    fn fits(&self) -> bool {
-        casa_types::quanta::registry::global_registry().add_fits_units();
+    fn fits(&self, py: Python<'_>) -> bool {
+        py.detach(|| casa_types::quanta::registry::global_registry().add_fits_units());
         true
     }
 
@@ -393,7 +391,10 @@ impl PyQuanta {
         format: String,
         prec: i64,
     ) -> PyResult<Py<PyAny>> {
-        let written = py.detach(|| ops::formxxx(&v, &format, prec))?;
+        let written = py.detach(|| {
+            casa_types::quanta::registry::global_registry()
+                .with_stable_units(|| ops::formxxx(&v, &format, prec))
+        })?;
         if written.is_none() {
             emit(
                 py,
