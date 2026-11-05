@@ -240,14 +240,17 @@ fn common_enclosing_iterative(
         // Gaussian deconvolution checks convert those axes back to radians.
         let arcseconds_per_radian = 180.0 * 3_600.0 / std::f64::consts::PI;
         let radians_per_arcsecond = std::f64::consts::PI / (180.0 * 3_600.0);
-        let max_major = max_gaussian.major * arcseconds_per_radian;
-        let max_minor = max_gaussian.minor * arcseconds_per_radian;
+        // Quantum::getValue divides by the ratio of destination and source
+        // unit factors. Multiplying by the reciprocal can round differently
+        // at an enclosure boundary and change the next beam chosen.
+        let max_major = max_gaussian.major / radians_per_arcsecond;
+        let max_minor = max_gaussian.minor / radians_per_arcsecond;
         let equal_area_axis = (max_major * max_minor).sqrt();
         let x_scale = equal_area_axis / max_major;
         let y_scale = equal_area_axis / max_minor;
         let (problem_major, _, problem_angle) = transform_ellipse_by_scaling(
-            problem.major * arcseconds_per_radian,
-            problem.minor * arcseconds_per_radian,
+            problem.major / radians_per_arcsecond,
+            problem.minor / radians_per_arcsecond,
             relative_angle,
             x_scale,
             y_scale,
@@ -270,8 +273,8 @@ fn common_enclosing_iterative(
         }
         let gaussian = |major, minor| {
             EllipticalGaussian::new(
-                major * radians_per_arcsecond,
-                minor * radians_per_arcsecond,
+                major / arcseconds_per_radian,
+                minor / arcseconds_per_radian,
                 normalize_position_angle(position_angle),
             )
         };
@@ -510,33 +513,34 @@ mod tests {
     /// more than the beam-width tolerance for this four-ellipse case.
     #[test]
     fn common_envelope_uses_casas_arcsecond_construction() {
+        // CASA 6.7.6.14 on both macOS arm64 and Linux x86_64.
         let beams = [
             EllipticalGaussian::new(
-                0.000_635_663_281_774_671_6,
-                0.000_221_068_499_697_525_18,
-                0.698_202_265_589_554_6,
+                0.0005809635837183702,
+                0.00020457213860555773,
+                -0.5057805957649828,
             ),
             EllipticalGaussian::new(
-                0.000_331_624_008_949_999_7,
-                0.000_132_309_620_683_129_18,
-                0.009_212_392_884_049_958,
+                0.0005138004240856247,
+                0.0004535695954251352,
+                -1.2346990816943277,
             ),
             EllipticalGaussian::new(
-                0.000_545_372_831_442_117_8,
-                0.000_484_014_204_578_454_9,
-                0.762_798_083_901_558_7,
+                0.0006020567778759575,
+                0.00036222932439029874,
+                0.06148508161977695,
             ),
             EllipticalGaussian::new(
-                0.000_749_307_589_950_919_8,
-                0.000_369_864_343_484_647_7,
-                -0.415_377_347_404_582_76,
+                0.0005470056526564798,
+                0.0002815481172101375,
+                -1.4136485087299806,
             ),
         ];
         let actual = common_enclosing_gaussian(&beams, 1.0).expect("common beam");
         let expected = [
-            0.000_765_088_472_784_056_5,
-            0.000_588_291_796_685_771_8,
-            -0.222_854_456_601_728_03,
+            0.000_605_180_207_818_001,
+            0.000_542_898_009_337_946_4,
+            -0.132_838_294_776_703_72,
         ];
         assert!(
             (actual.major / expected[0] - 1.0).abs() < 1.0e-5,
@@ -570,6 +574,53 @@ mod tests {
         assert!(
             (converted.position_angle - expected[2]).abs() < 1.0e-5,
             "{converted:?}"
+        );
+    }
+
+    /// Quantum::getValue divides by the unit ratio; the reciprocal's
+    /// rounding selects a different problem ellipse for this CASA case.
+    #[test]
+    fn common_envelope_converts_units_as_casacore_quantities_do() {
+        let beams = [
+            EllipticalGaussian::new(
+                0.0007727863731880232,
+                0.00033200693569560637,
+                -0.812140157042141,
+            ),
+            EllipticalGaussian::new(
+                0.00039255666117823994,
+                0.00033608794032501815,
+                0.31051603323814825,
+            ),
+            EllipticalGaussian::new(
+                0.0005881801911219445,
+                0.00048705032806029247,
+                1.0510436721238698,
+            ),
+            EllipticalGaussian::new(
+                0.0007703389977759783,
+                0.00033883616355163894,
+                0.6120396306758029,
+            ),
+        ];
+        // CASA 6.7.6.14, macOS arm64 and Linux x86_64.
+        let expected = [
+            0.000_787_216_897_466_756_1,
+            0.000_763_692_822_239_434_6,
+            0.039_569_785_610_749_42,
+        ];
+        let actual = common_enclosing_gaussian(&beams, 1.0).expect("common beam");
+        assert!(
+            (actual.major / expected[0] - 1.0).abs() < 1e-5,
+            "{actual:?}"
+        );
+        assert!(
+            (actual.minor / expected[1] - 1.0).abs() < 1e-5,
+            "{actual:?}"
+        );
+        assert!(
+            (actual.position_angle - expected[2]).abs() < 1e-5,
+            "{actual:?}"
         );
     }
 
