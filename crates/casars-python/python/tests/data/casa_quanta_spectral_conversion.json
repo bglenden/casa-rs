@@ -1,0 +1,1996 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "convertfreq",
+      "value": "1GHz",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 1000000000.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1GHz",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 0.299792458
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1GHz",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": 1e-09
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1GHz",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": 6.6260755e-25
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1GHz",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1GHz",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1GHz",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "21cm",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 1427583133.3333333
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "21cm",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 0.21000000000000002
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "21cm",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": 7.004845999161193e-10
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "21cm",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": 9.459273623993233e-25
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "21cm",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "21cm",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "21cm",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2s",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 0.5
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2s",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 599584916.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2s",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2s",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": 3.31303775e-34
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2s",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2s",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2s",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1J",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 1.5091889610977116e+33
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1J",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 1.9864474610385792e-25
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1J",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": 6.6260755e-34
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1J",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1J",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1J",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1J",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0Hz",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0Hz",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0Hz",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0Hz",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0Hz",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0Hz",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0Hz",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0m",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0m",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0m",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0m",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0m",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0m",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0m",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0s",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0s",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0s",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0s",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0s",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0s",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0s",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0J",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0J",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0J",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0J",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0J",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0J",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0J",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "-1GHz",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": -1000000000.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "-1GHz",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -0.299792458
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "-1GHz",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": -1e-09
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "-1GHz",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": -6.6260755e-25
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "-1GHz",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "-1GHz",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "-1GHz",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1km/s",
+      "unit": "Hz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1km/s",
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1km/s",
+      "unit": "s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1km/s",
+      "unit": "J",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1km/s",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1km/s",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1km/s",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0.5",
+      "unit": "Hz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0.5",
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0.5",
+      "unit": "s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0.5",
+      "unit": "J",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0.5",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0.5",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0.5",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2rad",
+      "unit": "Hz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2rad",
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2rad",
+      "unit": "s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2rad",
+      "unit": "J",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2rad",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2rad",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "2rad",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "bad quantity",
+      "unit": "Hz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "bad quantity",
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "bad quantity",
+      "unit": "s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "bad quantity",
+      "unit": "J",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "bad quantity",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "bad quantity",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "bad quantity",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1km/s",
+      "unit": "km/s",
+      "result": {
+        "unit": "km/s",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1km/s",
+      "unit": "m/s",
+      "result": {
+        "unit": "m/s",
+        "value": 1000.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1km/s",
+      "unit": "",
+      "result": {
+        "unit": "",
+        "value": 3.3356409519815205e-06
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1km/s",
+      "unit": "1",
+      "result": {
+        "unit": "1",
+        "value": 3.3356409519815205e-06
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1km/s",
+      "unit": "%",
+      "result": {
+        "unit": "%",
+        "value": 0.00033356409519815205
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1km/s",
+      "unit": "Hz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'Hz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1km/s",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "3e8m/s",
+      "unit": "km/s",
+      "result": {
+        "unit": "km/s",
+        "value": 300000.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "3e8m/s",
+      "unit": "m/s",
+      "result": {
+        "unit": "m/s",
+        "value": 300000000.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "3e8m/s",
+      "unit": "",
+      "result": {
+        "unit": "",
+        "value": 1.0006922855944562
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "3e8m/s",
+      "unit": "1",
+      "result": {
+        "unit": "1",
+        "value": 1.0006922855944562
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "3e8m/s",
+      "unit": "%",
+      "result": {
+        "unit": "%",
+        "value": 100.06922855944562
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "3e8m/s",
+      "unit": "Hz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'Hz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "3e8m/s",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0.5",
+      "unit": "km/s",
+      "result": {
+        "unit": "km/s",
+        "value": 149896.229
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0.5",
+      "unit": "m/s",
+      "result": {
+        "unit": "m/s",
+        "value": 149896229.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0.5",
+      "unit": "",
+      "result": {
+        "unit": "",
+        "value": 0.5
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0.5",
+      "unit": "1",
+      "result": {
+        "unit": "1",
+        "value": 0.5
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0.5",
+      "unit": "%",
+      "result": {
+        "unit": "%",
+        "value": 50.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0.5",
+      "unit": "Hz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'Hz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0.5",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0%",
+      "unit": "km/s",
+      "result": {
+        "unit": "km/s",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0%",
+      "unit": "m/s",
+      "result": {
+        "unit": "m/s",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0%",
+      "unit": "",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0%",
+      "unit": "1",
+      "result": {
+        "unit": "1",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0%",
+      "unit": "%",
+      "result": {
+        "unit": "%",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0%",
+      "unit": "Hz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'Hz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "0%",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "-2km/s",
+      "unit": "km/s",
+      "result": {
+        "unit": "km/s",
+        "value": -2.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "-2km/s",
+      "unit": "m/s",
+      "result": {
+        "unit": "m/s",
+        "value": -2000.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "-2km/s",
+      "unit": "",
+      "result": {
+        "unit": "",
+        "value": -6.671281903963041e-06
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "-2km/s",
+      "unit": "1",
+      "result": {
+        "unit": "1",
+        "value": -6.671281903963041e-06
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "-2km/s",
+      "unit": "%",
+      "result": {
+        "unit": "%",
+        "value": -0.0006671281903963041
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "-2km/s",
+      "unit": "Hz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'Hz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "-2km/s",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1Hz",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'Hz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1Hz",
+      "unit": "m/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'Hz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1Hz",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'Hz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1Hz",
+      "unit": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'Hz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1Hz",
+      "unit": "%",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'Hz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1Hz",
+      "unit": "Hz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'Hz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1Hz",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'Hz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "2rad",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "2rad",
+      "unit": "m/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "2rad",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "2rad",
+      "unit": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "2rad",
+      "unit": "%",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "2rad",
+      "unit": "Hz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "2rad",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'rad'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "bad quantity",
+      "unit": "km/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "bad quantity",
+      "unit": "m/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "bad quantity",
+      "unit": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "bad quantity",
+      "unit": "1",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "bad quantity",
+      "unit": "%",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "bad quantity",
+      "unit": "Hz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "bad quantity",
+      "unit": "badunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad quantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1rad/s",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 0.15915494309189535
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1rad/s",
+      "unit": "rad/s",
+      "result": {
+        "unit": "rad/s",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1rad/s",
+      "unit": "/m",
+      "result": {
+        "unit": "/m",
+        "value": 3.335640951981521e-09
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1rad/s",
+      "unit": "kg.m",
+      "result": {
+        "unit": "kg.m",
+        "value": 3.5176757819741482e-43
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1rad/s",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 1883651567.3088531
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1rad/s",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": 6.283185307179586
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1rad/s",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": 1.054572669125102e-34
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1/m",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 47713451.59236942
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1/m",
+      "unit": "rad/s",
+      "result": {
+        "unit": "rad/s",
+        "value": 299792458.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1/m",
+      "unit": "/m",
+      "result": {
+        "unit": "/m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1/m",
+      "unit": "kg.m",
+      "result": {
+        "unit": "kg.m",
+        "value": 1.0545726691251018e-34
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1/m",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 6.283185307179586
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1/m",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": 2.095845021951682e-08
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1/m",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": 3.16152932616635e-26
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1kg.m",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 4.524434682339493e+41
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1kg.m",
+      "unit": "rad/s",
+      "result": {
+        "unit": "rad/s",
+        "value": 2.842786151936924e+42
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1kg.m",
+      "unit": "/m",
+      "result": {
+        "unit": "/m",
+        "value": 9.482513906126766e+33
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1kg.m",
+      "unit": "kg.m",
+      "result": {
+        "unit": "kg.m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1kg.m",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 6.6260755e-34
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1kg.m",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": 2.210220878872143e-42
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1kg.m",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": 299792458.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0rad/s",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0rad/s",
+      "unit": "rad/s",
+      "result": {
+        "unit": "rad/s",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0rad/s",
+      "unit": "/m",
+      "result": {
+        "unit": "/m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0rad/s",
+      "unit": "kg.m",
+      "result": {
+        "unit": "kg.m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0rad/s",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0rad/s",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0rad/s",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0/m",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0/m",
+      "unit": "rad/s",
+      "result": {
+        "unit": "rad/s",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0/m",
+      "unit": "/m",
+      "result": {
+        "unit": "/m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0/m",
+      "unit": "kg.m",
+      "result": {
+        "unit": "kg.m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0/m",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0/m",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0/m",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0kg.m",
+      "unit": "Hz",
+      "result": {
+        "unit": "Hz",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0kg.m",
+      "unit": "rad/s",
+      "result": {
+        "unit": "rad/s",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0kg.m",
+      "unit": "/m",
+      "result": {
+        "unit": "/m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0kg.m",
+      "unit": "kg.m",
+      "result": {
+        "unit": "kg.m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0kg.m",
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0kg.m",
+      "unit": "s",
+      "result": {
+        "unit": "s",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "0kg.m",
+      "unit": "J",
+      "result": {
+        "unit": "J",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1GHz",
+      "unit": null,
+      "result": {
+        "unit": "Hz",
+        "value": 1000000000.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": "1km/s",
+      "unit": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'km/s'"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": 0,
+      "unit": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": {
+        "value": "NaN",
+        "unit": ""
+      },
+      "unit": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "value": {
+        "value": "Infinity",
+        "unit": "m/s"
+      },
+      "unit": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'm/s'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1GHz",
+      "unit": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'GHz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": "1km/s",
+      "unit": null,
+      "result": {
+        "unit": "km/s",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": 0,
+      "unit": null,
+      "result": {
+        "unit": "km/s",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": {
+        "value": "NaN",
+        "unit": ""
+      },
+      "unit": null,
+      "result": {
+        "unit": "km/s",
+        "value": "NaN"
+      }
+    },
+    {
+      "method": "convertdop",
+      "value": {
+        "value": "Infinity",
+        "unit": "m/s"
+      },
+      "unit": null,
+      "result": {
+        "unit": "km/s",
+        "value": "Infinity"
+      }
+    }
+  ],
+  "argument_cases": [
+    {
+      "method": "convertfreq",
+      "args": [],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "args": [
+        null
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "args": [
+        "1GHz",
+        null
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _outunit must be a string"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "args": [
+        "1GHz",
+        3
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _outunit must be a string"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "args": [
+        "1GHz",
+        []
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _outunit must be a string"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "args": [
+        "1GHz",
+        {
+          "bytes": "Hz"
+        }
+      ],
+      "result": {
+        "unit": "Hz",
+        "value": 1000000000.0
+      }
+    },
+    {
+      "method": "convertfreq",
+      "args": [
+        [
+          1,
+          2
+        ]
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type ''"
+      }
+    },
+    {
+      "method": "convertfreq",
+      "args": [
+        {
+          "value": [
+            1.0,
+            2.0
+          ],
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "convertdop",
+      "args": [],
+      "result": {
+        "unit": "km/s",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "args": [
+        null
+      ],
+      "result": {
+        "unit": "km/s",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "args": [
+        "1GHz",
+        null
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _outunit must be a string"
+      }
+    },
+    {
+      "method": "convertdop",
+      "args": [
+        "1GHz",
+        3
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _outunit must be a string"
+      }
+    },
+    {
+      "method": "convertdop",
+      "args": [
+        "1GHz",
+        []
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _outunit must be a string"
+      }
+    },
+    {
+      "method": "convertdop",
+      "args": [
+        "1GHz",
+        {
+          "bytes": "Hz"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::assure non-conforming unit type 'GHz'"
+      }
+    },
+    {
+      "method": "convertdop",
+      "args": [
+        [
+          1,
+          2
+        ]
+      ],
+      "result": {
+        "unit": "km/s",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "convertdop",
+      "args": [
+        {
+          "value": [
+            1.0,
+            2.0
+          ],
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    }
+  ]
+}

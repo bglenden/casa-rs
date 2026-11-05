@@ -13,7 +13,9 @@
 mod ops;
 pub(crate) mod surface;
 
+use pyo3::exceptions::{PyOverflowError, PySystemError, PyTypeError};
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyString};
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, StringList, Variant};
@@ -21,6 +23,28 @@ use crate::tools::{LogLine, emit, not_yet_implemented_in};
 
 /// The Python logger the tool's warnings go to.
 const LOGGER: &str = "casars.tools.quanta";
+
+#[allow(clippy::unnecessary_wraps)] // PyO3's custom extractor requires a Result.
+fn constant_name(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    Ok(value.extract::<String>().ok())
+}
+
+/// Keep an explicitly supplied `None` distinct from an omitted argument.
+fn supplied<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
+    Ok(Some(value.clone()))
+}
+
+/// CASA accepts text and UTF-8 bytes for a string argument.
+fn output_unit(value: Option<Bound<'_, PyAny>>, default: &str) -> PyResult<String> {
+    match value {
+        None => Ok(default.to_string()),
+        Some(value) if value.is_instance_of::<PyString>() => value.extract(),
+        Some(value) if value.is_instance_of::<PyBytes>() => {
+            value.call_method1("decode", ("utf-8",))?.extract()
+        }
+        Some(_) => Err(PyTypeError::new_err("argument _outunit must be a string")),
+    }
+}
 
 /// CASA's `quanta` tool.
 #[pyclass(name = "quanta", module = "casars.tools", frozen)]
@@ -265,33 +289,39 @@ impl PyQuanta {
         call(py, || ops::checkfreq(&cm))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v='pi')")]
-    fn constants(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("constants")
+    /// A named physical constant, using CASA's case-insensitive minimax lookup.
+    #[pyo3(signature = (v = Some(String::from("pi"))), text_signature = "($self, v='pi')")]
+    fn constants(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = constant_name)] v: Option<String>,
+    ) -> PyResult<Py<PyAny>> {
+        let v = v.ok_or_else(|| PyTypeError::new_err("argument _v must be a string"))?;
+        call(py, || Ok(ops::constants(&v)))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, outunit = None), text_signature = "($self, v=[], outunit='km/s')")]
+    /// Convert between dimensionless Doppler and speed quantities.
+    #[pyo3(signature = (v = Variant::Empty, outunit = None), text_signature = "($self, v=[], outunit='km/s')")]
     fn convertdop(
         &self,
-        v: Option<&Bound<'_, PyAny>>,
-        outunit: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        v: Variant,
+        #[pyo3(from_py_with = supplied)] outunit: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("convertdop")
+        let outunit = output_unit(outunit, "km/s")?;
+        call(py, || ops::convert_doppler(&v, &outunit))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, outunit = None), text_signature = "($self, v=[], outunit='Hz')")]
+    /// Convert between frequency, period, wavelength and related units.
+    #[pyo3(signature = (v = Variant::Empty, outunit = None), text_signature = "($self, v=[], outunit='Hz')")]
     fn convertfreq(
         &self,
-        v: Option<&Bound<'_, PyAny>>,
-        outunit: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        v: Variant,
+        #[pyo3(from_py_with = supplied)] outunit: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("convertfreq")
+        let outunit = output_unit(outunit, "Hz")?;
+        call(py, || ops::convert_frequency(&v, &outunit))
     }
 
     /// CASA's scalar cos of a quantity.
@@ -423,26 +453,55 @@ impl PyQuanta {
         call(py, || ops::relational(&v, &a, "ne"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=-0.5)")]
+    /// Normalize an angle into a one-turn range, returning degrees.
+    #[pyo3(signature = (v = Variant::Empty, a = None), text_signature = "($self, v=[], a=-0.5)")]
     fn norm(
         &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        v: Variant,
+        #[pyo3(from_py_with = supplied)] a: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("norm")
+        let (origin, pending) = match a {
+            None => (-0.5, false),
+            Some(value) => match value.extract::<f64>() {
+                Ok(number) => (number, false),
+                Err(_) => (-1.0, true),
+            },
+        };
+        let result = call(py, || ops::normalize(&v, origin))?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function quanta_norm> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=1)")]
+    /// Raise a scalar quantity to an integer power.
+    #[pyo3(signature = (v = Variant::Empty, a = None), text_signature = "($self, v=[], a=1)")]
     fn pow(
         &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        v: Variant,
+        #[pyo3(from_py_with = supplied)] a: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("pow")
+        let (power, system_error) = match a {
+            None => (1, false),
+            Some(value) => match value.extract::<i64>() {
+                Ok(number) => (number as i32, false),
+                Err(error) if value.is_none() || error.is_instance_of::<PyOverflowError>(py) => {
+                    (-1, true)
+                }
+                Err(_) => return Err(PyTypeError::new_err("argument _a must be an integer")),
+            },
+        };
+        let result = call(py, || ops::power(&v, power))?;
+        if system_error {
+            return Err(PySystemError::new_err(
+                "<built-in function quanta_pow> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Not yet implemented in casa-rs.
@@ -462,11 +521,10 @@ impl PyQuanta {
         call(py, || ops::trigonometry(&v, "sin"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn sqrt(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("sqrt")
+    /// Square root in CASA's canonical units.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn sqrt(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::sqrt(&v))
     }
 
     /// CASA's scalar tan of a quantity.

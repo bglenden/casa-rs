@@ -86,5 +86,5 @@ pub(super) fn measure_psfs(
             cache.summaries.insert(key, summary);
         }
     }
-    beams::settle_off_centre(normal, taylor, cache, setup.psf_beams.is_some())
+    beams::settle_off_centre(normal, base, taylor, cache, setup.psf_beams.is_some())
 }

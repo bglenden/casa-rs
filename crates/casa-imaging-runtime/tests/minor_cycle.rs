@@ -267,6 +267,62 @@ fn an_off_centre_plane_takes_its_domains_largest_beam_and_clarks_patch() {
     assert!(off.clark().exterior_sidelobe >= 1.0);
 }
 
+/// CASA 6.7.6.14 subtracts the domain's fitted beam at the image centre
+/// before choosing the largest sidelobe, including for an off-centre PSF.
+#[test]
+fn an_off_centre_plane_remeasures_sidelobes_after_its_domain_beam_is_chosen() {
+    const WIDTH: usize = 64;
+    for algorithm in [
+        ReconstructionAlgorithm::Hogbom,
+        ReconstructionAlgorithm::Clark,
+    ] {
+        let problem = problem(
+            WIDTH,
+            ReconstructionBasis::ChannelLocal { channels: 2 },
+            algorithm,
+        );
+        let scene = Scene::new(&problem);
+        let cells = WIDTH * WIDTH;
+        let completion = completion(&problem, &scene, |images| {
+            let psf = images.psf.as_mut().expect("initial PSF");
+            psf.fill(0.0);
+            for x in 0..WIDTH {
+                for y in 0..WIDTH {
+                    let dx = x as f64 - 32.0;
+                    let dy = y as f64 - 32.0;
+                    psf[x * WIDTH + y] =
+                        (-4.0 * std::f64::consts::LN_2 * (dx * dx + dy * dy) / 1600.0).exp() as f32;
+                }
+            }
+            psf[cells + 15 * WIDTH + 32] = 1.0;
+            images.residual.fill(0.0);
+            images.residual[32 * WIDTH + 32] = 1.0;
+            images.residual[cells + 32 * WIDTH + 32] = 1.0;
+        });
+        let mut cache = PsfCache::default();
+        let result = prepare_minor_cycle(
+            &completion,
+            &full_plane(&problem),
+            &setup(&problem, None),
+            &mut cache,
+            &WorkerTeam::new(1).expect("team"),
+        )
+        .expect("prepare");
+        let off = cache.summary(0, 1, 0).expect("off-centre summary");
+        assert!(off.off_centre());
+        assert!(
+            (off.sidelobe() - 0.39395368).abs() < 2e-5,
+            "{}",
+            off.sidelobe()
+        );
+        assert!(
+            (result.statistics.psf_sidelobe - 0.39395368).abs() < 2e-5,
+            "{}",
+            result.statistics.psf_sidelobe
+        );
+    }
+}
+
 fn automatic_plan(
     problem: &CompiledProblem,
     minimum_beam_fraction: f64,

@@ -17,6 +17,7 @@ pub struct PsfSummary {
     sidelobe: f64,
     clark: ClarkPatch,
     off_centre: bool,
+    unsettled_beam: bool,
 }
 
 /// Clark's PSF patch (`SDAlgorithmClarkClean2`): the square the active
@@ -112,6 +113,7 @@ impl PsfSummary {
                 exterior_sidelobe: 0.0,
             },
             off_centre: false,
+            unsettled_beam: false,
         }
     }
 
@@ -166,6 +168,7 @@ impl PsfSummary {
             sidelobe,
             clark: ClarkPatch::new(psf, shape, beam),
             off_centre,
+            unsettled_beam: off_centre && saved_beam.is_none(),
         })
     }
 
@@ -187,6 +190,35 @@ impl PsfSummary {
             clark: ClarkPatch::new(psf, shape, beam),
             ..self
         }
+    }
+
+    /// Whether the off-centre plane still needs its domain's beam.
+    #[must_use]
+    pub const fn needs_domain_beam(&self) -> bool {
+        self.unsettled_beam
+    }
+
+    /// Set the domain's beam and remeasure an off-centre PSF's sidelobe.
+    /// `cell` gives the direction increments in first-axis pixels.
+    ///
+    /// # Errors
+    ///
+    /// The PSF shape or peak is invalid.
+    pub fn settle_domain_beam(
+        self,
+        psf: &[f64],
+        shape: PlaneShape,
+        beam: RestoringBeam,
+        cell: [f64; 2],
+    ) -> Result<Self, Error> {
+        let single = psf.iter().map(|value| *value as f32).collect::<Vec<_>>();
+        let sidelobe =
+            fitted_psf_sidelobe_fraction_with_cell(&single, [shape.nx, shape.ny], beam, cell)?;
+        Ok(Self {
+            sidelobe,
+            unsettled_beam: false,
+            ..self.with_domain_beam(psf, shape, beam)
+        })
     }
 
     /// Storage index of the PSF peak.
@@ -331,6 +363,25 @@ mod tests {
             "{beam:?}"
         );
         assert!(summary.sidelobe() < 0.03, "{}", summary.sidelobe());
+    }
+    /// A domain beam's Gaussian is evaluated using both pixel increments.
+    #[test]
+    fn an_off_centre_domain_beam_uses_the_actual_pixel_aspect_ratio() {
+        let shape = PlaneShape::new(64, 64);
+        let mut psf = vec![0.0; shape.len()];
+        psf[32 * 64 + 15] = 1.0;
+        let beam = RestoringBeam::new(40.0, 40.0, 0.0).unwrap();
+        let summary = PsfSummary::new(&psf, shape)
+            .unwrap()
+            .settle_domain_beam(&psf, shape, beam, [1.0, 2.0])
+            .unwrap();
+        let expected = 1.0 - (-4.0 * std::f64::consts::LN_2 * (34.0_f64 / 40.0).powi(2)).exp();
+        assert!(
+            (summary.sidelobe() - expected).abs() < 1e-6,
+            "{}",
+            summary.sidelobe()
+        );
+        assert!(!summary.needs_domain_beam());
     }
     /// CASA subtracts the saved beam at the image centre even when the PSF
     /// peaks outside the inner quarter (CASA 6.7.6.14: 0.39395368).

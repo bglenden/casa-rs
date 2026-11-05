@@ -1,0 +1,44 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "count": 0,
+      "select": [],
+      "result": [],
+      "dtype": "int64",
+      "shape": [
+        0
+      ]
+    },
+    {
+      "count": 1,
+      "select": [],
+      "result": [],
+      "dtype": "int64",
+      "shape": [
+        0
+      ]
+    },
+    {
+      "count": 3,
+      "select": [],
+      "result": [],
+      "dtype": "int64",
+      "shape": [
+        0
+      ]
+    },
+    {
+      "count": 3,
+      "select": [
+        0,
+        2
+      ],
+      "result": [],
+      "dtype": "int64",
+      "shape": [
+        0
+      ]
+    }
+  ]
+}

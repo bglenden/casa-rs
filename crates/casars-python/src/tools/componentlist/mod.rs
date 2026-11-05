@@ -26,6 +26,7 @@
 
 mod add;
 mod ops;
+mod selection;
 pub(crate) mod surface;
 
 use std::ffi::CString;
@@ -346,10 +347,19 @@ impl PyComponentList {
         stub("convertshape")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Deselect component indices.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn deselect(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("deselect")
+    fn deselect(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let (indices, pending) = selection::indices(which)?;
+        let result = self.call(py, move |state, lines| {
+            state.set_selection(&indices, false, lines)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_deselect> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Release the list (writing a list opened for update or renamed) and
@@ -535,10 +545,15 @@ impl PyComponentList {
         self.refdir_placeholder(py, which, unit.as_ref(), precision.as_ref(), "getrefdirra")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// The component's shape parameters and their current units.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn getshape(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getshape")
+    fn getshape(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let which = match which.extract::<i64>() {
+            Ok(index) => i64::from(index as i32),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => -1,
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        self.call(py, move |state, _| state.getshape(which))
     }
 
     /// Component `which`'s spectral model, as its `toRecord` writes it.
@@ -555,10 +570,16 @@ impl PyComponentList {
         stub("haskeyword")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns an empty int64 array.
     #[pyo3(signature = (), text_signature = "($self)")]
-    fn indices(&self) -> PyResult<Py<PyAny>> {
-        stub("indices")
+    fn indices(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, lines| {
+            lines.push(LogLine::warning("indices not implemented yet"));
+            Ok(CasaValue::Ints {
+                shape: vec![0],
+                values: Vec::new(),
+            })
+        })
     }
 
     /// Not yet implemented in casa-rs.
@@ -567,10 +588,24 @@ impl PyComponentList {
         stub("iscomponentlist")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Check whether the selected components have physically possible fluxes.
     #[pyo3(signature = (which = None), text_signature = "($self, which=[-1])")]
-    fn isphysical(&self, which: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("isphysical")
+    fn isphysical(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] which: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let (indices, pending) = match which {
+            Some(which) => selection::indices(&which)?,
+            None => (vec![-1], false),
+        };
+        let result = self.call(py, move |state, lines| state.is_physical(&indices, lines))?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_isphysical> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// The number of components.
@@ -666,16 +701,25 @@ impl PyComponentList {
         stub("sample")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Select component indices.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn select(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("select")
+    fn select(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let (indices, pending) = selection::indices(which)?;
+        let result = self.call(py, move |state, lines| {
+            state.set_selection(&indices, true, lines)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_select> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
-    /// Not yet implemented in casa-rs.
+    /// The selected component indices in ascending order.
     #[pyo3(signature = (), text_signature = "($self)")]
-    fn selected(&self) -> PyResult<Py<PyAny>> {
-        stub("selected")
+    fn selected(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, _| Ok(state.selected()))
     }
 
     /// Not yet implemented in casa-rs.

@@ -19,17 +19,19 @@
 //! - a list opened read-only (`nomodify=True`) is never written, though it
 //!   can be changed in memory.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_components::{ComponentList, ComponentListError, SkyComponent};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
+use casa_types::quanta::Unit;
 use casa_types::{RecordValue, Value};
 
 use super::add::AddComponent;
 use crate::convert::value::CasaValue;
-use crate::convert::{ConvertError, ConvertResult};
+use crate::convert::{ConvertError, ConvertResult, quantity};
 use crate::tools::LogLine;
 
 /// The table a list is attached to.
@@ -46,6 +48,8 @@ struct Attached {
 #[derive(Default)]
 pub(crate) struct State {
     list: ComponentList,
+    selection: std::collections::BTreeSet<i64>,
+    shape_units: BTreeMap<usize, [Unit; 3]>,
     table: Option<Attached>,
     measures: Option<Arc<dyn MeasuresProvider>>,
 }
@@ -71,6 +75,8 @@ impl State {
     /// The table could not be rewritten; the state is reset all the same.
     pub(crate) fn release(&mut self) -> Result<(), String> {
         let list = std::mem::take(&mut self.list);
+        self.selection.clear();
+        self.shape_units.clear();
         match self.table.take() {
             Some(Attached {
                 path,
@@ -165,6 +171,78 @@ impl State {
         Ok(true)
     }
 
+    /// Check the selected components using CASA's Stokes physicality test.
+    pub(crate) fn is_physical(
+        &self,
+        indices: &[i64],
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<CasaValue> {
+        if indices == [-1] && self.list.is_empty() {
+            return Err(ConvertError::runtime(
+                "Cannot check all components of an empty list (CASA exits: #1158)",
+            ));
+        }
+        let indices = if indices == [-1] {
+            (0..self.length()).collect::<Vec<_>>()
+        } else {
+            indices.to_vec()
+        };
+        if indices
+            .iter()
+            .any(|&index| index < 0 || index >= self.length())
+        {
+            let message = "Index out of range.\nA component number is less than one or greater than the list length\nNot checking any components";
+            lines.push(LogLine::error(message));
+            return Err(ConvertError::runtime(message));
+        }
+        Ok(CasaValue::Bool(indices.into_iter().all(|index| {
+            self.list
+                .get(index as usize)
+                .is_some_and(|component| component.flux().is_physical())
+        })))
+    }
+
+    /// Change selection only after validating the complete request.
+    pub(crate) fn set_selection(
+        &mut self,
+        indices: &[i64],
+        select: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<CasaValue> {
+        if indices == [-1] {
+            if select {
+                self.selection = (0..self.length()).collect();
+            } else {
+                self.selection.clear();
+            }
+        } else {
+            if indices.iter().any(|&i| i < 0 || i >= self.length()) {
+                let action = if select { "selected" } else { "deselected" };
+                let message = format!(
+                    "Index out of range.\nA component number is less than one or greater than the list length\nNo components {action}"
+                );
+                lines.push(LogLine::error(message.clone()));
+                return Err(ConvertError::runtime(message));
+            }
+            for &index in indices {
+                if select {
+                    self.selection.insert(index);
+                } else {
+                    self.selection.remove(&index);
+                }
+            }
+        }
+        Ok(CasaValue::Bool(true))
+    }
+
+    /// The selected indices in CASA's integer-array representation.
+    pub(crate) fn selected(&self) -> CasaValue {
+        CasaValue::Ints {
+            shape: vec![self.selection.len()],
+            values: self.selection.iter().copied().collect(),
+        }
+    }
+
     /// `length()`.
     pub(crate) fn length(&self) -> i64 {
         i64::try_from(self.list.len()).unwrap_or(i64::MAX)
@@ -179,6 +257,14 @@ impl State {
     ) -> ConvertResult<bool> {
         let measures = self.measures()?;
         let component = request.component(&measures, lines)?;
+        if component.shape().kind().axes().is_some() {
+            let units = [
+                quantity(&request.majoraxis)?.unit().clone(),
+                quantity(&request.minoraxis)?.unit().clone(),
+                quantity(&request.positionangle)?.unit().clone(),
+            ];
+            self.shape_units.insert(self.list.len(), units);
+        }
         self.list.push(component);
         Ok(true)
     }
@@ -213,6 +299,35 @@ impl State {
             .ok()
             .and_then(|index| self.list.get(index))
             .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))
+    }
+
+    /// `getshape(which)`: axes retain their in-memory units until reopened.
+    pub(crate) fn getshape(&self, which: i64) -> ConvertResult<CasaValue> {
+        let component = self.unchecked(which)?;
+        let Some((axes, errors)) = component.shape().kind().axes() else {
+            return Ok(CasaValue::empty_record());
+        };
+        let defaults = [
+            Unit::new("arcmin").expect("known unit"),
+            Unit::new("arcmin").expect("known unit"),
+            Unit::new("deg").expect("known unit"),
+        ];
+        let units = self.shape_units.get(&(which as usize)).unwrap_or(&defaults);
+        let axis = |value: f64, unit: &Unit| {
+            CasaValue::record([
+                ("unit", CasaValue::Text(unit.name().to_string())),
+                ("value", CasaValue::Float(value / unit.val().factor)),
+            ])
+        };
+        let rad = Unit::new("rad").expect("known unit");
+        Ok(CasaValue::record([
+            ("majoraxis", axis(axes.major_axis(), &units[0])),
+            ("minoraxis", axis(axes.minor_axis(), &units[1])),
+            ("positionangle", axis(axes.position_angle(), &units[2])),
+            ("majoraxiserror", axis(errors.major_axis, &rad)),
+            ("minoraxiserror", axis(errors.minor_axis, &rad)),
+            ("positionangleerror", axis(errors.position_angle, &rad)),
+        ]))
     }
 
     /// `getrefdir(which)`: the reference direction's `MeasureHolder` record.
