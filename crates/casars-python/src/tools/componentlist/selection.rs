@@ -57,7 +57,7 @@ fn append(
         values.push(0);
     } else if value.is_instance_of::<PyString>() {
         let string = value.extract::<String>()?;
-        values.push(number_prefix(&string) as i64 as i32 as i64);
+        values.push(i64::from(number_prefix(&string) as i32));
     } else if value.is_instance_of::<PyInt>() {
         match value.extract::<i64>() {
             Ok(number) => values.push(i64::from(number as i32)),
@@ -84,56 +84,22 @@ fn append(
 }
 
 /// casatools reads numeric prefixes in string elements, defaulting to zero.
-fn number_prefix(value: &str) -> f64 {
+fn number_prefix(value: &str) -> i64 {
     let value = value.trim_start();
     let bytes = value.as_bytes();
     let mut i = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
-    let sign = if bytes.first() == Some(&b'-') {
-        -1.0
-    } else {
-        1.0
-    };
-    let rest = &value[i..];
-    if rest
-        .get(..3)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("inf"))
-    {
-        return sign * f64::INFINITY;
-    }
-    if rest
-        .get(..3)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("nan"))
-    {
-        return f64::NAN;
-    }
-    let mut digits = 0;
+    let digits = i;
     while bytes.get(i).is_some_and(u8::is_ascii_digit) {
         i += 1;
-        digits += 1;
     }
-    if bytes.get(i) == Some(&b'.') {
-        i += 1;
-        while bytes.get(i).is_some_and(u8::is_ascii_digit) {
-            i += 1;
-            digits += 1;
-        }
+    if i == digits {
+        return 0;
     }
-    if digits == 0 {
-        return 0.0;
-    }
-    let mut end = i;
-    if matches!(bytes.get(i), Some(b'e' | b'E')) {
-        i += 1;
-        if matches!(bytes.get(i), Some(b'+' | b'-')) {
-            i += 1;
+    value[..i].parse::<i64>().unwrap_or_else(|_| {
+        if bytes.first() == Some(&b'-') {
+            i64::MIN
+        } else {
+            i64::MAX
         }
-        let exponent_start = i;
-        while bytes.get(i).is_some_and(u8::is_ascii_digit) {
-            i += 1;
-        }
-        if i > exponent_start {
-            end = i;
-        }
-    }
-    value[..end].parse::<f64>().unwrap_or(0.0)
+    })
 }
