@@ -156,7 +156,7 @@ const METHODS: &[Method] = &[
         R::Text,
         Yes,
     ),
-    of_one("getrefdirframe", R::Text, No),
+    of_one("getrefdirframe", R::Text, Yes),
     method(
         "getrefdirra",
         &[
