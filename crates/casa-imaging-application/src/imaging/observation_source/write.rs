@@ -320,7 +320,7 @@ impl<'a> BatchWriter<'a> {
             transform,
             write_back.model,
             write_back.corrected,
-            !write_back.by_band,
+            false,
         )
     }
 

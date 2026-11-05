@@ -511,7 +511,7 @@ impl<'a> ObservationSource<'a> {
     ) -> Result<(Traversal<'a>, Layout), SourceError> {
         let route: &'a BatchRoute = self.route;
         let single_time =
-            values && !prediction && self.packer.problem.visibility_transform().is_some();
+            (values || prediction) && self.packer.problem.visibility_transform().is_some();
         let (request, layout) = route.request(key, window, values, prediction, single_time)?;
         let traversal = route.stores[key.store].observation().bind_read(&request)?;
         if writing && let Some(write_back) = route.write_back() {
@@ -606,7 +606,7 @@ impl<'a> ObservationSource<'a> {
             } else {
                 None
             };
-            let rule = if stream.values && !stream.prediction {
+            let rule = if stream.values || stream.prediction {
                 self.packer
                     .problem
                     .visibility_transform()

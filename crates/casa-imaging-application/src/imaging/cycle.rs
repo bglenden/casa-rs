@@ -554,6 +554,7 @@ fn predict_final_model(
         .as_ref()
         .is_some_and(VisibilityWriteTarget::predicts_final_model)
     {
+        let plan = prediction::admit_model(run)?;
         let corrected = if run
             .visibility_write
             .as_ref()
@@ -563,7 +564,7 @@ fn predict_final_model(
         } else {
             0
         };
-        let model = prediction::write_model(run, outcome.scientific.final_model())?;
+        let model = prediction::write_model(run, outcome.scientific.final_model(), plan)?;
         outcome.visibility_products = Some(VisibilityProductCompletion::new(corrected + model));
         return Ok(outcome);
     }

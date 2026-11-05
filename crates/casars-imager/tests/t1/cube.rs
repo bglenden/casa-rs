@@ -1271,6 +1271,94 @@ fn continuum_fit_only_channels_do_not_enter_tuned_gridding_rows() {
     );
 }
 
+/// A continuum fit may read a wider union than its output. Both the tuned
+/// traversal and the final predictor must physically use the output roles.
+#[test]
+fn final_prediction_excludes_continuum_fit_only_channels() {
+    let observation = drifting_track_with_width(20_000.0);
+    let request = observation.request(
+        "fitted-prediction-layout",
+        json!({
+            "specmode": "cube", "spw": "0", "start": 20, "width": 1, "nchan": 2,
+            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn", "fitspw": "0:0;39",
+        }),
+    );
+    let context = super::fixture::run_context(&request);
+    let mut tuned = casa_imaging_application::source_law::gridding_layouts(&request, &context)
+        .expect("the tuned gridding traversal");
+    let mut predicted =
+        casa_imaging_application::source_law::prediction_layouts(&request, &context)
+            .expect("the final prediction traversal")
+            .into_iter()
+            .map(|layout| layout.channels)
+            .collect::<Vec<_>>();
+    tuned.sort();
+    predicted.sort();
+    assert_eq!(
+        predicted, tuned,
+        "prediction must not interpolate through fit-only or unrelated channels"
+    );
+    assert!(
+        predicted
+            .iter()
+            .all(|channels| !channels.contains(&0) && !channels.contains(&39))
+    );
+}
+
+/// A corrected-only final major cycle uses the same tuned rows as a run
+/// without a visibility write, even when nsigma is enabled.
+#[test]
+fn corrected_only_nsigma_uses_the_tuned_continuum_rows() {
+    use casa_ms::MeasurementSet;
+    use casa_tables::ColumnSchema;
+    use casa_types::{ArrayValue, PrimitiveType, Value};
+
+    let observation = drifting_track_with_width(20_000.0);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    let Some(Value::Array(ArrayValue::Complex32(data))) = ms
+        .main_table()
+        .column_accessor("DATA")
+        .unwrap()
+        .get(0)
+        .unwrap()
+        .cloned()
+    else {
+        panic!("DATA is a complex array");
+    };
+    let shape = data.shape().to_vec();
+    ms.main_table_mut()
+        .add_column(
+            ColumnSchema::array_fixed("CORRECTED_DATA", PrimitiveType::Complex32, shape.clone()),
+            Some(Value::Array(ArrayValue::Complex32(ndarray::ArrayD::zeros(
+                shape,
+            )))),
+        )
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let controls = json!({
+        "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 2,
+        "niter": 0, "nsigma": 0.01, "fitspw": "0:0;39",
+    });
+    let ordinary = observation
+        .image("continuum-without-write", controls.clone())
+        .1;
+    let mut corrected_controls = controls;
+    corrected_controls["save_continuum_residual"] = json!(true);
+    let corrected = observation
+        .image("continuum-corrected-only", corrected_controls)
+        .1;
+    assert_eq!(
+        corrected.get(".sumwt").channel_values(),
+        ordinary.get(".sumwt").channel_values(),
+        "the visibility writer must not select the parent prediction source",
+    );
+    assert_eq!(
+        corrected.get(".residual").values(),
+        ordinary.get(".residual").values()
+    );
+}
+
 /// `predictModel` visits the whole parent selection and writes zero where
 /// the cube has no spectral support, rather than leaving the initial model.
 #[test]

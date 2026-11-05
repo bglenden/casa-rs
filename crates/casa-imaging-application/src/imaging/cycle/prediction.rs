@@ -5,13 +5,13 @@ use casa_imaging_runtime::pass::{BlockPredictor, NativeBlock, PredictionDomain, 
 use num_complex::Complex32;
 
 use super::{
-    ImagingError, ModeSet, ModelGeneration, PassError, PlaneRange, Residency, Run, prepare_model,
+    Admitted, ImagingError, ModeSet, ModelGeneration, PassError, PassPlan, PlaneRange, Residency,
+    Run, prepare_model,
 };
 
 /// Persist continuum-corrected values on the tuned fit/output selection.
 pub(super) fn write_corrected(run: &mut Run<'_>) -> Result<u64, ImagingError> {
     let target = run.visibility_write.expect("a split write has a target");
-    let _charge = run.admit("corrected data write", run.visibility_write_bytes)?;
     let mut writer = target
         .begin_corrected(run.problem.visibility_transform())
         .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?;
@@ -41,10 +41,10 @@ pub(super) fn write_corrected(run: &mut Run<'_>) -> Result<u64, ImagingError> {
         .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))
 }
 
-/// Predict the final model on the parent selection without changing the
-/// residual or its normal state.
-pub(super) fn write_model(run: &mut Run<'_>, model: &ModelGeneration) -> Result<u64, ImagingError> {
-    let target = run.visibility_write.expect("a split write has a target");
+/// Reserve the final predictor and writer before either split traversal
+/// can change the observation. The same reservation covers the corrected
+/// traversal, whose source and writer are a subset of this demand.
+pub(super) fn admit_model(run: &Run<'_>) -> Result<Admitted<PassPlan>, ImagingError> {
     let team = run.teams.streaming();
     let shape = run.source.maximum_block();
     let predictor_bytes = BlockPredictor::bytes_for(
@@ -66,6 +66,19 @@ pub(super) fn write_model(run: &mut Run<'_>, model: &ModelGeneration) -> Result<
     if plan.value.residency != Residency::All {
         return Err(ImagingError::Pass(PassError::VisibilityWriteWaves));
     }
+    Ok(plan)
+}
+
+/// Predict the final model on the parent selection without changing the
+/// residual or its normal state, retaining its earlier admission.
+pub(super) fn write_model(
+    run: &mut Run<'_>,
+    model: &ModelGeneration,
+    _plan: Admitted<PassPlan>,
+) -> Result<u64, ImagingError> {
+    let target = run.visibility_write.expect("a split write has a target");
+    let team = run.teams.streaming();
+    let shape = run.source.maximum_block();
     let planes = PlaneRange::new(0, run.domains[0].operator.basis().planes());
     let models = run
         .domains
