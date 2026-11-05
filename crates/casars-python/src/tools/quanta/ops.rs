@@ -275,11 +275,68 @@ pub(super) fn sqrt(value: &Variant) -> ConvertResult<CasaValue> {
     Ok(record(&Quantity::with_unit(result, result_unit)))
 }
 
+/// `qa.pow(v, a)`: CASA multiplies or divides repeatedly in the original unit.
+pub(super) fn power(value: &Variant, power: i32) -> ConvertResult<CasaValue> {
+    let quantity = quantity(value)?;
+    if power.unsigned_abs() >= 100 {
+        return Err(ConvertError::runtime("Quantum::pow exponent too large"));
+    }
+    let number = quantity.value();
+    // This initialization deliberately turns infinities into NaN, as CASA does.
+    let mut result = number * 0.0 + 1.0;
+    if power >= 0 {
+        for _ in 0..power {
+            result *= number;
+        }
+    } else {
+        for _ in power..0 {
+            result /= number;
+        }
+    }
+    let unit = if power == 0 || quantity.unit().name().is_empty() {
+        String::new()
+    } else {
+        format!("({}){power}", quantity.unit().name())
+    };
+    Ok(CasaValue::record([
+        ("unit", CasaValue::Text(unit)),
+        ("value", CasaValue::Float(result)),
+    ]))
+}
+
 /// `qa.compare(v, a)`: whether the units have the same dimensions.
 pub(super) fn compare(left: &Variant, right: &Variant) -> ConvertResult<CasaValue> {
     Ok(CasaValue::Bool(
         quantity(left)?.unit().val().dim == quantity(right)?.unit().val().dim,
     ))
+}
+
+/// The six scalar relational operators convert the right value into the left
+/// unit. Equality allows unlike dimensions; ordered comparisons reject them.
+pub(super) fn relational(left: &Variant, right: &Variant, op: &str) -> ConvertResult<CasaValue> {
+    let (left, right) = (quantity(left)?, quantity(right)?);
+    let conformant = left.unit().val().dim == right.unit().val().dim;
+    if !conformant && !matches!(op, "eq" | "ne") {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::operator< unequal units '{}, '{}'",
+            left.unit().name(),
+            right.unit().name()
+        )));
+    }
+    let scaled = right.value() * (right.unit().val().factor / left.unit().val().factor);
+    let order = left.value().partial_cmp(&scaled);
+    let equal = conformant && order == Some(std::cmp::Ordering::Equal);
+    let result = match op {
+        "eq" => equal,
+        "ne" => !equal,
+        "lt" => order == Some(std::cmp::Ordering::Less),
+        "gt" => order == Some(std::cmp::Ordering::Greater),
+        // casacore defines <= as !(>) and >= as !(<), including for NaN.
+        "le" => order != Some(std::cmp::Ordering::Greater),
+        "ge" => order != Some(std::cmp::Ordering::Less),
+        _ => unreachable!("unknown quantity comparison"),
+    };
+    Ok(CasaValue::Bool(result))
 }
 
 /// `qa.checkfreq(cm)`: the dimensions accepted by casacore's MVFrequency.
