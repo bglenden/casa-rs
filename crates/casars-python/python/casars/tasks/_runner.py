@@ -77,7 +77,14 @@ class TaskParameterError(ValueError):
 
     def __init__(self, completion: TaskCompletion) -> None:
         self.completion = completion
-        super().__init__(completion.describe())
+        message = completion.message or ""
+        # The native front end marks the narrow CASA-compatible missing-path
+        # case with its exact wording; retain it for scripts that match CASA.
+        prefix = f"the {completion.parameter} parameter must be a path that exists ('"
+        if completion.parameter and message.startswith(prefix) and message.endswith("' does not exist)"):
+            super().__init__(message)
+        else:
+            super().__init__(completion.describe())
 
 
 @dataclass(frozen=True, slots=True)
