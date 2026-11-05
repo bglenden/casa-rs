@@ -9,7 +9,7 @@ config.measures_auto_update = False
 from casatools import componentlist, version_string  # noqa: E402
 
 FLUXES = [1.0, -1.0, 0.0, [1.0, 1.0, 0.0, 0.0], [1.0, 2.0, 0.0, 0.0], [1.0, 0.5, 0.5, 0.5]]
-INDICES = [[0], [1], [2], [3], [4], [5], [-1], [], [0, 1], [0, 4], [4, 0], [99], [-2], [-1, 0], 0, 1.9, "0"]
+INDICES = [[0], [1], [2], [3], [4], [5], [-1], [], [0, 1], [0, 4], [4, 0], [99], [-2], [-1, 0], 0, 1.9, "0", None]
 cl = componentlist()
 empty_vector = cl.isphysical([])
 for flux in FLUXES:

@@ -20,7 +20,7 @@ def test_isphysical_matches_casa() -> None:
     for case in fixture["cases"]:
         if "error" in case:
             expected = case["error"]
-            error_type = {"RuntimeError": RuntimeError, "TypeError": TypeError}[expected["type"]]
+            error_type = {"RuntimeError": RuntimeError, "TypeError": TypeError, "SystemError": SystemError}[expected["type"]]
             with pytest.raises(error_type) as error:
                 cl.isphysical(case["which"])
             assert expected["message"] in str(error.value)

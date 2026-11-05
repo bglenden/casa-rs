@@ -134,6 +134,13 @@
         "type": "TypeError",
         "message": "argument _which must not be a string"
       }
+    },
+    {
+      "which": null,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_isphysical> returned a result with an exception set"
+      }
     }
   ]
 }
