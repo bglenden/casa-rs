@@ -128,7 +128,7 @@ fn bary_cube_uses_the_lsrk_band_and_bary_plane_frequencies() {
     assert_eq!(mask[(50, 50)], 1.0);
     assert_eq!(mask[(75, 50)], 0.0);
     let reference = [
-        (0.9846422076_f32, 0.9419874549_f32),
+        (0.9846422076_f64, 0.9419874549_f64),
         (0.9830494523, 0.9362540245),
         (0.9814318419, 0.9301775098),
         (0.9797421098, 0.9238516092),
@@ -141,12 +141,12 @@ fn bary_cube_uses_the_lsrk_band_and_bary_plane_frequencies() {
     for (channel, (near, far)) in reference.into_iter().enumerate() {
         let plane = pb.plane(channel);
         assert!(
-            (plane[(75, 50)] - near).abs() < 1e-5,
+            (f64::from(plane[(75, 50)]) - near).abs() < 1e-5,
             "channel {channel}: near {} vs {near}",
             plane[(75, 50)]
         );
         assert!(
-            (plane[(99, 50)] - far).abs() < 1e-5,
+            (f64::from(plane[(99, 50)]) - far).abs() < 1e-5,
             "channel {channel}: far {} vs {far}",
             plane[(99, 50)]
         );
