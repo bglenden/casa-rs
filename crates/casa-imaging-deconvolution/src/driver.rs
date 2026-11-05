@@ -32,8 +32,8 @@ pub struct PlaneOutcome {
     pub components: usize,
     /// Sum of the absolute component fluxes over every term.
     pub absolute_flux: f64,
-    /// Sum of the components' signed first-term fluxes: what the cycle adds
-    /// to the model's flux (CASA's `modelFlux`).
+    /// Signed model flux the solver reports (CASA's `modelFlux`): the first
+    /// Taylor term, or the sum of a joint polarization component.
     pub model_flux: f64,
     /// The peak residual on entry.
     pub start_peak: f64,
@@ -136,7 +136,10 @@ pub fn run_plane<S: Solver>(
         end_residual: Vec::new(),
     };
     let mut stop = control.stop(start_peak);
-    if view.support.is_empty() || stop.is_some() {
+    if stop.is_some()
+        || (view.support.is_empty()
+            && !(statistics.mask_sum > 0 && solver.runs_with_empty_support()))
+    {
         outcome.stop = stop.unwrap_or(PlaneStop::ZeroMask);
         return Ok(outcome);
     }
@@ -207,7 +210,7 @@ fn run_step<S: Solver>(
                 solver.accept(&mut state, view, residual, candidate, gain, &mut delta)?;
                 let Candidate::Pixel { index, scale, .. } = candidate;
                 outcome.absolute_flux += fluxes.iter().map(|flux| flux.abs()).sum::<f64>();
-                outcome.model_flux += fluxes.first().copied().unwrap_or(0.0);
+                outcome.model_flux += solver.reported_flux(&fluxes);
                 for (term, &flux) in fluxes.iter().enumerate() {
                     if outcome.trace.len() < trace {
                         outcome.trace.push(Component {

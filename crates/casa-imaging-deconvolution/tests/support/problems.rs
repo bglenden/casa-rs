@@ -127,6 +127,30 @@ pub fn reconstruction_problem_of_shape(
     algorithm: ReconstructionAlgorithm,
     controls: ReconstructionControls,
 ) -> CompiledProblem {
+    reconstruction_problem_of_shape_and_polarizations(
+        observation,
+        [width, height],
+        channels,
+        domains,
+        basis,
+        algorithm,
+        controls,
+        vec![PolarizationCoordinate::StokesI],
+    )
+}
+
+/// As `reconstruction_problem_of_shape`, with an explicit Stokes axis.
+#[allow(clippy::too_many_arguments)]
+pub fn reconstruction_problem_of_shape_and_polarizations(
+    observation: u8,
+    [width, height]: [usize; 2],
+    channels: usize,
+    domains: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+    polarizations: Vec<PolarizationCoordinate>,
+) -> CompiledProblem {
     let centre = [width as f64 / 2.0, height as f64 / 2.0];
     let direction = |ordinal: usize| {
         DirectionCoordinateSpec::new(
@@ -196,7 +220,7 @@ pub fn reconstruction_problem_of_shape(
                 basis,
                 algorithm,
                 controls,
-                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+                PolarizationContract::new(polarizations),
             ),
             WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
             ProductRequirements::new(

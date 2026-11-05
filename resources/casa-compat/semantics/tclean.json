@@ -814,13 +814,14 @@
     },
     "fullsummary": {
       "status": "Implemented",
-      "scope": "Every plane of every minor cycle has its own rows, in CASA's order of field, channel and Stokes: iterations through the planes in sequence (SDAlgorithmBase::deconvolve, addSummaryMinor), peaks inside the mask and over the plane's pixels, flux from the start model, mask sum and stop code. A dirty run reads its products as construct_summary_minor does. A plane with no data under nsigma can differ in its stop code, where CASA's checkStop reads a threshold left by an earlier plane or cycle. deconvolver='clark' on several Stokes planes has a row per plane, where CASA cleans them jointly (issue 1126).",
+      "scope": "Minor-cycle rows follow CASA's order of field, channel and Stokes, with iteration counts, peaks, start-model flux, mask sum and stop code (SDAlgorithmBase::deconvolve, addSummaryMinor). Clark on two or four Stokes planes cleans them jointly per channel and reports one row for the group. A dirty run reads its products as construct_summary_minor does. A plane with no data under nsigma can differ in its stop code, where CASA's checkStop reads a threshold left by an earlier plane or cycle.",
       "evidence": [
         "signature",
         "reader",
         "returns",
         "scalars-empty-mask",
-        "summary-rows-20261103"
+        "summary-rows-20261103",
+        "joint-clark-20261104"
       ],
       "behaviors": [
         "returns"
@@ -1977,6 +1978,22 @@
         "crates/casars-imager/tests/t1/mtmfs.rs",
         "crates/casa-imaging-products/src/generation.rs",
         "crates/casa-imaging-application/src/availability.rs"
+      ]
+    },
+    "joint-clark-20261104": {
+      "kind": "Joint Clark polarization components, rows and image products against CASA",
+      "state": "measured: five of five I, IV, IQUV and blank-channel cases pass",
+      "source_revision": "7a2715adc02474236e050945f3a01dce97129983",
+      "revision": "fd5042ac44d6123b477f5887c341d039b10c76a7",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-joint-clark-cases.json --backend cpu --precision f64 with staged casatestdata",
+      "receipt": "resources/casa-compat/evidence/tclean-joint-clark-1140-20261104.json",
+      "scope": "Clark selects and updates a joint polarization vector in each channel, including blank channels and blank polarizations. Five CASA-paired cases pass products, selected scalars and iteration counts; synthetic restarts check component selection, masks and start-model flux. A fresh T1.5 Clark case and representative T2 numerical comparison pass; the T2 raw beam metadata differs from CASA within measured tolerances and is unchanged from the parent. Issue 1140 records the review and mutation proofs.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-joint-clark-1140-20261104.json",
+        "resources/casa-compat/tclean-joint-clark-cases.json",
+        "crates/casa-imaging-deconvolution/src/clark.rs",
+        "crates/casa-imaging-runtime/src/minor/polarized.rs"
       ]
     },
     "summary-rows-20261103": {
