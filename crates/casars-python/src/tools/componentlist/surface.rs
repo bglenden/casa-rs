@@ -257,7 +257,7 @@ const METHODS: &[Method] = &[
         "setlabel",
         &[WHICH, param("value", K::Text, Required), LOG],
         R::Bool,
-        No,
+        Yes,
     ),
     method(
         "setrefdir",
