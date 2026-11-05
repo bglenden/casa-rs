@@ -897,6 +897,71 @@ fn an_end_point_sample_takes_its_own_channel_value() {
     }
 }
 
+/// The source and output frame conversions can round a shared edge to
+/// adjacent representable frequencies. Retain it without extrapolating an
+/// actually out-of-band channel; exercise both spectral orders and kernels.
+#[test]
+fn converted_edge_channels_survive_one_rounding_step() {
+    for ascending in [true, false] {
+        let first = if ascending { 1.0e9_f64 } else { 1.2e9_f64 };
+        let increment = if ascending { 50.0e6 } else { -50.0e6 };
+        let axis = SpectralAxis::new(first, increment, 5).expect("axis");
+        for kernel in [SpectralKernel::Linear, SpectralKernel::Cubic] {
+            let resampler = SpectralResampler::channel_local(axis, kernel);
+            let operator = operator(GridPrecision::F64, resampler.basis(), &XX_YY, &STOKES_I);
+            for near in [true, false] {
+                let mut frequencies = (0..5)
+                    .map(|channel| first + f64::from(channel) * increment)
+                    .collect::<Vec<_>>();
+                if ascending {
+                    frequencies[0] = if near {
+                        frequencies[0].next_up()
+                    } else {
+                        frequencies[0] + 1.0
+                    };
+                    frequencies[4] = if near {
+                        frequencies[4].next_down()
+                    } else {
+                        frequencies[4] - 1.0
+                    };
+                } else {
+                    frequencies[0] = if near {
+                        frequencies[0].next_down()
+                    } else {
+                        frequencies[0] - 1.0
+                    };
+                    frequencies[4] = if near {
+                        frequencies[4].next_up()
+                    } else {
+                        frequencies[4] + 1.0
+                    };
+                }
+                let row = NativeRow {
+                    uvw_m: [10.0, 10.0, 0.0],
+                    phase_shift_m: 0.0,
+                    pointing_offset_rad: [0.0; 2],
+                    frequencies_hz: &frequencies,
+                    values: &[Complex32::new(1.0, 0.0); 10],
+                    weights: &[1.0; 10],
+                    flags: &[false; 10],
+                    row_flag: false,
+                    context: context(),
+                };
+                let mut out = SampleBuffer::new(2);
+                resampler
+                    .place(&operator, &natural(), &row, &mut out)
+                    .expect("place");
+                let planes = out.placements().iter().map(|p| p.plane).collect::<Vec<_>>();
+                let expected: &[u32] = if near { &[0, 1, 2, 3, 4] } else { &[1, 2, 3] };
+                assert_eq!(
+                    planes, expected,
+                    "ascending {ascending}, kernel {kernel:?}, near {near}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn a_one_channel_row_bypasses_linear_interpolation() {
     // CASA `interpolateFrequencyTogrid`: with one native channel the row

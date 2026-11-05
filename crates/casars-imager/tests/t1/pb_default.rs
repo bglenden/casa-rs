@@ -272,6 +272,16 @@ fn topo_cube_image_epoch_follows_the_first_selected_physical_row() {
         pb.channel_frequency_hz(0)
     );
     assert!((f64::from(pb.plane(0)[(75, 50)]) - 0.995_832_860_5).abs() < 1e-5);
+    // CASA retains both edge planes after converting the cube to TOPO;
+    // rounding in the conversion must not drop either plane (#1198).
+    let sumwt = products.get(".sumwt");
+    for (channel, expected) in [(0, 20_791.853_515_625), (4, 16_697.605_468_75)] {
+        let actual = f64::from(sumwt.plane(channel)[(0, 0)]);
+        assert!(
+            (actual - expected).abs() / expected < 5e-5,
+            "channel {channel}: sumwt {actual}, CASA {expected}"
+        );
+    }
 }
 
 /// CASA excludes an unselected physical row before choosing the image epoch,
