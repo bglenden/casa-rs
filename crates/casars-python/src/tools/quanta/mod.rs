@@ -362,9 +362,10 @@ impl PyQuanta {
         call(py, || ops::logarithm(&v, "exp"))
     }
 
-    /// Not yet implemented in casa-rs.
-    fn fits(&self) -> PyResult<Py<PyAny>> {
-        stub("fits")
+    /// Register CASA's process-wide FITS unit aliases.
+    fn fits(&self) -> bool {
+        casa_types::quanta::registry::global_registry().add_fits_units();
+        true
     }
 
     /// Round a scalar quantity downward in its own unit.

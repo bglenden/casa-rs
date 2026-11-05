@@ -39,19 +39,27 @@ pub fn parse_unit(input: &str) -> Result<UnitVal, UnitError> {
         return Ok(val);
     }
 
-    let bytes = input.as_bytes();
-    let mut pos = 0;
-    let result = parse_expr(bytes, &mut pos)?;
-
-    if pos != bytes.len() {
-        return Err(UnitError::InvalidUnit {
-            input: input.to_owned(),
-        });
+    loop {
+        // A single expression can contain several `S` fields. If FITS is
+        // installed during parsing, retry rather than return a mixture of
+        // siemens and seconds. Registration can occur only once.
+        let fits_enabled = reg.cache_fits_state(input);
+        let bytes = input.as_bytes();
+        let mut pos = 0;
+        let result = parse_expr(bytes, &mut pos);
+        if fits_enabled != reg.cache_fits_state(input) {
+            continue;
+        }
+        let result = result?;
+        if pos != bytes.len() {
+            return Err(UnitError::InvalidUnit {
+                input: input.to_owned(),
+            });
+        }
+        // A late cache write retains the state under which parsing began.
+        reg.cache_put_at_fits_state(input, result, fits_enabled);
+        return Ok(result);
     }
-
-    // Cache the result.
-    reg.cache_put(input, result);
-    Ok(result)
 }
 
 /// Parse a full expression: sequence of terms separated by `.` or `/`.
