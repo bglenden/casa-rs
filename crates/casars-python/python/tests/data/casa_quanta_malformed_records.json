@@ -1,0 +1,473 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": "bad",
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": "bad",
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": "bad",
+          "unit": "m"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": null,
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": null,
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": null,
+          "unit": "m"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": true,
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": true,
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": true,
+          "unit": "m"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": false,
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": false,
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": false,
+          "unit": "m"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": [],
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": [],
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": [],
+          "unit": "m"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": {},
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": {},
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": {},
+          "unit": "m"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": [
+            1.0
+          ],
+          "unit": "m"
+        }
+      ],
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0
+        ]
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": [
+            1.0
+          ],
+          "unit": "m"
+        }
+      ],
+      "result": "m"
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": [
+            1.0
+          ],
+          "unit": "m"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator+ unequal units 'm, ''"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": [
+            1.0,
+            2.0
+          ],
+          "unit": "m"
+        }
+      ],
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0,
+          2.0
+        ]
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": [
+            1.0,
+            2.0
+          ],
+          "unit": "m"
+        }
+      ],
+      "result": "m"
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": [
+            1.0,
+            2.0
+          ],
+          "unit": "m"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": [
+            [
+              1.0,
+              2.0
+            ]
+          ],
+          "unit": "m"
+        }
+      ],
+      "result": {
+        "unit": "m",
+        "value": [
+          [
+            1.0,
+            2.0
+          ]
+        ]
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": [
+            [
+              1.0,
+              2.0
+            ]
+          ],
+          "unit": "m"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": [
+            [
+              1.0,
+              2.0
+            ]
+          ],
+          "unit": "m"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": 1,
+          "unit": "m"
+        }
+      ],
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": 1,
+          "unit": "m"
+        }
+      ],
+      "result": "m"
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": 1,
+          "unit": "m"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator+ unequal units 'm, ''"
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": 1.5,
+          "unit": "m"
+        }
+      ],
+      "result": {
+        "unit": "m",
+        "value": 1.5
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": 1.5,
+          "unit": "m"
+        }
+      ],
+      "result": "m"
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": 1.5,
+          "unit": "m"
+        },
+        1.0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::operator+ unequal units 'm, ''"
+      }
+    }
+  ]
+}
