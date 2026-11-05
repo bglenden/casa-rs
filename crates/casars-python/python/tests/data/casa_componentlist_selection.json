@@ -177,6 +177,44 @@
     {
       "method": "select",
       "input": [
+        "3xyz"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Index out of range."
+      },
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        "-1abc"
+      ],
+      "result": true,
+      "selected": [
+        0,
+        1,
+        2
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
+        "1e-3x"
+      ],
+      "result": true,
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": [
         null
       ],
       "result": true,
