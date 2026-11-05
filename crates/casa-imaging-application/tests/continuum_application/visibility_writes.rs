@@ -421,3 +421,86 @@ fn a_model_saved_over_partitions_leaves_what_the_uv_range_excludes() {
         "every channel and correlation of each selected row is written"
     );
 }
+
+/// The final parent prediction must retain the channels used for a
+/// continuum fit and persist only output roles, including when `spw` names
+/// channels that are neither fit nor output roles.
+#[test]
+fn final_model_prediction_preserves_continuum_fit_and_residual_writes() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    for spw in ["0:1", "0"] {
+        let root = tempfile::tempdir().expect("test root");
+        let measurement_set = spectral_line_measurement_set(root.path());
+        let reference_root = root.path().join("reference");
+        std::fs::create_dir(&reference_root).expect("reference directory");
+        let reference_ms = spectral_line_measurement_set(&reference_root);
+        let reference_request = continuum_subtracted_line(
+            &reference_ms,
+            &reference_root.join("ordinary-corrected-write"),
+            json!({ "spw": spw, "save_continuum_residual": true, "nsigma": 0.01 }),
+        );
+        execute_writing(&reference_request);
+        let reference = MeasurementSet::open(&reference_ms).expect("reference MS");
+        let reference_column = reference
+            .data_column(VisibilityDataColumn::CorrectedData)
+            .expect("reference CORRECTED_DATA");
+        let ArrayValue::Complex32(reference_corrected) =
+            reference_column.get(0).expect("reference row")
+        else {
+            panic!("reference CORRECTED_DATA is complex")
+        };
+        let reference_corrected = reference_corrected.to_owned();
+        drop(reference_column);
+        drop(reference);
+        let imaging = continuum_subtracted_line(
+            &measurement_set,
+            &root.path().join("final-prediction-continuum"),
+            json!({ "spw": spw, "savemodel": "modelcolumn", "save_continuum_residual": true, "nsigma": 0.01 }),
+        );
+        execute_writing(&imaging);
+        let reopened = MeasurementSet::open(&measurement_set).expect("reopen residual");
+        let column = reopened
+            .data_column(VisibilityDataColumn::CorrectedData)
+            .expect("CORRECTED_DATA");
+        let ArrayValue::Complex32(corrected) = column.get(0).expect("CORRECTED_DATA row") else {
+            panic!("CORRECTED_DATA is complex")
+        };
+        let model_column = reopened
+            .data_column(VisibilityDataColumn::ModelData)
+            .expect("MODEL_DATA");
+        let ArrayValue::Complex32(model) = model_column.get(0).expect("MODEL_DATA row") else {
+            panic!("MODEL_DATA is complex")
+        };
+        for correlation in 0..4 {
+            assert_eq!(
+                corrected[[correlation, 1]],
+                Complex32::new(1.0, 0.0),
+                "{spw}: output role"
+            );
+            assert_ne!(
+                model[[correlation, 1]],
+                Complex32::new(9.0, 9.0),
+                "{spw}: model output"
+            );
+            for channel in 0..4 {
+                assert_eq!(
+                    corrected[[correlation, channel]],
+                    reference_corrected[[correlation, channel]],
+                    "{spw}: corrected output agrees with an ordinary tuned write, channel {channel}"
+                );
+                if spw == "0:1" && channel != 1 {
+                    assert_eq!(
+                        corrected[[correlation, channel]],
+                        Complex32::new(20.0 + (correlation * 4 + channel) as f32, -3.0),
+                        "{spw}: non-output corrected channel {channel}"
+                    );
+                    assert_eq!(
+                        model[[correlation, channel]],
+                        Complex32::new(9.0, 9.0),
+                        "{spw}: non-output model channel {channel}"
+                    );
+                }
+            }
+        }
+    }
+}

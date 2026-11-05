@@ -503,6 +503,11 @@ impl Packer<'_> {
                     if nonfinite_uvw && (reject_flagged || imaged) {
                         return Err(nonfinite_input("uvw", &row.at(None)));
                     }
+                    // A model-only parent traversal does not fit or alter
+                    // continuum data; its writer applies output roles.
+                    if prediction && !values {
+                        return Ok(());
+                    }
                     let Some(rule) = rule else {
                         return Ok(());
                     };

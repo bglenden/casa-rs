@@ -51,6 +51,7 @@ use super::{ImagingError, trace};
 use crate::compile::StartModel;
 
 mod continuation;
+mod prediction;
 mod seeding;
 use crate::restart::ExistingProducts;
 use crate::{AwCatalogDeployment, NativeMinorCycleOutcome, NativeMinorCycleStopReason, PlaneRows};
@@ -548,6 +549,24 @@ fn predict_final_model(
     run: &mut Run<'_>,
     mut outcome: ImagingOutcome,
 ) -> Result<ImagingOutcome, ImagingError> {
+    if run
+        .visibility_write
+        .as_ref()
+        .is_some_and(VisibilityWriteTarget::predicts_final_model)
+    {
+        let corrected = if run
+            .visibility_write
+            .as_ref()
+            .is_some_and(VisibilityWriteTarget::writes_corrected)
+        {
+            prediction::write_corrected(run)?
+        } else {
+            0
+        };
+        let model = prediction::write_model(run, outcome.scientific.final_model())?;
+        outcome.visibility_products = Some(VisibilityProductCompletion::new(corrected + model));
+        return Ok(outcome);
+    }
     let mut major = run.refresh(outcome.scientific, (Vec::new(), Reservation::none()), true)?;
     if outcome.major_cycle_count == 0 {
         let visibility = major.visibility.take();
@@ -882,14 +901,21 @@ impl<'a> Run<'a> {
 
     /// What the pass holds for the visibility write: the write's bytes on
     /// the last pass, which writes.
-    const fn write_bytes(&self, last: bool) -> u64 {
-        if last { self.visibility_write_bytes } else { 0 }
+    fn write_bytes(&self, last: bool) -> u64 {
+        if self.writes(last) {
+            self.visibility_write_bytes
+        } else {
+            0
+        }
     }
 
-    /// Whether the pass writes visibilities: the last pass of a run with a
-    /// visibility write.
-    const fn writes(&self, last: bool) -> bool {
-        last && self.visibility_write.is_some()
+    /// The separate parent prediction and corrected-data traversals run
+    /// after the final tuned major cycle.
+    fn writes(&self, last: bool) -> bool {
+        last && self
+            .visibility_write
+            .as_ref()
+            .is_some_and(|target| !target.predicts_final_model())
     }
 
     /// Admit `memory` bytes for `phase` under the run's policy.
@@ -943,10 +969,11 @@ impl<'a> Run<'a> {
         let residency = plan.residency;
         let initial = modes.psf;
         let transform = self.problem.visibility_transform();
+        let writing = self.writes(last);
         let mut writer = self
             .visibility_write
             .as_ref()
-            .filter(|_| last)
+            .filter(|_| writing)
             .map(|target| target.begin(transform))
             .transpose()
             .map_err(|error| ImagingError::Pass(PassError::VisibilityWrite(error)))?;

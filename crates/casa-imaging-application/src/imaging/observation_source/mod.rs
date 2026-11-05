@@ -212,29 +212,39 @@ impl BatchRoute {
             .try_fold(WriteCharge::default(), |most, key| {
                 let route = &self.stores[key.store];
                 let partition = &route.selection.partitions[key.partition];
-                let prediction = !write_back.by_band() && partition.prediction_channels.is_some();
-                let channels = if prediction {
-                    partition
-                        .prediction_channels
-                        .as_ref()
-                        .expect("prediction selection")
-                        .len()
-                } else {
-                    partition.channels.len()
-                };
-                if channels == 0 {
-                    return Ok(most);
-                }
-                let (request, _) = self.request(key, 0..channels, true, prediction)?;
                 let session = route
                     .session()
                     .ok_or("a writing run's store was opened to read only")?;
-                let bands = if prediction {
-                    partition.prediction_bands.is_some()
-                } else {
-                    partition.frequency_bands.is_some()
-                };
-                Ok::<_, SourceError>(most.most(write_back.write_bytes(session, &request, bands)?))
+                let mut most = most;
+                // A split write may visit the tuned fit/output union and
+                // the parent selection separately. Bound both traversals.
+                for prediction in [false, true] {
+                    if prediction
+                        && (write_back.by_band() || partition.prediction_channels.is_none())
+                    {
+                        continue;
+                    }
+                    let channels = if prediction {
+                        partition
+                            .prediction_channels
+                            .as_ref()
+                            .expect("prediction selection")
+                            .len()
+                    } else {
+                        partition.channels.len()
+                    };
+                    if channels == 0 {
+                        continue;
+                    }
+                    let (request, _) = self.request(key, 0..channels, true, prediction)?;
+                    let bands = if prediction {
+                        partition.prediction_bands.is_some()
+                    } else {
+                        partition.frequency_bands.is_some()
+                    };
+                    most = most.most(write_back.write_bytes(session, &request, bands)?);
+                }
+                Ok::<_, SourceError>(most)
             })?;
         Ok(charge.bytes())
     }
@@ -644,15 +654,16 @@ impl BoundedSource for ObservationSource<'_> {
         self.state = State::Failed;
         let mut windows = self.windows(planes, restrict)?;
         let values = content == SampleContent::Visibilities;
+        let prediction_only = content == SampleContent::Prediction;
         let writing = match self.route.write_back() {
-            Some(write_back) if values => write_back.writing()?,
+            Some(write_back) if values || prediction_only => write_back.writing()?,
             _ => false,
         };
         let prediction = writing
             && self
                 .route
                 .write_back()
-                .is_some_and(|write| !write.by_band());
+                .is_some_and(WriteBack::parent_prediction);
         if prediction {
             for (key, window) in &mut windows {
                 let partition = &self.route.stores[key.store].selection.partitions[key.partition];
@@ -664,7 +675,7 @@ impl BoundedSource for ObservationSource<'_> {
         if values && !writing {
             self.skip_density_only(&mut windows)?;
         }
-        if !values {
+        if content == SampleContent::FlagsAndWeights {
             windows = self.density_windows(windows);
         }
         self.state = State::Streaming(Box::new(Stream {

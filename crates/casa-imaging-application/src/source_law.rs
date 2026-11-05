@@ -211,14 +211,10 @@ pub fn prediction_layouts(
     let predictions =
         vec![Complex32::default(); maximum.rows * maximum.channels() * maximum.correlations];
     let mut writer = VisibilityWriteTarget(&admitted.value)
-        .begin(problem.visibility_transform())
+        .begin_prediction(problem.visibility_transform())
         .map_err(failed)?;
     source
-        .begin(
-            PlaneRange::new(0, count),
-            false,
-            SampleContent::Visibilities,
-        )
+        .begin(PlaneRange::new(0, count), false, SampleContent::Prediction)
         .map_err(failed)?;
     let mut layouts = Vec::new();
     while source.fill(&mut block).map_err(failed)? {
