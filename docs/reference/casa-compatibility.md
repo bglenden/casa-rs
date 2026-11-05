@@ -1581,7 +1581,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 23 | 0 | 38 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 24 | 0 | 37 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1598,7 +1598,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 23, Partial: 0, Not implemented: 38, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 24, Partial: 0, Not implemented: 37, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1634,7 +1634,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `getshape` | `which` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `getspectrum` | `which` | Implemented | A component's spectrum record. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `haskeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `indices` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `indices` |  | Implemented | Matches CASA's placeholder: warns and returns an empty int64 array. | [signature](#componentlist-evidence-signature), [indices-casa](#componentlist-evidence-indices-casa) |
 | `iscomponentlist` | `tool=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `isphysical` | `which=[-1]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `length` |  | Implemented | The number of components. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
@@ -1812,6 +1812,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/componentlist_fluxpol_oracle.py](https://github.com/bglenden/casa-rs/blob/64562dde202cd6201e8205a0bc4ee30e1ef1cf0e/tools/simulation/componentlist_fluxpol_oracle.py)
 - [crates/casars-python/python/tests/data/casa_componentlist_fluxpol.json](https://github.com/bglenden/casa-rs/blob/64562dde202cd6201e8205a0bc4ee30e1ef1cf0e/crates/casars-python/python/tests/data/casa_componentlist_fluxpol.json)
 - [crates/casars-python/python/tests/test_tools_componentlist.py](https://github.com/bglenden/casa-rs/blob/64562dde202cd6201e8205a0bc4ee30e1ef1cf0e/crates/casars-python/python/tests/test_tools_componentlist.py)
+
+<a id="componentlist-evidence-indices-casa"></a>
+##### indices-casa
+
+**CASA-recorded values — measured.** Four CASA 6.7.6-14 states, including a selection, return an empty int64 array and warn. The selection case cannot yet be exercised in casa-rs. componentlist.indices.
+
+- [tools/simulation/componentlist_indices_oracle.py](https://github.com/bglenden/casa-rs/blob/aae16abef1d08ee2d1533befddec5c4e05d8bfb6/tools/simulation/componentlist_indices_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_indices.json](https://github.com/bglenden/casa-rs/blob/aae16abef1d08ee2d1533befddec5c4e05d8bfb6/crates/casars-python/python/tests/data/casa_componentlist_indices.json)
+- [crates/casars-python/python/tests/test_componentlist_indices.py](https://github.com/bglenden/casa-rs/blob/aae16abef1d08ee2d1533befddec5c4e05d8bfb6/crates/casars-python/python/tests/test_componentlist_indices.py)
 
 ### measures
 
