@@ -1017,6 +1017,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
+<a href="#casa-discards-the-values-of-bare-complex-quantity-arrays">complex quantity-array values</a>,
 <a href="#automatic-mask-convolution-requires-square-pixels-in-casa">automatic-mask convolution on rectangular pixels</a>,
 <a href="#casa-misreads-big-endian-integer-quantity-arrays">byte order of integer quantity arrays</a>,
 <a href="#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero">a Taylor run with no weight on its first correlation</a>,
@@ -4660,6 +4661,18 @@ The CASA failure was observed directly; there is no CASA mask to compare.</p>
 <li>Evidence: <code>tools/casa-compat/quantity_record_endian_oracle.py</code>, CASA 6.7.6.14 on a little-endian Mac.</li>
 </ul>
 <p>A quantity record containing <code>np.array([1], dtype="&gt;i4")</code> returns 16777216 m in CASA; the native-endian array returns 1 m. Big-endian 16-bit arrays return 256 m and 64-bit arrays return 0 m after integer narrowing. Signed and unsigned integer arrays show the same byte-order corruption, and arithmetic uses the corrupted values. casa-rs reads the numerical array value and returns 1 m for each. It still applies CASA's signed 32-bit narrowing to that value.</p>
+<h2 id="casa-discards-the-values-of-bare-complex-quantity-arrays">CASA discards the values of bare complex quantity arrays<a class="headerlink" href="#casa-discards-the-values-of-bare-complex-quantity-arrays" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-05</li>
+<li>Status: CASA silently loses input values; casa-rs raises an error (#1170).</li>
+<li>Evidence: <code>tools/casa-compat/quantity_record_complex_array_oracle.py</code>, CASA 6.7.6-14 on the Mac mini.</li>
+</ul>
+<p><code>qa.quantity(np.array([1+2j]))</code> returns a dimensionless zero in CASA; the
+same happens for zero-dimensional and multidimensional complex64 and
+complex128 arrays. A complex number cannot be converted to a real quantity
+without losing information, so casa-rs raises <code>Wrong QuantumHolder to convert
+asQuantumDouble</code> instead. Complex arrays used as ordinary record data retain
+their values and shape.</p>
 
 
 

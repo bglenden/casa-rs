@@ -328,7 +328,7 @@
 <a href=#328 id=328 data-nosnippet>328</a>        <span class="kw">let </span>reference = <span class="kw">match </span>measures::position(<span class="kw-2">&amp;</span>request.reference_location, <span class="kw-2">&amp;</span>session.measures)<span class="question-mark">? </span>{
 <a href=#329 id=329 data-nosnippet>329</a>            <span class="prelude-val">Some</span>(position) =&gt; position,
 <a href=#330 id=330 data-nosnippet>330</a>            <span class="prelude-val">None </span>=&gt; {
-<a href=#331 id=331 data-nosnippet>331</a>                <span class="kw">if </span>request.reference_location != Variant::Empty {
+<a href=#331 id=331 data-nosnippet>331</a>                <span class="kw">if </span>!request.reference_location.is_empty_sequence() {
 <a href=#332 id=332 data-nosnippet>332</a>                    lines.push(LogLine::error(<span class="macro">format!</span>(
 <a href=#333 id=333 data-nosnippet>333</a>                        <span class="string">"Could not convert referencelocation {} to a Position Measures"</span>,
 <a href=#334 id=334 data-nosnippet>334</a>                        request.reference_location.describe()

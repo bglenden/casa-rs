@@ -71,7 +71,7 @@
 <a href=#71 id=71 data-nosnippet>71</a>) -&gt; PyResult&lt;bool&gt; {
 <a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">let </span>result = tool.on_session(py, |session, lines| {
 <a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">if </span>measures::position(<span class="kw-2">&amp;</span>request.location, <span class="kw-2">&amp;</span>session.measures)<span class="question-mark">?</span>.is_none()
-<a href=#74 id=74 data-nosnippet>74</a>            &amp;&amp; request.location != Variant::Empty
+<a href=#74 id=74 data-nosnippet>74</a>            &amp;&amp; !request.location.is_empty_sequence()
 <a href=#75 id=75 data-nosnippet>75</a>        {
 <a href=#76 id=76 data-nosnippet>76</a>            lines.push(LogLine::error(<span class="macro">format!</span>(
 <a href=#77 id=77 data-nosnippet>77</a>                <span class="string">"Could not convert location {} to a Position Measures"</span>,
@@ -103,7 +103,7 @@
 <a href=#103 id=103 data-nosnippet>103</a>/// and `[]`, and converts anything else (raising when it cannot).
 <a href=#104 id=104 data-nosnippet>104</a></span><span class="kw">fn </span>angle_deg(value: <span class="kw-2">&amp;</span>Variant, default_deg: f64) -&gt; ConvertResult&lt;f64&gt; {
 <a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">match </span>value {
-<a href=#106 id=106 data-nosnippet>106</a>        Variant::Empty =&gt; <span class="prelude-val">Ok</span>(default_deg),
+<a href=#106 id=106 data-nosnippet>106</a>        value <span class="kw">if </span>value.is_empty_sequence() =&gt; <span class="prelude-val">Ok</span>(default_deg),
 <a href=#107 id=107 data-nosnippet>107</a>        Variant::Text(text) <span class="kw">if </span>text.is_empty() =&gt; <span class="prelude-val">Ok</span>(default_deg),
 <a href=#108 id=108 data-nosnippet>108</a>        other =&gt; value_in(<span class="kw-2">&amp;</span>quantity(other)<span class="question-mark">?</span>, <span class="string">"deg"</span>),
 <a href=#109 id=109 data-nosnippet>109</a>    }

@@ -2662,6 +2662,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#record-complex-array-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        record-complex-array-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6374,6 +6385,17 @@
     <span class="md-ellipsis">
       
         record-complex-scalar-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#record-complex-array-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        record-complex-array-casa
       
     </span>
   </a>
@@ -11491,7 +11513,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>v=[], a=[]</code></td>
 <td>Implemented</td>
 <td>Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a></td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a></td>
 </tr>
 <tr>
 <td><code>angle</code></td>
@@ -11673,7 +11695,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>v=[]</code></td>
 <td>Implemented</td>
 <td>Reads a quantity's value and unit back.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a></td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a></td>
 </tr>
 <tr>
 <td><code>getvalue</code></td>
@@ -11785,7 +11807,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>v=[], unitname='', keepshape=False</code></td>
 <td>Implemented</td>
 <td>Builds quantities and quantity arrays from strings, numbers and records, as CASA does.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a></td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a></td>
 </tr>
 <tr>
 <td><code>setformat</code></td>
@@ -12029,6 +12051,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e/tools/casa-compat/quantity_record_complex_scalar_oracle.py">tools/casa-compat/quantity_record_complex_scalar_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e/crates/casars-python/python/tests/data/casa_quanta_record_complex_scalar.json">crates/casars-python/python/tests/data/casa_quanta_record_complex_scalar.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e/crates/casars-python/python/tests/test_quanta_record_complex_scalar.py">crates/casars-python/python/tests/test_quanta_record_complex_scalar.py</a></li>
+</ul>
+<p><a id="quanta-evidence-record-complex-array-casa"></a></p>
+<h5 id="record-complex-array-casa">record-complex-array-casa<a class="headerlink" href="#record-complex-array-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 60 CASA 6.7.6-14 quantity-record comparisons cover complex64 and complex128 arrays of different shapes and units. Ten bare-array comparisons expose CASA discarding values; casa-rs rejects those inputs instead. Complex NumPy arrays in quanta.quantity, getunit and add.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/20e34293b366be9608b59fd036011a1ac2d1c001/tools/casa-compat/quantity_record_complex_array_oracle.py">tools/casa-compat/quantity_record_complex_array_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/20e34293b366be9608b59fd036011a1ac2d1c001/crates/casars-python/python/tests/data/casa_quanta_record_complex_array.json">crates/casars-python/python/tests/data/casa_quanta_record_complex_array.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/20e34293b366be9608b59fd036011a1ac2d1c001/crates/casars-python/python/tests/test_quanta_record_complex_array.py">crates/casars-python/python/tests/test_quanta_record_complex_array.py</a></li>
 </ul>
 <h3 id="simulator">simulator<a class="headerlink" href="#simulator" title="Permanent link">&para;</a></h3>
 <h4 id="simulator-method-implementation">simulator method implementation<a class="headerlink" href="#simulator-method-implementation" title="Permanent link">&para;</a></h4>
