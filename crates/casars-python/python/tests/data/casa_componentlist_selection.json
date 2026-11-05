@@ -382,6 +382,49 @@
         1
       ],
       "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": {
+        "scalar_numpy": true,
+        "dtype": "bool"
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_select> returned a result with an exception set"
+      },
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": {
+        "numpy": true,
+        "dtype": "bool"
+      },
+      "result": true,
+      "selected": [
+        1
+      ],
+      "dtype": "int64"
+    },
+    {
+      "method": "select",
+      "input": {
+        "numpy": [
+          true,
+          false
+        ],
+        "dtype": "bool"
+      },
+      "result": true,
+      "selected": [
+        0,
+        1
+      ],
+      "dtype": "int64"
     }
   ],
   "lifecycle": {

@@ -26,6 +26,9 @@ CASES = [
     ("select", {"numpy": 2, "dtype": "int64"}),
     ("select", {"scalar_numpy": 2, "dtype": "int64"}),
     ("select", {"scalar_numpy": 1.9, "dtype": "float64"}),
+    ("select", {"scalar_numpy": True, "dtype": "bool"}),
+    ("select", {"numpy": True, "dtype": "bool"}),
+    ("select", {"numpy": [True, False], "dtype": "bool"}),
 ]
 results = []
 for method, value in CASES:

@@ -47,7 +47,7 @@ fn append(
                 .and_then(|d| d.getattr("kind"))
                 .and_then(|k| k.extract::<String>())
                 .as_deref(),
-            Ok("i" | "u")
+            Ok("i" | "u" | "b")
         )
     {
         *pending = true;
