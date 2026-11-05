@@ -162,6 +162,82 @@ pub fn drive_batch_write(
     })
 }
 
+/// The channels physically delivered by one parent-prediction block and
+/// the first row's flags as the predictor sees them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PredictionLayout {
+    /// Native channel indices in the block's row order.
+    pub channels: Vec<u32>,
+    /// Flags over the first row's channels and correlations.
+    pub flags: Vec<bool>,
+}
+
+/// Drive a writing traversal and return each distinct parent-prediction row
+/// layout. Like [`drive_batch_write`], this writes zero model predictions to
+/// the request's disposable observation; use it only on a test fixture.
+///
+/// # Errors
+///
+/// When compilation, source admission, traversal or write-back fails.
+pub fn prediction_layouts(
+    request: &ImagingRequest,
+    context: &RunContext,
+) -> Result<Vec<PredictionLayout>, ApplicationDispatchError> {
+    let resolved = std::cell::Cell::new(None);
+    let (problem, input, native, _resident) = crate::compile_run(request, context, &resolved)?;
+    let admitted = crate::native::batch_route(
+        &problem,
+        input.observation,
+        (
+            input.write_model_column,
+            input.write_corrected_data,
+            input.predicts_final_model,
+        ),
+        &native.runtime,
+    )?;
+    let failed = |error: casa_imaging_runtime::pass::SourceError| {
+        ApplicationDispatchError::Native(error.to_string().into())
+    };
+    let count = planes(&problem);
+    let mut source = ObservationSource::new(
+        &problem,
+        &admitted.value,
+        count,
+        imaging::plane_bounds(&problem),
+        false,
+    );
+    let maximum = source.maximum_block();
+    let mut block = NativeBlock::with_capacity(maximum);
+    let predictions =
+        vec![Complex32::default(); maximum.rows * maximum.channels() * maximum.correlations];
+    let mut writer = VisibilityWriteTarget(&admitted.value)
+        .begin(problem.visibility_transform())
+        .map_err(failed)?;
+    source
+        .begin(
+            PlaneRange::new(0, count),
+            false,
+            SampleContent::Visibilities,
+        )
+        .map_err(failed)?;
+    let mut layouts = Vec::new();
+    while source.fill(&mut block).map_err(failed)? {
+        let layout = PredictionLayout {
+            channels: block.channel_indices().to_vec(),
+            flags: block.prediction_row(0, 0).flags.to_vec(),
+        };
+        if !layouts.contains(&layout) {
+            layouts.push(layout);
+        }
+        let cells = block.len() * block.channels() * block.correlations();
+        writer
+            .write(&block, &predictions[..cells])
+            .map_err(failed)?;
+    }
+    writer.complete().map_err(failed)?;
+    Ok(layouts)
+}
+
 /// Read `source` through a run's traversals of `planes` planes, waves of
 /// `planes_per_wave` included, into one block: the blocks filled, and the
 /// block's bytes.

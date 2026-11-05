@@ -1141,6 +1141,50 @@ fn predicting_the_final_model_uses_the_parent_imagers_time_dependent_bands() {
     }
 }
 
+/// CASA 6.7.6.14's parent iterator physically selects these channel sets
+/// over the drift for `spw=0:20`, rather than flagging a union row.
+#[test]
+fn parent_prediction_rows_match_casas_drifting_channel_layouts() {
+    let observation = drifting_track();
+    let request = observation.request(
+        "compact-prediction-rows",
+        json!({
+            "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 1,
+            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn",
+        }),
+    );
+    let layouts = casa_imaging_application::source_law::prediction_layouts(
+        &request,
+        &super::fixture::run_context(&request),
+    )
+    .expect("the parent prediction traversal");
+    let mut actual = layouts
+        .iter()
+        .map(|layout| layout.channels.clone())
+        .collect::<Vec<_>>();
+    actual.sort();
+    let mut casa = (15..=19)
+        .flat_map(|first| {
+            [
+                (first..first + 6).collect::<Vec<_>>(),
+                (first..first + 7).collect::<Vec<_>>(),
+            ]
+        })
+        .chain(std::iter::once((20..26).collect::<Vec<_>>()))
+        .collect::<Vec<_>>();
+    casa.sort();
+    assert_eq!(
+        actual, casa,
+        "CASA's physical parent selections over the drift"
+    );
+    assert!(
+        layouts
+            .iter()
+            .all(|layout| layout.flags.iter().all(|flag| !flag)),
+        "the selected unflagged cells remain unflagged: {layouts:?}"
+    );
+}
+
 /// `predictModel` visits the whole parent selection and writes zero where
 /// the cube has no spectral support, rather than leaving the initial model.
 #[test]
