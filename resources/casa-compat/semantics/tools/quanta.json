@@ -193,12 +193,11 @@
    ]
   },
   "exp": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "logarithms-casa"
    ]
   },
   "fits": {
@@ -296,21 +295,19 @@
    ]
   },
   "log": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "logarithms-casa"
    ]
   },
   "log10": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "logarithms-casa"
    ]
   },
   "lt": {
@@ -561,6 +558,18 @@
     "crates/casars-python/python/tests/test_tools_quanta.py"
    ],
    "source_revision": "88e8c2fd7b7742de78eeb75e16164b5b40367c90"
+  },
+  "logarithms-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "57 CASA 6.7.6-14 cases cover dimensionless and scaled inputs, units, non-finite results and errors for all three functions.",
+   "scope": "quanta.exp, log and log10.",
+   "links": [
+    "tools/simulation/quanta_logarithms_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_logarithms.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "83c3308ca779c3ca84f29d47fa4203e2f7ae5a50"
   }
  }
 }
