@@ -1,0 +1,107 @@
+{
+  "schema": "tclean-evidence-receipt/1",
+  "title": "Joint Clark polarization minor cycles",
+  "work_issue": 1140,
+  "date": "2026-11-04",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "native_revision": "fd5042ac44d6123b477f5887c341d039b10c76a7",
+  "imager_binary_sha256": "974bab52f2656c9fb87f6b2a84b9da1d62f969370d5bcf8facaaa789fc21ce82",
+  "backend": "cpu",
+  "precision": "f64",
+  "host": "macOS-27.2-arm64-arm-64bit",
+  "driver": "tools/casa-compat/tclean_case_matrix.py with resources/casa-compat/tclean-joint-clark-cases.json and staged casatestdata",
+  "case_file_sha256": "88bbcc8b9ba2cd4fe8b545574fee2e32098bc7bcdf00dc9c9ba7478eef1b029b",
+  "limits": "Exact image-product inventory, masks and selected iteration, major-cycle and stop counts; NRMS <= 1e-3; other recorded scalars within the driver limits.",
+  "outcome": "5 of 5 CASA-paired cases passed; the local C++ review, mutations, synthetic restart probes and representative evidence are recorded on issue 1140.",
+  "cases": {
+    "healthy_clark_i": {
+      "passed": true,
+      "casa_iterations": 20,
+      "native_iterations": 20,
+      "nrms": {
+        "image": 2.86098872145697e-07,
+        "mask": 0.0,
+        "model": 6.10750317147371e-08,
+        "pb": 0.0,
+        "psf": 1.5351112843852623e-07,
+        "residual": 4.296920815211575e-06,
+        "sumwt": 0.0
+      }
+    },
+    "healthy_clark_iv": {
+      "passed": true,
+      "casa_iterations": 20,
+      "native_iterations": 20,
+      "nrms": {
+        "image": 3.0911119873978306e-07,
+        "mask": 0.0,
+        "model": 9.484865429101661e-08,
+        "pb": 0.0,
+        "psf": 1.5351112843852626e-07,
+        "residual": 2.988071316135864e-06,
+        "sumwt": 0.0
+      }
+    },
+    "healthy_clark_iquv_one": {
+      "passed": true,
+      "casa_iterations": 1,
+      "native_iterations": 1,
+      "nrms": {
+        "image": 1.1455022613080329e-07,
+        "mask": 0.0,
+        "model": 8.61805487500222e-08,
+        "pb": 0.0,
+        "psf": 1.5351112843852623e-07,
+        "residual": 1.1500294567342296e-07,
+        "sumwt": 0.0
+      }
+    },
+    "healthy_plus_blank": {
+      "passed": true,
+      "casa_iterations": 20,
+      "native_iterations": 20,
+      "nrms": {
+        "image": 2.650514475950642e-07,
+        "mask": 0.0,
+        "model": 9.484865429101661e-08,
+        "pb": 0.0,
+        "psf": 1.5372965534524682e-07,
+        "residual": 4.1696170820095e-06,
+        "sumwt": 0.0
+      }
+    },
+    "healthy_clark_iquv_twenty": {
+      "passed": true,
+      "casa_iterations": 20,
+      "native_iterations": 20,
+      "nrms": {
+        "image": 3.1547414570199434e-07,
+        "mask": 0.0,
+        "model": 4.986755315382612e-08,
+        "pb": 0.0,
+        "psf": 1.5351112843852623e-07,
+        "residual": 4.066915765315296e-06,
+        "sumwt": 0.0
+      }
+    }
+  },
+  "t15": {
+    "case": "point-mfs-clark-briggs",
+    "worst_nrms": 2.2962298316876887e-06,
+    "sumwt_metric": 0.0,
+    "staging": "Fresh harness and references from NAS t15 archives; refim_point.ms from NAS casatestdata."
+  },
+  "t2": {
+    "case": "standard-mfs-clark-vla",
+    "input": "wave1-vla-single-small.ms, 512x512, 24 channels, 6,284,304 samples",
+    "reference": "CASA 6.7.6 frozen oracle 20261013T083619Z-issue607-standard-mfs-representative-63e19a69",
+    "worst_product": "psf",
+    "worst_nrms": 1.2198818629298232e-07,
+    "sumwt_nrms": 0.0,
+    "tolerances": "passed",
+    "raw_metadata": "The image and PSF restoring-beam floats differ from CASA within beam tolerances; parent and candidate beams and image arrays match exactly. The harness records its mode-level human review as pending."
+  }
+}

@@ -354,10 +354,56 @@ pub fn run_bytes_for(
     };
     // Every plane's slot, solved record and stop, which the cycle keeps
     // until it merges them.
-    let records =
-        layout.planes * (size_of::<Slot>() + size_of::<Solved>() + size_of::<PlaneStop>());
-    layout.concurrent(workers) * (layout.load_bytes(setup.response.is_some()) + solve)
-        + records as u64
+    let records = layout.planes
+        * (size_of::<Slot>()
+            + size_of::<(
+                PlaneKey,
+                casa_imaging_deconvolution::PlaneStatistics,
+                Solved,
+            )>()
+            + size_of::<PlaneStop>());
+    let ordinary = layout.concurrent(workers)
+        * (layout.load_bytes(setup.response.is_some()) + solve)
+        + records as u64;
+    let n_pol = layout.channels_and_polarizations.1;
+    if matches!(setup.algorithm, ReconstructionAlgorithm::Clark) && matches!(n_pol, 2 | 4) {
+        let polarized_solve = match n_pol {
+            2 => casa_imaging_deconvolution::solve_bytes(
+                &casa_imaging_deconvolution::ClarkPolarized::<2>::new(None),
+                layout.shape,
+                2,
+                iterations + 1,
+                TRACE,
+            ),
+            4 => casa_imaging_deconvolution::solve_bytes(
+                &casa_imaging_deconvolution::ClarkPolarized::<4>::new(None),
+                layout.shape,
+                4,
+                iterations + 1,
+                TRACE,
+            ),
+            _ => unreachable!(),
+        };
+        let groups = layout.planes.div_ceil(n_pol);
+        let concurrent = workers.min(groups).max(1) as u64;
+        // The sorted copy and group slots persist while the team solves. Each
+        // concurrent solve also holds its vector of loaded plane descriptors
+        // and the vector of residual descriptors moved from those planes.
+        let group_records = (layout.planes
+            * size_of::<(PlaneKey, casa_imaging_deconvolution::PlaneStatistics)>()
+            + groups * size_of::<super::PolarizedSlot>()) as u64;
+        let group_descriptors = concurrent
+            * (n_pol * (size_of::<super::PlaneData<'_>>() + size_of::<Vec<f64>>())) as u64;
+        ordinary.max(
+            concurrent
+                * (n_pol as u64 * layout.load_bytes(setup.response.is_some()) + polarized_solve)
+                + records as u64
+                + group_records
+                + group_descriptors,
+        )
+    } else {
+        ordinary
+    }
 }
 
 /// What `setup`'s solver holds for one plane of `layout`, cleaning at most
@@ -470,8 +516,14 @@ mod tests {
             terms: (1, 1),
             ..lone
         };
-        let records =
-            (4 * (size_of::<Slot>() + size_of::<Solved>() + size_of::<PlaneStop>())) as u64;
+        let records = (4
+            * (size_of::<Slot>()
+                + size_of::<(
+                    PlaneKey,
+                    casa_imaging_deconvolution::PlaneStatistics,
+                    Solved,
+                )>()
+                + size_of::<PlaneStop>())) as u64;
         let run = |workers| run_bytes_for(&side, &multiscale, 100, 0, workers) - records;
         assert_eq!(run(4), 4 * run(1), "four one-thread solves at once");
     }

@@ -593,3 +593,273 @@ fn a_cube_with_an_empty_first_channel_cleans_the_others() {
     assert_eq!(increments[0].0, 1);
     assert!((increments[0].1 - 1.0).abs() < 1e-6, "{increments:?}");
 }
+
+/// Clark chooses one joint polarization component, rather than one per
+/// plane, as CASA's two-position IV experiment does (#1140).
+#[test]
+fn clark_solves_a_channels_polarizations_as_one_component() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [64, 64],
+        1,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 1 },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(1, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = 64 * 64;
+        images.polarizations = 2;
+        let psf = images.psf.as_ref().unwrap().clone();
+        images.psf = Some([psf.as_slice(), psf.as_slice()].concat());
+        images.sum_weights = vec![1.0, 1.0];
+        images.published_sum_weights = vec![1.0, 1.0];
+        images.residual = vec![0.0; 2 * cells];
+        images.residual[20 * 64 + 20] = 3.0;
+        images.residual[40 * 64 + 40] = 1.0;
+        images.residual[cells + 40 * 64 + 40] = 3.0;
+    });
+    let (_, outcome) = minor_cycle(
+        &problem,
+        &completion,
+        &setup(&problem, None),
+        &controls(1, 0.17),
+        1,
+    );
+    assert_eq!(outcome.summary.iterations, 1);
+    assert_eq!(outcome.summary.planes.len(), 1);
+    assert_eq!(outcome.summary.planes[0].polarizations, 2);
+    let trace = &outcome.summary.trace;
+    assert_eq!(trace.len(), 2);
+    assert_eq!(trace[0].cell.pixel(), [40, 40]);
+    assert_eq!(trace[1].cell.pixel(), [40, 40]);
+    assert_eq!(trace[0].cell.polarization(), 0);
+    assert_eq!(trace[1].cell.polarization(), 1);
+    assert!((trace[0].flux - 0.17).abs() < 1e-6);
+    assert!((trace[1].flux - 0.51).abs() < 1e-6);
+}
+
+/// A channel with no samples does not disable joint Clark on a healthy
+/// channel in the same slab (#1140).
+#[test]
+fn an_empty_channel_does_not_split_another_channels_clark_polarizations() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    let width = 64;
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [width, width],
+        2,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(1, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = width * width;
+        images.polarizations = 2;
+        let unit = scene
+            .unit_psf()
+            .into_iter()
+            .map(|v| v as f32)
+            .collect::<Vec<_>>();
+        images.psf = Some(
+            [
+                unit.as_slice(),
+                unit.as_slice(),
+                &vec![0.0; cells],
+                &vec![0.0; cells],
+            ]
+            .concat(),
+        );
+        images.sum_weights = vec![1.0, 1.0, 0.0, 0.0];
+        images.published_sum_weights = images.sum_weights.clone();
+        images.residual = vec![0.0; 4 * cells];
+        images.residual[20 * width + 20] = 3.0;
+        images.residual[40 * width + 40] = 1.0;
+        images.residual[cells + 40 * width + 40] = 3.0;
+    });
+    let (_, outcome) = minor_cycle(
+        &problem,
+        &completion,
+        &setup(&problem, None),
+        &controls(1, 0.17),
+        1,
+    );
+    assert_eq!(outcome.summary.iterations, 1);
+    assert_eq!(outcome.summary.planes.len(), 2, "one row per channel");
+    assert_eq!(outcome.summary.planes[1].channel, 1);
+    assert_eq!(outcome.summary.planes[1].polarization, 0);
+    assert_eq!(outcome.summary.trace.len(), 2);
+    assert!(
+        outcome
+            .summary
+            .trace
+            .iter()
+            .all(|c| c.cell.pixel() == [40, 40])
+    );
+}
+
+/// CASA's joint IV Clark runs one channel even if either polarization has
+/// no data, retaining a single iteration record (#1140).
+#[test]
+fn joint_clark_keeps_a_blank_polarization_in_its_channel() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    for blank in 0..2 {
+        let width = 64;
+        let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+            31,
+            [width, width],
+            1,
+            1,
+            ReconstructionBasis::ChannelLocal { channels: 1 },
+            ReconstructionAlgorithm::Clark,
+            ReconstructionControls::new(1, 0.17, 0.0),
+            vec![StokesI, StokesV],
+        );
+        let scene = Scene::new(&problem);
+        let completion = completion(&problem, &scene, |images| {
+            let cells = width * width;
+            images.polarizations = 2;
+            let unit = scene
+                .unit_psf()
+                .into_iter()
+                .map(|v| v as f32)
+                .collect::<Vec<_>>();
+            images.psf = Some(unit.repeat(2));
+            images.psf.as_mut().unwrap()[blank * cells..(blank + 1) * cells].fill(0.0);
+            images.sum_weights = vec![1.0, 1.0];
+            images.sum_weights[blank] = 0.0;
+            images.published_sum_weights = images.sum_weights.clone();
+            images.residual = vec![0.0; 2 * cells];
+            images.residual[(1 - blank) * cells + 40 * width + 40] = 3.0;
+        });
+        let (_, outcome) = minor_cycle(
+            &problem,
+            &completion,
+            &setup(&problem, None),
+            &controls(1, 0.17),
+            1,
+        );
+        assert_eq!(outcome.summary.iterations, 1, "blank={blank}");
+        assert_eq!(outcome.summary.planes.len(), 1, "blank={blank}");
+        assert_eq!(outcome.terms.len(), 1, "blank={blank}");
+        let changed = outcome
+            .summary
+            .trace
+            .iter()
+            .find(|c| c.flux != 0.0)
+            .unwrap();
+        assert_eq!(changed.cell.polarization(), 1 - blank);
+        assert!((changed.flux - 0.51).abs() < 1e-6);
+    }
+}
+
+/// CASA's Clark uses the first polarization's PSF even when it is blank;
+/// a zero PSF leaves the other polarization's peak unchanged (#1140).
+#[test]
+fn joint_clark_uses_the_blank_first_polarizations_psf() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    let width = 64;
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [width, width],
+        1,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 1 },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(20, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = width * width;
+        images.polarizations = 2;
+        let unit = scene
+            .unit_psf()
+            .into_iter()
+            .map(|v| v as f32)
+            .collect::<Vec<_>>();
+        images.psf = Some([vec![0.0; cells].as_slice(), unit.as_slice()].concat());
+        images.sum_weights = vec![0.0, 1.0];
+        images.published_sum_weights = images.sum_weights.clone();
+        images.residual = vec![0.0; 2 * cells];
+        images.residual[cells + 40 * width + 40] = 3.0;
+    });
+    let (_, outcome) = minor_cycle(
+        &problem,
+        &completion,
+        &setup(&problem, None),
+        &controls(20, 0.17),
+        1,
+    );
+    assert_eq!(outcome.summary.iterations, 10);
+    assert!((outcome.summary.peak - 3.0).abs() < 1e-6);
+    assert!((outcome.summary.model_flux - 5.1).abs() < 1e-6);
+}
+
+/// CASA measures masks over both Stokes planes, but Clark reads the first
+/// plane's component mask, even when only the second mask is nonempty (#1140).
+#[test]
+fn joint_clark_counts_all_masks_but_uses_the_first_for_components() {
+    use casa_imaging_deconvolution::{MaskPlanes, PlaneStop};
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    use std::sync::Arc;
+    let width = 64;
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [width, width],
+        1,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 1 },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(1, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = width * width;
+        images.polarizations = 2;
+        let psf = images.psf.take().unwrap();
+        images.psf = Some(psf.repeat(2));
+        images.sum_weights = vec![1.0; 2];
+        images.published_sum_weights = images.sum_weights.clone();
+        images.residual = vec![0.0; 2 * cells];
+        images.residual[cells + 40 * width + 40] = 3.0;
+    });
+    let cells = width * width;
+    let mut support = vec![false; cells];
+    support.extend(vec![true; cells]);
+    let masks = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::Reprojected {
+        coordinate: problem.geometry().domains()[0].direction(),
+        planes: MaskPlanes::new(1, 2).unwrap(),
+        support: Arc::from(support),
+    }])
+    .unwrap();
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    let configured = setup(&problem, None);
+    let prepared =
+        prepare_minor_cycle(&completion, &masks, &configured, &mut cache, &team).unwrap();
+    let outcome = run_minor_cycle(
+        prepared,
+        &completion,
+        &configured,
+        &controls(1, 0.17),
+        &mut cache,
+        &team,
+        (&HOST, &POLICY),
+    )
+    .unwrap();
+    assert_eq!(outcome.summary.iterations, 0);
+    assert!(outcome.terms.is_empty());
+    assert_eq!(outcome.summary.planes.len(), 1);
+    let row = outcome.summary.planes[0];
+    assert_eq!(row.mask_sum, cells);
+    assert!((row.start_peak - 3.0).abs() < 1e-6);
+    assert_eq!(row.stop, PlaneStop::ZeroIterations);
+}

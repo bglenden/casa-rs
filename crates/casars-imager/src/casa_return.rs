@@ -68,8 +68,7 @@ pub fn tclean_record(
     let single = |value: f64| f64::from(value as f32);
     let iterations = int(run.minor_iterations);
     let (stopcode, description) = stop(run, dirty);
-    let mut major = vec![0_i64];
-    major.extend(cycles.iter().map(|cycle| count(cycle.total_iterations)));
+    let major = major_summary(dirty, request.calcres, cycles);
     let threshold = if dirty {
         given_threshold(values)
     } else {
@@ -122,7 +121,10 @@ pub fn tclean_record(
             },
         ),
         ("threshold", threshold),
-        ("stopDescription", CasaValue::string(description)),
+        (
+            "stopDescription",
+            description.map_or(CasaValue::None, CasaValue::string),
+        ),
     ])
 }
 
@@ -155,14 +157,34 @@ fn given_threshold(values: &Map<String, Value>) -> CasaValue {
     }
 }
 
-/// CASA's `stopcode` and its description (`imager_base.getStopDescription`).
-fn stop(run: &ImagerRunReport, dirty: bool) -> (i64, &'static str) {
-    if dirty {
-        return (3, "Zero iterations performed");
+/// Each major-cycle completion appends its cumulative iteration count. A
+/// read residual and a minor cycle that cleans nothing run no major cycle.
+fn major_summary(dirty: bool, calcres: bool, cycles: &[ImagerMinorCycleDiagnostic]) -> Vec<i64> {
+    let mut major = if dirty || calcres {
+        vec![0]
+    } else {
+        Vec::new()
+    };
+    if !dirty {
+        major.extend(
+            cycles
+                .iter()
+                .filter(|cycle| cycle.iterations > 0)
+                .map(|cycle| count(cycle.total_iterations)),
+        );
     }
-    match run.clean_stop_reason {
+    major
+}
+
+/// CASA's `stopcode` and its description (`imager_base.getStopDescription`).
+fn stop(run: &ImagerRunReport, dirty: bool) -> (i64, Option<&'static str>) {
+    if dirty {
+        return (3, Some("Zero iterations performed"));
+    }
+    let (code, description) = match run.clean_stop_reason {
         Some(ImagerCleanStopReason::IterationLimitReached) => (1, "iteration limit"),
-        Some(ImagerCleanStopReason::GlobalThresholdReached) | None => (2, "threshold"),
+        Some(ImagerCleanStopReason::GlobalThresholdReached) => (2, "threshold"),
+        None => return (0, None),
         // CASA 6.7.6.14 stops an empty mask so (probed).
         Some(ImagerCleanStopReason::NoCleanablePixels) => (7, "zero mask"),
         Some(ImagerCleanStopReason::NoChange) => {
@@ -181,7 +203,8 @@ fn stop(run: &ImagerRunReport, dirty: bool) -> (i64, &'static str) {
             "any combination of n-sigma and other valid exit criterion",
         ),
         Some(ImagerCleanStopReason::MajorCycleLimitReached) => (9, "reached nmajor"),
-    }
+    };
+    (code, Some(description))
 }
 
 /// `summaryminor`: `{field: {channel: {stokes: {row: [one per cycle]}}}}`,
@@ -203,7 +226,9 @@ fn summary_minor(run: &ImagerRunReport, rows: &PlaneRows, fullsummary: bool) -> 
             }
             planes
                 .entry([row.domain, row.channel, row.polarization])
-                .or_insert_with_key(|key| Rows::starting_from(start_flux(rows, *key)))
+                .or_insert_with_key(|key| {
+                    Rows::starting_from(start_flux(rows, *key, row.polarizations))
+                })
                 .push(row, cycle, done, field.1);
             done += row.iterations;
         }
@@ -216,10 +241,15 @@ fn summary_minor(run: &ImagerRunReport, rows: &PlaneRows, fullsummary: bool) -> 
 }
 
 /// The plane's start-model flux; zero when it has none.
-fn start_flux(rows: &PlaneRows, key: [usize; 3]) -> f64 {
-    rows.start_model_flux
-        .binary_search_by_key(&key, |(plane, _)| *plane)
-        .map_or(0.0, |index| rows.start_model_flux[index].1)
+fn start_flux(rows: &PlaneRows, key: [usize; 3], polarizations: usize) -> f64 {
+    (key[2]..key[2] + polarizations)
+        .map(|polarization| {
+            let plane = [key[0], key[1], polarization];
+            rows.start_model_flux
+                .binary_search_by_key(&plane, |(key, _)| *key)
+                .map_or(0.0, |index| rows.start_model_flux[index].1)
+        })
+        .sum()
 }
 
 /// `planes`, sorted by `[field, channel, stokes]`, as nested dictionaries.
@@ -403,16 +433,44 @@ mod tests {
                 &report(Some(ImagerCleanStopReason::NoCleanablePixels)),
                 false
             ),
-            (7, "zero mask")
+            (7, Some("zero mask"))
         );
         assert_eq!(
             stop(
                 &report(Some(ImagerCleanStopReason::GlobalThresholdReached)),
                 false
             ),
-            (2, "threshold")
+            (2, Some("threshold"))
         );
-        assert_eq!(stop(&report(None), true), (3, "Zero iterations performed"));
+        assert_eq!(
+            stop(&report(None), true),
+            (3, Some("Zero iterations performed"))
+        );
+    }
+
+    /// CASA leaves the global stop unset when a minor cycle cleans nothing
+    /// but no global convergence condition applies.
+    #[test]
+    fn no_global_stop_is_not_reported_as_threshold() {
+        assert_eq!(stop(&report(None), false), (0, None));
+    }
+
+    /// CASA appends a summary entry only after a real major cycle, including
+    /// the initial residual if formed, but excluding an empty minor cycle.
+    #[test]
+    fn major_summary_records_only_major_cycles_that_ran() {
+        let mut cleaned = cycle(0);
+        cleaned.total_iterations = 4;
+        let mut empty = cycle(4);
+        empty.iterations = 0;
+        empty.total_iterations = 4;
+        assert_eq!(
+            major_summary(false, false, &[cleaned.clone(), empty.clone()]),
+            [4]
+        );
+        assert_eq!(major_summary(false, true, &[cleaned, empty]), [0, 4]);
+        assert!(major_summary(false, false, &[]).is_empty());
+        assert_eq!(major_summary(true, true, &[]), [0]);
     }
 
     /// Astra's #1015 F4: the controller's three divergence stops keep
@@ -429,7 +487,7 @@ mod tests {
             let (returned, description) = stop(&report(Some(reason)), false);
             assert_eq!(returned, code, "{stop_reason:?}");
             assert_eq!(i64::from(stop_reason.code()), code);
-            assert!(!description.is_empty());
+            assert!(!description.expect("description").is_empty());
         }
     }
 
@@ -467,6 +525,7 @@ mod tests {
             domain: key[0],
             channel: key[1],
             polarization: key[2],
+            polarizations: 1,
             iterations,
             start_peak: 1.0,
             peak: 0.5,
@@ -525,6 +584,25 @@ mod tests {
         assert_eq!(row(&summary, [0, 0, 0], "modelFlux"), [3.5, 3.3]);
         assert_eq!(row(&summary, [0, 1, 0], "startModelFlux"), [0.0, 0.25]);
         assert_eq!(row(&summary, [0, 1, 0], "modelFlux"), [0.25, 0.25]);
+    }
+
+    /// A joint Clark row starts from all its polarizations' model flux,
+    /// including non-first polarization start models and restarts (#1140).
+    #[test]
+    fn joint_polarization_row_starts_from_the_whole_groups_model_flux() {
+        let mut run = report(Some(ImagerCleanStopReason::IterationLimitReached));
+        run.minor_cycles = vec![cycle(0), cycle(1)];
+        let mut first = plane_row([0, 0, 0], 1, 0.5);
+        first.polarizations = 2;
+        let mut second = plane_row([0, 0, 0], 1, -0.2);
+        second.polarizations = 2;
+        let rows = PlaneRows {
+            start_model_flux: vec![([0, 0, 0], 3.0), ([0, 0, 1], -1.0), ([0, 1, 0], 9.0)],
+            cycles: vec![vec![first], vec![second]],
+        };
+        let summary = summary_minor(&run, &rows, true);
+        assert_eq!(row(&summary, [0, 0, 0], "startModelFlux"), [2.0, 2.5]);
+        assert_eq!(row(&summary, [0, 0, 0], "modelFlux"), [2.5, 2.3]);
     }
 
     /// Planes run in sequence in CASA, so `startIterDone` counts the planes
