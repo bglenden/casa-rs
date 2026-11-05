@@ -1,6 +1,7 @@
 """CASA's component flux-error getter, including a CASA-created table."""
 
 import json
+import sys
 import tarfile
 from pathlib import Path
 
@@ -14,7 +15,8 @@ def test_fluxerror_matches_casa(tmp_path: Path) -> None:
     data = Path(__file__).parent / "data"
     fixture = json.loads((data / "casa_componentlist_fluxerror.json").read_text())
     with tarfile.open(data / "casa_fluxerrors.cl.tgz") as archive:
-        archive.extractall(tmp_path, filter="data")
+        extract = {"filter": "data"} if sys.version_info >= (3, 12) else {}
+        archive.extractall(tmp_path, **extract)
     cl = componentlist()
     assert cl.open(str(tmp_path / "fluxerrors.cl"), nomodify=True)
     for case in fixture["cases"]:
