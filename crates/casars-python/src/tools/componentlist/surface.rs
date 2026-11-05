@@ -221,8 +221,8 @@ const METHODS: &[Method] = &[
         R::Floats,
         No,
     ),
-    method("select", &[param("which", K::Ints, Required)], R::Bool, No),
-    method("selected", &[], R::Ints, No),
+    method("select", &[param("which", K::Ints, Required)], R::Bool, Yes),
+    method("selected", &[], R::Ints, Yes),
     method(
         "setflux",
         &[
