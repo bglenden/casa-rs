@@ -30,12 +30,12 @@ from _casa_tools import (
 CASA = casa_signatures("quanta")
 
 IMPLEMENTED = {
-    'abs', 'acos', 'add', 'angle', 'asin', 'atan', 'atan2',
-    'canon', 'canonical', 'ceil', 'check', 'checkfreq', 'compare', 'convert',
-    'cos', 'div', 'done', 'exp', 'floor', 'formxxx', 'getunit',
-    'getvalue', 'isangle', 'isquantity', 'log', 'log10', 'mul', 'neg',
-    'quantity', 'sin', 'splitdate', 'sqrt', 'sub', 'tan', 'time',
-    'toangle', 'tos', 'totime', 'type', 'unit',
+    'abs', 'acos', 'add', 'angle', 'asin', 'atan', 'atan2', 'canon',
+    'canonical', 'ceil', 'check', 'checkfreq', 'compare', 'convert', 'cos',
+    'div', 'done', 'exp', 'floor', 'formxxx', 'getunit', 'getvalue',
+    'isangle', 'isquantity', 'log', 'log10', 'mul', 'neg', 'quantity',
+    'sin', 'splitdate', 'sqrt', 'sub', 'tan', 'time', 'toangle', 'tos',
+    'totime', 'type', 'unit', 'eq', 'ne', 'lt', 'le', 'gt', 'ge',
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 
