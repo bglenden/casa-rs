@@ -30,37 +30,32 @@ from _casa_tools import (
 CASA = casa_signatures("quanta")
 
 IMPLEMENTED = {
-    'abs', 'acos', 'add', 'angle', 'asin', 'atan', 'canon',
-    'canonical', 'ceil', 'check', 'checkfreq', 'compare', 'convert', 'cos',
-    'div', 'done', 'exp', 'floor', 'formxxx', 'getunit', 'getvalue',
-    'isangle', 'isquantity', 'log', 'log10', 'mul', 'neg', 'quantity',
-    'sin', 'splitdate', 'sub', 'tan', 'time', 'toangle', 'tos',
-    'totime', 'type', 'unit',
+    'abs', 'acos', 'add', 'angle', 'asin', 'atan', 'atan2',
+    'canon', 'canonical', 'ceil', 'check', 'checkfreq', 'compare', 'convert',
+    'cos', 'div', 'done', 'exp', 'floor', 'formxxx', 'getunit',
+    'getvalue', 'isangle', 'isquantity', 'log', 'log10', 'mul', 'neg',
+    'quantity', 'sin', 'splitdate', 'sub', 'tan', 'time', 'toangle',
+    'tos', 'totime', 'type', 'unit',
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 
 
-def test_logarithms_match_casa() -> None:
-    fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_logarithms.json").read_text())
+def test_atan2_matches_casa() -> None:
+    fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_atan2.json").read_text())
     qa = quanta()
     for case in fixture["cases"]:
-        method = getattr(qa, case["method"])
         if "error" in case:
-            assert case["error"]["type"] == "RuntimeError"
             with pytest.raises(RuntimeError) as error:
-                method(case["input"])
+                qa.atan2(case["x"], case["y"])
             assert str(error.value) == case["error"]["message"]
         else:
-            result = method(case["input"])
-            expected = case["result"]
-            assert result["unit"] == expected["unit"]
-            if expected["value"] == "NaN":
-                assert math.isnan(result["value"])
-            elif expected["value"] in ("Infinity", "-Infinity"):
-                assert result["value"] == float(expected["value"])
-            else:
-                assert result["value"] == pytest.approx(expected["value"], rel=1e-14, abs=1e-15)
-
+            result = qa.atan2(case["x"], case["y"])
+            assert result["unit"] == case["result"]["unit"]
+            assert result["value"] == pytest.approx(case["result"]["value"], abs=1e-14)
+            if result["value"] == 0:
+                assert math.copysign(1, result["value"]) == math.copysign(1, case["result"]["value"])
+    assert qa.atan2() == {"unit": "rad", "value": 0.0}
+    assert qa.atan2(1.0)["value"] == pytest.approx(math.pi / 2)
 
 def test_trigonometry_matches_casa() -> None:
     fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_trigonometry.json").read_text())
@@ -94,6 +89,28 @@ def test_checkfreq_matches_casa() -> None:
         else:
             assert qa.checkfreq(case["input"]) is case["result"]
     assert qa.checkfreq() is False
+
+
+def test_logarithms_match_casa() -> None:
+    fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_logarithms.json").read_text())
+    qa = quanta()
+    for case in fixture["cases"]:
+        method = getattr(qa, case["method"])
+        if "error" in case:
+            assert case["error"]["type"] == "RuntimeError"
+            with pytest.raises(RuntimeError) as error:
+                method(case["input"])
+            assert str(error.value) == case["error"]["message"]
+        else:
+            result = method(case["input"])
+            expected = case["result"]
+            assert result["unit"] == expected["unit"]
+            if expected["value"] == "NaN":
+                assert math.isnan(result["value"])
+            elif expected["value"] in ("Infinity", "-Infinity"):
+                assert result["value"] == float(expected["value"])
+            else:
+                assert result["value"] == pytest.approx(expected["value"], rel=1e-14, abs=1e-15)
 
 
 def test_isangle_matches_casa() -> None:

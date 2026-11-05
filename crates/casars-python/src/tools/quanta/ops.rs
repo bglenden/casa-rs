@@ -207,6 +207,21 @@ pub(super) fn trigonometry(value: &Variant, method: &str) -> ConvertResult<CasaV
     }))
 }
 
+/// `qa.atan2(v, a)`: convert both dimensionless quantities before computing.
+pub(super) fn atan2(value: &Variant, other: &Variant) -> ConvertResult<CasaValue> {
+    let (value, other) = (quantity(value)?, quantity(other)?);
+    if value.unit().val().dim != UnitDim::NODIM || other.unit().val().dim != UnitDim::NODIM {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::atan2 illegal unit type '{}'",
+            value.unit().name()
+        )));
+    }
+    Ok(record(&Quantity::with_unit(
+        value.get_si_value().atan2(other.get_si_value()),
+        unit("rad"),
+    )))
+}
+
 /// `qa.compare(v, a)`: whether the units have the same dimensions.
 pub(super) fn compare(left: &Variant, right: &Variant) -> ConvertResult<CasaValue> {
     Ok(CasaValue::Bool(

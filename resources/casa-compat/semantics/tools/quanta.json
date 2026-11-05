@@ -53,12 +53,11 @@
    ]
   },
   "atan2": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar two-argument arctangent in radians, with CASA dimensionless-unit conversion and errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "atan2-casa"
    ]
   },
   "canon": {
@@ -597,6 +596,18 @@
     "crates/casars-python/python/tests/test_tools_quanta.py"
    ],
    "source_revision": "83c3308ca779c3ca84f29d47fa4203e2f7ae5a50"
+  },
+  "atan2-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "144 CASA 6.7.6-14 cases cover signed zero, scaled dimensionless inputs, invalid units, arrays and conversion errors.",
+   "scope": "quanta.atan2.",
+   "links": [
+    "tools/simulation/quanta_atan2_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_atan2.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "4d86ba7a97255eaafab86a745b660adc694aa3c7"
   }
  }
 }

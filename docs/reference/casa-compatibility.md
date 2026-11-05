@@ -1587,7 +1587,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
-| [quanta](#quanta) | `casars.tools` | 57 | yes | 38 | 0 | 19 | 0 | 0 | 0 |
+| [quanta](#quanta) | `casars.tools` | 57 | yes | 39 | 0 | 18 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 18 | 11 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 46 | 2 | 9 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
@@ -1996,7 +1996,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 38, Partial: 0, Not implemented: 19, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 39, Partial: 0, Not implemented: 18, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -2006,7 +2006,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `angle` | `v=[], prec=0, form=[], showform=False` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `asin` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
 | `atan` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
-| `atan2` | `v=[], a=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `atan2` | `v=[], a=[]` | Implemented | Scalar two-argument arctangent in radians, with CASA dimensionless-unit conversion and errors. | [signature](#quanta-evidence-signature), [atan2-casa](#quanta-evidence-atan2-casa) |
 | `canon` | `v=[]` | Implemented | Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance). | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `canonical` | `v=[]` | Implemented | Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance). | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `ceil` | `v=[]` | Implemented | Rounds a scalar quantity in its own unit, preserving CASA conversion errors. | [signature](#quanta-evidence-signature), [rounding-casa](#quanta-evidence-rounding-casa) |
@@ -2155,6 +2155,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/quanta_logarithms_oracle.py](https://github.com/bglenden/casa-rs/blob/83c3308ca779c3ca84f29d47fa4203e2f7ae5a50/tools/simulation/quanta_logarithms_oracle.py)
 - [crates/casars-python/python/tests/data/casa_quanta_logarithms.json](https://github.com/bglenden/casa-rs/blob/83c3308ca779c3ca84f29d47fa4203e2f7ae5a50/crates/casars-python/python/tests/data/casa_quanta_logarithms.json)
 - [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/83c3308ca779c3ca84f29d47fa4203e2f7ae5a50/crates/casars-python/python/tests/test_tools_quanta.py)
+
+<a id="quanta-evidence-atan2-casa"></a>
+##### atan2-casa
+
+**CASA-recorded values — measured.** 144 CASA 6.7.6-14 cases cover signed zero, scaled dimensionless inputs, invalid units, arrays and conversion errors. quanta.atan2.
+
+- [tools/simulation/quanta_atan2_oracle.py](https://github.com/bglenden/casa-rs/blob/4d86ba7a97255eaafab86a745b660adc694aa3c7/tools/simulation/quanta_atan2_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_atan2.json](https://github.com/bglenden/casa-rs/blob/4d86ba7a97255eaafab86a745b660adc694aa3c7/crates/casars-python/python/tests/data/casa_quanta_atan2.json)
+- [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/4d86ba7a97255eaafab86a745b660adc694aa3c7/crates/casars-python/python/tests/test_tools_quanta.py)
 
 ### simulator
 

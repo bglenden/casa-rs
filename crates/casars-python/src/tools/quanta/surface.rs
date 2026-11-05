@@ -51,7 +51,7 @@ const METHODS: &[Method] = &[
     method("angle", &FORMAT, R::Texts, Yes),
     unary("asin", R::Record, Yes),
     unary("atan", R::Record, Yes),
-    binary("atan2", R::Record, No),
+    binary("atan2", R::Record, Yes),
     unary("canon", R::Record, Yes),
     unary("canonical", R::Record, Yes),
     unary("ceil", R::Record, Yes),
