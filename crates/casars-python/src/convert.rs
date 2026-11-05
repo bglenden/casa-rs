@@ -203,41 +203,59 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
         return Ok(Variant::Text(text.to_str()?.to_string()));
     }
     if let Ok(dict) = object.cast::<PyDict>() {
+        // NumPy complex64 scalars are not CASA complex values. Preserve their
+        // old numeric representation for ordinary records without asking
+        // NumPy to discard the imaginary part (which emits a warning).
+        let complex64_scalar = match dict.get_item("value")? {
+            Some(value) => is_numpy_complex64_scalar(&value)?,
+            None => false,
+        };
         let mut record = BTreeMap::new();
         for (key, value) in dict.iter() {
             let key = key
                 .extract::<String>()
                 .map_err(|_| PyTypeError::new_err("a CASA record argument must have str keys"))?;
-            record.insert(key, variant_from_python(&value)?);
+            let converted = if key == "value" && complex64_scalar {
+                Variant::Number(value.getattr("real")?.extract::<f64>()?)
+            } else {
+                variant_from_python(&value)?
+            };
+            record.insert(key, converted);
         }
-        let scalar_kind = match dict.get_item("value")? {
-            Some(value) if value.is_instance_of::<PyInt>() && !value.is_instance_of::<PyBool>() => {
-                value
-                    .extract::<i64>()
-                    .ok()
-                    .map(RecordScalarKind::NativeInteger)
-            }
-            Some(value)
-                if !value.is_instance_of::<PyFloat>()
-                    && !value.is_instance_of::<PyComplex>()
-                    && matches!(
-                        value
-                            .getattr("dtype")
-                            .and_then(|d| d.getattr("kind"))
-                            .and_then(|k| k.extract::<String>())
-                            .as_deref(),
-                        Ok("i" | "u" | "f" | "b")
-                    ) =>
-            {
-                let scalar = value.py().import("numpy")?.getattr("generic")?;
-                if value.is_instance(&scalar)? {
-                    Some(RecordScalarKind::NumpyUnsupported)
-                } else {
-                    record_vector_kind(&value)?
+        let scalar_kind = if complex64_scalar {
+            Some(RecordScalarKind::NumpyUnsupported)
+        } else {
+            match dict.get_item("value")? {
+                Some(value)
+                    if value.is_instance_of::<PyInt>() && !value.is_instance_of::<PyBool>() =>
+                {
+                    value
+                        .extract::<i64>()
+                        .ok()
+                        .map(RecordScalarKind::NativeInteger)
                 }
+                Some(value)
+                    if !value.is_instance_of::<PyFloat>()
+                        && !value.is_instance_of::<PyComplex>()
+                        && matches!(
+                            value
+                                .getattr("dtype")
+                                .and_then(|d| d.getattr("kind"))
+                                .and_then(|k| k.extract::<String>())
+                                .as_deref(),
+                            Ok("i" | "u" | "f" | "b")
+                        ) =>
+                {
+                    let scalar = value.py().import("numpy")?.getattr("generic")?;
+                    if value.is_instance(&scalar)? {
+                        Some(RecordScalarKind::NumpyUnsupported)
+                    } else {
+                        record_vector_kind(&value)?
+                    }
+                }
+                Some(value) => record_vector_kind(&value)?,
+                None => None,
             }
-            Some(value) => record_vector_kind(&value)?,
-            None => None,
         };
         return Ok(Variant::Record(VariantRecord {
             fields: record,
@@ -260,6 +278,29 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
         return Ok(Variant::Number(number));
     }
     Ok(Variant::Other(object.repr()?.to_string()))
+}
+
+/// CASA rejects NumPy's complex64 scalar in quantity records, unlike Python
+/// complex and NumPy complex128. Do not classify zero-dimensional arrays.
+fn is_numpy_complex64_scalar(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let Ok(dtype) = value.getattr("dtype") else {
+        return Ok(false);
+    };
+    if !matches!(
+        dtype
+            .getattr("kind")
+            .and_then(|k| k.extract::<String>())
+            .as_deref(),
+        Ok("c")
+    ) || dtype
+        .getattr("itemsize")
+        .and_then(|n| n.extract::<usize>())
+        .ok()
+        != Some(8)
+    {
+        return Ok(false);
+    }
+    Ok(value.is_instance(&value.py().import("numpy")?.getattr("generic")?)?)
 }
 
 /// Keep the integer kind and low 32 bits of one-dimensional record arrays.
