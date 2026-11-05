@@ -145,6 +145,17 @@ pub(super) fn abs(value: &Variant) -> ConvertResult<CasaValue> {
     )))
 }
 
+/// `qa.ceil(v)` and `qa.floor(v)` preserve the input quantity's unit.
+pub(super) fn round_integer(value: &Variant, upward: bool) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    let rounded = if upward {
+        value.value().ceil()
+    } else {
+        value.value().floor()
+    };
+    Ok(record(&Quantity::with_unit(rounded, value.unit().clone())))
+}
+
 /// `qa.compare(v, a)`: whether the units have the same dimensions.
 pub(super) fn compare(left: &Variant, right: &Variant) -> ConvertResult<CasaValue> {
     Ok(CasaValue::Bool(

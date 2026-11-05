@@ -30,8 +30,8 @@ from _casa_tools import (
 CASA = casa_signatures("quanta")
 
 IMPLEMENTED = {
-    "abs", "add", "angle", "canon", "canonical", "check", "checkfreq", "compare", "convert", "div", "done",
-    "formxxx", "getunit", "getvalue", "isangle", "isquantity", "mul", "neg", "quantity", "splitdate", "sub", "time",
+    "abs", "add", "angle", "canon", "canonical", "ceil", "check", "checkfreq", "compare", "convert", "div", "done",
+    "floor", "formxxx", "getunit", "getvalue", "isangle", "isquantity", "mul", "neg", "quantity", "splitdate", "sub", "time",
     "toangle", "tos", "totime", "type", "unit",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
@@ -63,6 +63,24 @@ def test_isangle_matches_casa() -> None:
         else:
             assert qa.isangle(case["input"]) is case["result"]
     assert qa.isangle() is False
+
+
+def test_rounding_matches_casa() -> None:
+    fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_rounding.json").read_text())
+    qa = quanta()
+    for case in fixture["cases"]:
+        method = getattr(qa, case["method"])
+        if "error" in case:
+            assert case["error"]["type"] == "RuntimeError"
+            with pytest.raises(RuntimeError) as error:
+                method(case["input"])
+            assert str(error.value) == case["error"]["message"]
+        else:
+            result = method(case["input"])
+            assert result == case["result"]
+            if result["value"] == 0:
+                assert math.copysign(1, result["value"]) == math.copysign(1, case["result"]["value"])
+    assert qa.ceil() == qa.floor() == {"unit": "", "value": 0.0}
 
 
 def q(value: Any, unit: str) -> dict[str, Any]:

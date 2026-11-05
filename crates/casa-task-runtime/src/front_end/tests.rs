@@ -313,6 +313,38 @@ fn json_run_reports_casas_direct_scalar_type_refusals() {
 }
 
 #[test]
+fn json_run_reports_casas_direct_vector_type_refusals() {
+    let surfaces = ["applycal", "flagdata", "fluxscale", "immoments", "imregrid"];
+    let front_end = TaskFrontEnd::new("test", contract_hosting(&surfaces), &surfaces, |_| {
+        panic!("a rejected value must not reach the task")
+    })
+    .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("request.json");
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../casars-python/python/tests/data/casa_task_vector_refusals.json"
+    ))
+    .unwrap();
+    for case in fixture["cases"].as_array().unwrap() {
+        let mut values = case["args"].clone();
+        for name in ["vis", "imagename"] {
+            if values[name] == "$EXISTING" {
+                values[name] = json!(workspace.path().to_str().unwrap());
+            }
+        }
+        let request = json!({"surface": case["task"], "values": values});
+        std::fs::write(&path, request.to_string()).unwrap();
+        let output = front_end.dispatch(&args(&["--json-run", path.to_str().unwrap()]));
+        let TaskReply::Failed { kind, message, .. } = serde_json::from_str(&output.stdout).unwrap()
+        else {
+            panic!("{request}: expected a refusal");
+        };
+        assert_eq!(kind, TaskFailureKind::Validation);
+        assert_eq!(message, case["message"].as_str().unwrap(), "{request}");
+    }
+}
+
+#[test]
 fn the_first_word_selects_a_hosted_surface() {
     let calls = Calls::default();
     let front_end = front_end(&calls);

@@ -18,6 +18,8 @@ pub struct PlaneCycleRow {
     pub channel: usize,
     /// The plane's polarization.
     pub polarization: usize,
+    /// Number of consecutive polarizations represented by this row.
+    pub polarizations: usize,
     /// Iterations charged to the plane.
     pub iterations: usize,
     /// Peak residual inside the mask on entry; zero with no mask.
@@ -28,7 +30,7 @@ pub struct PlaneCycleRow {
     pub start_peak_no_mask: f64,
     /// Peak residual over the plane's pixels at the end.
     pub peak_no_mask: f64,
-    /// Signed first-term flux the plane added to the model.
+    /// Signed model flux added by this plane or polarization group.
     pub model_flux: f64,
     /// Pixels in the plane's mask.
     pub mask_sum: usize,
@@ -46,6 +48,7 @@ pub(super) fn blank_row(
         domain: key.domain,
         channel: key.channel,
         polarization: key.polarization,
+        polarizations: 1,
         iterations: 0,
         start_peak: 0.0,
         peak: 0.0,
@@ -98,6 +101,7 @@ pub(super) fn cycle_row(
         domain: key.domain,
         channel: key.channel,
         polarization: key.polarization,
+        polarizations: 1,
         iterations: outcome.iterations,
         start_peak: masked(outcome.start_peak),
         peak: masked(outcome.peak),

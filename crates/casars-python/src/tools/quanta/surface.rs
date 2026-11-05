@@ -54,7 +54,7 @@ const METHODS: &[Method] = &[
     binary("atan2", R::Record, No),
     unary("canon", R::Record, Yes),
     unary("canonical", R::Record, Yes),
-    unary("ceil", R::Record, No),
+    unary("ceil", R::Record, Yes),
     method("check", &[param("v", K::Text, Required)], R::Bool, Yes),
     method(
         "checkfreq",
@@ -111,7 +111,7 @@ const METHODS: &[Method] = &[
     binary("eq", R::Bool, No),
     unary("exp", R::Record, No),
     method("fits", &[], R::Bool, No),
-    unary("floor", R::Record, No),
+    unary("floor", R::Record, Yes),
     method(
         "formxxx",
         &[
