@@ -26,7 +26,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "record-complex-scalar-casa"
+    "record-complex-scalar-casa",
+    "record-complex-array-casa"
    ]
   },
   "angle": {
@@ -238,7 +239,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "record-complex-scalar-casa"
+    "record-complex-scalar-casa",
+    "record-complex-array-casa"
    ]
   },
   "getvalue": {
@@ -369,7 +371,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "record-complex-scalar-casa"
+    "record-complex-scalar-casa",
+    "record-complex-array-casa"
    ]
   },
   "setformat": {
@@ -683,6 +686,18 @@
     "crates/casars-python/python/tests/test_quanta_record_complex_scalar.py"
    ],
    "source_revision": "5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e"
+  },
+  "record-complex-array-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "60 CASA 6.7.6-14 quantity-record comparisons cover complex64 and complex128 arrays of different shapes and units. Ten bare-array comparisons expose CASA discarding values; casa-rs rejects those inputs instead.",
+   "scope": "Complex NumPy arrays in quanta.quantity, getunit and add.",
+   "links": [
+    "tools/casa-compat/quantity_record_complex_array_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_record_complex_array.json",
+    "crates/casars-python/python/tests/test_quanta_record_complex_array.py"
+   ],
+   "source_revision": "20e34293b366be9608b59fd036011a1ac2d1c001"
   }
  }
 }
