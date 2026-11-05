@@ -1,0 +1,20 @@
+{
+  "applycal": "vis",
+  "bandpass": "vis",
+  "exportfits": "imagename",
+  "flagdata": "vis",
+  "flagmanager": "vis",
+  "fluxscale": "vis",
+  "gaincal": "vis",
+  "gencal": "vis",
+  "imhead": "imagename",
+  "immoments": "imagename",
+  "impbcor": "imagename",
+  "importfits": "fitsimage",
+  "impv": "imagename",
+  "imregrid": "imagename",
+  "imstat": "imagename",
+  "imsubimage": "imagename",
+  "mstransform": "vis",
+  "split": "vis"
+}

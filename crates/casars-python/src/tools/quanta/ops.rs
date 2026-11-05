@@ -156,6 +156,38 @@ pub(super) fn round_integer(value: &Variant, upward: bool) -> ConvertResult<Casa
     Ok(record(&Quantity::with_unit(rounded, value.unit().clone())))
 }
 
+/// CASA's scalar trigonometric functions, with angular unit checking.
+pub(super) fn trigonometry(value: &Variant, method: &str) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    let inverse = matches!(method, "asin" | "acos" | "atan");
+    let valid = if inverse {
+        value.unit().val().dim == UnitDim::NODIM
+    } else {
+        has(&value, Dimension::Angle)
+    };
+    if !valid {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::{method} illegal unit type '{}'",
+            value.unit().name()
+        )));
+    }
+    let number = value.get_si_value();
+    let result = match method {
+        "sin" => number.sin(),
+        "cos" => number.cos(),
+        "tan" => number.tan(),
+        "asin" => number.asin(),
+        "acos" => number.acos(),
+        "atan" => number.atan(),
+        _ => unreachable!("the binding selects a trigonometric method"),
+    };
+    Ok(record(&if inverse {
+        Quantity::with_unit(result, unit("rad"))
+    } else {
+        Quantity::dimensionless(result)
+    }))
+}
+
 /// `qa.compare(v, a)`: whether the units have the same dimensions.
 pub(super) fn compare(left: &Variant, right: &Variant) -> ConvertResult<CasaValue> {
     Ok(CasaValue::Bool(
