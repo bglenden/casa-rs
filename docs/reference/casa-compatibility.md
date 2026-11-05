@@ -10,6 +10,8 @@ Each casa-rs task that mimics a CASA task (#931) against that task as CASA 6.7.6
 
 The CASA parameters casa-rs lacks or accepts only at their defaults are tracked by family: images in #977, MeasurementSet and flagging in #978, calibration in #979 and `tclean` in #980.
 
+For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the recorded coercions, a value both implementations reject for type reports CASA's wording, unless a narrower unimplemented-form diagnostic applies. Required paths, unions, vectors and variants retain casa-rs's diagnostics (#1099). CASA accepts booleans as integers and coerces them to floats; where casa-rs refuses one, it keeps its own message. Exception classes follow the casa-rs Python contract.
+
 ## Summary
 
 | Surface | CASA task | CASA's signature | CASA parameters | Shared | CASA's casa-rs lacks | Default only | casa-rs's CASA lacks | Defaults differ |
