@@ -267,6 +267,49 @@ fn an_off_centre_plane_takes_its_domains_largest_beam_and_clarks_patch() {
     assert!(off.clark().exterior_sidelobe >= 1.0);
 }
 
+/// When every PSF fit in a domain is refused, CASA 6.7.6.14 assigns the
+/// same 1e-6 arcsec circular beam to each plane (#1140). The minor cycle
+/// expresses that angular width in first-axis pixels.
+#[test]
+fn an_all_refused_domain_uses_casas_tiny_beam() {
+    const WIDTH: usize = 64;
+    let problem = problem(
+        WIDTH,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem);
+    let cells = WIDTH * WIDTH;
+    let completion = completion(&problem, &scene, |images| {
+        let psf = images.psf.as_mut().expect("the initial PSF");
+        psf.fill(0.0);
+        images.residual.fill(0.0);
+        for channel in 0..2 {
+            psf[channel * cells + 15 * WIDTH + 32] = 1.0;
+            images.residual[channel * cells + 32 * WIDTH + 32] = 1.0;
+        }
+    });
+    let mut cache = PsfCache::default();
+    prepare_minor_cycle(
+        &completion,
+        &full_plane(&problem),
+        &setup(&problem, None),
+        &mut cache,
+        &WorkerTeam::new(1).expect("team"),
+    )
+    .expect("prepare");
+    let cell_rad = problem.geometry().domains()[0].direction().increment_rad()[0].abs();
+    let expected = (1.0e-6_f64 / 3600.0).to_radians() / cell_rad;
+    for channel in 0..2 {
+        let summary = cache.summary(0, channel, 0).expect("a measured plane");
+        assert!(summary.off_centre() && !summary.needs_domain_beam());
+        let beam = summary.beam();
+        assert!((beam.major_fwhm_rad() / expected - 1.0).abs() < 1e-12);
+        assert!((beam.minor_fwhm_rad() / expected - 1.0).abs() < 1e-12);
+        assert_eq!(beam.position_angle_rad(), 0.0);
+    }
+}
+
 /// CASA 6.7.6.14 subtracts the domain's fitted beam at the image centre
 /// before choosing the largest sidelobe, including for an off-centre PSF.
 #[test]
