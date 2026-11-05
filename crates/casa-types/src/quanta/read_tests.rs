@@ -109,7 +109,7 @@ const CASA_REJECTS: &[&str] = &[
 /// (casacore's unit grammar allows repeated signs and a leading power before a
 /// name, and `h:`): CASA reads `--5s` as 0 `--5s`, `1.4.5GHz` as
 /// 1.4 `5GHz` and `12h:` as 12 `h:`.
-const UNIT_PARSER_GAPS: &[&str] = &["--5s", "-+-5s", "1.4.5GHz", "12h:"];
+const UNIT_PARSER_GAPS: &[&str] = &["--5s", "-+-5s", "12h:"];
 
 fn close(left: f64, right: f64) -> bool {
     (left - right).abs() <= 1e-12 * left.abs().max(right.abs()).max(1.0)
@@ -117,6 +117,9 @@ fn close(left: f64, right: f64) -> bool {
 
 #[test]
 fn strings_read_as_casa_reads_them() {
+    let numeric_unit = Quantity::read("1.4.5GHz").unwrap();
+    assert_eq!(numeric_unit.value(), 1.4);
+    assert_eq!(numeric_unit.unit().name(), "5GHz");
     for &(text, value, unit) in CASA_READS {
         let quantity = Quantity::read_at(text, 60_000.25)
             .unwrap_or_else(|error| panic!("{text:?} should read: {error}"));

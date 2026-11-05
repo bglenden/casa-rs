@@ -86,6 +86,126 @@
         "2 1"
       ],
       "result": true
+    },
+    {
+      "method": "quantity",
+      "args": [
+        "1.4.5GHz"
+      ],
+      "result": {
+        "unit": "5GHz",
+        "value": 1.4
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        1,
+        "1.m"
+      ],
+      "result": {
+        "unit": "1.m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        1,
+        "m.1"
+      ],
+      "result": {
+        "unit": "m.1",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        1,
+        "1/m"
+      ],
+      "result": {
+        "unit": "1/m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        1,
+        "(1)"
+      ],
+      "result": {
+        "unit": "(1)",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        1,
+        "1m"
+      ],
+      "result": {
+        "unit": "1m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        1,
+        "2.m"
+      ],
+      "result": {
+        "unit": "2.m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "mul",
+      "args": [
+        "2 1",
+        "3m"
+      ],
+      "result": {
+        "unit": "1.m",
+        "value": 6.0
+      }
+    },
+    {
+      "method": "mul",
+      "args": [
+        "3m",
+        "2 1"
+      ],
+      "result": {
+        "unit": "m.1",
+        "value": 6.0
+      }
+    },
+    {
+      "method": "div",
+      "args": [
+        "2 1",
+        "3m"
+      ],
+      "result": {
+        "unit": "1/(m)",
+        "value": 0.6666666666666666
+      }
+    },
+    {
+      "method": "pow",
+      "args": [
+        "2 1",
+        2
+      ],
+      "result": {
+        "unit": "(1)2",
+        "value": 4.0
+      }
     }
   ]
 }

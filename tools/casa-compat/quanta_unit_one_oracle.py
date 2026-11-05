@@ -14,7 +14,12 @@ CASES = [
     ("quantity", [{"value": 0.5, "unit": "1"}]),
     ("getunit", [{"value": 0.5, "unit": "1"}]),
     ("add", [{"value": 0.5, "unit": "1"}, 1.0]),
-    ("check", ["2 1"]),
+    ("check", ["2 1"]), ("quantity", ["1.4.5GHz"]),
+    ("quantity", [1, "1.m"]), ("quantity", [1, "m.1"]),
+    ("quantity", [1, "1/m"]), ("quantity", [1, "(1)"]),
+    ("quantity", [1, "1m"]), ("quantity", [1, "2.m"]),
+    ("mul", ["2 1", "3m"]), ("mul", ["3m", "2 1"]),
+    ("div", ["2 1", "3m"]), ("pow", ["2 1", 2]),
 ]
 q = quanta()
 results = []
