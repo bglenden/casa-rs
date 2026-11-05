@@ -2409,6 +2409,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#rounding-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rounding-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5868,6 +5879,17 @@
     <span class="md-ellipsis">
       
         isangle-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rounding-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rounding-casa
       
     </span>
   </a>
@@ -9773,9 +9795,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">57</td>
 <td>yes</td>
-<td style="text-align: right;">26</td>
+<td style="text-align: right;">28</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">31</td>
+<td style="text-align: right;">29</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10854,7 +10876,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="quanta">quanta<a class="headerlink" href="#quanta" title="Permanent link">&para;</a></h3>
 <h4 id="quanta-method-implementation">quanta method implementation<a class="headerlink" href="#quanta-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 26, Partial: 0, Not implemented: 31, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 28, Partial: 0, Not implemented: 29, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -10932,9 +10954,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>ceil</code></td>
 <td><code>v=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Rounds a scalar quantity in its own unit, preserving CASA conversion errors.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-rounding-casa">rounding-casa</a></td>
 </tr>
 <tr>
 <td><code>check</code></td>
@@ -11037,9 +11059,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>floor</code></td>
 <td><code>v=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Rounds a scalar quantity in its own unit, preserving CASA conversion errors.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-rounding-casa">rounding-casa</a></td>
 </tr>
 <tr>
 <td><code>formxxx</code></td>
@@ -11319,6 +11341,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/88e8c2fd7b7742de78eeb75e16164b5b40367c90/tools/simulation/quanta_isangle_oracle.py">tools/simulation/quanta_isangle_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/88e8c2fd7b7742de78eeb75e16164b5b40367c90/crates/casars-python/python/tests/data/casa_quanta_isangle.json">crates/casars-python/python/tests/data/casa_quanta_isangle.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/88e8c2fd7b7742de78eeb75e16164b5b40367c90/crates/casars-python/python/tests/test_tools_quanta.py">crates/casars-python/python/tests/test_tools_quanta.py</a></li>
+</ul>
+<p><a id="quanta-evidence-rounding-casa"></a></p>
+<h5 id="rounding-casa">rounding-casa<a class="headerlink" href="#rounding-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> Forty cases recorded with CASA 6.7.6-14 cover both rounding directions, scalar units, signed zero, records and errors. quanta.ceil and quanta.floor.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a05f4c2dbdfdff1a6a46575c02d4c714875281c6/tools/simulation/quanta_rounding_oracle.py">tools/simulation/quanta_rounding_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a05f4c2dbdfdff1a6a46575c02d4c714875281c6/crates/casars-python/python/tests/data/casa_quanta_rounding.json">crates/casars-python/python/tests/data/casa_quanta_rounding.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a05f4c2dbdfdff1a6a46575c02d4c714875281c6/crates/casars-python/python/tests/test_tools_quanta.py">crates/casars-python/python/tests/test_tools_quanta.py</a></li>
 </ul>
 <h3 id="simulator">simulator<a class="headerlink" href="#simulator" title="Permanent link">&para;</a></h3>
 <h4 id="simulator-method-implementation">simulator method implementation<a class="headerlink" href="#simulator-method-implementation" title="Permanent link">&para;</a></h4>
