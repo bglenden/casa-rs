@@ -750,7 +750,7 @@
     "crates/casars-python/python/tests/test_componentlist_selection.py",
     "crates/casars-python/python/tests/test_componentlist_indices.py"
    ],
-   "source_revision": "f479f80fe034323f366736c98b889b0acdb68950"
+   "source_revision": "0cfaab434ffe9bf362f2dc8a1a9df7b6b88dd2b8"
   }
  }
 }
