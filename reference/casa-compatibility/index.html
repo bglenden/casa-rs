@@ -2004,6 +2004,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#iscomponentlist-cyclic-input-previously-agreed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        iscomponentlist-cyclic-input: Previously agreed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2169,6 +2180,17 @@
     <span class="md-ellipsis">
       
         record-shape-units-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#iscomponentlist-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        iscomponentlist-casa
       
     </span>
   </a>
@@ -5755,6 +5777,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#iscomponentlist-cyclic-input-previously-agreed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        iscomponentlist-cyclic-input: Previously agreed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5920,6 +5953,17 @@
     <span class="md-ellipsis">
       
         record-shape-units-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#iscomponentlist-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        iscomponentlist-casa
       
     </span>
   </a>
@@ -10310,9 +10354,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">30</td>
-<td style="text-align: right;">0</td>
 <td style="text-align: right;">31</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">30</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10430,7 +10474,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 30, Partial: 0, Not implemented: 31, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 31, Partial: 0, Not implemented: 30, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -10676,9 +10720,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>iscomponentlist</code></td>
 <td><code>tool=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>CASA placeholder logs a warning and returns False; cyclic arguments are handled safely.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-iscomponentlist-casa">iscomponentlist-casa</a></td>
 </tr>
 <tr>
 <td><code>isphysical</code></td>
@@ -10938,6 +10982,16 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Owner decision: Owner approved a catchable error on 2026-11-05 (#1158).</li>
 <li>Evidence: <a href="#componentlist-evidence-isphysical-casa">isphysical-casa</a>.</li>
 </ul>
+<h5 id="iscomponentlist-cyclic-input-previously-agreed">iscomponentlist-cyclic-input: Previously agreed<a class="headerlink" href="#iscomponentlist-cyclic-input-previously-agreed" title="Permanent link">&para;</a></h5>
+<ul>
+<li>Inputs: A self-referential Python list passed to componentlist.iscomponentlist.</li>
+<li>CASA: CASA 6.7.6-14 terminates the Python process with SIGSEGV.</li>
+<li>casa-rs: Logs the placeholder warning and returns False without recursing forever.</li>
+<li>Rationale: A type-check placeholder should not terminate its caller.</li>
+<li>User impact: Callers retain the Python session.</li>
+<li>Owner decision: Owner approved correcting CASA crashes as a class on 2026-11-05; see docs/simulation/owner-decisions-20261105.md.</li>
+<li>Evidence: <a href="#componentlist-evidence-iscomponentlist-casa">iscomponentlist-casa</a>.</li>
+</ul>
 <h4 id="componentlist-evidence">componentlist evidence<a class="headerlink" href="#componentlist-evidence" title="Permanent link">&para;</a></h4>
 <p>Evidence is scoped to its named revision, inputs and comparator. Historical reported results need applicability review; planned or unexecuted tests are not passes.</p>
 <p><a id="componentlist-evidence-signature"></a></p>
@@ -11062,6 +11116,15 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/tools/simulation/componentlist_record_shape_units_oracle.py">tools/simulation/componentlist_record_shape_units_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/crates/casars-python/python/tests/data/casa_componentlist_record_shape_units.json">crates/casars-python/python/tests/data/casa_componentlist_record_shape_units.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/crates/casars-python/python/tests/test_componentlist_record_shape_units.py">crates/casars-python/python/tests/test_componentlist_record_shape_units.py</a></li>
+</ul>
+<p><a id="componentlist-evidence-iscomponentlist-casa"></a></p>
+<h5 id="iscomponentlist-casa">iscomponentlist-casa<a class="headerlink" href="#iscomponentlist-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 87 CASA 6.7.6-14 calls cover argument forms, oversized integers and empty, populated and released lists; a separate cyclic-input process exits with SIGSEGV. componentlist.iscomponentlist.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/tools/simulation/componentlist_iscomponentlist_oracle.py">tools/simulation/componentlist_iscomponentlist_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/crates/casars-python/python/tests/data/casa_componentlist_iscomponentlist.json">crates/casars-python/python/tests/data/casa_componentlist_iscomponentlist.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/crates/casars-python/python/tests/test_componentlist_iscomponentlist.py">crates/casars-python/python/tests/test_componentlist_iscomponentlist.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>

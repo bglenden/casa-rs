@@ -1017,6 +1017,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
+<a href="#cyclic-component-list-type-checks-crash-casa">cyclic component-list type checks</a>,
 <a href="#casa-discards-the-values-of-bare-complex-quantity-arrays">complex quantity-array values</a>,
 <a href="#casa-discards-bare-numpy-complex64-quantity-values">bare complex64 quantity values</a>,
 <a href="#automatic-mask-convolution-requires-square-pixels-in-casa">automatic-mask convolution on rectangular pixels</a>,
@@ -4685,6 +4686,18 @@ while an equivalent Python complex or NumPy complex128 value raises an error.
 CASA also treats the complex64 value as zero in other quantity operations.
 casa-rs preserves both parts and raises <code>Wrong QuantumHolder to convert
 asQuantumDouble</code> rather than silently discarding them.</p>
+<h2 id="cyclic-component-list-type-checks-crash-casa">Cyclic component-list type checks crash CASA<a class="headerlink" href="#cyclic-component-list-type-checks-crash-casa" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-05</li>
+<li>Status: CASA crashes; casa-rs returns the placeholder result (#1053).</li>
+<li>Owner decision: Correct CASA crashes as a class; see <code>docs/simulation/owner-decisions-20261105.md</code>.</li>
+<li>Evidence: <code>tools/simulation/componentlist_iscomponentlist_oracle.py</code>, CASA 6.7.6-14 on the Mac mini, in an isolated process with core dumps disabled.</li>
+</ul>
+<p>Passing a list that contains itself to <code>componentlist.iscomponentlist</code>
+terminates CASA's Python process with a segmentation fault before the
+placeholder can return. The method otherwise logs a warning and returns
+<code>False</code>. casa-rs detects cycles while inspecting the ignored argument and
+returns that same placeholder value without crashing.</p>
 
 
 
