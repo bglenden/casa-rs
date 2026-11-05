@@ -1017,6 +1017,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
+<a href="#casa-misreads-big-endian-integer-quantity-arrays">byte order of integer quantity arrays</a>,
 <a href="#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero">a Taylor run with no weight on its first correlation</a>,
 <a href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes">odd-size scale convolutions</a>,
 <a href="#matrixcleaners-step-residual-forgets-earlier-steps">MatrixCleaner's step residual</a>,
@@ -4619,6 +4620,13 @@ with. CASA's cube doesn't: the gap, 0.0057, is about the 1.1 Jy component times
 CASA's MFS does. <code>tools/casa-compat/tclean_summary_matrix.py --case
 mosaic-seed-cube --case mosaic-seed-cube-no-cut</code> shows it, and those two cases
 differ for this reason.</p>
+<h2 id="casa-misreads-big-endian-integer-quantity-arrays">CASA misreads big-endian integer quantity arrays<a class="headerlink" href="#casa-misreads-big-endian-integer-quantity-arrays" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-05</li>
+<li>Status: CASA bug; casa-rs does not follow it (#1183).</li>
+<li>Evidence: <code>tools/casa-compat/quantity_record_endian_oracle.py</code>, CASA 6.7.6.14 on a little-endian Mac.</li>
+</ul>
+<p>A quantity record containing <code>np.array([1], dtype="&gt;i4")</code> returns 16777216 m in CASA; the native-endian array returns 1 m. Big-endian 16-bit arrays return 256 m and 64-bit arrays return 0 m after integer narrowing. Signed and unsigned integer arrays show the same byte-order corruption, and arithmetic uses the corrupted values. casa-rs reads the numerical array value and returns 1 m for each. It still applies CASA's signed 32-bit narrowing to that value.</p>
 
 
 
