@@ -712,3 +712,578 @@ fn an_outlier_files_relative_name_reads_from_the_working_directory() {
     assert!(!settings.join("fields").exists());
     assert!(!directory.join("products/fields").exists());
 }
+
+/// A requested main-lobe cutoff reaches the minor cycle's PSF sidelobe,
+/// not just the beam written in the final image metadata (#1140).
+#[test]
+fn tclean_uses_psfcutoff_in_its_minor_cycle() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("psfcutoff");
+    std::fs::create_dir_all(&directory).expect("run directory");
+    let geometry = observation.geometry();
+    let run = |name: &str, cutoff: f64| {
+        let values = json!({
+            "vis": observation.measurement_set(),
+            "imagename": directory.join(name),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend": "cpu",
+            "deconvolver": "clark",
+            "niter": 1,
+            "psfcutoff": cutoff,
+            "restoration": false,
+        });
+        match json_run(&directory, values) {
+            TaskReply::Succeeded { value, .. } => scalar(&value, "maxpsfsidelobe"),
+            other => panic!("{name}: {other:?}"),
+        }
+    };
+    let (low, high) = (run("low", 0.15), run("high", 0.65));
+    assert!((low - high).abs() > 1e-5, "low {low}, high {high}");
+}
+
+/// A `calcpsf=False` restart keeps the PSF beam fitted by the first run,
+/// including in its minor-cycle sidelobe and republished PSF metadata.
+#[test]
+fn tclean_restart_reuses_the_saved_psf_beam() {
+    use casa_images::PagedImage;
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("restart-psfcutoff");
+    std::fs::create_dir_all(&directory).expect("run directory");
+    let geometry = observation.geometry();
+    let run = |name: &str, cutoff: f64, niter: usize, restart: bool| {
+        let values = json!({
+            "vis": observation.measurement_set(),
+            "imagename": directory.join(name),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend": "cpu",
+            "deconvolver": "clark",
+            "niter": niter,
+            "psfcutoff": cutoff,
+            "calcpsf": !restart,
+            "calcres": !restart,
+            "restoration": false,
+        });
+        match json_run(&directory, values) {
+            TaskReply::Succeeded { value, .. } => value,
+            other => panic!("{name}: {other:?}"),
+        }
+    };
+    let beam = |name: &str| {
+        PagedImage::<f32>::open(directory.join(format!("{name}.psf")))
+            .unwrap()
+            .image_info()
+            .unwrap()
+            .beam_set
+            .single_beam()
+            .expect("one PSF beam")
+    };
+    for (name, original, changed) in [("low", 0.15, 0.65), ("high", 0.65, 0.15)] {
+        let reference = run(&format!("{name}-fresh"), original, 20, false);
+        run(name, original, 0, false);
+        let before = beam(name);
+        let continued = run(name, changed, 20, true);
+        let after = beam(name);
+        assert!(
+            (after.major / before.major - 1.0).abs() < 1e-7,
+            "{name}: {before:?} -> {after:?}"
+        );
+        assert!(
+            (after.minor / before.minor - 1.0).abs() < 1e-7,
+            "{name}: {before:?} -> {after:?}"
+        );
+        assert!(
+            (after.position_angle - before.position_angle).abs() < 1e-7,
+            "{name}: {before:?} -> {after:?}"
+        );
+        let (expected, actual) = (
+            scalar(&reference, "maxpsfsidelobe"),
+            scalar(&continued, "maxpsfsidelobe"),
+        );
+        assert!(
+            (expected - actual).abs() < 1e-5,
+            "{name}: fresh {expected}, restart {actual}"
+        );
+    }
+}
+
+/// CASA 6.7.6.14 reports 0.4375 for this saved beam on 1:2 cells: the
+/// Gaussian is four pixels across x and two across y.
+#[test]
+fn tclean_saved_psf_sidelobe_uses_both_cell_sizes() {
+    use casa_images::{GaussianBeam, ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("rectangular-saved-psf");
+    std::fs::create_dir_all(&directory).unwrap();
+    let cell = 0.012_f64.to_radians() / 3600.0;
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": directory.join("image"),
+        "imsize": 64, "cell": ["0.012arcsec", "0.024arcsec"], "backend": "cpu",
+        "specmode": "cube", "nchan": 1, "start": 0, "width": 1,
+        "deconvolver": "hogbom", "niter": 0, "restoration": false,
+    });
+    let seed = json_run(&directory, values.clone());
+    assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
+    let mut psf = PagedImage::<f32>::open(directory.join("image.psf")).unwrap();
+    let mut info = psf.image_info().unwrap();
+    info.beam_set = ImageBeamSet::new(GaussianBeam {
+        major: 4.0 * cell,
+        minor: 4.0 * cell,
+        position_angle: 0.0,
+    });
+    psf.set_image_info(&info).unwrap();
+    let mut data = psf.get().unwrap();
+    for x in 0..64 {
+        for y in 0..64 {
+            let d2 = (x as f64 - 32.0).powi(2) + (y as f64 - 32.0).powi(2);
+            data[[x, y, 0, 0]] = (-4.0 * std::f64::consts::LN_2 * d2 / 16.0).exp() as f32;
+        }
+    }
+    psf.put_slice(&data, &[0; 4]).unwrap();
+    psf.save().unwrap();
+    drop(psf);
+    let mut residual = PagedImage::<f32>::open(directory.join("image.residual")).unwrap();
+    let mut data = residual.get().unwrap();
+    data.fill(0.0);
+    data[[32, 32, 0, 0]] = 1.0;
+    residual.put_slice(&data, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    let mut sumwt = PagedImage::<f32>::open(directory.join("image.sumwt")).unwrap();
+    let mut weights = sumwt.get().unwrap();
+    weights.fill(1.0);
+    sumwt.put_slice(&weights, &[0; 4]).unwrap();
+    sumwt.save().unwrap();
+    drop(sumwt);
+    values["niter"] = json!(1);
+    values["calcpsf"] = json!(false);
+    values["calcres"] = json!(false);
+    let result = match json_run(&directory, values) {
+        TaskReply::Succeeded { value, .. } => value,
+        other => panic!("{other:?}"),
+    };
+    let sidelobe = scalar(&result, "maxpsfsidelobe");
+    assert!((sidelobe - 0.4375).abs() < 1e-6, "{sidelobe}");
+}
+
+/// CASA subtracts a saved off-centre PSF beam at the image centre.
+#[test]
+fn tclean_saved_off_centre_psf_subtracts_the_beam_at_image_centre() {
+    use casa_images::{GaussianBeam, ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("offcentre-saved-psf");
+    std::fs::create_dir_all(&directory).unwrap();
+    let cell = 0.012_f64.to_radians() / 3600.0;
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": directory.join("image"),
+        "imsize": 64, "cell": ["0.012arcsec", "0.012arcsec"], "backend": "cpu",
+        "specmode": "cube", "nchan": 1, "start": 0, "width": 1,
+        "deconvolver": "hogbom", "niter": 0, "restoration": false,
+    });
+    let seed = json_run(&directory, values.clone());
+    assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
+    let mut psf = PagedImage::<f32>::open(directory.join("image.psf")).unwrap();
+    let mut info = psf.image_info().unwrap();
+    info.beam_set = ImageBeamSet::new(GaussianBeam {
+        major: 40.0 * cell,
+        minor: 40.0 * cell,
+        position_angle: 0.0,
+    });
+    psf.set_image_info(&info).unwrap();
+    let mut data = psf.get().unwrap();
+    data.fill(0.0);
+    data[[15, 32, 0, 0]] = 1.0;
+    psf.put_slice(&data, &[0; 4]).unwrap();
+    psf.save().unwrap();
+    drop(psf);
+    let mut residual = PagedImage::<f32>::open(directory.join("image.residual")).unwrap();
+    let mut data = residual.get().unwrap();
+    data.fill(0.0);
+    data[[32, 32, 0, 0]] = 1.0;
+    residual.put_slice(&data, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    let mut sumwt = PagedImage::<f32>::open(directory.join("image.sumwt")).unwrap();
+    let mut weights = sumwt.get().unwrap();
+    weights.fill(1.0);
+    sumwt.put_slice(&weights, &[0; 4]).unwrap();
+    sumwt.save().unwrap();
+    drop(sumwt);
+    values["niter"] = json!(1);
+    values["calcpsf"] = json!(false);
+    values["calcres"] = json!(false);
+    let result = match json_run(&directory, values) {
+        TaskReply::Succeeded { value, .. } => value,
+        other => panic!("{other:?}"),
+    };
+    let sidelobe = scalar(&result, "maxpsfsidelobe");
+    assert!((sidelobe - 0.39395368).abs() < 1e-6, "{sidelobe}");
+}
+
+/// MFS retains an existing PSF beam through recomputation; cube gridding
+/// forms a temporary image without that metadata and fits a fresh beam.
+#[test]
+fn tclean_recomputed_psf_uses_the_mode_specific_beam() {
+    use casa_images::{GaussianBeam, ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("recompute-saved-psf");
+    std::fs::create_dir_all(&directory).unwrap();
+    let geometry = observation.geometry();
+    let cell = geometry.cell_rad()[0];
+    for (algorithm, niter, cube) in [
+        ("clark", 0, false),
+        ("clark", 10, false),
+        ("mtmfs", 0, false),
+        ("mtmfs", 10, false),
+        ("clark", 0, true),
+        ("clark", 10, true),
+    ] {
+        let prefix = format!("{algorithm}-{niter}-{cube}");
+        let mut values = json!({
+            "vis": observation.measurement_set(), "imagename": directory.join(&prefix),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend": "cpu", "deconvolver": algorithm, "nterms": 2,
+            "niter": 0, "psfcutoff": 0.15, "restoration": false,
+        });
+        if cube {
+            values["specmode"] = json!("cube");
+            values["nchan"] = json!(1);
+            values["start"] = json!(0);
+            values["width"] = json!(1);
+        }
+        let reference_path = directory.join(format!("{prefix}-fresh.psf"));
+        if cube {
+            let mut fresh = values.clone();
+            fresh["imagename"] = json!(directory.join(format!("{prefix}-fresh")));
+            fresh["psfcutoff"] = json!(0.65);
+            let result = json_run(&directory, fresh);
+            assert!(matches!(result, TaskReply::Succeeded { .. }), "{result:?}");
+        }
+        let seed = json_run(&directory, values.clone());
+        assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
+        let suffix = if algorithm == "mtmfs" {
+            "psf.tt0"
+        } else {
+            "psf"
+        };
+        let path = directory.join(format!("{prefix}.{suffix}"));
+        let mut psf = PagedImage::<f32>::open(&path).unwrap();
+        let mut info = psf.image_info().unwrap();
+        info.beam_set = ImageBeamSet::new(GaussianBeam {
+            major: 10.0 * cell,
+            minor: 8.0 * cell,
+            position_angle: 0.25,
+        });
+        psf.set_image_info(&info).unwrap();
+        psf.save().unwrap();
+        drop(psf);
+        values["psfcutoff"] = json!(0.65);
+        values["niter"] = json!(niter);
+        let result = json_run(&directory, values);
+        assert!(
+            matches!(result, TaskReply::Succeeded { .. }),
+            "{prefix}: {result:?}"
+        );
+        let saved = PagedImage::<f32>::open(path)
+            .unwrap()
+            .image_info()
+            .unwrap()
+            .beam_set
+            .single_beam()
+            .unwrap();
+        if cube {
+            let fresh = PagedImage::<f32>::open(reference_path)
+                .unwrap()
+                .image_info()
+                .unwrap()
+                .beam_set
+                .single_beam()
+                .unwrap();
+            assert!(
+                (saved.major / fresh.major - 1.0).abs() < 1e-6,
+                "{prefix}: {fresh:?} {saved:?}"
+            );
+            assert!(
+                (saved.minor / fresh.minor - 1.0).abs() < 1e-6,
+                "{prefix}: {fresh:?} {saved:?}"
+            );
+            assert!(
+                (saved.position_angle - fresh.position_angle).abs() < 1e-6,
+                "{prefix}: {fresh:?} {saved:?}"
+            );
+        } else {
+            assert!(
+                (saved.major / cell - 10.0).abs() < 1e-5,
+                "{prefix}: {saved:?}"
+            );
+            assert!(
+                (saved.minor / cell - 8.0).abs() < 1e-5,
+                "{prefix}: {saved:?}"
+            );
+            assert!(
+                (saved.position_angle - 0.25).abs() < 1e-6,
+                "{prefix}: {saved:?}"
+            );
+        }
+    }
+}
+
+/// CASA fits a headerless saved PSF at its default cutoff before publishing
+/// its beam, even if the continuing request asks for a different cutoff.
+#[test]
+fn tclean_restart_without_a_saved_beam_publishes_the_default_fit() {
+    use casa_images::{ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("restart-headerless-psf");
+    std::fs::create_dir_all(&directory).unwrap();
+    let geometry = observation.geometry();
+    for (name, algorithm) in [("clark", "clark"), ("mtmfs", "mtmfs")] {
+        let run = |prefix: &str, cutoff: f64, niter: usize, restart: bool| {
+            let values = json!({
+                "vis": observation.measurement_set(), "imagename": directory.join(prefix),
+                "imsize": geometry.image_size,
+                "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+                "backend": "cpu", "deconvolver": algorithm, "nterms": 2,
+                "niter": niter, "psfcutoff": cutoff,
+                "calcpsf": !restart, "calcres": !restart, "restoration": false,
+            });
+            let reply = json_run(&directory, values);
+            assert!(
+                matches!(reply, TaskReply::Succeeded { .. }),
+                "{prefix}: {reply:?}"
+            );
+        };
+        let suffix = if algorithm == "mtmfs" {
+            "psf.tt0"
+        } else {
+            "psf"
+        };
+        let beam = |prefix: &str| {
+            PagedImage::<f32>::open(directory.join(format!("{prefix}.{suffix}")))
+                .unwrap()
+                .image_info()
+                .unwrap()
+                .beam_set
+                .single_beam()
+                .unwrap()
+        };
+        run(&format!("{name}-reference"), 0.35, 20, false);
+        run(name, 0.15, 0, false);
+        let path = directory.join(format!("{name}.{suffix}"));
+        let mut psf = PagedImage::<f32>::open(&path).unwrap();
+        let mut info = psf.image_info().unwrap();
+        info.beam_set = ImageBeamSet::empty();
+        psf.set_image_info(&info).unwrap();
+        psf.save().unwrap();
+        drop(psf);
+        run(name, 0.65, 20, true);
+        let (expected, actual) = (beam(&format!("{name}-reference")), beam(name));
+        assert!(
+            (actual.major / expected.major - 1.0).abs() < 1e-6,
+            "{name}: {expected:?} {actual:?}"
+        );
+        assert!(
+            (actual.minor / expected.minor - 1.0).abs() < 1e-6,
+            "{name}: {expected:?} {actual:?}"
+        );
+        assert!(
+            (actual.position_angle - expected.position_angle).abs() < 1e-6,
+            "{name}: {expected:?} {actual:?}"
+        );
+    }
+}
+
+/// On restart CASA automask uses the residual's beam, or the PSF beam when
+/// the residual has none, including when image pixels are recomputed.
+/// The two headers deliberately disagree.
+#[test]
+fn tclean_automatic_restart_prefers_the_residual_beam() {
+    use casa_images::{GaussianBeam, ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("restart-mask-beam");
+    std::fs::create_dir_all(&directory).unwrap();
+    let cell = 0.012_f64.to_radians() / 3600.0;
+    for (name, psf_size, residual_size, recompute, recompute_psf, rectangular, expected_mask) in [
+        (
+            "residual-broad",
+            2.5,
+            Some(10.0),
+            false,
+            false,
+            false,
+            false,
+        ),
+        (
+            "residual-narrow",
+            10.0,
+            Some(2.5),
+            false,
+            false,
+            false,
+            true,
+        ),
+        ("residual-absent", 10.0, None, false, false, false, false),
+        (
+            "recomputed-broad",
+            2.5,
+            Some(50.0),
+            true,
+            false,
+            false,
+            false,
+        ),
+        (
+            "recomputed-narrow",
+            2.5,
+            Some(2.5),
+            true,
+            false,
+            false,
+            true,
+        ),
+        (
+            "both-recomputed-broad",
+            2.5,
+            Some(50.0),
+            true,
+            true,
+            false,
+            false,
+        ),
+        (
+            "both-recomputed-narrow",
+            2.5,
+            Some(2.5),
+            true,
+            true,
+            false,
+            true,
+        ),
+        ("rectangular", 2.5, Some(9.0), false, false, true, true),
+    ] {
+        let mut values = json!({
+            "vis": observation.measurement_set(), "imagename": directory.join(name),
+            "imsize": 64, "cell": ["0.012arcsec", if rectangular { "0.024arcsec" } else { "0.012arcsec" }], "backend": "cpu",
+            "specmode": "cube", "nchan": 1, "start": 0, "width": 1,
+            "deconvolver": "hogbom", "niter": 0, "restoration": false,
+        });
+        let seed = json_run(&directory, values.clone());
+        assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
+        for (product, size) in [("psf", Some(psf_size)), ("residual", residual_size)] {
+            let mut image =
+                PagedImage::<f32>::open(directory.join(format!("{name}.{product}"))).unwrap();
+            let mut info = image.image_info().unwrap();
+            info.beam_set = size.map_or_else(ImageBeamSet::empty, |width| {
+                ImageBeamSet::new(GaussianBeam {
+                    major: width * cell,
+                    minor: width * cell,
+                    position_angle: 0.0,
+                })
+            });
+            image.set_image_info(&info).unwrap();
+            let mut data = image.get().unwrap();
+            for x in 0..64 {
+                for y in 0..64 {
+                    let d2 = ((x as f64 - 32.0).powi(2) + (y as f64 - 32.0).powi(2)) / 8.0;
+                    data[[x, y, 0, 0]] = if product == "psf" {
+                        (-d2).exp() as f32
+                    } else if (30..35).contains(&x) && (30..35).contains(&y) {
+                        10.0
+                    } else {
+                        0.0
+                    };
+                }
+            }
+            image.put_slice(&data, &[0; 4]).unwrap();
+            image.save().unwrap();
+        }
+        let mut sumwt = PagedImage::<f32>::open(directory.join(format!("{name}.sumwt"))).unwrap();
+        let mut weights = sumwt.get().unwrap();
+        weights.fill(1.0);
+        sumwt.put_slice(&weights, &[0; 4]).unwrap();
+        sumwt.save().unwrap();
+        drop(sumwt);
+        values["niter"] = json!(1);
+        values["calcpsf"] = json!(recompute_psf);
+        values["calcres"] = json!(recompute);
+        values["usemask"] = json!("auto-multithresh");
+        values["sidelobethreshold"] = json!(if recompute || rectangular { 0.01 } else { 2.0 });
+        values["noisethreshold"] = json!(4.25);
+        values["lownoisethreshold"] = json!(1.5);
+        values["minbeamfrac"] = json!(0.5);
+        values["smoothfactor"] = json!(1.0);
+        values["cutthreshold"] = json!(0.01);
+        values["growiterations"] = json!(0);
+        let result = json_run(&directory, values);
+        assert!(
+            matches!(result, TaskReply::Succeeded { .. }),
+            "{name}: {result:?}"
+        );
+        let mask = PagedImage::<f32>::open(directory.join(format!("{name}.mask")))
+            .unwrap()
+            .get()
+            .unwrap();
+        assert_eq!(
+            mask.iter().any(|value| *value != 0.0),
+            expected_mask,
+            "{name}"
+        );
+    }
+}
+
+/// A Taylor-family restart also keeps the fitted beam of its saved tt0 PSF.
+#[test]
+fn mtmfs_restart_reuses_the_saved_psf_beam() {
+    use casa_images::PagedImage;
+    let observation = Observation::synthesise_band(16, &[("point", POINT)]);
+    let directory = observation.scratch("restart-mtmfs-psfcutoff");
+    std::fs::create_dir_all(&directory).expect("run directory");
+    let geometry = observation.geometry();
+    let run = |cutoff: f64, niter: usize, restart: bool| {
+        let values = json!({
+            "vis": observation.measurement_set(),
+            "imagename": directory.join("image"),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend": "cpu",
+            "deconvolver": "mtmfs",
+            "nterms": 2,
+            "niter": niter,
+            "psfcutoff": cutoff,
+            "calcpsf": !restart,
+            "calcres": !restart,
+            "restoration": false,
+        });
+        match json_run(&directory, values) {
+            TaskReply::Succeeded { .. } => (),
+            other => panic!("MT-MFS restart: {other:?}"),
+        }
+    };
+    let beam = || {
+        PagedImage::<f32>::open(directory.join("image.psf.tt0"))
+            .unwrap()
+            .image_info()
+            .unwrap()
+            .beam_set
+            .single_beam()
+            .expect("one PSF beam")
+    };
+    run(0.65, 0, false);
+    let before = beam();
+    run(0.15, 3, true);
+    let after = beam();
+    assert!(
+        (after.major / before.major - 1.0).abs() < 1e-7,
+        "{before:?} -> {after:?}"
+    );
+    assert!(
+        (after.minor / before.minor - 1.0).abs() < 1e-7,
+        "{before:?} -> {after:?}"
+    );
+    assert!(
+        (after.position_angle - before.position_angle).abs() < 1e-7,
+        "{before:?} -> {after:?}"
+    );
+}

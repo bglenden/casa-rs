@@ -20,9 +20,9 @@ use crate::{ImagingRequest, RunContext, UseMask};
 pub(crate) struct Continuation {
     /// The earlier model, on the image's own grid.
     pub(crate) start_model: Option<StartModel>,
-    /// The charge of a reused CLEAN mask's support, held through publication.
+    /// Charges for a reused CLEAN mask and saved beams, held through publication.
     pub(crate) mask_resident: Reservation,
-    /// The PSF, sums of weights and residual read in place of a pass.
+    /// Earlier products or their metadata, including images read in place of a pass.
     pub(crate) existing: Option<ExistingProducts>,
 }
 
@@ -112,13 +112,55 @@ pub(super) fn prepare(
         ));
     }
     let residual = restart::reads_residual(request);
-    if !request.calcpsf || residual {
-        continuation.existing = Some(ExistingProducts::new(
+    // CASA retains an existing residual's beam even when it forms new pixels.
+    let residual_name = family
+        .names("residual")
+        .into_iter()
+        .next()
+        .expect("a residual name");
+    let psf_name = family.names("psf").into_iter().next().expect("a PSF name");
+    // CubeMajorCycleAlgorithm forms a temporary PSF without the old image
+    // metadata, whereas MFS makes its PSF in the existing image store.
+    let psf_beam = (!request.calcpsf || request.specmode == crate::SpecMode::Mfs)
+        && restart::product_path(&request.imagename, &psf_name).exists();
+    let mask_beam = request.usemask == UseMask::AutoMultithresh
+        && request.niter > 0
+        && restart::product_path(&request.imagename, &residual_name).exists();
+    if !request.calcpsf || residual || mask_beam || psf_beam {
+        let mut existing = ExistingProducts::new(
             &request.imagename,
             family,
             ([nx, ny], polarizations, channels),
             (!request.calcpsf, residual),
-        )?);
+        )?;
+        if psf_beam {
+            let mut charge = admit(
+                &context.host,
+                &context.policy,
+                &Demand {
+                    phase: "restart PSF beam metadata",
+                    memory: ExistingProducts::beam_reading_bytes(planes, polarizations),
+                },
+            )?;
+            existing.read_psf_beams(channels, main.direction.increment_rad()[0].abs())?;
+            charge.retain(existing.beam_resident_bytes());
+            continuation.mask_resident.join(charge);
+        }
+        if mask_beam {
+            let mut charge = admit(
+                &context.host,
+                &context.policy,
+                &Demand {
+                    phase: "restart residual beam metadata",
+                    memory: ExistingProducts::beam_reading_bytes(planes, polarizations),
+                },
+            )?;
+            let before = existing.beam_resident_bytes();
+            existing.read_mask_beams(channels, main.direction.increment_rad()[0].abs())?;
+            charge.retain(existing.beam_resident_bytes() - before);
+            continuation.mask_resident.join(charge);
+        }
+        continuation.existing = Some(existing);
     }
     Ok(continuation)
 }

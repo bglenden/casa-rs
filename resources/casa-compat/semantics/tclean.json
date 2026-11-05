@@ -1047,11 +1047,12 @@
     },
     "calcpsf": {
       "status": "Partial",
-      "scope": "Contract 36: False reads the PSF and sums of weights an earlier run left (each channel and Stokes plane's, or a Taylor family's 2*nterms-1 moments) in place of gridding them; the restoring beam is fitted on the PSF read and the primary beam formed as before. Refused: no earlier PSF or .sumwt, and mosaic, A-projection, facets or outliers (#980).",
+      "scope": "Contract 36: False reads the PSF and sums of weights an earlier run left (each channel and Stokes plane, or a Taylor family's 2*nterms-1 moments) in place of gridding them; a complete saved PSF beam set is reused for the minor cycle and publication. Headerless PSFs fit at CASA's default cutoff before cleaning. MFS retains a complete saved PSF beam when recomputing, while cube gridding refits it. Refused: no earlier PSF or .sumwt, and mosaic, A-projection, facets or outliers (#980).",
       "evidence": [
         "signature",
         "reader",
-        "continuation-20261102"
+        "continuation-20261102",
+        "psfcutoff-restart-20261105"
       ],
       "behaviors": [
         "restart"
@@ -1059,12 +1060,13 @@
     },
     "psfcutoff": {
       "status": "Implemented",
-      "scope": "Copied; request requires positive value. A plane whose PSF peaks outside its inner quarter is not fitted, as StokesImageUtil::FitGaussianPSF refuses it, and takes its domain's largest beam, or a tiny one where no plane has a beam (SIImageStore::makeImageBeamSet). Its peak is its sidelobe level.",
+      "scope": "The requested cutoff fits a newly formed PSF and sets the beam used for minor-cycle sidelobes, Clark patches, automatic masking and publication. A complete existing PSF beam set is reused when calcpsf=False, and on MFS recomputation; cube gridding refits after discarding temporary PSF metadata. A headerless saved PSF is fitted at the default 0.35 before cleaning. Off-centre saved beams are subtracted at the image centre; an off-centre plane with no saved beam still uses its peak as its sidelobe pending #1140 item 6. The fit and sidelobe use both direction increments; rectangular-cell automatic masks retain the native support CASA 6.7.6.14 lacks.",
       "evidence": [
         "signature",
         "reader",
         "psf-off-centre-20261104",
-        "psf-off-centre-1130-20261104"
+        "psf-off-centre-1130-20261104",
+        "psfcutoff-restart-20261105"
       ],
       "behaviors": [
         "deconvolution"
@@ -2134,6 +2136,24 @@
         "resources/casa-compat/evidence/tclean-density-channels-20261104.json",
         "resources/casa-compat/tclean-density-channels-cases.json",
         "crates/casa-imaging-application/src/compile/spectral.rs"
+      ]
+    },
+    "psfcutoff-restart-20261105": {
+      "kind": "PSF cutoff and saved-beam restart comparisons against CASA",
+      "state": "measured: 10 of 11 strict paired cases pass; a near-zero MT-MFS model coefficient is a recorded pre-existing exception",
+      "source_revision": "2c0e1647d747dc73a185f280afd9d702efc2a5c5",
+      "revision": "b2c468423b839c4decf02c719a9b8977cfe338e6",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-psfcutoff-cases.json --backend cpu --precision f64, plus controlled restart probes and T1.5/T2 comparisons",
+      "receipt": "resources/casa-compat/evidence/tclean-psfcutoff-1140-20261105.json",
+      "scope": "Fresh and resumed PSF cutoff, retained PSF and residual beam metadata, rectangular-cell and off-centre saved beams, MFS versus cube recomputation, and headerless PSF fits. Ten strict CASA cases pass; one MT-MFS model.tt1 near-zero pixel fails per-product NRMS in both parent and candidate. Two other MT-MFS cases pass. T1.5 and representative T2 numerical comparisons pass; the generic mode-level owner review is pending. Each new law failed its targeted mutation, and one independent local review checked CASA/casacore C++.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-psfcutoff-1140-20261105.json",
+        "resources/casa-compat/tclean-psfcutoff-cases.json",
+        "crates/casa-imaging-application/src/restart/existing.rs",
+        "crates/casa-imaging-runtime/src/minor/psfs.rs",
+        "crates/casa-imaging-deconvolution/src/psf.rs",
+        "docs/CASA (C++) bugs.md"
       ]
     }
   }
