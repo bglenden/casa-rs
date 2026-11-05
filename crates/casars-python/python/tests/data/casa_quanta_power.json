@@ -1,0 +1,917 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "input": "2m",
+      "power": -2,
+      "result": {
+        "unit": "(m)-2",
+        "value": 0.25
+      }
+    },
+    {
+      "input": "2m",
+      "power": -1,
+      "result": {
+        "unit": "(m)-1",
+        "value": 0.5
+      }
+    },
+    {
+      "input": "2m",
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "2m",
+      "power": 1,
+      "result": {
+        "unit": "(m)1",
+        "value": 2.0
+      }
+    },
+    {
+      "input": "2m",
+      "power": 2,
+      "result": {
+        "unit": "(m)2",
+        "value": 4.0
+      }
+    },
+    {
+      "input": "2m",
+      "power": 3,
+      "result": {
+        "unit": "(m)3",
+        "value": 8.0
+      }
+    },
+    {
+      "input": "2km",
+      "power": -2,
+      "result": {
+        "unit": "(km)-2",
+        "value": 0.25
+      }
+    },
+    {
+      "input": "2km",
+      "power": -1,
+      "result": {
+        "unit": "(km)-1",
+        "value": 0.5
+      }
+    },
+    {
+      "input": "2km",
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "2km",
+      "power": 1,
+      "result": {
+        "unit": "(km)1",
+        "value": 2.0
+      }
+    },
+    {
+      "input": "2km",
+      "power": 2,
+      "result": {
+        "unit": "(km)2",
+        "value": 4.0
+      }
+    },
+    {
+      "input": "2km",
+      "power": 3,
+      "result": {
+        "unit": "(km)3",
+        "value": 8.0
+      }
+    },
+    {
+      "input": "4m2",
+      "power": -2,
+      "result": {
+        "unit": "(m2)-2",
+        "value": 0.0625
+      }
+    },
+    {
+      "input": "4m2",
+      "power": -1,
+      "result": {
+        "unit": "(m2)-1",
+        "value": 0.25
+      }
+    },
+    {
+      "input": "4m2",
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "4m2",
+      "power": 1,
+      "result": {
+        "unit": "(m2)1",
+        "value": 4.0
+      }
+    },
+    {
+      "input": "4m2",
+      "power": 2,
+      "result": {
+        "unit": "(m2)2",
+        "value": 16.0
+      }
+    },
+    {
+      "input": "4m2",
+      "power": 3,
+      "result": {
+        "unit": "(m2)3",
+        "value": 64.0
+      }
+    },
+    {
+      "input": "3m/s",
+      "power": -2,
+      "result": {
+        "unit": "(m/s)-2",
+        "value": 0.1111111111111111
+      }
+    },
+    {
+      "input": "3m/s",
+      "power": -1,
+      "result": {
+        "unit": "(m/s)-1",
+        "value": 0.3333333333333333
+      }
+    },
+    {
+      "input": "3m/s",
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "3m/s",
+      "power": 1,
+      "result": {
+        "unit": "(m/s)1",
+        "value": 3.0
+      }
+    },
+    {
+      "input": "3m/s",
+      "power": 2,
+      "result": {
+        "unit": "(m/s)2",
+        "value": 9.0
+      }
+    },
+    {
+      "input": "3m/s",
+      "power": 3,
+      "result": {
+        "unit": "(m/s)3",
+        "value": 27.0
+      }
+    },
+    {
+      "input": "0m",
+      "power": -2,
+      "result": {
+        "unit": "(m)-2",
+        "value": "Infinity"
+      }
+    },
+    {
+      "input": "0m",
+      "power": -1,
+      "result": {
+        "unit": "(m)-1",
+        "value": "Infinity"
+      }
+    },
+    {
+      "input": "0m",
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "0m",
+      "power": 1,
+      "result": {
+        "unit": "(m)1",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "0m",
+      "power": 2,
+      "result": {
+        "unit": "(m)2",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "0m",
+      "power": 3,
+      "result": {
+        "unit": "(m)3",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "-2m",
+      "power": -2,
+      "result": {
+        "unit": "(m)-2",
+        "value": 0.25
+      }
+    },
+    {
+      "input": "-2m",
+      "power": -1,
+      "result": {
+        "unit": "(m)-1",
+        "value": -0.5
+      }
+    },
+    {
+      "input": "-2m",
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "-2m",
+      "power": 1,
+      "result": {
+        "unit": "(m)1",
+        "value": -2.0
+      }
+    },
+    {
+      "input": "-2m",
+      "power": 2,
+      "result": {
+        "unit": "(m)2",
+        "value": 4.0
+      }
+    },
+    {
+      "input": "-2m",
+      "power": 3,
+      "result": {
+        "unit": "(m)3",
+        "value": -8.0
+      }
+    },
+    {
+      "input": "2%",
+      "power": -2,
+      "result": {
+        "unit": "(%)-2",
+        "value": 0.25
+      }
+    },
+    {
+      "input": "2%",
+      "power": -1,
+      "result": {
+        "unit": "(%)-1",
+        "value": 0.5
+      }
+    },
+    {
+      "input": "2%",
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "2%",
+      "power": 1,
+      "result": {
+        "unit": "(%)1",
+        "value": 2.0
+      }
+    },
+    {
+      "input": "2%",
+      "power": 2,
+      "result": {
+        "unit": "(%)2",
+        "value": 4.0
+      }
+    },
+    {
+      "input": "2%",
+      "power": 3,
+      "result": {
+        "unit": "(%)3",
+        "value": 8.0
+      }
+    },
+    {
+      "input": "2_",
+      "power": -2,
+      "result": {
+        "unit": "(_)-2",
+        "value": 0.25
+      }
+    },
+    {
+      "input": "2_",
+      "power": -1,
+      "result": {
+        "unit": "(_)-1",
+        "value": 0.5
+      }
+    },
+    {
+      "input": "2_",
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "2_",
+      "power": 1,
+      "result": {
+        "unit": "(_)1",
+        "value": 2.0
+      }
+    },
+    {
+      "input": "2_",
+      "power": 2,
+      "result": {
+        "unit": "(_)2",
+        "value": 4.0
+      }
+    },
+    {
+      "input": "2_",
+      "power": 3,
+      "result": {
+        "unit": "(_)3",
+        "value": 8.0
+      }
+    },
+    {
+      "input": "4rad",
+      "power": -2,
+      "result": {
+        "unit": "(rad)-2",
+        "value": 0.0625
+      }
+    },
+    {
+      "input": "4rad",
+      "power": -1,
+      "result": {
+        "unit": "(rad)-1",
+        "value": 0.25
+      }
+    },
+    {
+      "input": "4rad",
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "4rad",
+      "power": 1,
+      "result": {
+        "unit": "(rad)1",
+        "value": 4.0
+      }
+    },
+    {
+      "input": "4rad",
+      "power": 2,
+      "result": {
+        "unit": "(rad)2",
+        "value": 16.0
+      }
+    },
+    {
+      "input": "4rad",
+      "power": 3,
+      "result": {
+        "unit": "(rad)3",
+        "value": 64.0
+      }
+    },
+    {
+      "input": null,
+      "power": -2,
+      "result": {
+        "unit": "",
+        "value": "Infinity"
+      }
+    },
+    {
+      "input": null,
+      "power": -1,
+      "result": {
+        "unit": "",
+        "value": "Infinity"
+      }
+    },
+    {
+      "input": null,
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": null,
+      "power": 1,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": null,
+      "power": 2,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": null,
+      "power": 3,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "bad",
+      "power": -2,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": "bad",
+      "power": -1,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": "bad",
+      "power": 0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": "bad",
+      "power": 1,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": "bad",
+      "power": 2,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": "bad",
+      "power": 3,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": 0.1,
+      "power": -2,
+      "result": {
+        "unit": "",
+        "value": 100.0
+      }
+    },
+    {
+      "input": 0.1,
+      "power": -1,
+      "result": {
+        "unit": "",
+        "value": 10.0
+      }
+    },
+    {
+      "input": 0.1,
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": 0.1,
+      "power": 1,
+      "result": {
+        "unit": "",
+        "value": 0.1
+      }
+    },
+    {
+      "input": 0.1,
+      "power": 2,
+      "result": {
+        "unit": "",
+        "value": 0.010000000000000002
+      }
+    },
+    {
+      "input": 0.1,
+      "power": 3,
+      "result": {
+        "unit": "",
+        "value": 0.0010000000000000002
+      }
+    },
+    {
+      "input": -0.0,
+      "power": -2,
+      "result": {
+        "unit": "",
+        "value": "Infinity"
+      }
+    },
+    {
+      "input": -0.0,
+      "power": -1,
+      "result": {
+        "unit": "",
+        "value": "-Infinity"
+      }
+    },
+    {
+      "input": -0.0,
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": -0.0,
+      "power": 1,
+      "result": {
+        "unit": "",
+        "value": -0.0
+      }
+    },
+    {
+      "input": -0.0,
+      "power": 2,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": -0.0,
+      "power": 3,
+      "result": {
+        "unit": "",
+        "value": -0.0
+      }
+    },
+    {
+      "input": "NaN",
+      "power": -2,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "NaN",
+      "power": -1,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "NaN",
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "NaN",
+      "power": 1,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "NaN",
+      "power": 2,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "NaN",
+      "power": 3,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "Infinity",
+      "power": -2,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "Infinity",
+      "power": -1,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "Infinity",
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "Infinity",
+      "power": 1,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "Infinity",
+      "power": 2,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "Infinity",
+      "power": 3,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "-Infinity",
+      "power": -2,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "-Infinity",
+      "power": -1,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "-Infinity",
+      "power": 0,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "-Infinity",
+      "power": 1,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "-Infinity",
+      "power": 2,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "-Infinity",
+      "power": 3,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": "1m",
+      "power": -100,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::pow exponent too large"
+      }
+    },
+    {
+      "input": "1m",
+      "power": -99,
+      "result": {
+        "unit": "(m)-99",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "1m",
+      "power": 99,
+      "result": {
+        "unit": "(m)99",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "1m",
+      "power": 100,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::pow exponent too large"
+      }
+    },
+    {
+      "input": "1m10",
+      "power": 99,
+      "result": {
+        "unit": "(m10)99",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "2m",
+      "power": null,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_pow> returned a result with an exception set"
+      }
+    },
+    {
+      "input": "2m",
+      "power": true,
+      "result": {
+        "unit": "(m)1",
+        "value": 2.0
+      }
+    },
+    {
+      "input": "2m",
+      "power": false,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "2m",
+      "power": 1.0,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _a must be an integer"
+      }
+    },
+    {
+      "input": "2m",
+      "power": "2",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _a must be an integer"
+      }
+    },
+    {
+      "input": "2m",
+      "power": [
+        2
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _a must be an integer"
+      }
+    },
+    {
+      "input": "2m",
+      "power": 4294967296,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": "2m",
+      "power": 4294967297,
+      "result": {
+        "unit": "(m)1",
+        "value": 2.0
+      }
+    },
+    {
+      "input": "2m",
+      "power": 9223372036854775808,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function quanta_pow> returned a result with an exception set"
+      }
+    },
+    {
+      "input": "bad",
+      "power": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": "bad",
+      "power": 100,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": {
+        "value": [
+          1.0,
+          2.0
+        ],
+        "unit": "m"
+      },
+      "power": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    }
+  ]
+}

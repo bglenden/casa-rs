@@ -222,6 +222,35 @@ pub(super) fn atan2(value: &Variant, other: &Variant) -> ConvertResult<CasaValue
     )))
 }
 
+/// `qa.pow(v, a)`: CASA multiplies or divides repeatedly in the original unit.
+pub(super) fn power(value: &Variant, power: i32) -> ConvertResult<CasaValue> {
+    let quantity = quantity(value)?;
+    if power.unsigned_abs() >= 100 {
+        return Err(ConvertError::runtime("Quantum::pow exponent too large"));
+    }
+    let number = quantity.value();
+    // This initialization deliberately turns infinities into NaN, as CASA does.
+    let mut result = number * 0.0 + 1.0;
+    if power >= 0 {
+        for _ in 0..power {
+            result *= number;
+        }
+    } else {
+        for _ in power..0 {
+            result /= number;
+        }
+    }
+    let unit = if power == 0 || quantity.unit().name().is_empty() {
+        String::new()
+    } else {
+        format!("({}){power}", quantity.unit().name())
+    };
+    Ok(CasaValue::record([
+        ("unit", CasaValue::Text(unit)),
+        ("value", CasaValue::Float(result)),
+    ]))
+}
+
 /// `qa.compare(v, a)`: whether the units have the same dimensions.
 pub(super) fn compare(left: &Variant, right: &Variant) -> ConvertResult<CasaValue> {
     Ok(CasaValue::Bool(
