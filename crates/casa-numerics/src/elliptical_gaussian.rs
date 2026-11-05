@@ -87,7 +87,8 @@ pub fn normalize_position_angle(angle: f64) -> f64 {
 /// # Errors
 ///
 /// Returns [`EllipticalGaussianError::EmptySet`] for no beams and
-/// [`EllipticalGaussianError::InvalidGaussian`] for invalid beam parameters.
+/// [`EllipticalGaussianError::InvalidGaussian`] for invalid beam parameters
+/// or a non-finite or non-positive axis-unit conversion.
 pub fn common_enclosing_gaussian(
     gaussians: &[EllipticalGaussian],
     radians_per_axis_unit: f64,
@@ -490,6 +491,19 @@ mod tests {
             (common.position_angle.to_degrees() + 49.863_390_056_5).abs() < 1.0e-4,
             "{common:?}"
         );
+    }
+
+    /// The caller's axis-unit conversion must describe a finite positive
+    /// angular unit, even when a single beam needs no enclosure work.
+    #[test]
+    fn a_common_beam_requires_a_valid_axis_unit() {
+        let beam = [EllipticalGaussian::new(2.0, 1.0, 0.0)];
+        for unit in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                common_enclosing_gaussian(&beam, unit),
+                Err(EllipticalGaussianError::InvalidGaussian)
+            );
+        }
     }
 
     /// CASA's arcsecond intermediate changes the selected enclosing beam by
