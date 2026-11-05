@@ -18,6 +18,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[byte order of integer quantity arrays](#casa-misreads-big-endian-integer-quantity-arrays),
 [a Taylor run with no weight on its first correlation](#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero),
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
@@ -3778,3 +3779,11 @@ with. CASA's cube doesn't: the gap, 0.0057, is about the 1.1 Jy component times
 CASA's MFS does. `tools/casa-compat/tclean_summary_matrix.py --case
 mosaic-seed-cube --case mosaic-seed-cube-no-cut` shows it, and those two cases
 differ for this reason.
+
+## CASA misreads big-endian integer quantity arrays
+
+- Date noted: 2026-11-05
+- Status: CASA bug; casa-rs does not follow it (#1183).
+- Evidence: `tools/casa-compat/quantity_record_endian_oracle.py`, CASA 6.7.6.14 on a little-endian Mac.
+
+A quantity record containing `np.array([1], dtype=">i4")` returns 16777216 m in CASA; the native-endian array returns 1 m. Big-endian 16-bit arrays return 256 m and 64-bit arrays return 0 m after integer narrowing. Signed and unsigned integer arrays show the same byte-order corruption, and arithmetic uses the corrupted values. casa-rs reads the numerical array value and returns 1 m for each. It still applies CASA's signed 32-bit narrowing to that value.
