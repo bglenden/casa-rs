@@ -546,6 +546,16 @@ mod beam_tests {
                 .collect::<Vec<_>>(),
             [1.0, 2.0, 1.0, 2.0, 1.0, 2.0]
         );
+        let grid =
+            ImageBeamSet::from_grid(vec![vec![beam(2.0), beam(4.0)], vec![beam(6.0), beam(8.0)]]);
+        let pixels = residual_pixel_beams(&grid, 2, 2, 2.0).unwrap().unwrap();
+        assert_eq!(
+            pixels
+                .iter()
+                .map(|b| b.major_fwhm_rad())
+                .collect::<Vec<_>>(),
+            [1.0, 2.0, 3.0, 4.0]
+        );
         assert!(residual_pixel_beams(&set, 3, 3, 2.0).is_err());
         assert!(
             residual_pixel_beams(&ImageBeamSet::empty(), 3, 2, 2.0)
