@@ -222,6 +222,24 @@ pub(super) fn atan2(value: &Variant, other: &Variant) -> ConvertResult<CasaValue
     )))
 }
 
+/// `qa.sqrt(v)`: take the root in SI units, as casacore does.
+pub(super) fn sqrt(value: &Variant) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    let dimension =
+        value.unit().val().dim.sqrt().map_err(|_| {
+            ConvertError::runtime("UnitVal::UnitVal Illegal unit dimensions for root")
+        })?;
+    let result_unit = if dimension == UnitDim::NODIM {
+        Unit::dimensionless()
+    } else {
+        unit(&dimension.to_string())
+    };
+    let number = value.get_si_value();
+    // CASA's root calculation maps both signed zeros to positive zero.
+    let result = if number == 0.0 { 0.0 } else { number.sqrt() };
+    Ok(record(&Quantity::with_unit(result, result_unit)))
+}
+
 /// `qa.pow(v, a)`: CASA multiplies or divides repeatedly in the original unit.
 pub(super) fn power(value: &Variant, power: i32) -> ConvertResult<CasaValue> {
     let quantity = quantity(value)?;
