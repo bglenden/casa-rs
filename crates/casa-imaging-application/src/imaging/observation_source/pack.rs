@@ -4,8 +4,9 @@
 
 use casa_coordinates::DirectionCoordinate;
 use casa_imaging_model::{
-    AntennaResponseClass, BatchGeometry, CompiledProblem, DirectionCoordinateSpec,
-    FiniteValuePolicy, FrequencyBands, GeometryPlan, SelectedAntennaResponses, SkyDirection,
+    AntennaResponseClass, BatchGeometry, CompiledProblem, ContinuumFitRule,
+    DirectionCoordinateSpec, FiniteValuePolicy, FrequencyBands, GeometryPlan,
+    SelectedAntennaResponses, SkyDirection,
 };
 use casa_imaging_operator::RowContext;
 use casa_imaging_runtime::pass::{
@@ -202,6 +203,12 @@ pub(super) struct PackScratch {
     /// One sample's weight per delivered product, for weights stored per
     /// correlation.
     row_weights: Vec<f32>,
+    /// Full fit/output union for one row, before the output is compacted.
+    fit_values: Vec<Complex32>,
+    fit_weights: Vec<f32>,
+    fit_flags: Vec<bool>,
+    /// Each compact output channel's ordinal in that union.
+    fit_positions: Vec<usize>,
 }
 
 impl PackScratch {
@@ -212,6 +219,15 @@ impl PackScratch {
             + layout.channels() * (size_of::<f64>() + 2 * size_of::<bool>())
             + layout.correlations * (size_of::<usize>() + size_of::<f32>()))
             + Layout::compacted_bound(layout)
+            + Self::fit_bound(layout)
+    }
+
+    /// The reusable full-spectrum fit row and compact-channel mapping.
+    fn fit_bound(layout: BlockShape) -> usize {
+        2 * (layout.channels()
+            * layout.correlations
+            * (size_of::<Complex32>() + size_of::<f32>() + size_of::<bool>())
+            + layout.channels() * size_of::<usize>())
     }
 }
 
@@ -263,7 +279,8 @@ impl Packer<'_> {
         &self,
         (batch, store, layout): (&VisibilityBatch<'_>, usize, &Layout),
         geometry: &BatchGeometry,
-        bands: &FrequencyBands,
+        bands: Option<&FrequencyBands>,
+        rule: Option<&ContinuumFitRule>,
         scratch: &mut PackScratch,
     ) -> Result<Option<Layout>, SourceError> {
         if batch.times() != 1 {
@@ -274,21 +291,110 @@ impl Packer<'_> {
         scratch
             .frequencies_hz
             .extend(layout.channels.iter().map(|channel| frequencies[*channel]));
-        let factor = self.plans[store].frequency_factor(
-            bands.frame().frequency_ref(),
-            batch.field[0],
-            batch.time.seconds_since(0, MjdHighPrec::new(0.0, 0.0)),
-            batch.time.reference(),
-        )?;
         scratch.in_prediction.clear();
-        in_band(
-            bands,
-            factor,
-            layout,
-            &scratch.frequencies_hz,
-            &mut scratch.in_prediction,
-        );
+        if let Some(bands) = bands {
+            let factor = self.plans[store].frequency_factor(
+                bands.frame().frequency_ref(),
+                batch.field[0],
+                batch.time.seconds_since(0, MjdHighPrec::new(0.0, 0.0)),
+                batch.time.reference(),
+            )?;
+            in_band(
+                bands,
+                factor,
+                layout,
+                &scratch.frequencies_hz,
+                &mut scratch.in_prediction,
+            );
+        } else {
+            scratch.in_prediction.resize(layout.channels.len(), true);
+        }
+        if let Some(rule) = rule {
+            for (channel, selected) in layout
+                .channel_indices
+                .iter()
+                .zip(&mut scratch.in_prediction)
+            {
+                *selected &= rule
+                    .channel_use(*channel)
+                    .is_some_and(|role| role.contributes_to_output());
+            }
+        }
         Ok(layout.compact(&scratch.in_prediction))
+    }
+
+    /// Prepare one time's physical frequencies and selection masks.
+    fn prepare_time(
+        &self,
+        (batch, store, partition, layout): (
+            &VisibilityBatch<'_>,
+            usize,
+            &SelectedPartition,
+            &Layout,
+        ),
+        geometry: &BatchGeometry,
+        time: usize,
+        (bands, prediction, keep_in_band): (Option<&FrequencyBands>, bool, bool),
+        scratch: &mut PackScratch,
+    ) -> Result<(), SourceError> {
+        let origin = MjdHighPrec::new(0.0, 0.0);
+        let frequencies = geometry.frequencies_hz(time);
+        scratch.frequencies_hz.clear();
+        scratch
+            .frequencies_hz
+            .extend(layout.channels.iter().map(|channel| frequencies[*channel]));
+        scratch.in_band.clear();
+        if let Some(bands) = bands {
+            let factor = self.plans[store].frequency_factor(
+                bands.frame().frequency_ref(),
+                batch.field[time],
+                batch.time.seconds_since(time, origin),
+                batch.time.reference(),
+            )?;
+            in_band(
+                bands,
+                factor,
+                layout,
+                &scratch.frequencies_hz,
+                &mut scratch.in_band,
+            );
+        }
+        if prediction {
+            if bands.is_none() {
+                scratch.in_band.resize(layout.channels.len(), true);
+            }
+            for (channel, selected) in layout.channel_indices.iter().zip(&mut scratch.in_band) {
+                *selected &= partition.channels.binary_search(channel).is_ok();
+            }
+            scratch.in_prediction.clear();
+            if let Some(bands) = partition.prediction_bands.as_ref() {
+                let factor = self.plans[store].frequency_factor(
+                    bands.frame().frequency_ref(),
+                    batch.field[time],
+                    batch.time.seconds_since(time, origin),
+                    batch.time.reference(),
+                )?;
+                in_band(
+                    bands,
+                    factor,
+                    layout,
+                    &scratch.frequencies_hz,
+                    &mut scratch.in_prediction,
+                );
+            } else {
+                scratch.in_prediction.resize(layout.channels.len(), true);
+            }
+        }
+        if keep_in_band {
+            let selected = if prediction {
+                &scratch.in_prediction
+            } else {
+                &scratch.in_band
+            };
+            scratch.in_band_by_time[time * layout.channels.len()..][..layout.channels.len()]
+                .copy_from_slice(selected);
+        }
+        Ok(())
     }
 
     /// Pack `batch`'s samples `keep` names into `out` under `layout`, with
@@ -298,10 +404,11 @@ impl Packer<'_> {
     /// the sample.
     pub(super) fn pack(
         &self,
-        (batch, store, partition, layout): (
+        (batch, store, partition, layout, input_layout): (
             &VisibilityBatch<'_>,
             usize,
             &SelectedPartition,
+            &Layout,
             &Layout,
         ),
         geometry: &BatchGeometry,
@@ -354,69 +461,29 @@ impl Packer<'_> {
             let cells = batch.samples() / per_time * layout.channels.len();
             scratch.in_band_by_time.resize(cells, false);
         }
+        let compacted = !std::ptr::eq(layout, input_layout);
+        scratch.fit_positions.clear();
+        if compacted && values && !prediction && self.problem.visibility_transform().is_some() {
+            for channel in &layout.channel_indices {
+                scratch.fit_positions.push(
+                    input_layout
+                        .channel_indices
+                        .binary_search(channel)
+                        .map_err(|_| "a compact channel is absent from the fit selection")?,
+                );
+            }
+        }
         let mut packed_time = None;
         for sample in (0..batch.samples()).filter(|sample| keep[*sample]) {
             let time = sample / per_time;
             if packed_time != Some(time) {
-                let frequencies = geometry.frequencies_hz(time);
-                scratch.frequencies_hz.clear();
-                scratch
-                    .frequencies_hz
-                    .extend(layout.channels.iter().map(|channel| frequencies[*channel]));
-                scratch.in_band.clear();
-                if let Some(bands) = bands {
-                    let factor = self.plans[store].frequency_factor(
-                        bands.frame().frequency_ref(),
-                        batch.field[time],
-                        batch.time.seconds_since(time, origin),
-                        batch.time.reference(),
-                    )?;
-                    in_band(
-                        bands,
-                        factor,
-                        layout,
-                        &scratch.frequencies_hz,
-                        &mut scratch.in_band,
-                    );
-                }
-                if prediction {
-                    if bands.is_none() {
-                        scratch.in_band.resize(layout.channels.len(), true);
-                    }
-                    for (channel, selected) in
-                        layout.channel_indices.iter().zip(&mut scratch.in_band)
-                    {
-                        *selected &= partition.channels.binary_search(channel).is_ok();
-                    }
-                    scratch.in_prediction.clear();
-                    if let Some(bands) = partition.prediction_bands.as_ref() {
-                        let factor = self.plans[store].frequency_factor(
-                            bands.frame().frequency_ref(),
-                            batch.field[time],
-                            batch.time.seconds_since(time, origin),
-                            batch.time.reference(),
-                        )?;
-                        in_band(
-                            bands,
-                            factor,
-                            layout,
-                            &scratch.frequencies_hz,
-                            &mut scratch.in_prediction,
-                        );
-                    } else {
-                        scratch.in_prediction.resize(layout.channels.len(), true);
-                    }
-                }
-                if keep_in_band {
-                    let selected = if prediction {
-                        &scratch.in_prediction
-                    } else {
-                        &scratch.in_band
-                    };
-                    scratch.in_band_by_time[time * layout.channels.len()..]
-                        [..layout.channels.len()]
-                        .copy_from_slice(selected);
-                }
+                self.prepare_time(
+                    (batch, store, partition, layout),
+                    geometry,
+                    time,
+                    (bands, prediction, keep_in_band),
+                    scratch,
+                )?;
                 packed_time = Some(time);
             }
             let row = Row {
@@ -437,7 +504,13 @@ impl Packer<'_> {
                         .map(|product| arrays.weight_view[[sample, 0, product]]),
                 );
             }
-            let flagged = layout.channels.iter().all(|channel| {
+            let flag_layout =
+                if values && !prediction && self.problem.visibility_transform().is_some() {
+                    input_layout
+                } else {
+                    layout
+                };
+            let flagged = flag_layout.channels.iter().all(|channel| {
                 scratch.routed.iter().all(|product| {
                     arrays.flags
                         [(sample * arrays.channels + channel) * arrays.correlations + product]
@@ -465,20 +538,48 @@ impl Packer<'_> {
                 .problem
                 .visibility_transform()
                 .and_then(|transform| transform.rule(field.0 as i32, partition.spectral_window));
+            let prefit = compacted && values && !prediction && rule.is_some();
+            if prefit {
+                fit_sample(
+                    &row,
+                    input_layout,
+                    &arrays,
+                    rule.expect("a compact fit has a rule"),
+                    scratch,
+                    (flagged, reject_flagged),
+                )?;
+            }
             let row_weights = &scratch.row_weights;
             let routed = &scratch.routed;
             let in_band = &scratch.in_band;
+            let fit_values = &scratch.fit_values;
+            let fit_weights = &scratch.fit_weights;
+            let fit_flags = &scratch.fit_flags;
+            let fit_positions = &scratch.fit_positions;
             out.push_row_with(
                 header,
                 &scratch.projections,
                 &scratch.frequencies_hz,
                 |values_out, weights_out, flags_out| {
-                    fill_samples(
-                        &row,
-                        (&arrays, row_weights, routed, layout),
-                        (values_out, weights_out, flags_out),
-                        reject_flagged,
-                    )?;
+                    if prefit {
+                        for (output, input) in fit_positions.iter().copied().enumerate() {
+                            let output = output * routed.len();
+                            let input = input * routed.len();
+                            values_out[output..output + routed.len()]
+                                .copy_from_slice(&fit_values[input..input + routed.len()]);
+                            weights_out[output..output + routed.len()]
+                                .copy_from_slice(&fit_weights[input..input + routed.len()]);
+                            flags_out[output..output + routed.len()]
+                                .copy_from_slice(&fit_flags[input..input + routed.len()]);
+                        }
+                    } else {
+                        fill_samples(
+                            &row,
+                            (&arrays, row_weights, routed, layout),
+                            (values_out, weights_out, flags_out),
+                            reject_flagged,
+                        )?;
+                    }
                     // A channel the time's bands miss is not read: no
                     // sample of it, or interpolated from it, is imaged.
                     if !prediction {
@@ -497,7 +598,7 @@ impl Packer<'_> {
                     }
                     // A model-only parent traversal does not fit or alter
                     // continuum data; its writer applies output roles.
-                    if prediction && !values {
+                    if prefit || (prediction && !values) {
                         return Ok(());
                     }
                     let Some(rule) = rule else {
@@ -552,6 +653,46 @@ impl Packer<'_> {
         }
         Ok(())
     }
+}
+
+/// Fit one full input row before its output is compacted.
+fn fit_sample(
+    row: &Row<'_, '_>,
+    input_layout: &Layout,
+    arrays: &Arrays<'_>,
+    rule: &ContinuumFitRule,
+    scratch: &mut PackScratch,
+    (flagged, reject_flagged): (bool, bool),
+) -> Result<(), SourceError> {
+    let cells = input_layout.channels.len() * scratch.routed.len();
+    scratch.fit_values.resize(cells, Complex32::default());
+    scratch.fit_weights.resize(cells, 0.0);
+    scratch.fit_flags.resize(cells, false);
+    fill_samples(
+        row,
+        (arrays, &scratch.row_weights, &scratch.routed, input_layout),
+        (
+            &mut scratch.fit_values,
+            &mut scratch.fit_weights,
+            &mut scratch.fit_flags,
+        ),
+        reject_flagged,
+    )?;
+    let fit_row = ContinuumRow {
+        channels: &input_layout.channel_indices,
+        frequencies_hz: &input_layout.native_hz,
+        parallel: &input_layout.parallel,
+        real: false,
+        row_flag: flagged,
+    };
+    subtract_continuum(
+        rule,
+        &fit_row,
+        &mut scratch.fit_values,
+        &scratch.fit_weights,
+        &mut scratch.fit_flags,
+    )?;
+    Ok(())
 }
 
 /// Whether `bands` select each of `layout`'s channels at one time, into
@@ -754,6 +895,33 @@ mod compact_layout_tests {
         assert!(
             allocated <= Layout::compacted_bound(shape),
             "{allocated} bytes exceed compact layout admission"
+        );
+    }
+    /// The fit buffers retain capacity as rows of different sizes arrive;
+    /// their admitted bound covers the full input union and mapping.
+    #[test]
+    fn compacted_fit_scratch_stays_within_its_admission() {
+        let mut scratch = PackScratch::default();
+        for channels in [1, 17, 33, 65] {
+            let cells = channels * 4;
+            scratch.fit_values.resize(cells, Complex32::default());
+            scratch.fit_weights.resize(cells, 0.0);
+            scratch.fit_flags.resize(cells, false);
+            scratch.fit_positions.clear();
+            scratch.fit_positions.extend(0..channels);
+        }
+        let held = scratch.fit_values.capacity() * size_of::<Complex32>()
+            + scratch.fit_weights.capacity() * size_of::<f32>()
+            + scratch.fit_flags.capacity() * size_of::<bool>()
+            + scratch.fit_positions.capacity() * size_of::<usize>();
+        let shape = BlockShape {
+            spectrum: casa_imaging_operator::RowSpectrum::evenly_spaced(65),
+            correlations: 4,
+            ..BlockShape::default()
+        };
+        assert!(
+            held <= PackScratch::fit_bound(shape),
+            "{held} bytes exceed fit scratch admission"
         );
     }
 }

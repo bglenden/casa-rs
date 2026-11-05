@@ -234,6 +234,53 @@ pub fn prediction_layouts(
     Ok(layouts)
 }
 
+/// Return the distinct physical channel layouts delivered to a normal
+/// gridding traversal. This reads the observation without writing it.
+///
+/// # Errors
+///
+/// When compilation, source admission or traversal fails.
+pub fn gridding_layouts(
+    request: &ImagingRequest,
+    context: &RunContext,
+) -> Result<Vec<Vec<u32>>, ApplicationDispatchError> {
+    let resolved = std::cell::Cell::new(None);
+    let (problem, input, native, _resident) = crate::compile_run(request, context, &resolved)?;
+    let admitted = crate::native::batch_route(
+        &problem,
+        input.observation,
+        (false, false, false),
+        &native.runtime,
+    )?;
+    let failed = |error: casa_imaging_runtime::pass::SourceError| {
+        ApplicationDispatchError::Native(error.to_string().into())
+    };
+    let count = planes(&problem);
+    let mut source = ObservationSource::new(
+        &problem,
+        &admitted.value,
+        count,
+        imaging::plane_bounds(&problem),
+        false,
+    );
+    let mut block = NativeBlock::with_capacity(source.maximum_block());
+    source
+        .begin(
+            PlaneRange::new(0, count),
+            false,
+            SampleContent::Visibilities,
+        )
+        .map_err(failed)?;
+    let mut layouts = Vec::new();
+    while source.fill(&mut block).map_err(failed)? {
+        let channels = block.channel_indices();
+        if !layouts.iter().any(|layout: &Vec<u32>| layout == channels) {
+            layouts.push(channels.to_vec());
+        }
+    }
+    Ok(layouts)
+}
+
 /// Read `source` through a run's traversals of `planes` planes, waves of
 /// `planes_per_wave` included, into one block: the blocks filled, and the
 /// block's bytes.

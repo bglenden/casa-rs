@@ -150,6 +150,7 @@ impl BatchRoute {
         window: Range<usize>,
         values: bool,
         prediction: bool,
+        single_time: bool,
     ) -> Result<(AccessRequest, Layout), SourceError> {
         let route = &self.stores[key.store];
         let partition = &route.selection.partitions[key.partition];
@@ -190,7 +191,7 @@ impl BatchRoute {
         } else {
             values && partition.frequency_bands.is_some()
         };
-        let times = if time_varying {
+        let times = if time_varying || single_time {
             1
         } else {
             self.batching.times_per_batch(key.store, key.partition)
@@ -241,7 +242,7 @@ impl BatchRoute {
                     if channels == 0 {
                         continue;
                     }
-                    let (request, _) = self.request(key, 0..channels, true, prediction)?;
+                    let (request, _) = self.request(key, 0..channels, true, prediction, false)?;
                     let bands = if prediction {
                         partition.prediction_bands.is_some()
                     } else {
@@ -509,7 +510,9 @@ impl<'a> ObservationSource<'a> {
         (values, writing, prediction): (bool, bool, bool),
     ) -> Result<(Traversal<'a>, Layout), SourceError> {
         let route: &'a BatchRoute = self.route;
-        let (request, layout) = route.request(key, window, values, prediction)?;
+        let single_time =
+            values && !prediction && self.packer.problem.visibility_transform().is_some();
+        let (request, layout) = route.request(key, window, values, prediction, single_time)?;
         let traversal = route.stores[key.store].observation().bind_read(&request)?;
         if writing && let Some(write_back) = route.write_back() {
             write_back.deliver(Delivered::Partition {
@@ -598,16 +601,27 @@ impl<'a> ObservationSource<'a> {
             // bands; flagging a wider row changes interpolation.
             let bands = if stream.prediction && partition.prediction_channels.is_some() {
                 partition.prediction_bands.as_ref()
-            } else if stream.values && self.packer.problem.visibility_transform().is_none() {
+            } else if stream.values {
                 partition.frequency_bands.as_ref()
             } else {
                 None
             };
-            let compact = if let Some(bands) = bands {
+            let rule = if stream.values && !stream.prediction {
+                self.packer
+                    .problem
+                    .visibility_transform()
+                    .and_then(|transform| {
+                        transform.rule(batch.field[0].0 as i32, partition.spectral_window)
+                    })
+            } else {
+                None
+            };
+            let compact = if bands.is_some() || rule.is_some() {
                 let Some(compact) = self.packer.time_layout(
                     (&batch, key.store, layout),
                     &self.geometry,
                     bands,
+                    rule,
                     &mut self.scratch,
                 )?
                 else {
@@ -617,9 +631,10 @@ impl<'a> ObservationSource<'a> {
             } else {
                 None
             };
-            let layout = compact.as_ref().unwrap_or(layout);
+            let input_layout = &*layout;
+            let layout = compact.as_ref().unwrap_or(input_layout);
             self.packer.pack(
-                (&batch, key.store, partition, layout),
+                (&batch, key.store, partition, layout, input_layout),
                 &self.geometry,
                 &self.keep,
                 (stream.values, stream.writing, stream.prediction),

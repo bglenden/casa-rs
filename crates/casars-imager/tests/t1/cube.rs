@@ -1246,6 +1246,31 @@ fn tuned_singleton_rows_match_casas_sum_of_weights() {
     );
 }
 
+/// The native `fitspw` extension reads its fit-only channels but keeps
+/// the channels named by `spw` as outputs. Fit channels 0 and 39 must not
+/// become interpolation neighbors of the selected output channel 20.
+#[test]
+fn continuum_fit_only_channels_do_not_enter_tuned_gridding_rows() {
+    let observation = drifting_track_with_width(20_000.0);
+    let request = observation.request(
+        "fitted-grid-layout",
+        json!({
+            "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 2,
+            "niter": 0, "fitspw": "0:0;39",
+        }),
+    );
+    let layouts = casa_imaging_application::source_law::gridding_layouts(
+        &request,
+        &super::fixture::run_context(&request),
+    )
+    .expect("the tuned gridding traversal");
+    assert_eq!(
+        layouts,
+        [vec![20]],
+        "fit-only channels cannot enter a gridding row"
+    );
+}
+
 /// `predictModel` visits the whole parent selection and writes zero where
 /// the cube has no spectral support, rather than leaving the initial model.
 #[test]
