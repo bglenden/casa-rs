@@ -464,7 +464,7 @@ impl Observation {
     }
 
     /// The request of `controls` merged over the T1 geometry.
-    fn request(&self, name: &str, controls: Value) -> ImagingRequest {
+    pub(super) fn request(&self, name: &str, controls: Value) -> ImagingRequest {
         let mut parameters = json!({
             "vis": self.measurement_set,
             "imagename": self.root.path().join(name),
@@ -605,7 +605,7 @@ fn imager_defaults(fields: &mut serde_json::Map<String, Value>) {
 }
 
 /// A run context for `request` on this host.
-fn run_context(request: &ImagingRequest) -> RunContext {
+pub(super) fn run_context(request: &ImagingRequest) -> RunContext {
     RunContext {
         host: HostResources::detect().expect("host resources"),
         policy: request.resource_policy(),

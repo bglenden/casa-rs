@@ -109,8 +109,15 @@ fn partition_costs(store: &StoreBatches<'_>) -> Result<Vec<PartitionCost>, Imagi
         .iter()
         .map(|partition| {
             let entry = observation.catalogue().partition(partition.id);
-            let first = partition.channels[0] as usize;
-            let last = *partition.channels.last().expect("a selected channel") as usize;
+            let prediction = partition
+                .prediction_channels
+                .as_deref()
+                .filter(|channels| !channels.is_empty())
+                .unwrap_or(&partition.channels);
+            let first = (partition.channels[0].min(prediction[0])) as usize;
+            let last = (*partition.channels.last().expect("a selected channel"))
+                .max(*prediction.last().expect("a selected channel"))
+                as usize;
             let payload = estimate(
                 observation,
                 &requests::payload(

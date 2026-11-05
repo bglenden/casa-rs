@@ -94,6 +94,8 @@ pub(super) struct WindowRead {
     /// every selected channel at every time: it reads what the untuned bands
     /// select, whatever the axis reaches ([`whole_selection_density`]).
     pub(super) density: Option<WindowDensity>,
+    /// The parent imager's untuned selection for final model prediction.
+    pub(super) prediction: Option<WindowDensity>,
 }
 
 /// What a density over the whole selection counts of a window.
@@ -584,6 +586,13 @@ fn store_reads(
     } else {
         None
     };
+    let prediction_bands =
+        if request.savemodel == SaveModel::ModelColumn && request.predicts_final_model() {
+            cube_bands(request, (catalogue, engine), survey, None)?
+        } else {
+            None
+        };
+    let predicts = request.savemodel == SaveModel::ModelColumn && request.predicts_final_model();
     let mut reads = StoreReads {
         channels: WindowChannels::new(),
         windows: WindowReads::new(),
@@ -631,6 +640,38 @@ fn store_reads(
                 window_density((catalogue, engine), survey, window, density, &channels)?
         {
             reads.windows.entry(window.spw_id).or_default().density = Some(read);
+        }
+        if predicts {
+            let prediction = match &prediction_bands {
+                Some(bands) => {
+                    let selection = bands.epoch_selection((catalogue, engine), survey, window)?;
+                    match selection {
+                        Some(selection) => {
+                            let read = (0..window.frequencies_hz.len())
+                                .filter(|channel| selection.ever(*channel))
+                                .collect::<Vec<_>>();
+                            let by_time = (!read.iter().all(|channel| selection.always(*channel)))
+                                .then(|| bands.frequency_bands(window.spw_id).cloned())
+                                .flatten();
+                            WindowDensity {
+                                channels: read,
+                                bands: by_time,
+                            }
+                        }
+                        None => WindowDensity {
+                            channels: Vec::new(),
+                            bands: None,
+                        },
+                    }
+                }
+                None => WindowDensity {
+                    channels: explicit
+                        .cloned()
+                        .unwrap_or_else(|| (0..window.frequencies_hz.len()).collect()),
+                    bands: None,
+                },
+            };
+            reads.windows.entry(window.spw_id).or_default().prediction = Some(prediction);
         }
         reads.channels.insert(window.spw_id, channels);
     }

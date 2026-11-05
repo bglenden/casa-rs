@@ -14,9 +14,8 @@ Each side images its own copy of the MeasurementSet. Both create `MODEL_DATA`
 with CASA's initial model, one in every cell, so a cell still holding exactly
 one was not written. The summary counts, per channel, the cells only one side
 wrote, and gives the normalized RMS of the cells both wrote. `predictModel`
-also writes zero into the channels no plane reaches, which casa-rs doesn't read:
-those cells are counted apart. The cases that end in `predictModel` differ until
-issue 1134 is done. Native runs at `gridprecision='f64'`.
+also writes zero into channels no plane reaches; those cells are counted apart
+when one side leaves them untouched. Native runs at `gridprecision='f64'`.
 """
 import argparse
 import json
@@ -46,6 +45,9 @@ CASES = {
     "topo-nsigma": (POINT, dict(CUBE, outframe="TOPO", nsigma=0.5)),
     "topo-auto": (POINT, dict(CUBE, outframe="TOPO", usemask="auto-multithresh")),
     "lsrk-nsigma": (POINT, dict(CUBE, outframe="LSRK", nsigma=0.5)),
+    "lsrk-auto": (POINT, dict(CUBE, outframe="LSRK", usemask="auto-multithresh")),
+    "lsrk-predict": (POINT, dict(CUBE, outframe="LSRK", savemodel="none"),
+                     dict(CUBE, outframe="LSRK", niter=0, calcres=False, calcpsf=False)),
     # A first call solves, without a model column; a second only predicts it.
     "topo-predict": (POINT, dict(CUBE, outframe="TOPO", savemodel="none"),
                      dict(CUBE, outframe="TOPO", niter=0, calcres=False, calcpsf=False)),
