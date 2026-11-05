@@ -1345,6 +1345,15 @@ fn corrected_only_nsigma_uses_the_tuned_continuum_rows() {
         .1;
     let mut corrected_controls = controls;
     corrected_controls["save_continuum_residual"] = json!(true);
+    let request = observation.request("corrected-only-source", corrected_controls.clone());
+    assert!(
+        !casa_imaging_application::source_law::ordinary_write_uses_parent_selection(
+            &request,
+            &super::fixture::run_context(&request),
+        )
+        .expect("corrected-only writer"),
+        "a corrected-only writer must request tuned rows",
+    );
     let corrected = observation
         .image("continuum-corrected-only", corrected_controls)
         .1;

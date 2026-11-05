@@ -187,7 +187,7 @@ impl WriteBack {
     }
 
     /// Whether the armed traversal reads the untuned parent selection.
-    pub(super) fn parent_prediction(&self) -> bool {
+    pub(crate) fn parent_prediction(&self) -> bool {
         self.queue().parent_prediction
     }
 

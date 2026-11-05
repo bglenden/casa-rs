@@ -162,6 +162,39 @@ pub fn drive_batch_write(
     })
 }
 
+/// Whether the ordinary visibility writer asks the source for the parent
+/// prediction selection. A corrected-only write must use tuned rows.
+///
+/// # Errors
+///
+/// When the request, route or writer cannot be opened.
+pub fn ordinary_write_uses_parent_selection(
+    request: &ImagingRequest,
+    context: &RunContext,
+) -> Result<bool, ApplicationDispatchError> {
+    let resolved = std::cell::Cell::new(None);
+    let (problem, input, native, _resident) = crate::compile_run(request, context, &resolved)?;
+    let admitted = crate::native::batch_route(
+        &problem,
+        input.observation,
+        (
+            input.write_model_column,
+            input.write_corrected_data,
+            input.predicts_final_model,
+        ),
+        &native.runtime,
+    )?;
+    let target = VisibilityWriteTarget(&admitted.value);
+    let _writer = target
+        .begin(problem.visibility_transform())
+        .map_err(|error| ApplicationDispatchError::Native(error.to_string().into()))?;
+    Ok(admitted
+        .value
+        .write_back()
+        .expect("a writing route")
+        .parent_prediction())
+}
+
 /// The channels physically delivered by one parent-prediction block and
 /// the first row's flags as the predictor sees them.
 #[derive(Debug, Clone, PartialEq, Eq)]
