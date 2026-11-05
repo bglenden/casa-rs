@@ -119,7 +119,10 @@ pub(super) fn prepare(
         .next()
         .expect("a residual name");
     let psf_name = family.names("psf").into_iter().next().expect("a PSF name");
-    let psf_beam = restart::product_path(&request.imagename, &psf_name).exists();
+    // CubeMajorCycleAlgorithm forms a temporary PSF without the old image
+    // metadata, whereas MFS makes its PSF in the existing image store.
+    let psf_beam = (!request.calcpsf || request.specmode == crate::SpecMode::Mfs)
+        && restart::product_path(&request.imagename, &psf_name).exists();
     let mask_beam = request.usemask == UseMask::AutoMultithresh
         && request.niter > 0
         && restart::product_path(&request.imagename, &residual_name).exists();

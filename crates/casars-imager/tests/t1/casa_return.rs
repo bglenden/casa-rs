@@ -921,18 +921,25 @@ fn tclean_saved_off_centre_psf_subtracts_the_beam_at_image_centre() {
     assert!((sidelobe - 0.39395368).abs() < 1e-6, "{sidelobe}");
 }
 
-/// `makeImageBeamSet` keeps an existing complete beam even after calcpsf
-/// recomputes PSF pixels; CASA does so with and without minor iterations.
+/// MFS retains an existing PSF beam through recomputation; cube gridding
+/// forms a temporary image without that metadata and fits a fresh beam.
 #[test]
-fn tclean_recomputed_psf_keeps_its_saved_beam() {
+fn tclean_recomputed_psf_uses_the_mode_specific_beam() {
     use casa_images::{GaussianBeam, ImageBeamSet, PagedImage};
     let observation = Observation::synthesise(&[("point", POINT)]);
     let directory = observation.scratch("recompute-saved-psf");
     std::fs::create_dir_all(&directory).unwrap();
     let geometry = observation.geometry();
     let cell = geometry.cell_rad()[0];
-    for (algorithm, niter) in [("clark", 0), ("clark", 10), ("mtmfs", 0), ("mtmfs", 10)] {
-        let prefix = format!("{algorithm}-{niter}");
+    for (algorithm, niter, cube) in [
+        ("clark", 0, false),
+        ("clark", 10, false),
+        ("mtmfs", 0, false),
+        ("mtmfs", 10, false),
+        ("clark", 0, true),
+        ("clark", 10, true),
+    ] {
+        let prefix = format!("{algorithm}-{niter}-{cube}");
         let mut values = json!({
             "vis": observation.measurement_set(), "imagename": directory.join(&prefix),
             "imsize": geometry.image_size,
@@ -940,6 +947,20 @@ fn tclean_recomputed_psf_keeps_its_saved_beam() {
             "backend": "cpu", "deconvolver": algorithm, "nterms": 2,
             "niter": 0, "psfcutoff": 0.15, "restoration": false,
         });
+        if cube {
+            values["specmode"] = json!("cube");
+            values["nchan"] = json!(1);
+            values["start"] = json!(0);
+            values["width"] = json!(1);
+        }
+        let reference_path = directory.join(format!("{prefix}-fresh.psf"));
+        if cube {
+            let mut fresh = values.clone();
+            fresh["imagename"] = json!(directory.join(format!("{prefix}-fresh")));
+            fresh["psfcutoff"] = json!(0.65);
+            let result = json_run(&directory, fresh);
+            assert!(matches!(result, TaskReply::Succeeded { .. }), "{result:?}");
+        }
         let seed = json_run(&directory, values.clone());
         assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
         let suffix = if algorithm == "mtmfs" {
@@ -972,18 +993,40 @@ fn tclean_recomputed_psf_keeps_its_saved_beam() {
             .beam_set
             .single_beam()
             .unwrap();
-        assert!(
-            (saved.major / cell - 10.0).abs() < 1e-5,
-            "{prefix}: {saved:?}"
-        );
-        assert!(
-            (saved.minor / cell - 8.0).abs() < 1e-5,
-            "{prefix}: {saved:?}"
-        );
-        assert!(
-            (saved.position_angle - 0.25).abs() < 1e-6,
-            "{prefix}: {saved:?}"
-        );
+        if cube {
+            let fresh = PagedImage::<f32>::open(reference_path)
+                .unwrap()
+                .image_info()
+                .unwrap()
+                .beam_set
+                .single_beam()
+                .unwrap();
+            assert!(
+                (saved.major / fresh.major - 1.0).abs() < 1e-6,
+                "{prefix}: {fresh:?} {saved:?}"
+            );
+            assert!(
+                (saved.minor / fresh.minor - 1.0).abs() < 1e-6,
+                "{prefix}: {fresh:?} {saved:?}"
+            );
+            assert!(
+                (saved.position_angle - fresh.position_angle).abs() < 1e-6,
+                "{prefix}: {fresh:?} {saved:?}"
+            );
+        } else {
+            assert!(
+                (saved.major / cell - 10.0).abs() < 1e-5,
+                "{prefix}: {saved:?}"
+            );
+            assert!(
+                (saved.minor / cell - 8.0).abs() < 1e-5,
+                "{prefix}: {saved:?}"
+            );
+            assert!(
+                (saved.position_angle - 0.25).abs() < 1e-6,
+                "{prefix}: {saved:?}"
+            );
+        }
     }
 }
 
