@@ -13,11 +13,11 @@ CASES = json.loads((Path(__file__).parent / "data" / "casa_componentlist_indices
 
 @pytest.mark.parametrize("case", CASES)
 def test_indices_matches_casa(case: dict, caplog: pytest.LogCaptureFixture) -> None:
-    if case["select"]:
-        pytest.skip("component selection remains unimplemented in casa-rs")
     cl = componentlist()
     for _ in range(case["count"]):
         assert cl.addcomponent(flux=1, dir="J2000 0deg 0deg")
+    if case["select"]:
+        assert cl.select(case["select"])
     with caplog.at_level(logging.WARNING, logger="casars.tools.componentlist"):
         result = cl.indices()
     assert isinstance(result, np.ndarray)

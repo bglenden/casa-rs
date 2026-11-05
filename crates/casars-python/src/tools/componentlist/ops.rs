@@ -46,6 +46,7 @@ struct Attached {
 #[derive(Default)]
 pub(crate) struct State {
     list: ComponentList,
+    selection: std::collections::BTreeSet<i64>,
     table: Option<Attached>,
     measures: Option<Arc<dyn MeasuresProvider>>,
 }
@@ -71,6 +72,7 @@ impl State {
     /// The table could not be rewritten; the state is reset all the same.
     pub(crate) fn release(&mut self) -> Result<(), String> {
         let list = std::mem::take(&mut self.list);
+        self.selection.clear();
         match self.table.take() {
             Some(Attached {
                 path,
@@ -163,6 +165,47 @@ impl State {
     pub(crate) fn done(&mut self) -> ConvertResult<bool> {
         self.release().map_err(ConvertError::runtime)?;
         Ok(true)
+    }
+
+    /// Change selection only after validating the complete request.
+    pub(crate) fn set_selection(
+        &mut self,
+        indices: &[i64],
+        select: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<CasaValue> {
+        if indices == [-1] {
+            if select {
+                self.selection = (0..self.length()).collect();
+            } else {
+                self.selection.clear();
+            }
+        } else {
+            if indices.iter().any(|&i| i < 0 || i >= self.length()) {
+                let action = if select { "selected" } else { "deselected" };
+                let message = format!(
+                    "Index out of range.\nA component number is less than one or greater than the list length\nNo components {action}"
+                );
+                lines.push(LogLine::error(message.clone()));
+                return Err(ConvertError::runtime(message));
+            }
+            for &index in indices {
+                if select {
+                    self.selection.insert(index);
+                } else {
+                    self.selection.remove(&index);
+                }
+            }
+        }
+        Ok(CasaValue::Bool(true))
+    }
+
+    /// The selected indices in CASA's integer-array representation.
+    pub(crate) fn selected(&self) -> CasaValue {
+        CasaValue::Ints {
+            shape: vec![self.selection.len()],
+            values: self.selection.iter().copied().collect(),
+        }
     }
 
     /// `length()`.

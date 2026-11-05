@@ -31,7 +31,7 @@ CASA = casa_signatures("quanta")
 
 IMPLEMENTED = {
     'abs', 'acos', 'add', 'angle', 'asin', 'atan', 'atan2', 'canon',
-    'canonical', 'ceil', 'check', 'checkfreq', 'compare', 'convert', 'cos',
+    'canonical', 'ceil', 'check', 'checkfreq', 'compare', 'constants', 'convert', 'cos',
     'div', 'done', 'exp', 'floor', 'formxxx', 'getunit', 'getvalue',
     'isangle', 'isquantity', 'log', 'log10', 'mul', 'neg', 'norm', 'pow', 'quantity',
     'sin', 'splitdate', 'sqrt', 'sub', 'tan', 'time', 'toangle', 'tos',
@@ -39,6 +39,18 @@ IMPLEMENTED = {
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 
+
+def test_constants_match_casa() -> None:
+    fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_constants.json").read_text())
+    qa = quanta()
+    for case in fixture["cases"]:
+        if "error" in case:
+            with pytest.raises(TypeError) as error:
+                qa.constants(case["input"])
+            assert str(error.value) == case["error"]["message"]
+        else:
+            assert qa.constants(case["input"]) == case["result"]
+    assert qa.constants() == {"unit": "", "value": math.pi}
 
 def test_sqrt_matches_casa() -> None:
     fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_sqrt.json").read_text())
