@@ -97,6 +97,16 @@ fn direct_type(surface: &str, name: &str) -> Option<&'static str> {
     parameters.get(surface)?.get(name).map(String::as_str)
 }
 
+/// A task with one direct required-path validator in its recorded schema.
+pub(crate) fn single_required_path(surface: &str, name: &str) -> bool {
+    static PARAMETERS: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+    let parameters = PARAMETERS.get_or_init(|| {
+        serde_json::from_str(include_str!("../resources/casa-single-required-paths.json"))
+            .expect("the checked CASA single-required-path inventory")
+    });
+    parameters.get(surface).is_some_and(|value| value == name)
+}
+
 /// A JSON integer literal that cannot fit the native signed representation.
 /// Decimal and exponent forms are floats in CASA even when mathematically whole.
 pub(crate) fn integer_literal_outside_i64(raw: &str) -> bool {
@@ -110,7 +120,7 @@ pub(crate) fn integer_literal_outside_i64(raw: &str) -> bool {
 mod tests {
     use casa_provider_contracts::ParameterValue;
 
-    use super::{direct_type_refusal, integer_literal_outside_i64};
+    use super::{direct_type_refusal, integer_literal_outside_i64, single_required_path};
 
     #[test]
     fn required_paths_and_union_types_do_not_get_guessed_scalar_errors() {
@@ -118,6 +128,15 @@ mod tests {
         assert_eq!(direct_type_refusal("tclean", "vis", &value), None);
         assert_eq!(direct_type_refusal("tclean", "mask", &value), None);
         assert_eq!(direct_type_refusal("calibrate", "vis", &value), None);
+    }
+
+    #[test]
+    fn only_tasks_with_one_direct_required_path_are_selected() {
+        assert!(single_required_path("imstat", "imagename"));
+        assert!(single_required_path("split", "vis"));
+        assert!(!single_required_path("feather", "highres"));
+        assert!(!single_required_path("feather", "lowres"));
+        assert!(!single_required_path("tclean", "vis"));
     }
 
     #[test]

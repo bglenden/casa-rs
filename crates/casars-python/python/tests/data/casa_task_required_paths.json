@@ -1,0 +1,74 @@
+{
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "task": "imstat",
+      "args": {
+        "imagename": "$MISSING"
+      },
+      "type": "AssertionError",
+      "message": "the imagename parameter must be a path that exists ('$TMP/missing' does not exist)"
+    },
+    {
+      "task": "imstat",
+      "args": {
+        "imagename": "./missing"
+      },
+      "type": "AssertionError",
+      "message": "the imagename parameter must be a path that exists ('./missing' does not exist)"
+    },
+    {
+      "task": "imstat",
+      "args": {
+        "imagename": "../casa-path-probe-missing"
+      },
+      "type": "AssertionError",
+      "message": "the imagename parameter must be a path that exists ('../casa-path-probe-missing' does not exist)"
+    },
+    {
+      "task": "imhead",
+      "args": {
+        "imagename": "$MISSING"
+      },
+      "type": "AssertionError",
+      "message": "the imagename parameter must be a path that exists ('$TMP/missing' does not exist)"
+    },
+    {
+      "task": "immoments",
+      "args": {
+        "imagename": "$QUOTE",
+        "outfile": "$OUTPUT"
+      },
+      "type": "AssertionError",
+      "message": "the imagename parameter must be a path that exists ('$TMP/a'quote' does not exist)"
+    },
+    {
+      "task": "imsubimage",
+      "args": {
+        "imagename": "$MISSING",
+        "outfile": "$OUTPUT"
+      },
+      "type": "AssertionError",
+      "message": "the imagename parameter must be a path that exists ('$TMP/missing' does not exist)"
+    },
+    {
+      "task": "split",
+      "args": {
+        "vis": "$MISSING",
+        "outputvis": "$OUTPUT"
+      },
+      "type": "AssertionError",
+      "message": "the vis parameter must be a path that exists ('$TMP/missing' does not exist)"
+    },
+    {
+      "task": "exportfits",
+      "args": {
+        "imagename": "$MISSING",
+        "fitsimage": "$OUTPUT"
+      },
+      "type": "AssertionError",
+      "message": "the imagename parameter must be a path that exists ('$TMP/missing' does not exist)"
+    }
+  ]
+}
