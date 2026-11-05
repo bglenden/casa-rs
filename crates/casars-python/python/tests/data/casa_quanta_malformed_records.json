@@ -339,66 +339,6 @@
       "method": "quantity",
       "args": [
         {
-          "value": [
-            [
-              1.0,
-              2.0
-            ]
-          ],
-          "unit": "m"
-        }
-      ],
-      "result": {
-        "unit": "m",
-        "value": [
-          [
-            1.0,
-            2.0
-          ]
-        ]
-      }
-    },
-    {
-      "method": "getunit",
-      "args": [
-        {
-          "value": [
-            [
-              1.0,
-              2.0
-            ]
-          ],
-          "unit": "m"
-        }
-      ],
-      "error": {
-        "type": "RuntimeError",
-        "message": "Wrong QuantumHolder to convert asQuantumDouble"
-      }
-    },
-    {
-      "method": "add",
-      "args": [
-        {
-          "value": [
-            [
-              1.0,
-              2.0
-            ]
-          ],
-          "unit": "m"
-        },
-        1.0
-      ],
-      "error": {
-        "type": "RuntimeError",
-        "message": "Wrong QuantumHolder to convert asQuantumDouble"
-      }
-    },
-    {
-      "method": "quantity",
-      "args": [
-        {
           "value": 1,
           "unit": "m"
         }
