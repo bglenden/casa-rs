@@ -89,6 +89,7 @@ Simulator behaviours casa-rs follows:
 [`observemany`'s padded single name](#observemany-pads-one-name-with-empty-ones),
 [one leakage per window for the whole run](#setleakage-draws-one-leakage-per-window-for-the-whole-run).
 Component-list behaviours casa-rs does not follow:
+[non-finite or cyclic selection inputs](#component-selection-aborts-for-non-finite-or-cyclic-inputs),
 [a limb-darkened disk without an exponent](#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa),
 [a negative component under the primary beam](#a-negative-component-turns-positive-under-the-primary-beam),
 [a single spectral index](#a-single-spectral-index-is-read-past-its-end),
@@ -994,6 +995,25 @@ error. `GMST1_UT1`'s iteration does not undo it: GMST1 58258.280 converts
 back to UT1 51544.999. casa-rs uses the IAU 1976 GMST1 under either model,
 as casacore's own GAST does, so its GMST1, LMST, GAST and LAST agree with
 each other and, under IAU 1976, with casacore.
+
+## Component selection aborts for non-finite or cyclic inputs
+
+- Date noted: 2026-11-05
+- Status: CASA crash casa-rs corrects (#1176)
+- Affected code: CASA `componentlist.select` Python binding
+
+With three point components, CASA 6.7.6.14 terminates an isolated Python
+process with signal 11 for `cl.select(float("nan"))`,
+`cl.select(float("inf"))`, or a list that contains itself. By contrast,
+`cl.select([float("nan")])` selects index 0, and a 100-level acyclic nested
+list containing 1 selects index 1. The isolated probe and its receipt are
+`tools/simulation/componentlist_selection_crashes_oracle.py` and
+`crates/casars-python/python/tests/data/casa_componentlist_selection_crashes.json`.
+
+casa-rs raises `ValueError` for scalar non-finite or cyclic selections and
+leaves the selection unchanged. It continues to accept nested acyclic lists
+and follows the recorded list-wrapped numeric conversions. This corrects the
+process crash: scripts can catch the exception and retain their session.
 
 ## Writing a limb-darkened disk without an exponent aborts CASA
 
