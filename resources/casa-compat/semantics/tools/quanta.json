@@ -98,12 +98,11 @@
    ]
   },
   "checkfreq": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Tests whether a scalar quantity has a frequency-compatible dimension, with CASA conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "checkfreq-casa"
    ]
   },
   "compare": {
@@ -550,6 +549,18 @@
    "links": [
     "docs/CASA (C++) bugs.md"
    ]
+  },
+  "checkfreq-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Thirty-two CASA 6.7.6-14 cases cover frequency, period, wavelength, energy, other dimensions and scalar conversion errors.",
+   "scope": "quanta.checkfreq.",
+   "links": [
+    "tools/simulation/quanta_checkfreq_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_checkfreq.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "119771e30d19558740b3b799e5bd519b1a060ba7"
   }
  }
 }
