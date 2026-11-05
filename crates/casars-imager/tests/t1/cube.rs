@@ -943,10 +943,15 @@ fn a_whole_selection_density_counts_channels_the_axis_misses() {
 /// A track of 40 TOPO channels of 2 kHz at 44 GHz, where the LSRK drift is
 /// several channels wide.
 fn drifting_track() -> Observation {
+    drifting_track_with_width(2.0e3)
+}
+
+/// The same track with a chosen native channel width.
+fn drifting_track_with_width(width_hz: f64) -> Observation {
     use casa_ms::MeasurementSet;
     use casa_types::measures::frequency::FrequencyRef;
     let mut setup = super::fixture::Setup::vla_q_band(40);
-    setup.spectral_windows[0].channel_width_hz = 2.0e3;
+    setup.spectral_windows[0].channel_width_hz = width_hz;
     let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
     ms.spectral_window_mut()
@@ -1182,6 +1187,41 @@ fn parent_prediction_rows_match_casas_drifting_channel_layouts() {
             .iter()
             .all(|layout| layout.flags.iter().all(|flag| !flag)),
         "the selected unflagged cells remain unflagged: {layouts:?}"
+    );
+}
+
+/// With 20 kHz native channels, CASA reads channel 20 alone for most of
+/// the track and one adjacent channel at either end. A physically singleton
+/// row takes CASA's nearest prediction path even under linear interpolation.
+#[test]
+fn parent_prediction_rows_include_casas_singleton_channel() {
+    let observation = drifting_track_with_width(20_000.0);
+    let request = observation.request(
+        "compact-singleton-rows",
+        json!({
+            "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 2,
+            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn",
+        }),
+    );
+    let layouts = casa_imaging_application::source_law::prediction_layouts(
+        &request,
+        &super::fixture::run_context(&request),
+    )
+    .expect("the parent prediction traversal");
+    let mut actual = layouts
+        .iter()
+        .map(|layout| layout.channels.clone())
+        .collect::<Vec<_>>();
+    actual.sort();
+    assert_eq!(
+        actual,
+        [vec![19, 20], vec![20], vec![20, 21]],
+        "CASA's parent selections"
+    );
+    assert!(
+        layouts
+            .iter()
+            .all(|layout| layout.flags.iter().all(|flag| !flag))
     );
 }
 
