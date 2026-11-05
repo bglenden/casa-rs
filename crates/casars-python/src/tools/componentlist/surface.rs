@@ -119,7 +119,7 @@ const METHODS: &[Method] = &[
         "deselect",
         &[param("which", K::Ints, Required)],
         R::Bool,
-        No,
+        Yes,
     ),
     method("done", &[], R::Bool, Yes),
     method("edit", &[WHICH, LOG], R::Bool, No),
