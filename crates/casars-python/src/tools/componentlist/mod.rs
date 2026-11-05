@@ -583,10 +583,24 @@ impl PyComponentList {
         stub("iscomponentlist")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Check whether the selected components have physically possible fluxes.
     #[pyo3(signature = (which = None), text_signature = "($self, which=[-1])")]
-    fn isphysical(&self, which: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("isphysical")
+    fn isphysical(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] which: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let (indices, pending) = match which {
+            Some(which) => selection::indices(&which)?,
+            None => (vec![-1], false),
+        };
+        let result = self.call(py, move |state, lines| state.is_physical(&indices, lines))?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_isphysical> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// The number of components.

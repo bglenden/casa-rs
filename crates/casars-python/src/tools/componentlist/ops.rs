@@ -167,6 +167,37 @@ impl State {
         Ok(true)
     }
 
+    /// Check the selected components using CASA's Stokes physicality test.
+    pub(crate) fn is_physical(
+        &self,
+        indices: &[i64],
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<CasaValue> {
+        if indices == [-1] && self.list.is_empty() {
+            return Err(ConvertError::runtime(
+                "Cannot check all components of an empty list (CASA exits: #1158)",
+            ));
+        }
+        let indices = if indices == [-1] {
+            (0..self.length()).collect::<Vec<_>>()
+        } else {
+            indices.to_vec()
+        };
+        if indices
+            .iter()
+            .any(|&index| index < 0 || index >= self.length())
+        {
+            let message = "Index out of range.\nA component number is less than one or greater than the list length\nNot checking any components";
+            lines.push(LogLine::error(message));
+            return Err(ConvertError::runtime(message));
+        }
+        Ok(CasaValue::Bool(indices.into_iter().all(|index| {
+            self.list
+                .get(index as usize)
+                .is_some_and(|component| component.flux().is_physical())
+        })))
+    }
+
     /// Change selection only after validating the complete request.
     pub(crate) fn set_selection(
         &mut self,
