@@ -307,15 +307,10 @@ impl PyQuanta {
         stub("define")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn eq(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("eq")
+    /// CASA's scalar quantity comparison.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn eq(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::relational(&v, &a, "eq"))
     }
 
     /// CASA's scalar exp of a dimensionless quantity.
@@ -359,15 +354,10 @@ impl PyQuanta {
         CasaValue::Text(written.unwrap_or_default()).into_python(py)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn ge(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("ge")
+    /// CASA's scalar quantity comparison.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn ge(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::relational(&v, &a, "ge"))
     }
 
     /// Not yet implemented in casa-rs.
@@ -377,15 +367,10 @@ impl PyQuanta {
         stub("getformat")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn gt(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("gt")
+    /// CASA's scalar quantity comparison.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn gt(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::relational(&v, &a, "gt"))
     }
 
     /// Whether a scalar quantity has angle or time dimensions.
@@ -394,15 +379,10 @@ impl PyQuanta {
         call(py, || ops::isangle(&v))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn le(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("le")
+    /// CASA's scalar quantity comparison.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn le(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::relational(&v, &a, "le"))
     }
 
     /// CASA's scalar log of a dimensionless quantity.
@@ -417,15 +397,10 @@ impl PyQuanta {
         call(py, || ops::logarithm(&v, "log10"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn lt(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("lt")
+    /// CASA's scalar quantity comparison.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn lt(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::relational(&v, &a, "lt"))
     }
 
     /// Not yet implemented in casa-rs.
@@ -442,15 +417,10 @@ impl PyQuanta {
         stub("maprec")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn ne(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("ne")
+    /// CASA's scalar quantity comparison.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn ne(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::relational(&v, &a, "ne"))
     }
 
     /// Not yet implemented in casa-rs.
