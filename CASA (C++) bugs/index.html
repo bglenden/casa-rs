@@ -1087,6 +1087,7 @@ Simulator behaviours casa-rs follows:
 <a href="#observemany-pads-one-name-with-empty-ones"><code>observemany</code>'s padded single name</a>,
 <a href="#setleakage-draws-one-leakage-per-window-for-the-whole-run">one leakage per window for the whole run</a>.
 Component-list behaviours casa-rs does not follow:
+<a href="#component-selection-aborts-for-non-finite-or-cyclic-inputs">non-finite or cyclic selection inputs</a>,
 <a href="#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa">a limb-darkened disk without an exponent</a>,
 <a href="#a-negative-component-turns-positive-under-the-primary-beam">a negative component under the primary beam</a>,
 <a href="#a-single-spectral-index-is-read-past-its-end">a single spectral index</a>,
@@ -1917,6 +1918,23 @@ error. <code>GMST1_UT1</code>'s iteration does not undo it: GMST1 58258.280 conv
 back to UT1 51544.999. casa-rs uses the IAU 1976 GMST1 under either model,
 as casacore's own GAST does, so its GMST1, LMST, GAST and LAST agree with
 each other and, under IAU 1976, with casacore.</p>
+<h2 id="component-selection-aborts-for-non-finite-or-cyclic-inputs">Component selection aborts for non-finite or cyclic inputs<a class="headerlink" href="#component-selection-aborts-for-non-finite-or-cyclic-inputs" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-05</li>
+<li>Status: CASA crash casa-rs corrects (#1176)</li>
+<li>Affected code: CASA <code>componentlist.select</code> Python binding</li>
+</ul>
+<p>With three point components, CASA 6.7.6.14 terminates an isolated Python
+process with signal 11 for <code>cl.select(float("nan"))</code>,
+<code>cl.select(float("inf"))</code>, or a list that contains itself. By contrast,
+<code>cl.select([float("nan")])</code> selects index 0, and a 100-level acyclic nested
+list containing 1 selects index 1. The isolated probe and its receipt are
+<code>tools/simulation/componentlist_selection_crashes_oracle.py</code> and
+<code>crates/casars-python/python/tests/data/casa_componentlist_selection_crashes.json</code>.</p>
+<p>casa-rs raises <code>ValueError</code> for scalar non-finite or cyclic selections and
+leaves the selection unchanged. It continues to accept nested acyclic lists
+and follows the recorded list-wrapped numeric conversions. This corrects the
+process crash: scripts can catch the exception and retain their session.</p>
 <h2 id="writing-a-limb-darkened-disk-without-an-exponent-aborts-casa">Writing a limb-darkened disk without an exponent aborts CASA<a class="headerlink" href="#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>
