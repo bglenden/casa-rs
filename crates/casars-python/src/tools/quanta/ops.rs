@@ -240,22 +240,7 @@ pub(super) fn atan2(value: &Variant, other: &Variant) -> ConvertResult<CasaValue
 
 /// `qa.sqrt(v)`: take the root in SI units, as casacore does.
 pub(super) fn sqrt(value: &Variant) -> ConvertResult<CasaValue> {
-    let quantity = quantity(value)?;
-    // The shared parser currently accepts positive exponents on casacore's
-    // special `_` unit, but CASA's QuantumHolder string parser rejects them.
-    if let Variant::Text(text) = value
-        && quantity
-            .unit()
-            .name()
-            .as_bytes()
-            .windows(2)
-            .any(|pair| pair[0] == b'_' && pair[1].is_ascii_digit())
-    {
-        return Err(ConvertError::runtime(format!(
-            "Error in QuantumHolder::fromString with input string \"{text}\": Illegal input units or format\n in converting quantity"
-        )));
-    }
-    let value = quantity;
+    let value = quantity(value)?;
     let dimension =
         value.unit().val().dim.sqrt().map_err(|_| {
             ConvertError::runtime("UnitVal::UnitVal Illegal unit dimensions for root")
