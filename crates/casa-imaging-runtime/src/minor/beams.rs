@@ -18,6 +18,7 @@ pub(super) fn settle_off_centre(
     normal: &FinalNormalState,
     taylor: bool,
     cache: &mut PsfCache,
+    preserve_main: bool,
 ) -> Result<(), MinorCycleRunError> {
     let mut largest = BTreeMap::<usize, RestoringBeam>::new();
     for (key, summary) in cache.summaries.iter().filter(|(_, s)| !s.off_centre()) {
@@ -33,6 +34,9 @@ pub(super) fn settle_off_centre(
             .or_insert(beam);
     }
     for (key, summary) in &mut cache.summaries {
+        if preserve_main && key.domain == 0 {
+            continue;
+        }
         let Some(beam) = largest.get(&key.domain).copied() else {
             continue;
         };

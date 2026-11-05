@@ -8,6 +8,39 @@ use crate::{PowerLogPolynomial, SpectralIndex};
 const ARCSEC: f64 = std::f64::consts::PI / 180.0 / 3600.0;
 const GHZ_230: f64 = 230.0e9;
 
+#[test]
+fn physical_flux_checks_complex_stokes_in_all_polarisation_bases() {
+    assert!(Flux::stokes_jy(-1.0, 0.0, 0.0, 0.0).is_physical());
+    assert!(Flux::stokes_jy(1.0, 1.0, 0.0, 0.0).is_physical());
+    assert!(!Flux::stokes_jy(1.0, 2.0, 0.0, 0.0).is_physical());
+    for (basis, values) in [
+        (Polarisation::Linear, [1.0, 0.0, 0.0, 1.0]),
+        (Polarisation::Circular, [1.0, 0.0, 0.0, 1.0]),
+    ] {
+        let values = values.map(|x| Complex64::new(x, 0.0));
+        assert!(Flux::new(values, "K.rad2", basis).unwrap().is_physical());
+    }
+    let mut values = [Complex64::new(0.0, 0.0); 4];
+    values[0] = Complex64::new(1.0, 1e-13);
+    assert!(
+        Flux::new(values, "Jy", Polarisation::Stokes)
+            .unwrap()
+            .is_physical()
+    );
+    values[0].im = 1.01e-13;
+    assert!(
+        !Flux::new(values, "Jy", Polarisation::Stokes)
+            .unwrap()
+            .is_physical()
+    );
+    values[0].im = f64::NAN;
+    assert!(
+        !Flux::new(values, "Jy", Polarisation::Stokes)
+            .unwrap()
+            .is_physical()
+    );
+}
+
 fn direction() -> MDirection {
     MDirection::from_angles(2.6, -0.5, DirectionRef::J2000)
 }

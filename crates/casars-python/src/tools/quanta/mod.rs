@@ -15,6 +15,7 @@ pub(crate) mod surface;
 
 use pyo3::exceptions::{PyOverflowError, PySystemError, PyTypeError};
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyString};
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, StringList, Variant};
@@ -31,6 +32,18 @@ fn constant_name(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
 /// Keep an explicitly supplied `None` distinct from an omitted argument.
 fn supplied<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
     Ok(Some(value.clone()))
+}
+
+/// CASA accepts text and UTF-8 bytes for a string argument.
+fn output_unit(value: Option<Bound<'_, PyAny>>, default: &str) -> PyResult<String> {
+    match value {
+        None => Ok(default.to_string()),
+        Some(value) if value.is_instance_of::<PyString>() => value.extract(),
+        Some(value) if value.is_instance_of::<PyBytes>() => {
+            value.call_method1("decode", ("utf-8",))?.extract()
+        }
+        Some(_) => Err(PyTypeError::new_err("argument _outunit must be a string")),
+    }
 }
 
 /// CASA's `quanta` tool.
@@ -287,26 +300,28 @@ impl PyQuanta {
         call(py, || Ok(ops::constants(&v)))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, outunit = None), text_signature = "($self, v=[], outunit='km/s')")]
+    /// Convert between dimensionless Doppler and speed quantities.
+    #[pyo3(signature = (v = Variant::Empty, outunit = None), text_signature = "($self, v=[], outunit='km/s')")]
     fn convertdop(
         &self,
-        v: Option<&Bound<'_, PyAny>>,
-        outunit: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        v: Variant,
+        #[pyo3(from_py_with = supplied)] outunit: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("convertdop")
+        let outunit = output_unit(outunit, "km/s")?;
+        call(py, || ops::convert_doppler(&v, &outunit))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, outunit = None), text_signature = "($self, v=[], outunit='Hz')")]
+    /// Convert between frequency, period, wavelength and related units.
+    #[pyo3(signature = (v = Variant::Empty, outunit = None), text_signature = "($self, v=[], outunit='Hz')")]
     fn convertfreq(
         &self,
-        v: Option<&Bound<'_, PyAny>>,
-        outunit: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        v: Variant,
+        #[pyo3(from_py_with = supplied)] outunit: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("convertfreq")
+        let outunit = output_unit(outunit, "Hz")?;
+        call(py, || ops::convert_frequency(&v, &outunit))
     }
 
     /// CASA's scalar cos of a quantity.

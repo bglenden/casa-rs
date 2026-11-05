@@ -303,12 +303,11 @@
    ]
   },
   "isphysical": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Checks selected components using CASA Stokes physicality; an explicit empty index list returns true, and selecting all on an empty list raises an owner-approved error rather than exiting.",
    "evidence": [
     "signature",
-    "refusals"
+    "isphysical-casa"
    ]
   },
   "length": {
@@ -618,6 +617,19 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Standing rule, AGENTS.md \"CASA deviations\" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it."
+  },
+  {
+   "id": "isphysical-empty-list-exit",
+   "inputs": "componentlist().isphysical(), default [-1] selection on an empty list.",
+   "casa": "CASA 6.7.6-14 exits the Python process without raising an exception.",
+   "ours": "Raises a catchable RuntimeError; an explicit empty index list still returns True.",
+   "rationale": "A component check should not terminate its caller.",
+   "impact": "Callers can recover rather than lose the Python session.",
+   "evidence": [
+    "isphysical-casa"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Owner approved a catchable error on 2026-11-05 (#1158)."
   }
  ],
  "evidence": {
@@ -753,6 +765,22 @@
     "crates/casars-python/python/tests/test_componentlist_fluxerror.py"
    ],
    "source_revision": "5074e93e7172c2d348f11beaa04daf83895a6e62"
+  },
+  "isphysical-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "18 CASA 6.7.6-14 cases cover physical and nonphysical Stokes fluxes, selections and index errors; an empty index vector returns true. The empty default selection terminates an isolated CASA process (#1158). Six additional CASA-created table rows test complex Stokes and correlation-basis fluxes.",
+   "scope": "componentlist.isphysical.",
+   "links": [
+    "tools/simulation/componentlist_isphysical_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_isphysical.json",
+    "crates/casars-python/python/tests/test_componentlist_isphysical.py",
+    "docs/CASA (C++) bugs.md",
+    "tools/simulation/componentlist_physical_flux_table_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_physical_fluxes.json",
+    "crates/casars-python/python/tests/data/casa_physical_fluxes.cl.tgz"
+   ],
+   "source_revision": "f19c17971aa90799e053910a45eed46cd0ec744e"
   },
   "getshape-casa": {
    "kind": "CASA-recorded values",

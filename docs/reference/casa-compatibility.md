@@ -759,8 +759,8 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `restart` | `True` | `True`; `restart` → `restart` | Partial | Contract 36: True continues on an earlier run's products at imagename on the same grid, as SIImageStore opens them: the model (every Taylor term, cube channel and Stokes plane; a mosaic's flat-noise model made physical with the weights the run forms, every Taylor term with term 0's) starts the solve, an existing binary CLEAN mask is reused plane by plane when no mask is given, and calcpsf/calcres=False read the PSF, sums of weights and residual. False keeps contract32's single-main numbering. Refused (#944, #980): outlier fields, another deconvolver family's products, a new user mask or auto-multithresh over an existing CLEAN mask when cleaning, embedded model/mask pixel masks and tabulated spectral axes. Preserving prior image histories remains the owner-agreed deviation. [restart](#tclean-behavior-restart)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [lifecycle](#tclean-evidence-lifecycle), [restart-native-current](#tclean-evidence-restart-native-current), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [numbering-preview](#tclean-evidence-numbering-preview), [numbering-activation](#tclean-evidence-numbering-activation), [continuation-20261102](#tclean-evidence-continuation-20261102) |
 | `savemodel` | `'none'` | `'none'`; `savemodel` → `savemodel` | Partial | Copied. modelcolumn writes MODEL_DATA, at each time only the channels its bands select where CASA's final write is its last major cycle's; after nsigma, auto-multithresh, or niter=0 with calcres=False, CASA's final write is predictModel, which casa-rs doesn't match outside the imaged band (issue 1134); request checks a solved or start model exists. virtual saves the final model as CASA's virtual model (casa_ms::virtual_model): the selection's fields'/windows' models are cleared first (VisModelData::clearModel), then the standard gridder's GridFT record (MultiTermFTNew over GridFT for mtmfs) and its FT_MODEL grid image are filed, incrementally, under SOURCE (rows and a known source) or MAIN keywords as CASA 6.7.6.14 files them; CASA predicts from them what it predicts from its own. A model of no flux saves nothing. Other gridders, polarizations than I, facets and outlier fields are refused (issue 823). [returns](#tclean-behavior-returns)<br>Catalog domain: `modelcolumn`, `none`, `virtual` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [virtual-model](#tclean-evidence-virtual-model), [model-column-bands-20261104](#tclean-evidence-model-column-bands-20261104) |
 | `calcres` | `True` | `True`; `calcres` → `calcres` | Partial | Contract 36: False runs no major cycle before the first minor cycle and cleans the residual an earlier run left at imagename, read with its sums of weights as the unnormalized normal state (task_tclean.py; not counted in nmajordone). With no residual and niter=0 the run makes the PSF alone in a PSF-only pass (psf, sumwt, pb). niter=0 with savemodel predicts the read model (predictModel) and leaves the residual as read. Refused: niter>0 with no earlier residual, and mosaic, A-projection, facets or outliers (#980). [restart](#tclean-behavior-restart)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [continuation-20261102](#tclean-evidence-continuation-20261102) |
-| `calcpsf` | `True` | `True`; `calcpsf` → `calcpsf` | Partial | Contract 36: False reads the PSF and sums of weights an earlier run left (each channel and Stokes plane's, or a Taylor family's 2*nterms-1 moments) in place of gridding them; the restoring beam is fitted on the PSF read and the primary beam formed as before. Refused: no earlier PSF or .sumwt, and mosaic, A-projection, facets or outliers (#980). [restart](#tclean-behavior-restart)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [continuation-20261102](#tclean-evidence-continuation-20261102) |
-| `psfcutoff` | `0.35` | `0.35`; `psfcutoff` → `psfcutoff` | Implemented | Copied; request requires positive value. A plane whose PSF peaks outside its inner quarter is not fitted, as StokesImageUtil::FitGaussianPSF refuses it, and takes its domain's largest beam, or a tiny one where no plane has a beam (SIImageStore::makeImageBeamSet). Its peak is its sidelobe level. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `float` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [psf-off-centre-20261104](#tclean-evidence-psf-off-centre-20261104), [psf-off-centre-1130-20261104](#tclean-evidence-psf-off-centre-1130-20261104) |
+| `calcpsf` | `True` | `True`; `calcpsf` → `calcpsf` | Partial | Contract 36: False reads the PSF and sums of weights an earlier run left (each channel and Stokes plane, or a Taylor family's 2*nterms-1 moments) in place of gridding them; a complete saved PSF beam set is reused for the minor cycle and publication. Headerless PSFs fit at CASA's default cutoff before cleaning. MFS retains a complete saved PSF beam when recomputing, while cube gridding refits it. Refused: no earlier PSF or .sumwt, and mosaic, A-projection, facets or outliers (#980). [restart](#tclean-behavior-restart)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [continuation-20261102](#tclean-evidence-continuation-20261102), [psfcutoff-restart-20261105](#tclean-evidence-psfcutoff-restart-20261105) |
+| `psfcutoff` | `0.35` | `0.35`; `psfcutoff` → `psfcutoff` | Implemented | The requested cutoff fits a newly formed PSF and sets the beam used for minor-cycle sidelobes, Clark patches, automatic masking and publication. A complete existing PSF beam set is reused when calcpsf=False, and on MFS recomputation; cube gridding refits after discarding temporary PSF metadata. A headerless saved PSF is fitted at the default 0.35 before cleaning. Off-centre saved beams are subtracted at the image centre; an off-centre plane with no saved beam still uses its peak as its sidelobe pending #1140 item 6. The fit and sidelobe use both direction increments; rectangular-cell automatic masks retain the native support CASA 6.7.6.14 lacks. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `float` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [psf-off-centre-20261104](#tclean-evidence-psf-off-centre-20261104), [psf-off-centre-1130-20261104](#tclean-evidence-psf-off-centre-1130-20261104), [psfcutoff-restart-20261105](#tclean-evidence-psfcutoff-restart-20261105) |
 | `parallel` | `False` | `False`; `parallel` → `parallel` | Partial | Native local worker resource policy, not CASA MPI launch/partition semantics. Ordinary output equivalence and resource bounds require separate evidence; distributed behavior is unfinished. [accuracy](#tclean-behavior-accuracy)<br>Catalog domain: `bool` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [adopted-defaults](#tclean-evidence-adopted-defaults) |
 
 #### tclean interacting modes and task behavior
@@ -1575,19 +1575,34 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Command: `tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-density-channels-cases.json --backend cpu --precision f64`.
 - Receipt: `resources/casa-compat/evidence/tclean-density-channels-20261104.json`.
 
+<a id="tclean-evidence-psfcutoff-restart-20261105"></a>
+##### psfcutoff-restart-20261105
+
+**PSF cutoff and saved-beam restart comparisons against CASA — measured: 10 of 11 strict paired cases pass; a near-zero MT-MFS model coefficient is a recorded pre-existing exception.** Fresh and resumed PSF cutoff, retained PSF and residual beam metadata, rectangular-cell and off-centre saved beams, MFS versus cube recomputation, and headerless PSF fits. Ten strict CASA cases pass; one MT-MFS model.tt1 near-zero pixel fails per-product NRMS in both parent and candidate. Two other MT-MFS cases pass. T1.5 and representative T2 numerical comparisons pass; the generic mode-level owner review is pending. Each new law failed its targeted mutation, and one independent local review checked CASA/casacore C++.
+
+- [resources/casa-compat/evidence/tclean-psfcutoff-1140-20261105.json](https://github.com/bglenden/casa-rs/blob/2c0e1647d747dc73a185f280afd9d702efc2a5c5/resources/casa-compat/evidence/tclean-psfcutoff-1140-20261105.json)
+- [resources/casa-compat/tclean-psfcutoff-cases.json](https://github.com/bglenden/casa-rs/blob/2c0e1647d747dc73a185f280afd9d702efc2a5c5/resources/casa-compat/tclean-psfcutoff-cases.json)
+- [crates/casa-imaging-application/src/restart/existing.rs](https://github.com/bglenden/casa-rs/blob/2c0e1647d747dc73a185f280afd9d702efc2a5c5/crates/casa-imaging-application/src/restart/existing.rs)
+- [crates/casa-imaging-runtime/src/minor/psfs.rs](https://github.com/bglenden/casa-rs/blob/2c0e1647d747dc73a185f280afd9d702efc2a5c5/crates/casa-imaging-runtime/src/minor/psfs.rs)
+- [crates/casa-imaging-deconvolution/src/psf.rs](https://github.com/bglenden/casa-rs/blob/2c0e1647d747dc73a185f280afd9d702efc2a5c5/crates/casa-imaging-deconvolution/src/psf.rs)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/2c0e1647d747dc73a185f280afd9d702efc2a5c5/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- Revision: `b2c468423b839c4decf02c719a9b8977cfe338e6`; CASA: `casatasks 6.7.6.14; casatools 6.7.6-14`.
+- Command: `tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-psfcutoff-cases.json --backend cpu --precision f64, plus controlled restart probes and T1.5/T2 comparisons`.
+- Receipt: `resources/casa-compat/evidence/tclean-psfcutoff-1140-20261105.json`.
+
 ## Tools
 
 Each CASA class casa-rs presents in Python, against the signatures recorded from CASA 6.7.6.14 (`crates/casars-python/python/tests/data/casa_<class>_signatures.json`), which the Python tests hold the classes to. A reviewed class has a file under `resources/casa-compat/semantics/tools/` giving each method's status, scope and evidence; the others are not reviewed yet. The simulation classes (`simulator`, `componentlist`, `measures`, `quanta` and `simutil`) are reviewed in #1053, and `image`, `coordsys`, `table`, `msmetadata` and `ms` in #1025.
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 29 | 0 | 32 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 30 | 0 | 31 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
-| [quanta](#quanta) | `casars.tools` | 57 | yes | 49 | 0 | 8 | 0 | 0 | 0 |
+| [quanta](#quanta) | `casars.tools` | 57 | yes | 51 | 0 | 6 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 18 | 11 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 46 | 2 | 9 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
@@ -1598,7 +1613,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 29, Partial: 0, Not implemented: 32, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 30, Partial: 0, Not implemented: 31, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1636,7 +1651,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `haskeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `indices` |  | Implemented | Matches CASA's placeholder: warns and returns an empty int64 array. | [signature](#componentlist-evidence-signature), [indices-casa](#componentlist-evidence-indices-casa) |
 | `iscomponentlist` | `tool=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `isphysical` | `which=[-1]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `isphysical` | `which=[-1]` | Implemented | Checks selected components using CASA Stokes physicality; an explicit empty index list returns true, and selecting all on an empty list raises an owner-approved error rather than exiting. | [signature](#componentlist-evidence-signature), [isphysical-casa](#componentlist-evidence-isphysical-casa) |
 | `length` |  | Implemented | The number of components. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `open` | `filename='', nomodify=False, log=True` | Implemented | Opens a component-list table, writing a list it replaces first; refuses what is not a component list. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `purge` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
@@ -1722,6 +1737,16 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 - User impact: A misspelled shape yields a point source instead of an error.
 - Owner decision: Standing rule, AGENTS.md "CASA deviations" (owner, #1054): where CASA's behaviour is deliberate or users' results depend on it, casa-rs follows it.
 - Evidence: [bugs-record](#componentlist-evidence-bugs-record).
+
+##### isphysical-empty-list-exit: Previously agreed
+
+- Inputs: componentlist().isphysical(), default [-1] selection on an empty list.
+- CASA: CASA 6.7.6-14 exits the Python process without raising an exception.
+- casa-rs: Raises a catchable RuntimeError; an explicit empty index list still returns True.
+- Rationale: A component check should not terminate its caller.
+- User impact: Callers can recover rather than lose the Python session.
+- Owner decision: Owner approved a catchable error on 2026-11-05 (#1158).
+- Evidence: [isphysical-casa](#componentlist-evidence-isphysical-casa).
 
 #### componentlist evidence
 
@@ -1832,6 +1857,19 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/data/casa_componentlist_fluxerror.json](https://github.com/bglenden/casa-rs/blob/5074e93e7172c2d348f11beaa04daf83895a6e62/crates/casars-python/python/tests/data/casa_componentlist_fluxerror.json)
 - [crates/casars-python/python/tests/data/casa_fluxerrors.cl.tgz](https://github.com/bglenden/casa-rs/blob/5074e93e7172c2d348f11beaa04daf83895a6e62/crates/casars-python/python/tests/data/casa_fluxerrors.cl.tgz)
 - [crates/casars-python/python/tests/test_componentlist_fluxerror.py](https://github.com/bglenden/casa-rs/blob/5074e93e7172c2d348f11beaa04daf83895a6e62/crates/casars-python/python/tests/test_componentlist_fluxerror.py)
+
+<a id="componentlist-evidence-isphysical-casa"></a>
+##### isphysical-casa
+
+**CASA-recorded values — measured.** 18 CASA 6.7.6-14 cases cover physical and nonphysical Stokes fluxes, selections and index errors; an empty index vector returns true. The empty default selection terminates an isolated CASA process (#1158). Six additional CASA-created table rows test complex Stokes and correlation-basis fluxes. componentlist.isphysical.
+
+- [tools/simulation/componentlist_isphysical_oracle.py](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/tools/simulation/componentlist_isphysical_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_isphysical.json](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/crates/casars-python/python/tests/data/casa_componentlist_isphysical.json)
+- [crates/casars-python/python/tests/test_componentlist_isphysical.py](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/crates/casars-python/python/tests/test_componentlist_isphysical.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- [tools/simulation/componentlist_physical_flux_table_oracle.py](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/tools/simulation/componentlist_physical_flux_table_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_physical_fluxes.json](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/crates/casars-python/python/tests/data/casa_componentlist_physical_fluxes.json)
+- [crates/casars-python/python/tests/data/casa_physical_fluxes.cl.tgz](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/crates/casars-python/python/tests/data/casa_physical_fluxes.cl.tgz)
 
 <a id="componentlist-evidence-getshape-casa"></a>
 ##### getshape-casa
@@ -2034,7 +2072,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 49, Partial: 0, Not implemented: 8, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 51, Partial: 0, Not implemented: 6, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -2053,8 +2091,8 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `compare` | `v=[], a=[]` | Implemented | Answers as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `constants` | `v='pi'` | Implemented | CASA's named physical constants and case-insensitive minimax lookup, including ambiguous names. | [signature](#quanta-evidence-signature), [constants-casa](#quanta-evidence-constants-casa) |
 | `convert` | `v=[], outunit=[]` | Implemented | Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance). | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
-| `convertdop` | `v=[], outunit='km/s'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
-| `convertfreq` | `v=[], outunit='Hz'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `convertdop` | `v=[], outunit='km/s'` | Implemented | Converts scalar quantities between dimensionless Doppler values and speeds using CASA unit equivalencies. | [signature](#quanta-evidence-signature), [spectral-conversion-casa](#quanta-evidence-spectral-conversion-casa) |
+| `convertfreq` | `v=[], outunit='Hz'` | Implemented | Converts scalar quantities between frequency, period, wavelength, angular frequency, wavenumber, energy, and momentum using CASA unit equivalencies. | [signature](#quanta-evidence-signature), [spectral-conversion-casa](#quanta-evidence-spectral-conversion-casa) |
 | `cos` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
 | `define` | `name, v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
 | `div` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
@@ -2247,6 +2285,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/quanta_normalize_oracle.py](https://github.com/bglenden/casa-rs/blob/53e13129e2058d0e97f8e7be3a943b9bf29d7d8c/tools/simulation/quanta_normalize_oracle.py)
 - [crates/casars-python/python/tests/data/casa_quanta_normalize.json](https://github.com/bglenden/casa-rs/blob/53e13129e2058d0e97f8e7be3a943b9bf29d7d8c/crates/casars-python/python/tests/data/casa_quanta_normalize.json)
 - [crates/casars-python/python/tests/test_quanta_normalize.py](https://github.com/bglenden/casa-rs/blob/53e13129e2058d0e97f8e7be3a943b9bf29d7d8c/crates/casars-python/python/tests/test_quanta_normalize.py)
+
+<a id="quanta-evidence-spectral-conversion-casa"></a>
+##### spectral-conversion-casa
+
+**CASA-recorded values — measured.** 215 CASA 6.7.6-14 conversions and argument cases cover supported dimensions, zero and non-finite values, incompatible units and argument errors. quanta.convertfreq and convertdop.
+
+- [tools/simulation/quanta_spectral_conversion_oracle.py](https://github.com/bglenden/casa-rs/blob/63be6c526c6fdaff7308f747d002372157a2b1bd/tools/simulation/quanta_spectral_conversion_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json](https://github.com/bglenden/casa-rs/blob/63be6c526c6fdaff7308f747d002372157a2b1bd/crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json)
+- [crates/casars-python/python/tests/test_quanta_spectral_conversion.py](https://github.com/bglenden/casa-rs/blob/63be6c526c6fdaff7308f747d002372157a2b1bd/crates/casars-python/python/tests/test_quanta_spectral_conversion.py)
 
 ### simulator
 

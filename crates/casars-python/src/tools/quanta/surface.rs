@@ -85,7 +85,7 @@ const METHODS: &[Method] = &[
             param("outunit", K::Text, Text("km/s")),
         ],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "convertfreq",
@@ -94,7 +94,7 @@ const METHODS: &[Method] = &[
             param("outunit", K::Text, Text("Hz")),
         ],
         R::Record,
-        No,
+        Yes,
     ),
     unary("cos", R::Record, Yes),
     method(

@@ -18,6 +18,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[automatic-mask convolution on rectangular pixels](#automatic-mask-convolution-requires-square-pixels-in-casa),
 [byte order of integer quantity arrays](#casa-misreads-big-endian-integer-quantity-arrays),
 [a Taylor run with no weight on its first correlation](#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero),
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
@@ -89,6 +90,7 @@ Simulator behaviours casa-rs follows:
 [`observemany`'s padded single name](#observemany-pads-one-name-with-empty-ones),
 [one leakage per window for the whole run](#setleakage-draws-one-leakage-per-window-for-the-whole-run).
 Component-list behaviours casa-rs does not follow:
+[physicality of an empty component list](#checking-all-components-of-an-empty-list-exits-casa),
 [non-finite or cyclic selection inputs](#component-selection-aborts-for-non-finite-or-cyclic-inputs),
 [a limb-darkened disk without an exponent](#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa),
 [a negative component under the primary beam](#a-negative-component-turns-positive-under-the-primary-beam),
@@ -995,6 +997,19 @@ error. `GMST1_UT1`'s iteration does not undo it: GMST1 58258.280 converts
 back to UT1 51544.999. casa-rs uses the IAU 1976 GMST1 under either model,
 as casacore's own GAST does, so its GMST1, LMST, GAST and LAST agree with
 each other and, under IAU 1976, with casacore.
+
+## Checking all components of an empty list exits CASA
+
+- Date noted: 2026-11-05
+- Status: CASA exits; casa-rs raises a catchable error (owner approved, #1158)
+- Affected code: `componentlist::_checkIndices` and `componentlist::isphysical`
+
+CASA 6.7.6-14 exits its Python process when `componentlist().isphysical()`
+checks the default `[-1]` selection on an empty list. The index helper expands
+`[-1]` into an empty vector and still reads its first element. An isolated
+Mac mini run ended with status 255 and no Python exception. casa-rs raises a
+`RuntimeError` so a caller can recover. An explicitly empty selection, `[]`,
+returns `True`, as in CASA. The owner approved a catchable error on 2026-11-05.
 
 ## Component selection aborts for non-finite or cyclic inputs
 
@@ -3780,6 +3795,25 @@ with. CASA's cube doesn't: the gap, 0.0057, is about the 1.1 Jy component times
 CASA's MFS does. `tools/casa-compat/tclean_summary_matrix.py --case
 mosaic-seed-cube --case mosaic-seed-cube-no-cut` shows it, and those two cases
 differ for this reason.
+
+## Automatic-mask convolution requires square pixels in CASA
+
+- Date noted: 2026-11-05
+- Status: CASA 6.7.6.14 limitation; casa-rs keeps supporting rectangular pixels (#1140)
+- Affected code: `SDMaskHandler::autoMaskByMultiThreshold` and
+  `Image2DConvolver::convolve`
+
+With `usemask='auto-multithresh'`, `imsize=64`, `cell=['8arcsec',
+'16arcsec']`, a residual with a 5-by-5-pixel island and a stored 72-arcsec
+circular beam, CASA fails when it reaches convolution: “Pixels must be square,
+please regrid your image so that they are.” `Image2DConvolver::convolve` checks
+the two direction increments and throws before it convolves. casa-rs keeps its
+existing rectangular-cell support: pruning divides the beam solid angle by the
+product of the two pixel increments, and smoothing evaluates the Gaussian at
+both angular pixel offsets. The T1 restart law
+`tclean_automatic_restart_prefers_the_residual_beam` checks the resulting mask;
+`rectangular_pixel_smoothing_uses_both_cell_sizes` checks a rotated Gaussian.
+The CASA failure was observed directly; there is no CASA mask to compare.
 
 ## CASA misreads big-endian integer quantity arrays
 

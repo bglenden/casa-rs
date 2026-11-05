@@ -1,0 +1,138 @@
+{
+  "schema": "tclean-evidence-receipt/1",
+  "title": "PSF cutoff and saved beam restart behavior",
+  "work_issue": 1140,
+  "date": "2026-11-05",
+  "oracle": {
+    "casatasks": "6.7.6.14",
+    "casatools": "6.7.6-14"
+  },
+  "native_revision": "b2c468423b839c4decf02c719a9b8977cfe338e6",
+  "imager_binary_sha256": "bc615a4beda516aab21a28191601ec668f10c101a1c7c3ce0489899ff9c839d3",
+  "backend": "cpu",
+  "precision": "f64",
+  "case_file": "resources/casa-compat/tclean-psfcutoff-cases.json",
+  "case_file_sha256": "a96c06de112a331c8815dd5639323e8d73e99811304e04c75bcb642217cd389e",
+  "paired_matrix": {
+    "passed": 10,
+    "total": 11,
+    "cases": {
+      "cutoff_015": {
+        "passed": true,
+        "worst_product_nrms": 4.296920815211575e-06
+      },
+      "cutoff_065": {
+        "passed": true,
+        "worst_product_nrms": 4.296920815211575e-06
+      },
+      "auto_015": {
+        "passed": true,
+        "worst_product_nrms": 4.296920815211575e-06
+      },
+      "auto_065": {
+        "passed": true,
+        "worst_product_nrms": 4.296920815211575e-06
+      },
+      "restart_015_to_065": {
+        "passed": true,
+        "worst_product_nrms": 5.179831180146522e-06
+      },
+      "restart_065_to_015": {
+        "passed": true,
+        "worst_product_nrms": 5.179831180146522e-06
+      },
+      "cube_iquv_065": {
+        "passed": true,
+        "worst_product_nrms": 7.672038302504731e-07
+      },
+      "mtmfs_065": {
+        "passed": false,
+        "worst_product_nrms": 0.9999988895620471
+      },
+      "rectangular_restart_015_to_065": {
+        "passed": true,
+        "worst_product_nrms": 4.598644674712827e-06
+      },
+      "mtmfs_polarized_065": {
+        "passed": true,
+        "worst_product_nrms": 4.0335571114437756e-06
+      },
+      "mtmfs_twochan_065": {
+        "passed": true,
+        "worst_product_nrms": 1.3616359506751668e-06
+      }
+    },
+    "exception": "mtmfs_065 model.tt1 has one nonzero pixel: CASA 4.5735195e-8, native 5.0786e-14, parent 4.5700e-14. Strict per-product NRMS is 0.9999989, so the case remains failed. The candidate and parent have the same tiny near-zero discrepancy; the candidate fixes maxpsfsidelobe to 0.2232837081 from parent 0.1829965264. Two additional MT-MFS cases with nonzero terms pass."
+  },
+  "controlled_casa": {
+    "rectangular_saved_psf": {
+      "cell_arcsec": [
+        8,
+        16
+      ],
+      "casa_maxpsfsidelobe": 0.4375,
+      "native_maxpsfsidelobe": 0.4375,
+      "before": 0.0,
+      "revision": "b2c468423b839c4decf02c719a9b8977cfe338e6"
+    },
+    "saved_off_centre_psf": {
+      "casa_maxpsfsidelobe": 0.39395368099212646,
+      "native_maxpsfsidelobe": 0.39395368099212646,
+      "before": 1.0,
+      "revision": "b2c468423b839c4decf02c719a9b8977cfe338e6"
+    },
+    "recomputed_psf": "CASA and native retain 100x80 arcsec, PA 15 deg in MFS; cube CASA refits to 123.6667557x46.8877068 arcsec, PA 28.1336498 deg, native 123.6667709x46.8877144 arcsec, PA 28.1336479 deg. Controlled probes at b2c468423b839c4decf02c719a9b8977cfe338e6; T1 laws cover both with and without cleaning.",
+    "headerless_psf": "At the default 0.35 fit on an elliptical headerless saved PSF, CASA and native both give 47.8803024x32.0546341 arcsec; PA differs by 1.7e-8 degrees.",
+    "rectangular_automask": "CASA throws because Image2DConvolver requires square pixels; native retains pre-existing rectangular support and uses both increments. The divergence is recorded in docs/CASA (C++) bugs.md."
+  },
+  "t15": {
+    "case": "point-mfs-clark-briggs",
+    "restaged_from_nas": true,
+    "worst_nrms": 2.2962298316876887e-06,
+    "sumwt_metric": 0.0
+  },
+  "t2": {
+    "case": "issue607-standard-mfs-representative, usemask=auto-multithresh",
+    "worst_nrms": 1.2198818629298232e-07,
+    "mask_nrms": 0.0,
+    "inventory": "matched",
+    "structured_difference": "good",
+    "human_review": "pending; the generic mode ticket is not closed by this evidence"
+  },
+  "memory_law": "The 2,000-plane residual beam read peaked at 6,070,189 of 14,806,160 admitted bytes and retained 48,016 of 48,016 charged bytes; removing the retained charge failed the law. Saved PSF angular and pixel grids have separately mutation-proven charges.",
+  "review": "One independent local review at 7bb4902d7abd87e1fa32fb0230bcf53dba5310cc checked CASA/casacore C++; its three findings were fixed and each new law mutation-tested. Direct CASA follow-up distinguished MFS from cube PSF recomputation.",
+  "quick_gate": {
+    "revision": "b2c468423b839c4decf02c719a9b8977cfe338e6",
+    "tests_passed": 5173,
+    "tests_skipped": 42,
+    "task_cli_hosts": 22,
+    "clippy_and_architecture": "passed",
+    "local_optional_perf_tools": "skipped: Python lacks pytest, numpy, scipy or matplotlib; hosted CI runs it"
+  },
+  "performance": {
+    "case": "100x100 one-channel Clark, psfcutoff=0.35, matched NEON FFTW; one warmup each and ABBA",
+    "parent_user_cpu_seconds": [
+      0.143284,
+      0.144455
+    ],
+    "candidate_user_cpu_seconds": [
+      0.143951,
+      0.1454
+    ],
+    "parent_wall_seconds": [
+      0.225911,
+      0.225669
+    ],
+    "candidate_wall_seconds": [
+      0.225044,
+      0.22762
+    ],
+    "scope": "Small startup-inclusive case; no material change apparent at this resolution."
+  },
+  "archive": {
+    "path": "/Volumes/home/casa-rs/tclean/20261105/tclean-1140-psfcutoff-b2c468423b.tar.gz",
+    "sha256": "aafaa067edc4b32f13bdfcaf8a70a7a9fb0e386b45e3f2de1ef5e83c132455a0",
+    "tested_binary": "/Volumes/home/casa-rs/tclean/20261105/casars-imager-psfcutoff-b2c468423b",
+    "binary_sha256": "bc615a4beda516aab21a28191601ec668f10c101a1c7c3ce0489899ff9c839d3"
+  }
+}
