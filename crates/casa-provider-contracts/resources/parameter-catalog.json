@@ -535,11 +535,12 @@
     },
     {
       "id": "imhead.mode",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "mode",
       "value_domain": {
         "kind": "choice",
         "values": [
+          "get",
           "list",
           "put",
           "summary"
@@ -553,7 +554,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Header operation mode.",
-        "details": null,
+        "details": "get supports brightness unit, image type, object, observer, telescope, masks, shape, and coordinate-axis values. Other get keys remain unimplemented (#977).",
         "examples": [
           "summary"
         ]

@@ -58,7 +58,6 @@ pub fn imstat_record(summary: &ImageStatisticsSummary) -> CasaValue {
 
 /// `imhead`'s `summary` record.
 ///
-/// Not computed yet (#977): `messages` and `tileshape`.
 pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
     let axes = &summary.axes;
     let mut entries = vec![
@@ -87,6 +86,9 @@ pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
             CasaValue::float64_vector(axes.iter().map(|axis| axis.increment)),
         ),
         ("masks", CasaValue::str_vector(summary.masks.clone())),
+        // imhead calls summary with list=True, so casacore posts the
+        // coordinate messages instead of collecting them in its return.
+        ("messages", CasaValue::str_vector(Vec::<String>::new())),
         (
             "ndim",
             CasaValue::Int {
@@ -102,6 +104,7 @@ pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
             CasaValue::float64_vector(axes.iter().map(|axis| axis.reference_value)),
         ),
         ("shape", pixels(&summary.shape)),
+        ("tileshape", pixels(&summary.tile_shape)),
         ("unit", CasaValue::string(summary.units.clone())),
     ];
     if let Some(beam) = &summary.restoring_beam {
@@ -114,9 +117,9 @@ pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
 /// `cdelt`, `ctype` and `cunit` per axis, numbered from 1 as FITS numbers
 /// them.
 ///
-/// Not computed yet (#977): `datamax`, `datamin`, `date-obs`, `equinox`,
-/// `maxpixpos`, `maxpos`, `minpixpos`, `minpos`, `observer`, `projection`,
-/// `reffreqtype`, `restfreq` and `telescope`.
+/// Not computed yet (#977): `datamax`, `datamin`, `date-obs`,
+/// `maxpixpos`, `maxpos`, `minpixpos`, `minpos`, `projection`,
+/// `reffreqtype` and `restfreq`.
 pub fn imhead_list_record(summary: &ImageHeaderSummary) -> CasaValue {
     let mut entries = vec![
         (
@@ -135,8 +138,16 @@ pub fn imhead_list_record(summary: &ImageHeaderSummary) -> CasaValue {
             "object".to_string(),
             CasaValue::string(summary.object_name.clone()),
         ),
+        ("observer".to_string(), CasaValue::string(&summary.observer)),
         ("shape".to_string(), pixels(&summary.shape)),
+        (
+            "telescope".to_string(),
+            CasaValue::string(&summary.telescope),
+        ),
     ];
+    if let Some(frame) = &summary.direction_reference {
+        entries.push(("equinox".to_string(), CasaValue::string(frame)));
+    }
     for (index, axis) in summary.axes.iter().enumerate() {
         let number = index + 1;
         entries.extend([
@@ -245,13 +256,18 @@ mod tests {
             reference_pixel: 8.0,
             increment: -1e-5,
             unit: unit.into(),
+            stokes: Vec::new(),
         };
         ImageHeaderSummary {
             imagename: "ramp.im".into(),
             pixel_type: "Float32".into(),
             shape: vec![16, 16],
+            tile_shape: vec![8, 8],
             units: "Jy/beam".into(),
             object_name: String::new(),
+            observer: String::new(),
+            telescope: String::new(),
+            direction_reference: None,
             image_type: "Intensity".into(),
             default_mask: None,
             masks: Vec::new(),
@@ -319,11 +335,13 @@ mod tests {
                 "imagetype",
                 "incr",
                 "masks",
+                "messages",
                 "ndim",
                 "refpix",
                 "refval",
                 "restoringbeam",
                 "shape",
+                "tileshape",
                 "unit"
             ]
         );
@@ -353,7 +371,9 @@ mod tests {
                 "imtype",
                 "masks",
                 "object",
-                "shape"
+                "observer",
+                "shape",
+                "telescope"
             ]
         );
         assert_eq!(list.to_plain_json()["ctype2"], "Declination");

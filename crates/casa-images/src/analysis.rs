@@ -38,7 +38,7 @@ use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
 use crate::regrid::{RegridMethod, RegridTemplate, Regridded, regrid};
 use crate::{
     AnyPagedImage, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageInterface, ImagePixel,
-    ImagePixelType, ImageType, PagedImage, TempImage,
+    ImagePixelType, PagedImage, TempImage,
 };
 
 /// Stable protocol name advertised by the image-analysis task binaries.
@@ -597,6 +597,8 @@ pub struct ImageAxisSummary {
     pub increment: f64,
     /// Axis units.
     pub unit: String,
+    /// Stokes labels in pixel order, for a Stokes axis.
+    pub stokes: Vec<String>,
 }
 
 /// CASA `imhead`-style image header summary.
@@ -608,10 +610,18 @@ pub struct ImageHeaderSummary {
     pub pixel_type: String,
     /// Image shape.
     pub shape: Vec<usize>,
+    /// Tile shape of the backing image.
+    pub tile_shape: Vec<usize>,
     /// Brightness units.
     pub units: String,
     /// Astronomical object name.
     pub object_name: String,
+    /// Observer name stored in the coordinate system.
+    pub observer: String,
+    /// Telescope name stored in the coordinate system.
+    pub telescope: String,
+    /// Direction reference frame, if the image has a direction coordinate.
+    pub direction_reference: Option<String>,
     /// Image quantity classification.
     pub image_type: String,
     /// Stored default pixel mask name.
@@ -780,33 +790,8 @@ pub fn imhead(path: impl AsRef<Path>) -> Result<ImageHeaderSummary, ImageError> 
     match &image {
         AnyPagedImage::Float32(image) => imhead_typed(path, image, image.pixel_type_label()),
         AnyPagedImage::Float64(image) => imhead_typed(path, image, image.pixel_type_label()),
-        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
-            let mut summary = ImageHeaderSummary {
-                imagename: path.display().to_string(),
-                pixel_type: format!("{:?}", image.pixel_type()),
-                shape: image.shape().to_vec(),
-                units: String::new(),
-                object_name: String::new(),
-                image_type: ImageType::Undefined.to_string(),
-                default_mask: image.default_mask_name(),
-                masks: image.mask_names(),
-                regions: image.region_names(),
-                restoring_beam: None,
-                axes: Vec::new(),
-            };
-            match &image {
-                AnyPagedImage::Complex32(image) => {
-                    summary.units = image.units().to_string();
-                    summary.axes = axis_summaries(image);
-                }
-                AnyPagedImage::Complex64(image) => {
-                    summary.units = image.units().to_string();
-                    summary.axes = axis_summaries(image);
-                }
-                _ => {}
-            }
-            Ok(summary)
-        }
+        AnyPagedImage::Complex32(image) => imhead_typed(path, image, "Complex32".into()),
+        AnyPagedImage::Complex64(image) => imhead_typed(path, image, "Complex64".into()),
     }
 }
 
@@ -1171,8 +1156,20 @@ where
         imagename: path.display().to_string(),
         pixel_type,
         shape: image.shape().to_vec(),
+        tile_shape: image.tile_shape().to_vec(),
         units: image.units().to_string(),
         object_name: info.object_name.clone(),
+        observer: image.coordinates().obs_info().observer.clone(),
+        telescope: image.coordinates().obs_info().telescope.clone(),
+        direction_reference: (0..image.coordinates().n_coordinates()).find_map(|index| match image
+            .coordinates()
+            .coordinate(index)
+        {
+            casa_coordinates::CoordinateModel::Direction(direction) => {
+                Some(direction.direction_ref().as_str().to_string())
+            }
+            _ => None,
+        }),
         image_type: info.image_type.to_string(),
         default_mask: image.default_mask_name(),
         masks: image.mask_names(),
@@ -1226,6 +1223,12 @@ fn axis_summaries<T: ImagePixel>(image: &impl ImageInterface<T>) -> Vec<ImageAxi
                 reference_pixel: *refpix.get(axis_in_coord).unwrap_or(&0.0),
                 increment: *increments.get(axis_in_coord).unwrap_or(&0.0),
                 unit: units.get(axis_in_coord).cloned().unwrap_or_default(),
+                stokes: match coord {
+                    casa_coordinates::CoordinateModel::Stokes(stokes) => {
+                        stokes.stokes().iter().map(ToString::to_string).collect()
+                    }
+                    _ => Vec::new(),
+                },
             });
             axis += 1;
         }
@@ -1240,6 +1243,7 @@ fn axis_summaries<T: ImagePixel>(image: &impl ImageInterface<T>) -> Vec<ImageAxi
             reference_pixel: 0.0,
             increment: 1.0,
             unit: String::new(),
+            stokes: Vec::new(),
         });
         axis += 1;
     }
@@ -3701,6 +3705,7 @@ fn image_pixel_type<T: ImagePixel>() -> ImagePixelType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageType;
     use casa_coordinates::{
         DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
         StokesType,

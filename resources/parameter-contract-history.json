@@ -517,6 +517,11 @@
       "fingerprint": "8dfee4c5d6d89c30017dc16a2e15ca138a77632cd3cbbfe873db21ef0cda9171"
     },
     {
+      "id": "imhead.mode",
+      "semantic_revision": 2,
+      "fingerprint": "b3e7cff742a706648352aa1f3451c9276abc344097ebcb290c34066e9d15e4ae"
+    },
+    {
       "id": "immath.imagemd",
       "semantic_revision": 1,
       "fingerprint": "fe00bb9fd217fd7efbd69da74f9d8724f73189369970e9d5995d3fe11745a1ff"
@@ -4217,6 +4222,11 @@
       "id": "imhead",
       "contract_version": 5,
       "fingerprint": "6bdb3d05425a3fe777fbe6c9c8defa146cf4c22f3a4b18ba8e9d628cba5a35cb"
+    },
+    {
+      "id": "imhead",
+      "contract_version": 6,
+      "fingerprint": "0e0c5e5d1f910394263a6d1096348825f6e5c67c489c435d741a9d593dda2d06"
     },
     {
       "id": "immath",

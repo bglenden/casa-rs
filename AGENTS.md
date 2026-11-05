@@ -103,8 +103,10 @@ locations are in `docs/agent-reference.md`.
   and judges freshness by file times), so a test can run another branch's
   code. A full debug tree is tens of GB; `CARGO_PROFILE_DEV_DEBUG=0` and
   `CARGO_PROFILE_TEST_DEBUG=0` keep one small.
-- Check free space before large runs; the laptop's 40 GB floor is on the
-  stop list below.
+- Check free space before large runs. The laptop's 40 GB floor is on the
+  stop list below; cloud environments have fixed internal disk capacity, so
+  that floor does not apply there. Work within the space available and keep
+  cloud build artifacts small.
 - Evidence needed later never lives only in a temporary directory.
 
 ## Work And Git
@@ -186,9 +188,9 @@ Ask the owner only before these, asynchronously where the host allows:
    data it wrote before;
 3. building a design for a broad new capability, or changing or adding an
    ADR, before its external review (see Review);
-4. taking the internal disk below about 40 GB free, when deleting your own
-   artifacts and running `cleanup-disk` (where the host has it) cannot
-   prevent it;
+4. taking the laptop's internal disk below about 40 GB free, when deleting
+   your own artifacts and running `cleanup-disk` (where the host has it)
+   cannot prevent it; this floor does not apply in a cloud environment;
 5. handling credentials, secrets or non-public data.
 
 Everything else is decided and recorded, including scope within the stated

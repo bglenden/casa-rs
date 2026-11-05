@@ -37,7 +37,9 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("imagename")?;
     let mode = task.required_text("mode")?.to_ascii_lowercase();
     let summary = match mode.as_str() {
-        "summary" | "list" => imhead(&path).map_err(|error| image_error("imhead", &path, error))?,
+        "summary" | "list" | "get" => {
+            imhead(&path).map_err(|error| image_error("imhead", &path, error))?
+        }
         "put" => {
             let hdkey = task.text("hdkey")?.ok_or_else(|| {
                 TaskFailure::validation("imhead mode put requires hdkey").at("hdkey")
@@ -57,7 +59,7 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         other => {
             return Err(TaskFailure::validation(format!(
-                "unsupported imhead mode {other:?}; expected summary, list, or put"
+                "unsupported imhead mode {other:?}; expected summary, list, get, or put"
             ))
             .at("mode"));
         }
@@ -65,11 +67,74 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let value = match mode.as_str() {
         "summary" => imhead_summary_record(&summary),
         "list" => imhead_list_record(&summary),
+        "get" => header_value(&summary, &task.text("hdkey")?.unwrap_or_default())?,
         // CASA's put returns None.
         _ => CasaValue::None,
     };
     let text = header_text(&summary);
     Ok(TaskSuccess::new(value, &summary)?.with_text(text))
+}
+
+/// The header fields already represented by `ImageHeaderSummary`.
+/// Other CASA keys remain explicit refusals until their metadata is read (#977).
+fn header_value(summary: &ImageHeaderSummary, key: &str) -> Result<CasaValue, TaskFailure> {
+    let lower = key.to_ascii_lowercase();
+    let value = match lower.as_str() {
+        "bunit" => CasaValue::string(&summary.units),
+        "imtype" => CasaValue::string(&summary.image_type),
+        "object" => CasaValue::string(&summary.object_name),
+        "observer" => CasaValue::string(&summary.observer),
+        "telescope" => CasaValue::string(&summary.telescope),
+        "equinox" => CasaValue::string(summary.direction_reference.as_deref().unwrap_or("")),
+        "masks" => CasaValue::str_vector(summary.masks.clone()),
+        "shape" => CasaValue::int64_vector(summary.shape.iter().map(|&n| n as i64)),
+        _ => return axis_header_value(summary, key, &lower),
+    };
+    Ok(value)
+}
+
+fn axis_header_value(
+    summary: &ImageHeaderSummary,
+    key: &str,
+    lower: &str,
+) -> Result<CasaValue, TaskFailure> {
+    if let Some((prefix, suffix)) = lower
+        .get(..5)
+        .zip(lower.get(5..))
+        .filter(|(prefix, _)| ["cdelt", "crpix", "crval", "ctype", "cunit"].contains(prefix))
+    {
+        let index = suffix.parse::<usize>().ok().and_then(|n| n.checked_sub(1));
+        let axis = index
+            .and_then(|index| summary.axes.get(index))
+            .ok_or_else(|| {
+                TaskFailure::execution(format!("imhead: invalid axis keyword {key:?}"))
+            })?;
+        let quantity = |value| {
+            CasaValue::dict([
+                ("unit", CasaValue::string(&axis.unit)),
+                ("value", CasaValue::float(value)),
+            ])
+        };
+        return match prefix {
+            "cdelt" => Ok(quantity(axis.increment)),
+            "crpix" => Ok(CasaValue::float(axis.reference_pixel)),
+            "crval" if axis.coordinate_type == "Stokes" => {
+                Ok(CasaValue::str_vector(axis.stokes.clone()))
+            }
+            "crval" => Ok(quantity(axis.reference_value)),
+            "ctype" => Ok(CasaValue::string(&axis.name)),
+            "cunit" => Ok(CasaValue::string(&axis.unit)),
+            _ => Err(unimplemented_header_key(key)),
+        };
+    }
+    Err(unimplemented_header_key(key))
+}
+
+fn unimplemented_header_key(key: &str) -> TaskFailure {
+    TaskFailure::validation(format!(
+        "imhead get of hdkey {key:?} is not implemented by casa-rs yet (#977)"
+    ))
+    .at("hdkey")
 }
 
 fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
