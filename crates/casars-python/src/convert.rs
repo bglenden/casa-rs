@@ -566,7 +566,10 @@ pub(crate) fn quantity_record(record: &BTreeMap<String, Variant>) -> Result<Quan
             casacore_unit(unit)?;
             return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string());
         }
-        _ => return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string()),
+        Variant::Other(_) => {
+            return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string());
+        }
+        _ => return Err("Illegal Quantum record in QuantumHolder::fromRecord\n".to_string()),
     };
     Ok(Quantity::with_unit(value, casacore_unit(unit)?))
 }

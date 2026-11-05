@@ -393,10 +393,32 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// The real parts of component `which`'s four flux errors.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn getfluxerror(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getfluxerror")
+    fn getfluxerror(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let which = match which.extract::<i64>() {
+            Ok(index) => i64::from(index as i32),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => -1,
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        self.call(py, move |state, lines| match state.checked(which) {
+            Ok(component) => Ok(CasaValue::floats(
+                component
+                    .flux()
+                    .errors()
+                    .iter()
+                    .map(|value| value.re)
+                    .collect(),
+            )),
+            Err(_) => {
+                let message = format!(
+                    "Exception: Index out of range. The component number must be between 0 and {}.",
+                    state.length() - 1
+                );
+                lines.push(LogLine::error(format!("Exception Reported: {message}")));
+                Err(crate::convert::ConvertError::runtime(message))
+            }
+        })
     }
 
     /// CASA's placeholder: logs a warning and returns an empty string.
