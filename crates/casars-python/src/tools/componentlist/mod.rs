@@ -31,7 +31,7 @@ pub(crate) mod surface;
 use std::ffi::CString;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use pyo3::exceptions::PyRuntimeWarning;
+use pyo3::exceptions::{PyOverflowError, PyRuntimeWarning, PySystemError, PyTypeError};
 use pyo3::prelude::*;
 
 use crate::convert::value::CasaValue;
@@ -50,6 +50,35 @@ pub(crate) struct PyComponentList {
 }
 
 impl PyComponentList {
+    /// CASA's frequency getters currently log a warning and return placeholders.
+    fn frequency_placeholder(
+        &self,
+        py: Python<'_>,
+        which: &Bound<'_, PyAny>,
+        method: &'static str,
+        result: CasaValue,
+    ) -> PyResult<Py<PyAny>> {
+        let index = which.extract::<i64>();
+        let system_error = which.is_none()
+            || index
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.is_instance_of::<PyOverflowError>(py));
+        if index.is_err() && !system_error {
+            return Err(PyTypeError::new_err("argument _which must be an integer"));
+        }
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning(format!("{method} not implemented yet")));
+            Ok(result)
+        })?;
+        if system_error {
+            return Err(PySystemError::new_err(format!(
+                "<built-in function componentlist_{method}> returned a result with an exception set"
+            )));
+        }
+        Ok(result)
+    }
+
     /// Runs `work` on the state with the GIL released, logs what it reports
     /// and returns its value as Python.
     fn call(
@@ -332,28 +361,28 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns an empty record.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn getfreq(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getfreq")
+    fn getfreq(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        self.frequency_placeholder(py, which, "getfreq", CasaValue::empty_record())
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns an empty string.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn getfreqframe(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getfreqframe")
+    fn getfreqframe(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        self.frequency_placeholder(py, which, "getfreqframe", CasaValue::Text(String::new()))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns an empty string.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn getfrequnit(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getfrequnit")
+    fn getfrequnit(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        self.frequency_placeholder(py, which, "getfrequnit", CasaValue::Text(String::new()))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns zero.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn getfreqvalue(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getfreqvalue")
+    fn getfreqvalue(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        self.frequency_placeholder(py, which, "getfreqvalue", CasaValue::Float(0.0))
     }
 
     /// Not yet implemented in casa-rs.
