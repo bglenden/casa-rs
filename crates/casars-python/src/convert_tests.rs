@@ -184,6 +184,34 @@ fn record_scalar_metadata_changes_only_quantity_interpretation() {
 }
 
 #[test]
+fn zero_dimensional_float_arrays_survive_in_ordinary_records() {
+    Python::initialize();
+    Python::attach(|py| {
+        let array = py
+            .eval(
+                c"__import__('numpy').array(1.25, dtype='float32')",
+                None,
+                None,
+            )
+            .unwrap();
+        let input = pyo3::types::PyDict::new(py);
+        input.set_item("value", array).unwrap();
+        input.set_item("unit", "m").unwrap();
+        let record = variant_from_python(input.as_any()).unwrap();
+        let value::CasaValue::Record(fields) = value::CasaValue::from_variant(&record) else {
+            panic!("expected an ordinary record");
+        };
+        assert_eq!(
+            fields[1].1,
+            value::CasaValue::Floats {
+                shape: vec![],
+                values: vec![1.25],
+            }
+        );
+    });
+}
+
+#[test]
 fn complex_numpy_arrays_keep_values_and_shapes_in_ordinary_records() {
     Python::initialize();
     Python::attach(|py| {

@@ -29,7 +29,8 @@
     "record-complex-scalar-casa",
     "record-complex-array-casa",
     "bare-complex-scalar-casa",
-    "record-empty-float-vector-casa"
+    "record-empty-float-vector-casa",
+    "record-zero-dimensional-casa"
    ]
   },
   "angle": {
@@ -126,7 +127,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "record-empty-float-vector-casa"
+    "record-empty-float-vector-casa",
+    "record-zero-dimensional-casa"
    ]
   },
   "convertdop": {
@@ -243,7 +245,8 @@
     "record-complex-scalar-casa",
     "record-complex-array-casa",
     "bare-complex-scalar-casa",
-    "record-empty-float-vector-casa"
+    "record-empty-float-vector-casa",
+    "record-zero-dimensional-casa"
    ]
   },
   "getvalue": {
@@ -252,7 +255,8 @@
    "evidence": [
     "signature",
     "casa-values",
-    "record-empty-float-vector-casa"
+    "record-empty-float-vector-casa",
+    "record-zero-dimensional-casa"
    ]
   },
   "gt": {
@@ -378,7 +382,8 @@
     "record-complex-scalar-casa",
     "record-complex-array-casa",
     "bare-complex-scalar-casa",
-    "record-empty-float-vector-casa"
+    "record-empty-float-vector-casa",
+    "record-zero-dimensional-casa"
    ]
   },
   "setformat": {
@@ -751,6 +756,18 @@
     "crates/casars-python/python/tests/test_quanta_record_empty_array.py"
    ],
    "source_revision": "a9bed31f4033c1c34490c96cef9b87889aad0f28"
+  },
+  "record-zero-dimensional-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "60 CASA 6.7.6-14 calls cover zero-dimensional floating quantity records; CASA silently replaces values with zero in quantity and convert, while casa-rs preserves them. Four bare-array observations provide a control.",
+   "scope": "Zero-dimensional float32 and float64 quantity records in quanta.quantity, getunit, getvalue, add and convert.",
+   "links": [
+    "tools/casa-compat/quantity_record_zero_dim_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quantity_record_zero_dim.json",
+    "crates/casars-python/python/tests/test_quanta_record_zero_dim.py"
+   ],
+   "source_revision": "56667e6a4ae6d0daca4ea89e2e68cac3a9d096d3"
   }
  }
 }
