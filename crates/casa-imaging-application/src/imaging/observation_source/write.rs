@@ -32,11 +32,9 @@
 //! (`VisibilityIteratorImpl2::putColumnRows`), so that channel keeps its
 //! contents. `SynthesisImagerVi2::predictModel`, which overwrites it where
 //! tclean goes on to call it, reads the parent imager's selection, which is
-//! not tuned and so takes every channel at every time
-//! ([`WriteBack::by_band`]). There a channel a time's bands miss holds the
-//! prediction of a flagged sample, zero, where CASA extrapolates, and a
-//! channel the run doesn't read keeps its contents, where CASA writes it
-//! (#1134).
+//! not tuned: its per-time bands select the parent channels, including those
+//! that do not reach the cube. The source keeps these predictions distinct
+//! from the channels and flags used for gridding ([`WriteBack::by_band`]).
 
 use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
@@ -90,6 +88,7 @@ pub(super) struct Provenance {
 #[derive(Debug, Default)]
 struct Queue {
     armed: bool,
+    parent_prediction: bool,
     entries: VecDeque<Delivered>,
 }
 
@@ -156,8 +155,15 @@ impl WriteBack {
 
     /// The sessions' targets, every one of which each write gives values
     /// for.
-    fn targets(&self) -> Vec<usize> {
-        (0..usize::from(self.model) + usize::from(self.corrected)).collect()
+    fn targets(&self, model: bool, corrected: bool) -> Vec<usize> {
+        let mut targets = Vec::with_capacity(2);
+        if model {
+            targets.push(0);
+        }
+        if corrected {
+            targets.push(usize::from(self.model));
+        }
+        targets
     }
 
     fn queue(&self) -> std::sync::MutexGuard<'_, Queue> {
@@ -180,6 +186,21 @@ impl WriteBack {
         Ok(queue.armed)
     }
 
+    /// Whether the armed traversal reads the untuned parent selection.
+    pub(crate) fn parent_prediction(&self) -> bool {
+        self.queue().parent_prediction
+    }
+
+    /// Whether this write needs CASA's separate final parent prediction.
+    pub(crate) const fn predicts_final_model(&self) -> bool {
+        self.model && !self.by_band
+    }
+
+    /// Whether the route writes continuum-corrected data.
+    pub(crate) const fn writes_corrected(&self) -> bool {
+        self.corrected
+    }
+
     /// Queue `entry` for the sink.
     pub(super) fn deliver(&self, entry: Delivered) {
         self.queue().entries.push_back(entry);
@@ -194,7 +215,7 @@ impl WriteBack {
         request: &AccessRequest,
         bands: bool,
     ) -> Result<WriteCharge, SourceError> {
-        let targets = self.targets();
+        let targets = self.targets(self.model, self.corrected);
         let updater = session.write_bytes(request, &targets)?;
         let estimate = session.observation().estimate(request)?;
         let partition = estimate
@@ -214,7 +235,7 @@ impl WriteBack {
         let patch = elements * (targets.len() * size_of::<Complex32>() + size_of::<bool>());
         // The blocks in flight and the one being written, each with its
         // batch's times and products and which channels each time reads.
-        let in_band = if bands && self.by_band {
+        let in_band = if bands {
             partition.times_per_batch * request.channels.len() * size_of::<bool>()
         } else {
             0
@@ -272,6 +293,8 @@ pub(crate) struct BatchWriter<'a> {
     route: &'a BatchRoute,
     write_back: &'a WriteBack,
     transform: Option<&'a SequentialContinuumTransform>,
+    model_target: bool,
+    corrected_target: bool,
     updater: Option<Box<dyn Updater + 'a>>,
     /// The patch's mask and each column's values, reused from batch to
     /// batch.
@@ -292,17 +315,47 @@ impl<'a> BatchWriter<'a> {
         let write_back = route
             .write_back()
             .ok_or("the batch route was opened to read only")?;
-        if write_back.corrected && transform.is_none() {
+        Self::begin_targets(
+            route,
+            transform,
+            write_back.model,
+            write_back.corrected,
+            false,
+        )
+    }
+
+    /// A single-column traversal, either the parent model prediction or
+    /// the tuned continuum-corrected data.
+    pub(crate) fn begin_targets(
+        route: &'a BatchRoute,
+        transform: Option<&'a SequentialContinuumTransform>,
+        model: bool,
+        corrected: bool,
+        parent_prediction: bool,
+    ) -> Result<Self, SourceError> {
+        let write_back = route
+            .write_back()
+            .ok_or("the batch route was opened to read only")?;
+        if (model && !write_back.model)
+            || (corrected && !write_back.corrected)
+            || (!model && !corrected)
+        {
+            return Err("the traversal's write targets were not opened".into());
+        }
+        if corrected && transform.is_none() {
             return Err("CORRECTED_DATA is written only by a continuum transform".into());
         }
         let mut queue = write_back.queue();
         queue.entries.clear();
         queue.armed = true;
+        queue.parent_prediction = parent_prediction;
         drop(queue);
         Ok(Self {
             route,
             write_back,
             transform,
+            model_target: model,
+            corrected_target: corrected,
             updater: None,
             written: Vec::new(),
             model: Vec::new(),
@@ -313,7 +366,7 @@ impl<'a> BatchWriter<'a> {
 
     /// Whether the write needs model predictions.
     pub(crate) const fn needs_predictions(&self) -> bool {
-        self.write_back.model
+        self.model_target
     }
 
     /// Write `block`'s predictions, `[row][channel][correlation]`, to the
@@ -358,7 +411,7 @@ impl<'a> BatchWriter<'a> {
             .collect::<Option<Vec<_>>>()
             .ok_or("a block holds a product its batch does not deliver")?;
         let len = batch_samples * channels * products;
-        let (model, corrected) = (self.write_back.model, self.write_back.corrected);
+        let (model, corrected) = (self.model_target, self.corrected_target);
         reset(&mut self.written, len, true, false);
         reset(&mut self.model, len, model, Complex32::default());
         reset(&mut self.corrected, len, corrected, Complex32::default());
@@ -429,7 +482,12 @@ impl<'a> BatchWriter<'a> {
         let session = self.route.stores[store]
             .session()
             .ok_or("a writing run's store was opened to read only")?;
-        let updater = session.updater(request, &self.write_back.targets())?;
+        let updater = session.updater(
+            request,
+            &self
+                .write_back
+                .targets(self.model_target, self.corrected_target),
+        )?;
         if let Some(last) = self.updater.replace(updater) {
             last.finish()?;
         }

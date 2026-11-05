@@ -572,6 +572,12 @@ impl FrequencyBands {
         &self.bands_hz
     }
 
+    /// Heap bytes held by the frequency intervals.
+    #[must_use]
+    pub fn allocated_bytes(&self) -> usize {
+        self.bands_hz.capacity() * size_of::<[f64; 2]>()
+    }
+
     /// Whether a channel whose extent is `[lower_hz, upper_hz]`, in the
     /// bands' frame scaled by `factor`, meets a band at either end.
     #[must_use]
@@ -593,6 +599,8 @@ pub struct SpectralWindowSelection {
     density_only: bool,
     density_channels: Option<Vec<u32>>,
     density_bands: Option<FrequencyBands>,
+    prediction_channels: Option<Vec<u32>>,
+    prediction_bands: Option<FrequencyBands>,
 }
 
 // Construction rejects every non-finite factor, so IEEE equality is
@@ -612,6 +620,8 @@ impl SpectralWindowSelection {
             density_only: false,
             density_channels: None,
             density_bands: None,
+            prediction_channels: None,
+            prediction_bands: None,
         }
     }
 
@@ -668,6 +678,32 @@ impl SpectralWindowSelection {
     #[must_use]
     pub const fn density_bands(&self) -> Option<&FrequencyBands> {
         self.density_bands.as_ref()
+    }
+
+    /// Bind the parent imager's untuned selection for the final model write.
+    /// `channels` are the ascending native channels selected at some time;
+    /// `bands`, when present, select them per time.
+    #[must_use]
+    pub fn with_prediction_read(
+        mut self,
+        channels: Vec<u32>,
+        bands: Option<FrequencyBands>,
+    ) -> Self {
+        self.prediction_channels = Some(channels);
+        self.prediction_bands = bands;
+        self
+    }
+
+    /// The native channels selected for final prediction, if it differs from gridding.
+    #[must_use]
+    pub fn prediction_channels(&self) -> Option<&[u32]> {
+        self.prediction_channels.as_deref()
+    }
+
+    /// The per-time frequency bands for final prediction, if needed.
+    #[must_use]
+    pub const fn prediction_bands(&self) -> Option<&FrequencyBands> {
+        self.prediction_bands.as_ref()
     }
 
     /// Bind the factor that takes the window's frequencies to LSRK at the
@@ -808,17 +844,25 @@ impl ObservationSelection {
         for selection in &mut self.spectral_windows {
             selection.channel_indices.sort_unstable();
             selection.channel_indices.dedup();
+            if let Some(channels) = &mut selection.prediction_channels {
+                channels.sort_unstable();
+                channels.dedup();
+            }
             if selection.channel_indices.is_empty() {
                 return Err(CompileObservationError::EmptySpectralWindowSelection {
                     spectral_window_id: selection.spectral_window_id,
                 });
             }
             if let Some(catalog) = &selection.coordinate_catalog
-                && selection.channel_indices.iter().any(|channel| {
-                    usize::try_from(*channel)
-                        .ok()
-                        .is_none_or(|channel| channel >= catalog.channel_count())
-                })
+                && selection
+                    .channel_indices
+                    .iter()
+                    .chain(selection.prediction_channels.iter().flatten())
+                    .any(|channel| {
+                        usize::try_from(*channel)
+                            .ok()
+                            .is_none_or(|channel| channel >= catalog.channel_count())
+                    })
             {
                 return Err(
                     CompileObservationError::SpectralWindowCoordinateCatalogMismatch {

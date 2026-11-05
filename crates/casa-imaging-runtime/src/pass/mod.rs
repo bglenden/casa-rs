@@ -159,6 +159,9 @@ impl Cancel {
 pub enum SampleContent {
     /// Values, flags and weights: every gridding, prediction and write pass.
     Visibilities,
+    /// Flags and geometry for a separate final model prediction on the
+    /// parent selection; stored visibility values are not read.
+    Prediction,
     /// Flags and weights only, which is all density weighting reads, as
     /// CASA's does. Every value is zero; a stored value is checked when an
     /// imaging pass reads it.

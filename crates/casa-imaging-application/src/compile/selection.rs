@@ -598,6 +598,16 @@ fn read_selection(
             density.bands.clone(),
         );
     }
+    if let Some(prediction) = &read.prediction {
+        selection = selection.with_prediction_read(
+            prediction
+                .channels
+                .iter()
+                .map(|channel| u32::try_from(*channel).expect("a CHAN_FREQ index fits u32"))
+                .collect(),
+            prediction.bands.clone(),
+        );
+    }
     selection
 }
 
