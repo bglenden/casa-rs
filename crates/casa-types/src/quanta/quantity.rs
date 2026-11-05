@@ -493,6 +493,26 @@ mod tests {
     }
 
     #[test]
+    fn dimensionless_named_one_preserves_units_in_arithmetic() {
+        let one = Quantity::new(2.0, "1").unwrap();
+        let length = Quantity::new(3.0, "km").unwrap();
+        let product = &one * &length;
+        assert_eq!(product.value(), 6.0);
+        assert_eq!(
+            product.get_value_in(&Unit::new("m").unwrap()).unwrap(),
+            6000.0
+        );
+        let quotient = &length / &one;
+        assert_eq!(quotient.value(), 1.5);
+        assert_eq!(
+            quotient.get_value_in(&Unit::new("m").unwrap()).unwrap(),
+            1500.0
+        );
+        let inverse = &one / &length;
+        assert_eq!(inverse.unit().val().dim, Unit::new("/m").unwrap().val().dim);
+    }
+
+    #[test]
     fn quantity_auto_scaled_promotes_frequency_values() {
         let q = Quantity::new(115_000_000_000.0, "Hz")
             .unwrap()
