@@ -260,12 +260,11 @@
    ]
   },
   "getshape": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Returns CASA shape axes and errors, preserving supplied axis units in memory and table units after reopening; point shapes return an empty record.",
    "evidence": [
     "signature",
-    "refusals"
+    "getshape-casa"
    ]
   },
   "getspectrum": {
@@ -765,6 +764,18 @@
     "crates/casars-python/python/tests/test_componentlist_fluxerror.py"
    ],
    "source_revision": "5074e93e7172c2d348f11beaa04daf83895a6e62"
+  },
+  "getshape-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "44 CASA 6.7.6-14 cases cover point, Gaussian and disk shapes, supplied units, rename and reopen, argument and index handling.",
+   "scope": "componentlist.getshape.",
+   "links": [
+    "tools/simulation/componentlist_getshape_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_getshape.json",
+    "crates/casars-python/python/tests/test_componentlist_getshape.py"
+   ],
+   "source_revision": "cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244"
   }
  }
 }
