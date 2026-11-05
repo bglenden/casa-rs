@@ -34,11 +34,34 @@ IMPLEMENTED = {
     'canonical', 'ceil', 'check', 'checkfreq', 'compare', 'convert', 'cos',
     'div', 'done', 'exp', 'floor', 'formxxx', 'getunit', 'getvalue',
     'isangle', 'isquantity', 'log', 'log10', 'mul', 'neg', 'pow', 'quantity',
-    'sin', 'splitdate', 'sub', 'tan', 'time', 'toangle', 'tos',
+    'sin', 'splitdate', 'sqrt', 'sub', 'tan', 'time', 'toangle', 'tos',
     'totime', 'type', 'unit', 'eq', 'ne', 'lt', 'le', 'gt', 'ge',
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 
+
+def test_sqrt_matches_casa() -> None:
+    fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_sqrt.json").read_text())
+    qa = quanta()
+    for case in fixture["cases"]:
+        if "error" in case:
+            with pytest.raises(RuntimeError) as error:
+                qa.sqrt(case["input"])
+            assert str(error.value) == case["error"]["message"]
+        else:
+            result = qa.sqrt(case["input"])
+            expected = case["result"]
+            assert result["unit"] == expected["unit"]
+            if expected["value"] == "NaN":
+                assert math.isnan(result["value"])
+            else:
+                assert result["value"] == pytest.approx(expected["value"], rel=1e-14, abs=1e-15)
+                if result["value"] == 0:
+                    assert math.copysign(1, result["value"]) == math.copysign(1, expected["value"])
+    assert qa.sqrt() == {"unit": "", "value": 0.0}
+    assert qa.sqrt("4_-2") == {"unit": "_-1", "value": 2.0}
+    assert qa.sqrt("4_._") == {"unit": "_", "value": 2.0}
+    assert qa.sqrt("4_+2") == {"unit": "_", "value": 2.0}
 
 def test_atan2_matches_casa() -> None:
     fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_atan2.json").read_text())

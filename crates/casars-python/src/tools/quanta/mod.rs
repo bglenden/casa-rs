@@ -484,11 +484,10 @@ impl PyQuanta {
         call(py, || ops::trigonometry(&v, "sin"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn sqrt(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("sqrt")
+    /// Square root in CASA's canonical units.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn sqrt(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::sqrt(&v))
     }
 
     /// CASA's scalar tan of a quantity.
