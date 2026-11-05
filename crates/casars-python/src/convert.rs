@@ -80,6 +80,38 @@ impl From<ConvertError> for PyErr {
 /// The result of a conversion.
 pub(crate) type ConvertResult<T> = Result<T, ConvertError>;
 
+/// The original scalar kind of a record's `value`, retained for CASA's
+/// QuantumHolder conversion while leaving the record's ordinary values intact.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum RecordScalarKind {
+    NativeInteger(i64),
+    NumpyUnsupported,
+}
+
+/// A record and optional information erased by the numeric variant conversion.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct VariantRecord {
+    fields: BTreeMap<String, Variant>,
+    scalar_kind: Option<RecordScalarKind>,
+}
+
+impl From<BTreeMap<String, Variant>> for VariantRecord {
+    fn from(fields: BTreeMap<String, Variant>) -> Self {
+        Self {
+            fields,
+            scalar_kind: None,
+        }
+    }
+}
+
+impl std::ops::Deref for VariantRecord {
+    type Target = BTreeMap<String, Variant>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.fields
+    }
+}
+
 /// A Python value passed to an `any` parameter (CASA's `casac::variant`),
 /// captured before the call releases the GIL.
 #[derive(Debug, Clone, PartialEq)]
@@ -105,7 +137,7 @@ pub(crate) enum Variant {
     /// (column-major) order, as casatools' `variant` holds them.
     Array { shape: Vec<usize>, values: Vec<f64> },
     /// A `dict` with `str` keys.
-    Record(BTreeMap<String, Variant>),
+    Record(VariantRecord),
     /// Anything else, kept as its `repr` for messages.
     Other(String),
 }
@@ -177,7 +209,36 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
                 .map_err(|_| PyTypeError::new_err("a CASA record argument must have str keys"))?;
             record.insert(key, variant_from_python(&value)?);
         }
-        return Ok(Variant::Record(record));
+        let scalar_kind = match dict.get_item("value")? {
+            Some(value) if value.is_instance_of::<PyInt>() && !value.is_instance_of::<PyBool>() => {
+                value
+                    .extract::<i64>()
+                    .ok()
+                    .map(RecordScalarKind::NativeInteger)
+            }
+            Some(value)
+                if !value.is_instance_of::<PyFloat>()
+                    && !value.is_instance_of::<PyComplex>()
+                    && matches!(
+                        value
+                            .getattr("dtype")
+                            .and_then(|d| d.getattr("kind"))
+                            .and_then(|k| k.extract::<String>())
+                            .as_deref(),
+                        Ok("i" | "u" | "f" | "b")
+                    ) =>
+            {
+                let scalar = value.py().import("numpy")?.getattr("generic")?;
+                value
+                    .is_instance(&scalar)?
+                    .then_some(RecordScalarKind::NumpyUnsupported)
+            }
+            _ => None,
+        };
+        return Ok(Variant::Record(VariantRecord {
+            fields: record,
+            scalar_kind,
+        }));
     }
     if let Ok(value) = object.cast::<PyComplex>() {
         return Ok(Variant::Complex(complex_of(value)));
@@ -306,7 +367,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for RecordArg {
             return Err(PyTypeError::new_err("is not a dictionary"));
         }
         match variant_from_python(&object)? {
-            Variant::Record(record) => Ok(Self(record)),
+            Variant::Record(record) => Ok(Self(record.fields)),
             _ => unreachable!("a dict reads as a record"),
         }
     }
@@ -459,7 +520,7 @@ pub(crate) fn quantity(value: &Variant) -> ConvertResult<Quantity> {
             " in converting quantity",
         )),
         // A record of several values reads, then fails to be one quantity.
-        Variant::Record(record) => quantity_record(record).map_err(|error| {
+        Variant::Record(record) => quantity_variant_record(record).map_err(|error| {
             if error.starts_with("Wrong") || error.starts_with("Unit::check Illegal unit string ") {
                 ConvertError::runtime(error)
             } else {
@@ -546,6 +607,23 @@ fn quantity_read_error(text: &str, context: &str) -> ConvertError {
         "Error in QuantumHolder::fromString with input string \"{text}\": \
          Illegal input units or format\n{context}"
     ))
+}
+
+/// A Python quantity record, preserving CASA's scalar integer distinctions.
+pub(crate) fn quantity_variant_record(record: &VariantRecord) -> Result<Quantity, String> {
+    let Some(Variant::Text(unit)) = record.get("unit") else {
+        return Err("Illegal Quantum record in QuantumHolder::fromRecord\n".to_string());
+    };
+    match record.scalar_kind {
+        Some(RecordScalarKind::NativeInteger(value)) => Ok(Quantity::with_unit(
+            f64::from(value as i32),
+            casacore_unit(unit)?,
+        )),
+        Some(RecordScalarKind::NumpyUnsupported) => {
+            Err("Illegal Quantum record in QuantumHolder::fromRecord\n".to_string())
+        }
+        None => quantity_record(&record.fields),
+    }
 }
 
 /// `QuantumHolder::fromRecord` for a scalar quantity: `{'value': number,

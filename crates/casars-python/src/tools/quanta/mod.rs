@@ -24,6 +24,11 @@ use crate::tools::{LogLine, emit, not_yet_implemented_in};
 /// The Python logger the tool's warnings go to.
 const LOGGER: &str = "casars.tools.quanta";
 
+#[allow(clippy::unnecessary_wraps)] // PyO3's custom extractor requires a Result.
+fn constant_name(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    Ok(value.extract::<String>().ok())
+}
+
 /// Keep an explicitly supplied `None` distinct from an omitted argument.
 fn supplied<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
     Ok(Some(value.clone()))
@@ -284,11 +289,15 @@ impl PyQuanta {
         call(py, || ops::checkfreq(&cm))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v='pi')")]
-    fn constants(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("constants")
+    /// A named physical constant, using CASA's case-insensitive minimax lookup.
+    #[pyo3(signature = (v = Some(String::from("pi"))), text_signature = "($self, v='pi')")]
+    fn constants(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = constant_name)] v: Option<String>,
+    ) -> PyResult<Py<PyAny>> {
+        let v = v.ok_or_else(|| PyTypeError::new_err("argument _v must be a string"))?;
+        call(py, || Ok(ops::constants(&v)))
     }
 
     /// Convert between dimensionless Doppler and speed quantities.

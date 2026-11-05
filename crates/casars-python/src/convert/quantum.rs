@@ -10,13 +10,14 @@
 //! and quotients name their unit `km.s`, `km/(s)` and `(s)-1`. Frequencies
 //! and wavelengths do not convert to each other.
 
-use std::collections::BTreeMap;
-
 use casa_types::quanta::casacore::{self, QuantumError, conversion};
 use casa_types::quanta::{Quantity, Unit};
 
 use super::value::CasaValue;
-use super::{ConvertError, ConvertResult, Variant, casacore_unit, quantity, quantity_record};
+use super::{
+    ConvertError, ConvertResult, Variant, VariantRecord, casacore_unit, quantity,
+    quantity_variant_record,
+};
 
 impl From<QuantumError> for ConvertError {
     fn from(error: QuantumError) -> Self {
@@ -103,7 +104,7 @@ pub(crate) fn quantum_holder(value: &Variant) -> ConvertResult<Option<Quantum>> 
 }
 
 /// `QuantumHolder::fromRecord`: a value, or an array of values.
-fn record_quantum(record: &BTreeMap<String, Variant>) -> ConvertResult<Quantum> {
+fn record_quantum(record: &VariantRecord) -> ConvertResult<Quantum> {
     let wrap = |error: String| {
         if error.starts_with("Unit::check Illegal unit string ") || error.starts_with("Wrong") {
             ConvertError::runtime(error)
@@ -111,6 +112,11 @@ fn record_quantum(record: &BTreeMap<String, Variant>) -> ConvertResult<Quantum> 
             ConvertError::runtime(format!("Error {error} in converting quantity"))
         }
     };
+    if record.scalar_kind.is_some() {
+        return quantity_variant_record(record)
+            .map(|quantity| Quantum::scalar(&quantity))
+            .map_err(wrap);
+    }
     match (record.get("value"), record.get("unit")) {
         (Some(Variant::Numbers(values)), Some(Variant::Text(unit))) => Ok(Quantum::vector(
             values.clone(),
@@ -121,7 +127,7 @@ fn record_quantum(record: &BTreeMap<String, Variant>) -> ConvertResult<Quantum> 
             shape: Some(shape.clone()),
             unit: casacore_unit(unit).map_err(wrap)?,
         }),
-        _ => quantity_record(record)
+        _ => quantity_variant_record(record)
             .map(|quantity| Quantum::scalar(&quantity))
             .map_err(wrap),
     }

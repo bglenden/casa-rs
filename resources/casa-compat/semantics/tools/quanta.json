@@ -109,12 +109,11 @@
    ]
   },
   "constants": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA's named physical constants and case-insensitive minimax lookup, including ambiguous names.",
    "evidence": [
     "signature",
-    "refusals"
+    "constants-casa"
    ]
   },
   "convert": {
@@ -621,6 +620,18 @@
     "crates/casars-python/python/tests/test_tools_quanta.py"
    ],
    "source_revision": "8c90f0f745b09bf5a7ec439598eb4502c8ff5b3d"
+  },
+  "constants-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Fifty-one CASA 6.7.6-14 cases cover its constants, case-insensitive and ambiguous prefixes, unknown names and argument errors.",
+   "scope": "quanta.constants.",
+   "links": [
+    "tools/simulation/quanta_constants_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_constants.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "04e5d05779e6ebde034ac1b1b64ff71dea223084"
   },
   "power-casa": {
    "kind": "CASA-recorded values",
