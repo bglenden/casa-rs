@@ -1232,28 +1232,19 @@ impl SpectralResampler {
                     let span = right_hz - left_hz;
                     while next < count {
                         let frequency_hz = grid.frequency_hz(next);
-                        // A frame conversion and its inverse can put the same
-                        // physical edge one representable frequency apart.
-                        // Keep that edge; a point farther outside is flagged
-                        // by CASA's interpolation, not extrapolated.
                         let before_left = if ascending {
                             frequency_hz < left_hz
-                                && !(left == 0 && frequency_hz.next_up() == left_hz)
                         } else {
                             frequency_hz > left_hz
-                                && !(left == 0 && frequency_hz.next_down() == left_hz)
                         };
                         if before_left {
                             next += 1;
                             continue;
                         }
-                        let last_interval = left + 2 == native.len();
                         let after_right = if ascending {
                             frequency_hz > right_hz
-                                && !(last_interval && frequency_hz.next_down() == right_hz)
                         } else {
                             frequency_hz < right_hz
-                                && !(last_interval && frequency_hz.next_up() == right_hz)
                         };
                         if after_right {
                             break;
