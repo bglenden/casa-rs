@@ -14,6 +14,7 @@ use casa_types::quanta::format::{
 };
 use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
 
+use crate::convert::holder::frequency_hz;
 use crate::convert::quantum::{self, Quantum, quantum_holder};
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertError, ConvertResult, Variant, casacore_unit, quantity};
@@ -302,6 +303,48 @@ pub(super) fn relational(left: &Variant, right: &Variant, op: &str) -> ConvertRe
         _ => unreachable!("unknown quantity comparison"),
     };
     Ok(CasaValue::Bool(result))
+}
+
+/// `qa.convertfreq`: use casacore's frequency equivalencies in both directions.
+pub(super) fn convert_frequency(value: &Variant, output: &str) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    let hz = frequency_hz(&value).ok_or_else(|| non_conforming(&value))?;
+    let output = casacore_unit(output).map_err(ConvertError::runtime)?;
+    let one = Quantity::with_unit(1.0, output.clone());
+    let factor = frequency_hz(&one).ok_or_else(|| non_conforming(&one))?;
+    let dim = output.val().dim;
+    let result =
+        if dim == UnitDim::basis(Dimension::Time) || dim == UnitDim::basis(Dimension::Length) {
+            factor / hz
+        } else {
+            hz / factor
+        };
+    Ok(record(&Quantity::with_unit(result, output)))
+}
+
+/// `qa.convertdop`: a fraction of light speed and a speed are equivalent.
+pub(super) fn convert_doppler(value: &Variant, output: &str) -> ConvertResult<CasaValue> {
+    const C: f64 = 299_792_458.0;
+    let value = quantity(value)?;
+    let time = UnitDim::basis(Dimension::Time);
+    let speed = UnitDim::basis(Dimension::Length) / time;
+    let dimension = value.unit().val().dim;
+    let ratio = if dimension == UnitDim::NODIM {
+        value.get_si_value()
+    } else if dimension == speed {
+        value.get_si_value() / C
+    } else {
+        return Err(non_conforming(&value));
+    };
+    let output = casacore_unit(output).map_err(ConvertError::runtime)?;
+    let result = if output.val().dim == UnitDim::NODIM {
+        ratio / output.val().factor
+    } else if output.val().dim == speed {
+        ratio * C / output.val().factor
+    } else {
+        return Err(non_conforming(&Quantity::with_unit(1.0, output)));
+    };
+    Ok(record(&Quantity::with_unit(result, output)))
 }
 
 /// `qa.checkfreq(cm)`: the dimensions accepted by casacore's MVFrequency.
