@@ -269,6 +269,21 @@ pub(super) fn power(value: &Variant, power: i32) -> ConvertResult<CasaValue> {
     ]))
 }
 
+/// `qa.norm(v, a)`: casacore's MVAngle normalizes in turns and returns degrees.
+#[allow(clippy::manual_range_contains)] // NaN must leave the value unchanged.
+pub(super) fn normalize(value: &Variant, origin: f64) -> ConvertResult<CasaValue> {
+    let mut angle = angle_radians(&quantity(value)?)?;
+    let turns = angle / CIRCLE - origin;
+    if turns < 0.0 || turns >= 1.0 {
+        angle -= turns.floor() * CIRCLE;
+    }
+    let degrees = unit("deg");
+    Ok(record(&Quantity::with_unit(
+        angle / degrees.val().factor,
+        degrees,
+    )))
+}
+
 /// `qa.compare(v, a)`: whether the units have the same dimensions.
 pub(super) fn compare(left: &Variant, right: &Variant) -> ConvertResult<CasaValue> {
     Ok(CasaValue::Bool(

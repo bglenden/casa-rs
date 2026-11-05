@@ -33,7 +33,7 @@ IMPLEMENTED = {
     'abs', 'acos', 'add', 'angle', 'asin', 'atan', 'atan2', 'canon',
     'canonical', 'ceil', 'check', 'checkfreq', 'compare', 'convert', 'cos',
     'div', 'done', 'exp', 'floor', 'formxxx', 'getunit', 'getvalue',
-    'isangle', 'isquantity', 'log', 'log10', 'mul', 'neg', 'pow', 'quantity',
+    'isangle', 'isquantity', 'log', 'log10', 'mul', 'neg', 'norm', 'pow', 'quantity',
     'sin', 'splitdate', 'sqrt', 'sub', 'tan', 'time', 'toangle', 'tos',
     'totime', 'type', 'unit', 'eq', 'ne', 'lt', 'le', 'gt', 'ge',
 }

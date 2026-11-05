@@ -429,15 +429,28 @@ impl PyQuanta {
         call(py, || ops::relational(&v, &a, "ne"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=-0.5)")]
+    /// Normalize an angle into a one-turn range, returning degrees.
+    #[pyo3(signature = (v = Variant::Empty, a = None), text_signature = "($self, v=[], a=-0.5)")]
     fn norm(
         &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        v: Variant,
+        #[pyo3(from_py_with = supplied)] a: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("norm")
+        let (origin, pending) = match a {
+            None => (-0.5, false),
+            Some(value) => match value.extract::<f64>() {
+                Ok(number) => (number, false),
+                Err(_) => (-1.0, true),
+            },
+        };
+        let result = call(py, || ops::normalize(&v, origin))?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function quanta_norm> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Raise a scalar quantity to an integer power.
