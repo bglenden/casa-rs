@@ -288,12 +288,11 @@
    ]
   },
   "indices": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Matches CASA's placeholder: warns and returns an empty int64 array.",
    "evidence": [
     "signature",
-    "refusals"
+    "indices-casa"
    ]
   },
   "iscomponentlist": {
@@ -729,6 +728,18 @@
     "crates/casars-python/python/tests/test_tools_componentlist.py"
    ],
    "source_revision": "64562dde202cd6201e8205a0bc4ee30e1ef1cf0e"
+  },
+  "indices-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Four CASA 6.7.6-14 states, including a selection, return an empty int64 array and warn. The selection case cannot yet be exercised in casa-rs.",
+   "scope": "componentlist.indices.",
+   "links": [
+    "tools/simulation/componentlist_indices_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_indices.json",
+    "crates/casars-python/python/tests/test_componentlist_indices.py"
+   ],
+   "source_revision": "aae16abef1d08ee2d1533befddec5c4e05d8bfb6"
   },
   "fluxerror-casa": {
    "kind": "CASA-recorded values",
