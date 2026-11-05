@@ -556,3 +556,48 @@ fn refused_final_prediction_leaves_both_visibility_columns_unchanged() {
         assert_eq!(row[[0, 1]], expected, "{column:?} changed before refusal");
     }
 }
+
+/// A per-channel density sees the line output's physical singleton, just as
+/// a separately continuum-subtracted observation does, not the fit union.
+#[test]
+fn briggs_density_ignores_continuum_fit_only_channels() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = spectral_line_measurement_set(root.path());
+    let fitted_name = root.path().join("fitted-density");
+    let controls = json!({
+        "channel_start": null, "channel_count": 2, "specmode": "cube", "outframe": "TOPO",
+        "spw": "0:1", "start": "44.00125GHz", "width": "1MHz", "niter": 0,
+        "fitspw": "0:0;3", "fitorder": 0, "weighting": "briggs", "robust": 0.5,
+        "perchanweightdensity": true, "save_continuum_residual": true,
+    });
+    execute(&request(&measurement_set, &fitted_name, controls.clone()))
+        .unwrap_or_else(|error| panic!("fitted imaging: {error:?}"));
+    let reference_name = root.path().join("materialized-density");
+    let mut materialized = controls;
+    materialized["fitspw"] = serde_json::Value::Null;
+    materialized["save_continuum_residual"] = json!(false);
+    materialized["datacolumn"] = json!("corrected");
+    execute(&request(&measurement_set, &reference_name, materialized))
+        .unwrap_or_else(|error| panic!("materialized imaging: {error:?}"));
+    let read = |base: &Path, suffix: &str| {
+        let image = PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", base.display())))
+            .expect("image product");
+        image
+            .get_slice(&vec![0; image.shape().len()], image.shape())
+            .expect("pixels")
+    };
+    assert!(
+        read(&reference_name, ".sumwt")
+            .iter()
+            .any(|weight| *weight > 0.0),
+        "the line contributes density"
+    );
+    for suffix in [".sumwt", ".residual"] {
+        assert_eq!(
+            read(&fitted_name, suffix),
+            read(&reference_name, suffix),
+            "{suffix}"
+        );
+    }
+}

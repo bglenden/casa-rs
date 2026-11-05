@@ -510,8 +510,7 @@ impl<'a> ObservationSource<'a> {
         (values, writing, prediction): (bool, bool, bool),
     ) -> Result<(Traversal<'a>, Layout), SourceError> {
         let route: &'a BatchRoute = self.route;
-        let single_time =
-            (values || prediction) && self.packer.problem.visibility_transform().is_some();
+        let single_time = self.packer.problem.visibility_transform().is_some();
         let (request, layout) = route.request(key, window, values, prediction, single_time)?;
         let traversal = route.stores[key.store].observation().bind_read(&request)?;
         if writing && let Some(write_back) = route.write_back() {
@@ -606,16 +605,13 @@ impl<'a> ObservationSource<'a> {
             } else {
                 None
             };
-            let rule = if stream.values || stream.prediction {
-                self.packer
-                    .problem
-                    .visibility_transform()
-                    .and_then(|transform| {
-                        transform.rule(batch.field[0].0 as i32, partition.spectral_window)
-                    })
-            } else {
-                None
-            };
+            let rule = self
+                .packer
+                .problem
+                .visibility_transform()
+                .and_then(|transform| {
+                    transform.rule(batch.field[0].0 as i32, partition.spectral_window)
+                });
             let compact = if bands.is_some() || rule.is_some() {
                 let Some(compact) = self.packer.time_layout(
                     (&batch, key.store, layout),
