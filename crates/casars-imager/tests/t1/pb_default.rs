@@ -95,3 +95,60 @@ fn alma_labelled_seven_metre_dishes_write_the_aca_primary_beam_by_default() {
         .fold(0.0_f32, |m, (a, b)| m.max((a - b).abs()));
     assert!(worst <= 1e-6, "ALMA/ACA 7 m PB difference {worst:e}");
 }
+
+/// CASA selects the VLA beam using the first cube plane in LSRK, then
+/// evaluates that beam at each output plane's BARY frequency. The LSRK
+/// frequency is 999.99 MHz while BARY is 1000.030 MHz, on opposite sides
+/// of the L-band boundary (CASA 6.7.6.14, issue #1138).
+#[test]
+fn bary_cube_uses_the_lsrk_band_and_bary_plane_frequencies() {
+    let mut setup = Setup::vla_q_band(5);
+    setup.spectral_windows[0].start_frequency_hz = 999_990_000.0;
+    setup.spectral_windows[0].channel_width_hz = 50.0e6;
+    setup.geometry = super::fixture::Geometry::square(100, 8.0);
+    setup.noise_jy = 0.0;
+    let point = Component {
+        offset_px: [50, 50],
+        flux_jy: 1.0,
+        fwhm_px: None,
+        spectral_index: 0.0,
+    };
+    let observation = Observation::synthesise_setup(setup, &[("point", point)]);
+    let (_, products) = observation.image(
+        "bary-vla-band",
+        json!({
+            "specmode": "cube", "spw": "0", "start": 0, "width": 1, "nchan": 5,
+            "niter": 1, "outframe": "BARY", "weighting": "natural", "write_pb": true,
+            "usemask": "pb", "pbmask": 0.99,
+        }),
+    );
+    let pb = products.get(".pb");
+    // The minor-cycle PB mask uses the same selected aperture as publication.
+    let mask = products.get(".mask").plane(0);
+    assert_eq!(mask[(50, 50)], 1.0);
+    assert_eq!(mask[(75, 50)], 0.0);
+    let reference = [
+        (0.9846422076_f64, 0.9419874549_f64),
+        (0.9830494523, 0.9362540245),
+        (0.9814318419, 0.9301775098),
+        (0.9797421098, 0.9238516092),
+        (0.9779247642, 0.9173852205),
+    ];
+    assert!(
+        pb.channel_frequency_hz(0) > 1.0e9,
+        "BARY lies above the band edge"
+    );
+    for (channel, (near, far)) in reference.into_iter().enumerate() {
+        let plane = pb.plane(channel);
+        assert!(
+            (f64::from(plane[(75, 50)]) - near).abs() < 1e-5,
+            "channel {channel}: near {} vs {near}",
+            plane[(75, 50)]
+        );
+        assert!(
+            (f64::from(plane[(99, 50)]) - far).abs() < 1e-5,
+            "channel {channel}: far {} vs {far}",
+            plane[(99, 50)]
+        );
+    }
+}

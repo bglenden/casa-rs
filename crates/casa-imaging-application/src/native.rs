@@ -337,10 +337,29 @@ pub(crate) fn run(
         }
         publication.controls = controls;
     }
+    // CASA selects a BARY cube's VLA aperture through its LSRK conversion layer,
+    // but evaluates it at each output plane's own frequency.
+    let vla_selection_hz = publication.vla_selection_store.map(|reference| {
+        let factor = route.stores[reference]
+            .plan
+            .output_lsrk_factor()
+            .expect("a tracked cube has an LSRK conversion layer");
+        problem
+            .geometry()
+            .spectral()
+            .channel_centre_hz(0)
+            .expect("a cube has a first channel")
+            * factor
+    });
     let teams = OnceCell::new();
     let primary_beam = match publication.controls.primary_beam_model() {
         Some(model) => {
             AnalyticPrimaryBeam::new(problem, model, publication.primary_beam_centres.as_ref())?
+                .map(|beam| {
+                    vla_selection_hz.map_or(beam, |frequency| {
+                        beam.with_vla_selection_frequency(frequency)
+                    })
+                })
         }
         None => None,
     };
@@ -401,6 +420,7 @@ pub(crate) fn run(
                     masks: outcome.masks,
                     facet_sum_weights: outcome.facet_sum_weights,
                     saved_psf_beams,
+                    vla_selection_hz,
                 },
                 &runtime,
                 publication,
@@ -466,6 +486,7 @@ struct ProductSource {
     masks: Option<ReconstructionMaskSet>,
     facet_sum_weights: FacetSumWeights,
     saved_psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
+    vla_selection_hz: Option<f64>,
 }
 
 /// What `problem`'s products hold on one lane, before the run
@@ -501,8 +522,12 @@ fn publish_products(
         masks: reconstruction_masks,
         facet_sum_weights,
         saved_psf_beams,
+        vla_selection_hz,
     } = source;
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
+    if let Some(frequency) = vla_selection_hz {
+        inputs = inputs.with_vla_selection_frequency(frequency);
+    }
     if let Some(beams) = saved_psf_beams.as_deref() {
         inputs = inputs.with_saved_psf_beams(beams)?;
     }
