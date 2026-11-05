@@ -7018,6 +7018,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </blockquote>
 <p>Each casa-rs task that mimics a CASA task (#931) against that task as CASA 6.7.6.14 defines it: whether it presents CASA's signature, the CASA parameters casa-rs does not take yet, those it takes but accepts only at CASA's default, the parameters casa-rs takes that CASA does not (casa-rs names for CASA concepts, or casa-rs-only controls), whether the shared parameters keep CASA's order, and the defaults that differ. <code>calibrate</code>, <code>msconvert</code> and <code>msexplore</code> are casa-rs tasks with no CASA counterpart.</p>
 <p>The CASA parameters casa-rs lacks or accepts only at their defaults are tracked by family: images in #977, MeasurementSet and flagging in #978, calibration in #979 and <code>tclean</code> in #980.</p>
+<p>For direct <code>cBool</code>, <code>cFloat</code>, <code>cInt</code>, <code>cPath</code> and <code>cStr</code> schemas with the recorded coercions, a value both implementations reject for type reports CASA's wording, unless a narrower unimplemented-form diagnostic applies. Required paths, unions, vectors and variants retain casa-rs's diagnostics (#1099). CASA accepts booleans as integers and coerces them to floats; where casa-rs refuses one, it keeps its own message. Exception classes follow the casa-rs Python contract.</p>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
