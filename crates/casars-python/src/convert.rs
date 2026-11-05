@@ -292,11 +292,15 @@ fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarK
     if values.iter().all(|v| v.is_instance_of::<PyBool>()) {
         return Ok(Some(RecordScalarKind::NumpyUnsupported));
     }
-    if !values
-        .iter()
-        .all(|v| v.is_instance_of::<PyInt>() && !v.is_instance_of::<PyBool>())
-    {
-        return Ok(None);
+    let native_integer =
+        |v: &Bound<'_, PyAny>| v.is_instance_of::<PyInt>() && !v.is_instance_of::<PyBool>();
+    if !values.iter().all(native_integer) {
+        let signed_integer = value.py().import("numpy")?.getattr("signedinteger")?;
+        for item in &values {
+            if !native_integer(item) && !item.is_instance(&signed_integer)? {
+                return Ok(None);
+            }
+        }
     }
     if values.len() > 1 {
         return Ok(Some(RecordScalarKind::IntegerVector(None)));

@@ -286,6 +286,83 @@
     },
     {
       "method": "quantity",
+      "value": {
+        "numpy_sequence": [
+          2147483648
+        ],
+        "dtype": "int64",
+        "container": "list"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -2147483648.0
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "numpy_sequence": [
+          9007199254740993
+        ],
+        "dtype": "int64",
+        "container": "tuple"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "numpy_sequence": [
+          9223372036854775807
+        ],
+        "dtype": "int64",
+        "container": "list"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -1.0
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "numpy_sequence": [
+          1,
+          2
+        ],
+        "dtype": "int32",
+        "container": "list"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "numpy_sequence": [
+          1,
+          2
+        ],
+        "dtype": "int16",
+        "container": "tuple"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
       "value": [
         0
       ],
@@ -377,6 +454,37 @@
           1
         ],
         "dtype": "float64"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "numpy_sequence": [
+          2147483648
+        ],
+        "dtype": "int64",
+        "container": "list"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "numpy_sequence": [
+          1,
+          2
+        ],
+        "dtype": "int32",
+        "container": "list"
       },
       "unit": "not_a_unit",
       "error": {
@@ -614,6 +722,74 @@
     },
     {
       "method": "getunit",
+      "value": {
+        "numpy_sequence": [
+          2147483648
+        ],
+        "dtype": "int64",
+        "container": "list"
+      },
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "numpy_sequence": [
+          9007199254740993
+        ],
+        "dtype": "int64",
+        "container": "tuple"
+      },
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "numpy_sequence": [
+          9223372036854775807
+        ],
+        "dtype": "int64",
+        "container": "list"
+      },
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "numpy_sequence": [
+          1,
+          2
+        ],
+        "dtype": "int32",
+        "container": "list"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "numpy_sequence": [
+          1,
+          2
+        ],
+        "dtype": "int16",
+        "container": "tuple"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
       "value": [
         0
       ],
@@ -705,6 +881,37 @@
           1
         ],
         "dtype": "float64"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "numpy_sequence": [
+          2147483648
+        ],
+        "dtype": "int64",
+        "container": "list"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "numpy_sequence": [
+          1,
+          2
+        ],
+        "dtype": "int32",
+        "container": "list"
       },
       "unit": "not_a_unit",
       "error": {
@@ -984,6 +1191,83 @@
     },
     {
       "method": "add",
+      "value": {
+        "numpy_sequence": [
+          2147483648
+        ],
+        "dtype": "int64",
+        "container": "list"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -2147483647.0
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "numpy_sequence": [
+          9007199254740993
+        ],
+        "dtype": "int64",
+        "container": "tuple"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "numpy_sequence": [
+          9223372036854775807
+        ],
+        "dtype": "int64",
+        "container": "list"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "numpy_sequence": [
+          1,
+          2
+        ],
+        "dtype": "int32",
+        "container": "list"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "numpy_sequence": [
+          1,
+          2
+        ],
+        "dtype": "int16",
+        "container": "tuple"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
       "value": [
         0
       ],
@@ -1075,6 +1359,37 @@
           1
         ],
         "dtype": "float64"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "numpy_sequence": [
+          2147483648
+        ],
+        "dtype": "int64",
+        "container": "list"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "numpy_sequence": [
+          1,
+          2
+        ],
+        "dtype": "int32",
+        "container": "list"
       },
       "unit": "not_a_unit",
       "error": {

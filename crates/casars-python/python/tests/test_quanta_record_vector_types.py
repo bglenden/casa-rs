@@ -14,7 +14,11 @@ def test_record_vector_types_match_casa() -> None:
     for case in fixture["cases"]:
         value = case["value"]
         if isinstance(value, dict):
-            value = tuple(value["tuple"]) if "tuple" in value else np.array(value["array"], dtype=value["dtype"])
+            if "numpy_sequence" in value:
+                sequence = [np.dtype(value["dtype"]).type(v) for v in value["numpy_sequence"]]
+                value = tuple(sequence) if value["container"] == "tuple" else sequence
+            else:
+                value = tuple(value["tuple"]) if "tuple" in value else np.array(value["array"], dtype=value["dtype"])
         args = ({"value": value, "unit": case["unit"]},)
         if case["method"] == "add":
             args += ("1m",)
@@ -32,3 +36,14 @@ def test_record_vector_types_match_casa() -> None:
                 assert np.ndim(actual["value"]) == np.ndim(expected["value"]), case
             else:
                 assert actual == expected, case
+
+
+def test_integer_arrays_keep_their_values_across_byte_orders() -> None:
+    # CASA 6.7.6.14 on little-endian systems corrupts big-endian values (#1183).
+    fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_record_endian.json").read_text())
+    assert fixture["byteorder"] == "little"
+    qa = quanta()
+    for case in fixture["cases"]:
+        value = np.array([1], dtype=case["dtype"])
+        assert qa.quantity({"value": value, "unit": "m"}) == {"unit": "m", "value": 1.0}
+        assert qa.add({"value": value, "unit": "m"}, "1m") == {"unit": "m", "value": 2.0}

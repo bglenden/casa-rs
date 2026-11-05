@@ -20,15 +20,25 @@ VALUES = [
     {"array": [True], "dtype": "bool"},
     {"array": [], "dtype": "int64"}, {"array": [], "dtype": "bool"},
     {"tuple": [2**31]}, {"tuple": [1, 2]},
+    {"numpy_sequence": [2**31], "dtype": "int64", "container": "list"},
+    {"numpy_sequence": [2**53+1], "dtype": "int64", "container": "tuple"},
+    {"numpy_sequence": [2**63-1], "dtype": "int64", "container": "list"},
+    {"numpy_sequence": [1, 2], "dtype": "int32", "container": "list"},
+    {"numpy_sequence": [1, 2], "dtype": "int16", "container": "tuple"},
 ]
-CASES = [(value, "m") for value in VALUES] + [(VALUES[i], "not_a_unit") for i in (0, 6, 7, 8, 10, 12, 14, 15)]
+CASES = [(value, "m") for value in VALUES] + [(VALUES[i], "not_a_unit") for i in (0, 6, 7, 8, 10, 12, 14, 15, 22, 25)]
 q = quanta()
 results = []
 for method in ("quantity", "getunit", "add"):
     for value, unit in CASES:
         item = {"method": method, "value": value, "unit": unit}
         if isinstance(value, dict):
-            actual = tuple(value["tuple"]) if "tuple" in value else np.array(value["array"], dtype=value["dtype"])
+            if "numpy_sequence" in value:
+                actual = [np.dtype(value["dtype"]).type(v) for v in value["numpy_sequence"]]
+                if value["container"] == "tuple":
+                    actual = tuple(actual)
+            else:
+                actual = tuple(value["tuple"]) if "tuple" in value else np.array(value["array"], dtype=value["dtype"])
         else:
             actual = value
         args = ({"value": actual, "unit": unit},) + (("1m",) if method == "add" else ())
