@@ -624,17 +624,39 @@ fn final_continuum_prediction_matches_a_compact_materialized_spectrum() {
     std::fs::create_dir(&original_root).unwrap();
     std::fs::create_dir(&compact_root).unwrap();
     let original = line_model_measurement_set(&original_root, 40);
-    let compact = line_model_measurement_set(&compact_root, 10);
+    let compact = line_model_measurement_set(&compact_root, 11);
+    // The parent row begins with a quarter-MHz gap, while its compact
+    // output channels are one MHz apart. A wider parent row would refine
+    // the prediction grid fourfold and change the predicted line values.
+    let mut irregular = MeasurementSet::open(&original).unwrap();
+    let mut frequencies = (0..40)
+        .map(|channel| 44.0e9 + f64::from(channel) * 1.0e6)
+        .collect::<Vec<_>>();
+    frequencies[1] = 44.00025e9;
+    irregular
+        .subtable_mut(SubtableId::SpectralWindow)
+        .unwrap()
+        .row_accessor_mut()
+        .set_cell(
+            0,
+            "CHAN_FREQ",
+            Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(vec![40], frequencies).unwrap(),
+            )),
+        )
+        .unwrap();
+    irregular.save().unwrap();
+    drop(irregular);
     let raw = MeasurementSet::open(&original).unwrap();
     let data = raw.data_column(VisibilityDataColumn::Data).unwrap();
     let ArrayValue::Complex32(raw_values) = data.get(0).unwrap() else {
         panic!("DATA")
     };
-    let mut corrected = ArrayD::zeros(vec![4, 10]);
+    let mut corrected = ArrayD::zeros(vec![4, 11]);
     for correlation in 0..4 {
         let continuum = (raw_values[[correlation, 0]] + raw_values[[correlation, 39]]) / 2.0;
-        for channel in 0..10 {
-            corrected[[correlation, channel]] = raw_values[[correlation, channel + 17]] - continuum;
+        for channel in 0..11 {
+            corrected[[correlation, channel]] = raw_values[[correlation, channel + 16]] - continuum;
         }
     }
     drop(raw);
@@ -644,13 +666,13 @@ fn final_continuum_prediction_matches_a_compact_materialized_spectrum() {
         .row_accessor_mut()
         .set_cell(0, "DATA", Value::Array(ArrayValue::Complex32(corrected)))
         .unwrap();
-    let frequencies = (17..27)
+    let frequencies = (16..27)
         .map(|channel| 44.0e9 + f64::from(channel) * 1.0e6)
         .collect();
     let window = reference.subtable_mut(SubtableId::SpectralWindow).unwrap();
     window
         .row_accessor_mut()
-        .set_cell(0, "REF_FREQUENCY", float(44.017e9))
+        .set_cell(0, "REF_FREQUENCY", float(44.016e9))
         .unwrap();
     window
         .row_accessor_mut()
@@ -658,7 +680,7 @@ fn final_continuum_prediction_matches_a_compact_materialized_spectrum() {
             0,
             "CHAN_FREQ",
             Value::Array(ArrayValue::Float64(
-                ArrayD::from_shape_vec(vec![10], frequencies).unwrap(),
+                ArrayD::from_shape_vec(vec![11], frequencies).unwrap(),
             )),
         )
         .unwrap();
@@ -672,7 +694,7 @@ fn final_continuum_prediction_matches_a_compact_materialized_spectrum() {
     let fitted = request(&original, &original_root.join("image"), controls.clone());
     assert_eq!(
         casa_imaging_application::source_law::gridding_layouts(&fitted, &context()).unwrap(),
-        [(17..27).collect::<Vec<_>>()],
+        [(16..27).collect::<Vec<_>>()],
     );
     execute_writing(&fitted);
     let mut reference_controls = controls;
@@ -694,15 +716,15 @@ fn final_continuum_prediction_matches_a_compact_materialized_spectrum() {
         panic!("MODEL_DATA")
     };
     for correlation in 0..4 {
-        for channel in 0..10 {
-            let actual = original_model[[correlation, channel + 17]];
+        for channel in 0..11 {
+            let actual = original_model[[correlation, channel + 16]];
             let expected = compact_model[[correlation, channel]];
             assert!(
                 (actual - expected).norm() <= 1.0e-5 * expected.norm().max(1.0),
                 "{correlation}/{channel}: {actual} != {expected}"
             );
         }
-        for channel in (0..17).chain(27..40) {
+        for channel in (0..16).chain(27..40) {
             assert_eq!(
                 original_model[[correlation, channel]],
                 Complex32::new(9.0, 9.0)
@@ -710,7 +732,7 @@ fn final_continuum_prediction_matches_a_compact_materialized_spectrum() {
         }
     }
     assert!(
-        (compact_model[[0, 3]] - compact_model[[0, 4]]).norm() > 1.0e-3,
+        (compact_model[[0, 4]] - compact_model[[0, 5]]).norm() > 1.0e-3,
         "the prediction varies over the output spectrum"
     );
 }
