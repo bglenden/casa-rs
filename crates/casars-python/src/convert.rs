@@ -559,7 +559,10 @@ pub(crate) fn quantity_record(record: &BTreeMap<String, Variant>) -> Result<Quan
         Variant::Numbers(numbers) if numbers.len() == 1 => numbers[0],
         // Numeric arrays and complex values are valid QuantumHolders, so
         // CASA checks their unit before a scalar operation refuses them.
-        Variant::Numbers(_) | Variant::Array { .. } | Variant::Complex(_) | Variant::Complexes(_) => {
+        Variant::Numbers(_)
+        | Variant::Array { .. }
+        | Variant::Complex(_)
+        | Variant::Complexes(_) => {
             casacore_unit(unit)?;
             return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string());
         }
