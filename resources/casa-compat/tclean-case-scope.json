@@ -23,8 +23,8 @@
    "cases": 9
   },
   {
-   "family": "deconvolver-asp-mem-clarkstokes",
-   "reason": "deconvolvers asp, mem and clarkstokes: no simulation task issues it and it is not common use",
+   "family": "deconvolver-asp-mem",
+   "reason": "deconvolvers asp and mem: no simulation task issues it and it is not common use",
    "cases": 5
   },
   {
@@ -963,25 +963,25 @@
   "test_onefield.test_onefield_asp.1": {
    "scope": "LATER",
    "families": [
-    "deconvolver-asp-mem-clarkstokes"
+    "deconvolver-asp-mem"
    ]
   },
   "test_onefield.test_onefield_asp.2": {
    "scope": "LATER",
    "families": [
-    "deconvolver-asp-mem-clarkstokes"
+    "deconvolver-asp-mem"
    ]
   },
   "test_onefield.test_onefield_asp.3": {
    "scope": "LATER",
    "families": [
-    "deconvolver-asp-mem-clarkstokes"
+    "deconvolver-asp-mem"
    ]
   },
   "test_onefield.test_onefield_asp.4": {
    "scope": "LATER",
    "families": [
-    "deconvolver-asp-mem-clarkstokes"
+    "deconvolver-asp-mem"
    ]
   },
   "test_onefield.test_onefield_autonames.1+2+3": {
@@ -1017,7 +1017,7 @@
   "test_onefield.test_onefield_mem.1": {
    "scope": "LATER",
    "families": [
-    "deconvolver-asp-mem-clarkstokes"
+    "deconvolver-asp-mem"
    ]
   },
   "test_onefield.test_onefield_mtmfs.1": {
