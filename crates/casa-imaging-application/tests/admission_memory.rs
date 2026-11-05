@@ -981,7 +981,7 @@ fn a_separate_final_prediction_stays_within_its_admission() {
     let measurement_set = observation(root.path(), 4);
     warm(&measurement_set, root.path());
     let mut breaches = Vec::new();
-    for (imsize, workers) in [(256, 1), (512, 4)] {
+    for (imsize, workers) in [(256, 1), (1024, 4)] {
         let prediction = request(
             &measurement_set,
             &root.path().join(format!("separate-prediction-{imsize}")),
