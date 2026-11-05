@@ -2164,6 +2164,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#getshape-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        getshape-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5843,6 +5854,17 @@
     <span class="md-ellipsis">
       
         isphysical-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#getshape-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        getshape-casa
       
     </span>
   </a>
@@ -10178,9 +10200,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">29</td>
+<td style="text-align: right;">30</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">32</td>
+<td style="text-align: right;">31</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10298,7 +10320,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 29, Partial: 0, Not implemented: 32, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 30, Partial: 0, Not implemented: 31, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -10516,9 +10538,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>getshape</code></td>
 <td><code>which</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Returns CASA shape axes and errors, preserving supplied axis units in memory and table units after reopening; point shapes return an empty record.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-getshape-casa">getshape-casa</a></td>
 </tr>
 <tr>
 <td><code>getspectrum</code></td>
@@ -10925,6 +10947,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/tools/simulation/componentlist_physical_flux_table_oracle.py">tools/simulation/componentlist_physical_flux_table_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/crates/casars-python/python/tests/data/casa_componentlist_physical_fluxes.json">crates/casars-python/python/tests/data/casa_componentlist_physical_fluxes.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/crates/casars-python/python/tests/data/casa_physical_fluxes.cl.tgz">crates/casars-python/python/tests/data/casa_physical_fluxes.cl.tgz</a></li>
+</ul>
+<p><a id="componentlist-evidence-getshape-casa"></a></p>
+<h5 id="getshape-casa">getshape-casa<a class="headerlink" href="#getshape-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 44 CASA 6.7.6-14 cases cover point, Gaussian and disk shapes, supplied units, rename and reopen, argument and index handling. componentlist.getshape.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244/tools/simulation/componentlist_getshape_oracle.py">tools/simulation/componentlist_getshape_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244/crates/casars-python/python/tests/data/casa_componentlist_getshape.json">crates/casars-python/python/tests/data/casa_componentlist_getshape.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244/crates/casars-python/python/tests/test_componentlist_getshape.py">crates/casars-python/python/tests/test_componentlist_getshape.py</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>
