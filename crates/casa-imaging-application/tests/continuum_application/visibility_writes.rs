@@ -349,6 +349,17 @@ fn application_replaces_every_selected_model_cell_when_flags_and_correlations_di
 /// row number is 3 modulo 4) are moved to 1 km.
 #[test]
 fn a_model_saved_over_partitions_leaves_what_the_uv_range_excludes() {
+    model_saved_over_partitions(0.0);
+}
+
+/// The separate parent predictor preserves each selected batch's original
+/// row and partition addresses as well.
+#[test]
+fn final_prediction_preserves_partition_and_row_provenance() {
+    model_saved_over_partitions(0.01);
+}
+
+fn model_saved_over_partitions(nsigma: f64) {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = four_spw_vla_measurement_set(root.path());
@@ -377,6 +388,7 @@ fn a_model_saved_over_partitions_leaves_what_the_uv_range_excludes() {
             "channel_count": null,
             "uvrange": "0~100m",
             "savemodel": "modelcolumn",
+            "nsigma": nsigma,
         }),
     );
 
