@@ -312,6 +312,31 @@ pub(crate) fn run(
         image_response,
         virtual_model,
     } = run;
+    let saved_psf_beams = existing
+        .as_ref()
+        .and_then(crate::restart::ExistingProducts::psf_beams);
+    let psf_beams = existing
+        .as_ref()
+        .and_then(crate::restart::ExistingProducts::psf_pixel_beams);
+    let mask_beams = existing
+        .as_ref()
+        .and_then(crate::restart::ExistingProducts::mask_beams);
+    // An unlabelled saved PSF is fitted by getBeamSet's default cutoff at
+    // minor-cycle initialization. Publication must reuse that fit's cutoff.
+    let mut publication = publication;
+    if !forms.psf
+        && psf_beams.is_none()
+        && problem.reconstruction().controls().max_minor_iterations() > 0
+    {
+        let model = publication.controls.primary_beam_model();
+        let mut controls = casa_imaging_products::ContinuumProductControls::new(
+            casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF,
+        )?;
+        if let Some(model) = model {
+            controls = controls.with_primary_beam_model(model);
+        }
+        publication.controls = controls;
+    }
     let teams = OnceCell::new();
     let primary_beam = match publication.controls.primary_beam_model() {
         Some(model) => {
@@ -327,6 +352,13 @@ pub(crate) fn run(
     let outcome = imaging::run(
         imaging::ImagingInputs {
             problem,
+            psf_cutoff: if !forms.psf && psf_beams.is_none() {
+                casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF
+            } else {
+                publication.controls.psf_cutoff()
+            },
+            psf_beams,
+            mask_beams,
             source: &route,
             masks,
             start_model,
@@ -368,6 +400,7 @@ pub(crate) fn run(
                     scientific: outcome.scientific,
                     masks: outcome.masks,
                     facet_sum_weights: outcome.facet_sum_weights,
+                    saved_psf_beams,
                 },
                 &runtime,
                 publication,
@@ -432,6 +465,7 @@ struct ProductSource {
     scientific: MajorCycleCompletion,
     masks: Option<ReconstructionMaskSet>,
     facet_sum_weights: FacetSumWeights,
+    saved_psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
 }
 
 /// What `problem`'s products hold on one lane, before the run
@@ -466,8 +500,12 @@ fn publish_products(
         scientific,
         masks: reconstruction_masks,
         facet_sum_weights,
+        saved_psf_beams,
     } = source;
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
+    if let Some(beams) = saved_psf_beams.as_deref() {
+        inputs = inputs.with_saved_psf_beams(beams)?;
+    }
     if let Some(masks) = reconstruction_masks.as_ref() {
         inputs = match masks {
             ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask),

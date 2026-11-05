@@ -3,7 +3,7 @@
 
 use crate::Error;
 use crate::beam::{
-    DEFAULT_PSF_FIT_CUTOFF, RestoringBeam, fit_main_lobe, fitted_psf_sidelobe_fraction_with_beam,
+    DEFAULT_PSF_FIT_CUTOFF, RestoringBeam, fit_main_lobe, fitted_psf_sidelobe_fraction_with_cell,
     peak_outside_inner_quarter,
 };
 use crate::plane::{PlaneShape, psf_peak};
@@ -46,26 +46,118 @@ impl PsfSummary {
     /// When the PSF has no positive finite peak or the main lobe cannot be
     /// fitted.
     pub fn new(psf: &[f64], shape: PlaneShape) -> Result<Self, Error> {
+        Self::with_cutoff(psf, shape, DEFAULT_PSF_FIT_CUTOFF)
+    }
+
+    /// Measure a PSF using the requested CASA main-lobe fit cutoff.
+    ///
+    /// # Errors
+    ///
+    /// When the PSF has no positive finite peak or the main lobe cannot be fitted.
+    pub fn with_cutoff(psf: &[f64], shape: PlaneShape, cutoff: f32) -> Result<Self, Error> {
+        Self::measure(psf, shape, cutoff, None, [1.0, 1.0])
+    }
+
+    /// Measure a PSF with a fitted beam recovered from its image metadata.
+    /// The beam widths use pixels, as in [`Self::beam`].
+    ///
+    /// # Errors
+    ///
+    /// When the PSF has no positive finite peak.
+    pub fn with_saved_beam(
+        psf: &[f64],
+        shape: PlaneShape,
+        beam: RestoringBeam,
+    ) -> Result<Self, Error> {
+        Self::measure(psf, shape, DEFAULT_PSF_FIT_CUTOFF, Some(beam), [1.0, 1.0])
+    }
+
+    /// Measure with direction increments expressed in first-axis pixels.
+    ///
+    /// # Errors
+    /// The PSF has no positive finite peak or its main lobe cannot be fitted.
+    pub fn with_cutoff_and_cell(
+        psf: &[f64],
+        shape: PlaneShape,
+        cutoff: f32,
+        cell: [f64; 2],
+    ) -> Result<Self, Error> {
+        Self::measure(psf, shape, cutoff, None, cell)
+    }
+
+    /// Measure a saved beam with direction increments in first-axis pixels.
+    ///
+    /// # Errors
+    /// The PSF has no positive finite peak.
+    pub fn with_saved_beam_and_cell(
+        psf: &[f64],
+        shape: PlaneShape,
+        beam: RestoringBeam,
+        cell: [f64; 2],
+    ) -> Result<Self, Error> {
+        Self::measure(psf, shape, DEFAULT_PSF_FIT_CUTOFF, Some(beam), cell)
+    }
+
+    /// A blank plane's saved beam for automatic-mask common-beam selection.
+    /// No solver may use its peak or patch: the plane has no PSF samples.
+    #[must_use]
+    pub fn blank_with_saved_beam(beam: RestoringBeam) -> Self {
+        Self {
+            peak: 0,
+            beam,
+            sidelobe: 0.0,
+            clark: ClarkPatch {
+                radius: [0, 0],
+                size: [0, 0],
+                exterior_sidelobe: 0.0,
+            },
+            off_centre: false,
+        }
+    }
+
+    /// Copy this summary with the beam used by automatic masking. The PSF's
+    /// sidelobe and Clark patch remain those measured from the PSF beam.
+    #[must_use]
+    pub const fn with_mask_beam(mut self, beam: RestoringBeam) -> Self {
+        self.beam = beam;
+        self
+    }
+
+    fn measure(
+        psf: &[f64],
+        shape: PlaneShape,
+        cutoff: f32,
+        saved_beam: Option<RestoringBeam>,
+        cell: [f64; 2],
+    ) -> Result<Self, Error> {
         let peak = psf_peak(psf, shape).ok_or(Error::PsfPeak)?;
         if !(psf[peak].is_finite() && psf[peak] > 0.0) {
             return Err(Error::PsfPeak);
         }
         let single = psf.iter().map(|value| *value as f32).collect::<Vec<_>>();
         let axes = [shape.nx, shape.ny];
-        // A plane peaking away from its centre has no beam of its own in CASA,
-        // which takes its domain's largest and subtracts a Gaussian at the
-        // centre, far from that peak, which so stays the sidelobe. Its beam
-        // here is a pixel until the run knows the other planes
-        // ([`Self::with_domain_beam`]).
+        // An off-centre plane without a saved beam takes its domain's largest
+        // later. With a saved beam, CASA subtracts that beam at the image
+        // centre even if it overlaps the off-centre PSF peak.
         let off_centre = peak_outside_inner_quarter(&single, axes)?;
         let (beam, sidelobe) = if off_centre {
-            let level = psf
-                .iter()
-                .fold(0.0_f64, |level, value| level.max(value.abs()));
-            (RestoringBeam::new(1.0, 1.0, 0.0)?, level)
+            match saved_beam {
+                Some(beam) => (
+                    beam,
+                    fitted_psf_sidelobe_fraction_with_cell(&single, axes, beam, cell)?,
+                ),
+                None => (
+                    RestoringBeam::new(1.0, 1.0, 0.0)?,
+                    psf.iter()
+                        .fold(0.0_f64, |level, value| level.max(value.abs())),
+                ),
+            }
         } else {
-            let beam = fit_main_lobe(&single, axes, [1.0, 1.0], DEFAULT_PSF_FIT_CUTOFF)?;
-            let sidelobe = fitted_psf_sidelobe_fraction_with_beam(&single, axes, beam)?;
+            let beam = match saved_beam {
+                Some(beam) => beam,
+                None => fit_main_lobe(&single, axes, cell, cutoff)?,
+            };
+            let sidelobe = fitted_psf_sidelobe_fraction_with_cell(&single, axes, beam, cell)?;
             (beam, sidelobe)
         };
         Ok(Self {
@@ -195,6 +287,65 @@ mod tests {
                 .expect("a summary")
                 .sidelobe(),
             1.0
+        );
+    }
+    /// The Gaussian uses both world-axis increments (CASA CAS-7171).
+    #[test]
+    fn a_saved_beam_sidelobe_uses_both_cell_sizes() {
+        let shape = PlaneShape::new(64, 64);
+        let mut psf = vec![0.0; 64 * 64];
+        for x in 0..64 {
+            for y in 0..64 {
+                let dx = x as f64 - 32.0;
+                let dy = y as f64 - 32.0;
+                psf[x * 64 + y] =
+                    (-4.0 * std::f64::consts::LN_2 * (dx * dx + dy * dy) / 16.0).exp();
+            }
+        }
+        let beam = RestoringBeam::new(4.0, 4.0, 0.0).unwrap();
+        let summary = PsfSummary::with_saved_beam_and_cell(&psf, shape, beam, [1.0, 2.0]).unwrap();
+        assert!(
+            (summary.sidelobe() - 0.4375).abs() < 1e-6,
+            "{}",
+            summary.sidelobe()
+        );
+    }
+    /// A PSF circular in world coordinates spans half as many pixels along
+    /// an axis whose increment is twice as large.
+    #[test]
+    fn a_fresh_psf_fit_uses_both_cell_sizes() {
+        let shape = PlaneShape::new(64, 64);
+        let mut psf = vec![0.0; shape.len()];
+        for x in 0..64 {
+            for y in 0..64 {
+                let dx = x as f64 - 32.0;
+                let dy = (y as f64 - 32.0) * 2.0;
+                psf[x * 64 + y] =
+                    (-4.0 * std::f64::consts::LN_2 * (dx * dx + dy * dy) / 64.0).exp();
+            }
+        }
+        let summary = PsfSummary::with_cutoff_and_cell(&psf, shape, 0.35, [1.0, 2.0]).unwrap();
+        let beam = summary.beam();
+        assert!(
+            (beam.major_fwhm_rad() / beam.minor_fwhm_rad() - 1.0).abs() < 0.05,
+            "{beam:?}"
+        );
+        assert!(summary.sidelobe() < 0.03, "{}", summary.sidelobe());
+    }
+    /// CASA subtracts the saved beam at the image centre even when the PSF
+    /// peaks outside the inner quarter (CASA 6.7.6.14: 0.39395368).
+    #[test]
+    fn an_off_centre_psf_subtracts_its_saved_beam_at_the_image_centre() {
+        let shape = PlaneShape::new(64, 64);
+        let mut psf = vec![0.0; shape.len()];
+        psf[15 * 64 + 32] = 1.0;
+        let beam = RestoringBeam::new(40.0, 40.0, 0.0).unwrap();
+        let summary = PsfSummary::with_saved_beam(&psf, shape, beam).unwrap();
+        assert!(summary.off_centre());
+        assert!(
+            (summary.sidelobe() - 0.39395368).abs() < 1e-6,
+            "{}",
+            summary.sidelobe()
         );
     }
 }

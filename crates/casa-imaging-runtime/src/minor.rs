@@ -16,6 +16,7 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use casa_imaging_deconvolution::{
     AutoMaskEvidence, AutoMaskPlane, AutoMaskSource, FinalNormalState,
@@ -25,8 +26,8 @@ use casa_imaging_deconvolution::{
 };
 use casa_imaging_deconvolution::{
     Clark, Component, CycleControls, Delta, Hogbom, LinearRefresh, MinorCycleView, Multiscale,
-    PlaneOutcome, PlaneShape, PlaneStatistics, PlaneStop, PsfSummary, ResidualStatistics, Solver,
-    Support, Taylor, peak_magnitude, run_plane,
+    PlaneOutcome, PlaneShape, PlaneStatistics, PlaneStop, PsfSummary, ResidualStatistics,
+    RestoringBeam, Solver, Support, Taylor, peak_magnitude, run_plane,
 };
 use casa_imaging_model::{
     HogbomIterationAccounting, ModelCell, ModelDeltaTerm, ModelSupport, ModelValue,
@@ -43,11 +44,13 @@ mod beams;
 mod layout;
 mod pixels;
 mod polarized;
+mod psfs;
 mod rows;
 pub use layout::{
     MinorLayout, mask_bytes, prepare_bytes, prepare_bytes_for, psf_cache_bytes, run_bytes,
     run_bytes_for,
 };
+use psfs::{measure_psfs, saved_beam, saved_psf_beam, summarize_psf};
 pub use rows::PlaneCycleRow;
 
 /// Component records kept per minor cycle for diagnostics.
@@ -79,6 +82,14 @@ pub enum MinorCycleRunError {
     /// The solver failed.
     #[error(transparent)]
     Solver(#[from] casa_imaging_deconvolution::Error),
+    /// A saved beam grid does not cover the image's channels and polarizations.
+    #[error("saved beam grid has {actual} planes; expected {expected}")]
+    SavedBeamGridLength {
+        /// Number of beam planes required.
+        expected: usize,
+        /// Number of beam planes supplied.
+        actual: usize,
+    },
     /// The selected algorithm has no minor cycle.
     #[error("{0:?} has no minor cycle")]
     Algorithm(ReconstructionAlgorithm),
@@ -90,6 +101,12 @@ pub enum MinorCycleRunError {
 /// What every minor cycle of a run shares.
 #[derive(Clone, Debug)]
 pub struct MinorCycleSetup<'a> {
+    /// The PSF main-lobe fit cutoff.
+    pub psf_cutoff: f32,
+    /// A complete saved PSF beam grid in pixels, channel-major, for the main image.
+    pub psf_beams: Option<Arc<[RestoringBeam]>>,
+    /// Saved residual beams in pixels, preferred by automatic masking.
+    pub mask_beams: Option<Arc<[RestoringBeam]>>,
     /// The deconvolver.
     pub algorithm: ReconstructionAlgorithm,
     /// Högbom's iteration accounting.
@@ -323,6 +340,20 @@ pub fn prepare_minor_cycle(
     let normal = completion.normal_state();
     let base = completion.final_model();
     let taylor = is_taylor(normal);
+    for beams in [&setup.psf_beams, &setup.mask_beams].into_iter().flatten() {
+        let channels = if taylor {
+            1
+        } else {
+            normal.slab().total_channels()
+        };
+        let expected = channels * normal.polarization_count();
+        if beams.len() != expected {
+            return Err(MinorCycleRunError::SavedBeamGridLength {
+                expected,
+                actual: beams.len(),
+            });
+        }
+    }
     let keys = plane_keys(normal, taylor);
     if pixels::reads_beam(setup) && setup.nsigma > 0.0 && cache.beams.is_none() {
         cache.beams = Some(pixels::domain_beams(normal, base, setup, taylor, &keys)?);
@@ -341,7 +372,7 @@ pub fn prepare_minor_cycle(
         // An automatic mask smooths by its channel block's common beam and
         // thresholds by the image's sidelobe level, so every plane's PSF is
         // measured first.
-        measure_psfs(normal, taylor, cache, &keys, team)?;
+        measure_psfs(normal, base, taylor, cache, &keys, setup, team)?;
         let shared = &*cache;
         let reading = Reading {
             normal,
@@ -354,10 +385,16 @@ pub fn prepare_minor_cycle(
         };
         let read = |key: MaskPlaneKey| automask_plane(&reading, absolute(normal, taylor, key));
         let psf = |key: MaskPlaneKey| {
-            shared
-                .summaries
-                .get(&absolute(normal, taylor, key))
-                .copied()
+            let key = absolute(normal, taylor, key);
+            let summary = shared.summaries.get(&key).copied().or_else(|| {
+                saved_psf_beam(normal, setup, key).map(PsfSummary::blank_with_saved_beam)
+            });
+            let beam = saved_beam(normal, &setup.mask_beams, key);
+            match (summary, beam) {
+                (Some(summary), Some(beam)) => Some(summary.with_mask_beam(beam)),
+                (None, Some(beam)) => Some(PsfSummary::blank_with_saved_beam(beam)),
+                (summary, None) => summary,
+            }
         };
         let source = AutoMaskSource {
             read: &read,
@@ -402,7 +439,7 @@ pub fn prepare_minor_cycle(
         };
         let summary = match shared.summaries.get(key) {
             Some(summary) => *summary,
-            None => PsfSummary::new(&plane.psf[0], plane.shape)?,
+            None => summarize_psf(normal, base, setup, *key, &plane.psf[0], plane.shape)?,
         };
         let pixels = plane_pixels(&inputs, *key, &plane)?;
         let mut statistics = PlaneStatistics::measure(
@@ -470,7 +507,7 @@ pub fn prepare_minor_cycle(
     // Only Clark's patch reads the settled beam here: an automatic mask's run
     // settled it above.
     if matches!(setup.algorithm, ReconstructionAlgorithm::Clark) {
-        beams::settle_off_centre(normal, taylor, cache)?;
+        beams::settle_off_centre(normal, taylor, cache, setup.psf_beams.is_some())?;
     }
     // Each image domain is one CASA image store.
     let mut statistics = ResidualStatistics::empty();
@@ -751,35 +788,6 @@ fn plane_pixels<'p>(
         beam,
         within: within.flatten(),
     })
-}
-
-/// Measure into the cache the PSF of each plane of `keys` that holds data
-/// and is not yet measured, side by side on the team.
-fn measure_psfs(
-    normal: &FinalNormalState,
-    taylor: bool,
-    cache: &mut PsfCache,
-    keys: &[PlaneKey],
-    team: &WorkerTeam,
-) -> Result<(), MinorCycleRunError> {
-    let mut slots = keys
-        .iter()
-        .filter(|key| !cache.summaries.contains_key(key) && holds_data(normal, taylor, **key))
-        .map(|key| (*key, None))
-        .collect::<Vec<_>>();
-    team.for_each_mut(&mut slots, |_, (key, summary)| {
-        let shape = plane_shape(normal, *key);
-        let psf = read_psf(normal, taylor, *key)?;
-        let peak = psf_peak_value(&psf, shape)?;
-        *summary = Some(PsfSummary::new(&normalise(psf, peak), shape)?);
-        Ok::<_, MinorCycleRunError>(())
-    })?;
-    for (key, summary) in slots {
-        if let Some(summary) = summary {
-            cache.summaries.insert(key, summary);
-        }
-    }
-    beams::settle_off_centre(normal, taylor, cache)
 }
 
 /// Whether the plane `key` holds data: a valid channel, or a valid Taylor
