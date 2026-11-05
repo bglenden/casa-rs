@@ -1,0 +1,213 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "input": 0.0,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": -0.0,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": 1.0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "input": -1.0,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "input": 4.0,
+      "result": {
+        "unit": "",
+        "value": 2.0
+      }
+    },
+    {
+      "input": 2.0,
+      "result": {
+        "unit": "",
+        "value": 1.4142135623730951
+      }
+    },
+    {
+      "input": null,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "4m2",
+      "result": {
+        "unit": "m",
+        "value": 2.0
+      }
+    },
+    {
+      "input": "4km2",
+      "result": {
+        "unit": "m",
+        "value": 2000.0
+      }
+    },
+    {
+      "input": "4cm2",
+      "result": {
+        "unit": "m",
+        "value": 0.02
+      }
+    },
+    {
+      "input": "4m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "UnitVal::UnitVal Illegal unit dimensions for root"
+      }
+    },
+    {
+      "input": "4m/s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "UnitVal::UnitVal Illegal unit dimensions for root"
+      }
+    },
+    {
+      "input": "4Hz2",
+      "result": {
+        "unit": "s-1",
+        "value": 2.0
+      }
+    },
+    {
+      "input": "4s-2",
+      "result": {
+        "unit": "s-1",
+        "value": 2.0
+      }
+    },
+    {
+      "input": "4kg2.m2/s4",
+      "result": {
+        "unit": "m.kg.s-2",
+        "value": 2.0
+      }
+    },
+    {
+      "input": "50%",
+      "result": {
+        "unit": "",
+        "value": 0.7071067811865476
+      }
+    },
+    {
+      "input": "4rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "UnitVal::UnitVal Illegal unit dimensions for root"
+      }
+    },
+    {
+      "input": "4deg2",
+      "result": {
+        "unit": "rad",
+        "value": 0.03490658503988659
+      }
+    },
+    {
+      "input": "4arcsec2",
+      "result": {
+        "unit": "rad",
+        "value": 9.69627362219072e-06
+      }
+    },
+    {
+      "input": "4sr2",
+      "result": {
+        "unit": "sr",
+        "value": 2.0
+      }
+    },
+    {
+      "input": "4_2",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"4_2\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": {
+        "value": 9.0,
+        "unit": "m2"
+      },
+      "result": {
+        "unit": "m",
+        "value": 3.0
+      }
+    },
+    {
+      "input": {
+        "value": [
+          1.0,
+          4.0
+        ],
+        "unit": "m2"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "input": [
+        1.0,
+        4.0
+      ],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "bad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": "",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "NaN",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"NaN\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "input": "inf",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"inf\": Illegal input units or format\n in converting quantity"
+      }
+    }
+  ]
+}

@@ -41,10 +41,13 @@ fn text(value: &str) -> Variant {
 }
 
 fn quantity_field(value: f64, unit: &str) -> Variant {
-    Variant::Record(BTreeMap::from([
-        ("value".to_string(), Variant::Number(value)),
-        ("unit".to_string(), text(unit)),
-    ]))
+    Variant::Record(
+        BTreeMap::from([
+            ("value".to_string(), Variant::Number(value)),
+            ("unit".to_string(), text(unit)),
+        ])
+        .into(),
+    )
 }
 
 fn measure(kind: &str, refer: &str, values: &[(f64, &str)]) -> Variant {
@@ -55,7 +58,7 @@ fn measure(kind: &str, refer: &str, values: &[(f64, &str)]) -> Variant {
     for (index, (value, unit)) in values.iter().enumerate() {
         record.insert(format!("m{index}"), quantity_field(*value, unit));
     }
-    Variant::Record(record)
+    Variant::Record(record.into())
 }
 
 fn close(left: f64, right: f64) -> bool {
