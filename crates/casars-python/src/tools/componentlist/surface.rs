@@ -170,7 +170,7 @@ const METHODS: &[Method] = &[
     of_one("getshape", R::Record, No),
     of_one("getspectrum", R::Record, Yes),
     method("haskeyword", &[KEYWORD], R::Bool, No),
-    method("indices", &[], R::Ints, No),
+    method("indices", &[], R::Ints, Yes),
     method(
         "iscomponentlist",
         &[param("tool", K::Any, Empty)],

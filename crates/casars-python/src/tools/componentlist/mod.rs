@@ -533,10 +533,16 @@ impl PyComponentList {
         stub("haskeyword")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns an empty int64 array.
     #[pyo3(signature = (), text_signature = "($self)")]
-    fn indices(&self) -> PyResult<Py<PyAny>> {
-        stub("indices")
+    fn indices(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, lines| {
+            lines.push(LogLine::warning("indices not implemented yet"));
+            Ok(CasaValue::Ints {
+                shape: vec![0],
+                values: Vec::new(),
+            })
+        })
     }
 
     /// Not yet implemented in casa-rs.
