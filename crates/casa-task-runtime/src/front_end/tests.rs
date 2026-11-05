@@ -383,10 +383,7 @@ fn json_run_reports_unambiguous_casa_missing_paths() {
         }
         let request = json!({"surface": case["task"], "values": values});
         std::fs::write(&path, request.to_string()).unwrap();
-        let output = front_end.dispatch(&in_workspace(
-            workspace.path(),
-            &["--json-run", path.to_str().unwrap()],
-        ));
+        let output = front_end.dispatch(&args(&["--json-run", path.to_str().unwrap()]));
         let TaskReply::Failed { kind, message, .. } = serde_json::from_str(&output.stdout).unwrap()
         else {
             panic!("{request}: expected a refusal");
@@ -416,10 +413,7 @@ fn ambiguous_path_forms_keep_the_native_diagnostic() {
     ] {
         let request = json!({"surface": "imstat", "values": {"imagename": value}});
         std::fs::write(&path, request.to_string()).unwrap();
-        let output = front_end.dispatch(&in_workspace(
-            workspace.path(),
-            &["--json-run", path.to_str().unwrap()],
-        ));
+        let output = front_end.dispatch(&args(&["--json-run", path.to_str().unwrap()]));
         let TaskReply::Failed { message, .. } = serde_json::from_str(&output.stdout).unwrap()
         else {
             panic!("{request}: expected a refusal");

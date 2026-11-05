@@ -23,7 +23,8 @@ use casa_task_runtime::{
     BaseSource, DiagnosticCode, ManagedProfileKind, ManagedStateStore, OpenSessionRequest,
     ParameterRuntime, ParameterRuntimeError, ParameterSession, ParameterSessionError, ProfileError,
     ResolutionPatch, format_profile_error, format_session_error, parse_profile,
-    project_provider_invocation, render_documented_template, write_parameter_profile_atomic,
+    project_provider_invocation_with_originals, render_documented_template,
+    write_parameter_profile_atomic,
 };
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -383,15 +384,24 @@ pub(crate) struct InvocationView {
 
 /// Project one complete task invocation: the task binary's `--json-run -`
 /// with the values set.
+#[cfg(test)]
 pub(crate) fn provider_invocation(
     surface_id: &str,
     values: BTreeMap<String, ParameterValue>,
+) -> ServiceResult<InvocationView> {
+    provider_invocation_with_originals(surface_id, values, BTreeMap::new())
+}
+
+fn provider_invocation_with_originals(
+    surface_id: &str,
+    values: BTreeMap<String, ParameterValue>,
+    originals: BTreeMap<String, ParameterValue>,
 ) -> ServiceResult<InvocationView> {
     let session = session_from_values(surface_id, values)?;
     session
         .render_sparse()
         .map_err(|error| parameter_error("validate provider invocation parameters", error))?;
-    let invocation = project_provider_invocation(&session)
+    let invocation = project_provider_invocation_with_originals(&session, &originals)
         .map_err(|error| parameter_error("project provider invocation", error))?;
     let descriptor = match session.bundle().surface.provider_family() {
         "imager" => Some(casars_imager::imager_protocol_descriptor()),
@@ -497,14 +507,20 @@ pub(crate) fn parameter_render_toml(
 
 /// The provider invocation of resolved values.
 #[pyfunction]
+#[pyo3(signature = (surface_id, values, originals = None))]
 pub(crate) fn parameter_provider_invocation<'py>(
     py: Python<'py>,
     surface_id: &str,
     values: &Bound<'py, PyDict>,
+    originals: Option<&Bound<'py, PyDict>>,
 ) -> PyResult<Bound<'py, PyAny>> {
     let values = parameter_values(values)?;
-    let invocation =
-        provider_invocation(surface_id, values).map_err(|reason| reason_error(py, reason))?;
+    let originals = originals
+        .map(parameter_values)
+        .transpose()?
+        .unwrap_or_default();
+    let invocation = provider_invocation_with_originals(surface_id, values, originals)
+        .map_err(|reason| reason_error(py, reason))?;
     to_python(py, &invocation)
 }
 

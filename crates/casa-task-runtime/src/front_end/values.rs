@@ -138,7 +138,10 @@ impl TaskInvocation<'_> {
         let casa_path = match original {
             Some(ParameterValue::String(value))
                 if override_origin
-                    && path.to_str() == Some(value.as_str())
+                    && (path.to_str() == Some(value.as_str())
+                        || value
+                            .strip_prefix("./")
+                            .is_some_and(|rest| path.to_str() == Some(rest)))
                     && (path.is_absolute()
                         || value.starts_with("./")
                         || value.starts_with("../"))

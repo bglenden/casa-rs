@@ -7,6 +7,8 @@
 //! [`TaskRunRequest`] of the values the caller set. The binary resolves them
 //! against the same contract, so defaults are not repeated.
 
+use std::collections::BTreeMap;
+
 use casa_provider_contracts::{
     ParameterType, ParameterValue, ProviderInvocation, TaskRunRequest, ValueAdapter,
 };
@@ -19,9 +21,20 @@ use crate::ParameterSession;
 /// values the caller set, from the base profile and the overrides, that are
 /// active. A quantity goes as it was given, `0.001` or `'1mJy'`: the binary
 /// normalizes it as the session did, and a task that echoes it returns the
-/// caller's form, as CASA's tclean echoes `threshold`.
+/// caller's form, as CASA's tclean echoes `threshold`. A scalar direct
+/// required path also retains its spelling for CASA's missing-path message.
 pub fn project_provider_invocation(
     session: &ParameterSession,
+) -> Result<ProviderInvocation, ProviderInvocationError> {
+    project_provider_invocation_with_originals(session, &BTreeMap::new())
+}
+
+/// Project a session whose caller also retains original explicit values.
+/// Only proven scalar required-path spellings use these originals; all other
+/// parameters follow the normal projection.
+pub fn project_provider_invocation_with_originals(
+    session: &ParameterSession,
+    originals: &BTreeMap<String, ParameterValue>,
 ) -> Result<ProviderInvocation, ProviderInvocationError> {
     let values = session
         .states()
@@ -29,9 +42,29 @@ pub fn project_provider_invocation(
         .filter(|(_, state)| state.explicit && state.active)
         .filter_map(|(name, state)| {
             let value = state.value.as_ref()?;
-            let sent = session
-                .given(name)
+            let given = session.given(name);
+            let path_original = originals.get(name).or(given).filter(|given| {
+                matches!(given, ParameterValue::String(path)
+                    if std::path::Path::new(path).is_absolute()
+                        || path.starts_with("./") || path.starts_with("../"))
+                    && crate::casa_type_diagnostics::single_required_path(
+                        session.bundle().surface.id(),
+                        name,
+                    )
+                    && session
+                        .bundle()
+                        .surface
+                        .bindings()
+                        .iter()
+                        .find(|binding| &binding.name == name)
+                        .and_then(|binding| session.bundle().catalog.concept(&binding.concept))
+                        .and_then(|concept| crate::normalize::normalize_value(given, concept).ok())
+                        .as_ref()
+                        == Some(value)
+            });
+            let sent = given
                 .filter(|_| is_quantity(session, name))
+                .or(path_original)
                 .unwrap_or(value);
             Some((name.clone(), sent.to_plain_json()))
         })
@@ -175,6 +208,53 @@ mod tests {
             serde_json::json!("1mJy")
         );
         assert_eq!(session.given("niter"), None);
+    }
+
+    #[test]
+    fn a_direct_required_path_keeps_the_callers_scalar_form() {
+        let mut session =
+            ParameterSession::defaults(builtin_surface_bundle("imstat").unwrap()).unwrap();
+        session
+            .set("imagename", ParameterValue::String("./missing".into()))
+            .unwrap();
+        assert_eq!(
+            request(&session).values["imagename"],
+            serde_json::json!("./missing")
+        );
+        session
+            .set(
+                "imagename",
+                ParameterValue::Array(vec![ParameterValue::String("./missing".into())]),
+            )
+            .unwrap();
+        assert_eq!(
+            request(&session).values["imagename"],
+            serde_json::json!(["missing"])
+        );
+
+        let original = BTreeMap::from([(
+            "imagename".into(),
+            ParameterValue::String("./missing".into()),
+        )]);
+        let invocation = project_provider_invocation_with_originals(&session, &original).unwrap();
+        let projected: TaskRunRequest =
+            serde_json::from_str(invocation.stdin.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            projected.values["imagename"],
+            serde_json::json!("./missing")
+        );
+
+        let wrong = BTreeMap::from([(
+            "imagename".into(),
+            ParameterValue::String("./different".into()),
+        )]);
+        let invocation = project_provider_invocation_with_originals(&session, &wrong).unwrap();
+        let projected: TaskRunRequest =
+            serde_json::from_str(invocation.stdin.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            projected.values["imagename"],
+            serde_json::json!(["missing"])
+        );
     }
 
     #[test]
