@@ -152,6 +152,14 @@ pub(super) fn compare(left: &Variant, right: &Variant) -> ConvertResult<CasaValu
     ))
 }
 
+/// `qa.isangle(v)`: angles and times are accepted by casacore's angle form.
+pub(super) fn isangle(value: &Variant) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    Ok(CasaValue::Bool(
+        has(&value, Dimension::Angle) || has(&value, Dimension::Time),
+    ))
+}
+
 /// `qa.check(v)`: whether casacore reads the string as a quantity.
 pub(super) fn check(text: &str) -> CasaValue {
     CasaValue::Bool(Quantity::read(text).is_ok())
