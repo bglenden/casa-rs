@@ -33,7 +33,9 @@
 //! (`geodesy.rs`); and `msg`, `isreport`, `openreport`, `closereport`,
 //! `dir_s2m`, `is4d`, `spectral` and `setcfg` (`helpers.rs`); and the direct
 //! pointing patterns `getTrianglePoints`, `getTriangularTiling`,
-//! `getBaseTriangularTiling` and `getShiftTriangularTiling` (`tiling.rs`). CASA's other
+//! `getBaseTriangularTiling` and `getShiftTriangularTiling` (`tiling.rs`);
+//! and the direct arithmetic helpers `applyRotate`, `isEven` and `needsFiller`
+//! (`arithmetic.rs`). CASA's other
 //! public methods have its signatures and raise `NotImplementedError` naming #1053, which
 //! classifies them (`stubs.rs`).
 //!
@@ -58,6 +60,7 @@
 //! `float64` scalars, which here are `float`s.
 
 mod analysis;
+mod arithmetic;
 mod geodesy;
 mod helpers;
 mod ops;
