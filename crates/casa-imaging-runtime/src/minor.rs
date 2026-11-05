@@ -607,7 +607,15 @@ pub fn run_minor_cycle(
         )?;
     } else if let [(key, statistics)] = planes.as_slice() {
         let summary = cache.summaries[key];
-        let clark = &mut cache.clark;
+        // A planned multi-plane run admits no retained Clark refresh, even
+        // if every plane but this one is blank. In that case its refresh is
+        // local to this solve; only a planned single plane can cache it.
+        let mut transient_refresh = None;
+        let clark = if blank.is_empty() {
+            &mut cache.clark
+        } else {
+            &mut transient_refresh
+        };
         // A lone plane has the team to itself: Clark spreads its refresh
         // across it, and the scale solvers transform on its threads.
         let solved = team.install(|| {
@@ -1345,7 +1353,7 @@ fn solve(
             controls,
             statistics,
         )?,
-        ReconstructionAlgorithm::Clark => {
+        ReconstructionAlgorithm::Clark | ReconstructionAlgorithm::ClarkStokes => {
             let solver = Clark::new(clark.take());
             let outcome = clean(&solver, &view, controls, statistics);
             *clark = solver.into_refresh();

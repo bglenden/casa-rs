@@ -1794,6 +1794,82 @@ class ImageComparisonProtocolTests(unittest.TestCase):
 
         self.assertAlmostEqual(math.pi / (4.0 * math.log(2.0)) * 8.0, area)
 
+    def test_restoring_beam_area_uses_display_plane_channel_and_stokes(self) -> None:
+        def beam(major):
+            return {
+                "major": {"value": major, "unit": "arcsec"},
+                "minor": {"value": 1.0, "unit": "arcsec"},
+            }
+
+        metadata = {
+            "shape": [8, 8, 5, 6],
+            "coordinates": {
+                "direction0": {"cdelt": [-1.0, 1.0], "units": ["arcsec", "arcsec"]},
+                "spectral1": {},
+                "pixelmap1": [2],
+                "stokes2": {},
+                "pixelmap2": [3],
+            },
+            "restoring_beam": {
+                "nChannels": 5,
+                "nStokes": 6,
+                "beams": {
+                    "*2": {"*3": beam(6.0), "*0": beam(3.0)},
+                    "*0": {"*3": beam(2.0)},
+                },
+            },
+        }
+        area = comparator.metadata_beam_area_pixels(metadata)
+        self.assertAlmostEqual(math.pi / (4.0 * math.log(2.0)) * 6.0, area)
+
+    def test_multibeam_area_supports_singleton_channel_dimension(self) -> None:
+        beam = {
+            "major": {"value": 3.0, "unit": "arcsec"},
+            "minor": {"value": 1.0, "unit": "arcsec"},
+        }
+        metadata = {
+            "shape": [8, 8, 4, 1],
+            "coordinates": {
+                "direction0": {"cdelt": [-1.0, 1.0], "units": ["arcsec", "arcsec"]},
+                "stokes1": {},
+                "pixelmap1": [2],
+            },
+            "restoring_beam": {
+                "nChannels": 1,
+                "nStokes": 4,
+                "beams": {"*0": {"*2": beam}},
+            },
+        }
+        self.assertAlmostEqual(
+            math.pi / (4.0 * math.log(2.0)) * 3.0,
+            comparator.metadata_beam_area_pixels(metadata),
+        )
+        del metadata["restoring_beam"]["beams"]["*0"]["*2"]
+        metadata["restoring_beam"]["beams"]["*0"]["*0"] = beam
+        self.assertIsNone(comparator.metadata_beam_area_pixels(metadata))
+
+    def test_multibeam_area_requires_identifiable_display_plane(self) -> None:
+        metadata = {
+            "shape": [8, 8, 4, 1],
+            "coordinates": {
+                "direction0": {"cdelt": [-1.0, 1.0], "units": ["arcsec", "arcsec"]},
+                "stokes1": {},
+            },
+            "restoring_beam": {
+                "nChannels": 1,
+                "nStokes": 4,
+                "beams": {
+                    "*0": {
+                        "*0": {
+                            "major": {"value": 2.0, "unit": "arcsec"},
+                            "minor": {"value": 1.0, "unit": "arcsec"},
+                        }
+                    }
+                },
+            },
+        }
+        self.assertIsNone(comparator.metadata_beam_area_pixels(metadata))
+
     def test_taylor_product_families_keep_matching_semantics(self) -> None:
         self.assertEqual(
             (".image.tt1", ".residual.tt1"),

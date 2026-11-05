@@ -406,8 +406,10 @@ pub enum SpecMode {
 pub enum Deconvolver {
     /// Högbom point components.
     Hogbom,
-    /// Clark point components.
+    /// Clark point components, jointly over a channel's polarizations.
     Clark,
+    /// Clark point components on each polarization separately.
+    ClarkStokes,
     /// Multiscale components.
     Multiscale,
     /// Multi-term multi-frequency synthesis.
