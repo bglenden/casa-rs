@@ -1845,6 +1845,7 @@ class ImageComparisonProtocolTests(unittest.TestCase):
             comparator.metadata_beam_area_pixels(metadata),
         )
         del metadata["restoring_beam"]["beams"]["*0"]["*2"]
+        metadata["restoring_beam"]["beams"]["*0"]["*0"] = beam
         self.assertIsNone(comparator.metadata_beam_area_pixels(metadata))
 
     def test_multibeam_area_requires_identifiable_display_plane(self) -> None:
