@@ -712,3 +712,32 @@ fn an_outlier_files_relative_name_reads_from_the_working_directory() {
     assert!(!settings.join("fields").exists());
     assert!(!directory.join("products/fields").exists());
 }
+
+/// A requested main-lobe cutoff reaches the minor cycle's PSF sidelobe,
+/// not just the beam written in the final image metadata (#1140).
+#[test]
+fn tclean_uses_psfcutoff_in_its_minor_cycle() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("psfcutoff");
+    std::fs::create_dir_all(&directory).expect("run directory");
+    let geometry = observation.geometry();
+    let run = |name: &str, cutoff: f64| {
+        let values = json!({
+            "vis": observation.measurement_set(),
+            "imagename": directory.join(name),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend": "cpu",
+            "deconvolver": "clark",
+            "niter": 1,
+            "psfcutoff": cutoff,
+            "restoration": false,
+        });
+        match json_run(&directory, values) {
+            TaskReply::Succeeded { value, .. } => scalar(&value, "maxpsfsidelobe"),
+            other => panic!("{name}: {other:?}"),
+        }
+    };
+    let (low, high) = (run("low", 0.15), run("high", 0.65));
+    assert!((low - high).abs() > 1e-5, "low {low}, high {high}");
+}
