@@ -214,3 +214,27 @@ fn complex_numpy_arrays_keep_values_and_shapes_in_ordinary_records() {
         );
     });
 }
+
+#[test]
+fn bare_numpy_complex64_keeps_both_parts() {
+    Python::initialize();
+    Python::attach(|py| {
+        let scalar = py
+            .eval(c"__import__('numpy').complex64(1+2j)", None, None)
+            .unwrap();
+        assert_eq!(
+            variant_from_python(&scalar).unwrap(),
+            Variant::Complex(Complex64::new(1.0, 2.0))
+        );
+        let input = pyo3::types::PyDict::new(py);
+        input.set_item("value", scalar).unwrap();
+        let record = variant_from_python(input.as_any()).unwrap();
+        let value::CasaValue::Record(fields) = value::CasaValue::from_variant(&record) else {
+            panic!("expected an ordinary record");
+        };
+        assert_eq!(
+            fields[0].1,
+            value::CasaValue::Complex(Complex64::new(1.0, 2.0))
+        );
+    });
+}
