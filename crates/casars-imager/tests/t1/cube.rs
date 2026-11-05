@@ -1091,24 +1091,93 @@ fn a_times_model_column_holds_only_the_channels_its_band_selects() {
     );
 }
 
-/// tclean's final write after a run with `nsigma` or an automatic mask is
-/// `predictModel`, on the parent imager's selection, which is not tuned, so
-/// every time takes every channel it reads. CASA 6.7.6.14 on `test_cube_1`'s
-/// cube fills the channel past the band's end at every time under either;
-/// the values it writes there, and past that channel, are #1134's.
+/// CASA's final `predictModel` uses the parent imager's untuned bands. On
+/// this drifting named range, the interior channels are written at every
+/// time and each outer channel is written at one end of the track. CASA
+/// 6.7.6.14 gives the same selection for `nsigma` and automatic masking.
 #[test]
-fn predicting_the_final_model_writes_every_time_of_a_channel_read() {
+fn predicting_the_final_model_uses_the_parent_imagers_time_dependent_bands() {
     for (label, controls) in [
         ("nsigma", json!({ "nsigma": 0.01 })),
         ("auto", json!({ "usemask": "auto-multithresh" })),
     ] {
         let written = model_written_over_a_drift(label, controls);
         let all = written[0].len();
-        for (channel, rows) in written.iter().enumerate().take(36) {
-            let count = rows.iter().filter(|row| **row).count();
-            assert_eq!(count, all, "{label}: channel {channel}");
+        for (channel, rows) in written.iter().enumerate().take(35).skip(5) {
+            assert!(
+                rows.iter().all(|written| *written),
+                "{label}: channel {channel}"
+            );
+        }
+        for (channel, rows) in written
+            .iter()
+            .enumerate()
+            .take(5)
+            .chain(written.iter().enumerate().skip(35))
+        {
+            let count = rows.iter().filter(|written| **written).count();
+            assert!(
+                (1..all).contains(&count),
+                "{label}: channel {channel}, {count} rows"
+            );
+            assert_eq!(
+                rows.windows(2).filter(|pair| pair[0] != pair[1]).count(),
+                1,
+                "{label}: channel {channel}"
+            );
+        }
+        let counts = written
+            .iter()
+            .map(|rows| rows.iter().filter(|written| **written).count())
+            .collect::<Vec<_>>();
+        assert!(
+            counts[..5].windows(2).all(|pair| pair[0] < pair[1]),
+            "{label}: {counts:?}"
+        );
+        assert!(
+            counts[35..].windows(2).all(|pair| pair[0] > pair[1]),
+            "{label}: {counts:?}"
+        );
+    }
+}
+
+/// `predictModel` visits the whole parent selection and writes zero where
+/// the cube has no spectral support, rather than leaving the initial model.
+#[test]
+fn predicting_the_final_model_zeroes_channels_beyond_the_cube() {
+    let observation = drifting_track();
+    observation.image(
+        "predict-outside",
+        json!({
+            "specmode": "cube", "spw": "0", "start": 10, "width": 1, "nchan": 10,
+            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn",
+        }),
+    );
+    let rows = super::vis_list::model_rows(observation.measurement_set());
+    assert!(!rows.is_empty());
+    for row in &rows {
+        for channel in [0, 39] {
+            assert!(
+                row.column(channel)
+                    .iter()
+                    .all(|value| *value == Complex32::new(0.0, 0.0)),
+                "channel {channel}"
+            );
         }
     }
+    // CASA 6.7.6.14 extrapolates channel 21 on 10,179 of the 52,650 rows.
+    let extrapolated = rows
+        .iter()
+        .filter(|row| {
+            row.column(21)
+                .iter()
+                .any(|value| *value != Complex32::new(0.0, 0.0))
+        })
+        .count();
+    assert!(
+        (5_000..15_000).contains(&extrapolated),
+        "channel 21: {extrapolated} extrapolated rows"
+    );
 }
 
 /// Two adjacent Q-band windows of `channels` 128 MHz channels each, the

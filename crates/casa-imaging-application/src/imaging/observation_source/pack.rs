@@ -156,6 +156,8 @@ pub(super) struct PackScratch {
     /// Whether the window's frequency bands select each channel at the time
     /// packed; empty when every channel is read.
     in_band: Vec<bool>,
+    /// The parent selection at a prediction's time.
+    in_prediction: Vec<bool>,
     /// What a write limited by the bands keeps of `in_band`,
     /// `[time][channel]`, for the block's provenance, which takes it; empty
     /// when every channel is written.
@@ -172,7 +174,7 @@ impl PackScratch {
     /// each growing at most to twice what it needs.
     pub(super) fn bound(layout: BlockShape) -> usize {
         2 * (layout.domains * size_of::<DomainProjection>()
-            + layout.channels() * (size_of::<f64>() + size_of::<bool>())
+            + layout.channels() * (size_of::<f64>() + 2 * size_of::<bool>())
             + layout.correlations * (size_of::<usize>() + size_of::<f32>()))
     }
 }
@@ -234,7 +236,7 @@ impl Packer<'_> {
         ),
         geometry: &BatchGeometry,
         keep: &[bool],
-        (values, keep_in_band): (bool, bool),
+        (values, writing, prediction): (bool, bool, bool),
         scratch: &mut PackScratch,
         out: &mut NativeBlock,
     ) -> Result<(), SourceError> {
@@ -270,8 +272,15 @@ impl Packer<'_> {
         } else {
             partition.density_bands.as_ref()
         };
+        let prediction = prediction && partition.prediction_channels.is_some();
+        let write_bands = if prediction {
+            partition.prediction_bands.as_ref()
+        } else {
+            bands
+        };
+        let keep_in_band = writing && write_bands.is_some();
         scratch.in_band_by_time.clear();
-        if keep_in_band && bands.is_some() {
+        if keep_in_band {
             let cells = batch.samples() / per_time * layout.channels.len();
             scratch.in_band_by_time.resize(cells, false);
         }
@@ -299,11 +308,44 @@ impl Packer<'_> {
                         &scratch.frequencies_hz,
                         &mut scratch.in_band,
                     );
-                    if keep_in_band {
-                        scratch.in_band_by_time[time * layout.channels.len()..]
-                            [..layout.channels.len()]
-                            .copy_from_slice(&scratch.in_band);
+                }
+                if prediction {
+                    if bands.is_none() {
+                        scratch.in_band.resize(layout.channels.len(), true);
                     }
+                    for (channel, selected) in
+                        layout.channel_indices.iter().zip(&mut scratch.in_band)
+                    {
+                        *selected &= partition.channels.binary_search(channel).is_ok();
+                    }
+                    scratch.in_prediction.clear();
+                    if let Some(bands) = partition.prediction_bands.as_ref() {
+                        let factor = self.plans[store].frequency_factor(
+                            bands.frame().frequency_ref(),
+                            batch.field[time],
+                            batch.time.seconds_since(time, origin),
+                            batch.time.reference(),
+                        )?;
+                        in_band(
+                            bands,
+                            factor,
+                            layout,
+                            &scratch.frequencies_hz,
+                            &mut scratch.in_prediction,
+                        );
+                    } else {
+                        scratch.in_prediction.resize(layout.channels.len(), true);
+                    }
+                }
+                if keep_in_band {
+                    let selected = if prediction {
+                        &scratch.in_prediction
+                    } else {
+                        &scratch.in_band
+                    };
+                    scratch.in_band_by_time[time * layout.channels.len()..]
+                        [..layout.channels.len()]
+                        .copy_from_slice(selected);
                 }
                 packed_time = Some(time);
             }
@@ -369,12 +411,14 @@ impl Packer<'_> {
                     )?;
                     // A channel the time's bands miss is not read: no
                     // sample of it, or interpolated from it, is imaged.
-                    for (cells, _) in flags_out
-                        .chunks_mut(routed.len())
-                        .zip(in_band)
-                        .filter(|(_, selected)| !**selected)
-                    {
-                        cells.fill(true);
+                    if !prediction {
+                        for (cells, _) in flags_out
+                            .chunks_mut(routed.len())
+                            .zip(in_band)
+                            .filter(|(_, selected)| !**selected)
+                        {
+                            cells.fill(true);
+                        }
                     }
                     // A row's uvw matters only if one of its samples is imaged.
                     let imaged = !flagged && flags_out.iter().any(|flag| !*flag);
@@ -398,6 +442,9 @@ impl Packer<'_> {
                     }
                 },
             )?;
+            if prediction {
+                out.separate_last_row_selection(&scratch.in_band, &scratch.in_prediction);
+            }
         }
         Ok(())
     }

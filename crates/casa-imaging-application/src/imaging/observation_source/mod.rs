@@ -149,13 +149,23 @@ impl BatchRoute {
         key: PartitionKey,
         window: Range<usize>,
         values: bool,
+        prediction: bool,
     ) -> Result<(AccessRequest, Layout), SourceError> {
         let route = &self.stores[key.store];
         let partition = &route.selection.partitions[key.partition];
         let entry = route.observation().catalogue().partition(partition.id);
-        let channels = match &partition.density_channels {
-            Some(channels) if !values => channels,
-            _ => &partition.channels,
+        let channels = if prediction {
+            partition
+                .prediction_channels
+                .as_ref()
+                .unwrap_or(&partition.channels)
+        } else if !values {
+            partition
+                .density_channels
+                .as_ref()
+                .unwrap_or(&partition.channels)
+        } else {
+            &partition.channels
         };
         let layout = Layout::new(partition, entry, &channels[window])?;
         let probe = requests::payload(
@@ -195,12 +205,28 @@ impl BatchRoute {
             .try_fold(WriteCharge::default(), |most, key| {
                 let route = &self.stores[key.store];
                 let partition = &route.selection.partitions[key.partition];
-                let channels = partition.channels.len();
-                let (request, _) = self.request(key, 0..channels, true)?;
+                let prediction = !write_back.by_band() && partition.prediction_channels.is_some();
+                let channels = if prediction {
+                    partition
+                        .prediction_channels
+                        .as_ref()
+                        .expect("prediction selection")
+                        .len()
+                } else {
+                    partition.channels.len()
+                };
+                if channels == 0 {
+                    return Ok(most);
+                }
+                let (request, _) = self.request(key, 0..channels, true, prediction)?;
                 let session = route
                     .session()
                     .ok_or("a writing run's store was opened to read only")?;
-                let bands = partition.frequency_bands.is_some();
+                let bands = if prediction {
+                    partition.prediction_bands.is_some()
+                } else {
+                    partition.frequency_bands.is_some()
+                };
                 Ok::<_, SourceError>(most.most(write_back.write_bytes(session, &request, bands)?))
             })?;
         Ok(charge.bytes())
@@ -213,6 +239,8 @@ struct Stream<'a> {
     /// Whether the traversal's blocks are written back: each partition it
     /// binds and each block it fills is queued for the sink.
     writing: bool,
+    /// Whether a final write reads the parent imager's untuned selection.
+    prediction: bool,
     /// Each partition's selected channels the wave reads, as ordinals of
     /// its selected channels, store by store; `None` when none reaches the
     /// wave.
@@ -456,10 +484,10 @@ impl<'a> ObservationSource<'a> {
         &self,
         key: PartitionKey,
         window: Range<usize>,
-        (values, writing): (bool, bool),
+        (values, writing, prediction): (bool, bool, bool),
     ) -> Result<(Traversal<'a>, Layout), SourceError> {
         let route: &'a BatchRoute = self.route;
-        let (request, layout) = route.request(key, window, values)?;
+        let (request, layout) = route.request(key, window, values, prediction)?;
         let traversal = route.stores[key.store].observation().bind_read(&request)?;
         if writing && let Some(write_back) = route.write_back() {
             write_back.deliver(Delivered::Partition {
@@ -509,8 +537,11 @@ impl<'a> ObservationSource<'a> {
                 };
                 let (key, window) = stream.windows[next].clone();
                 let window = window.expect("a window");
-                let (traversal, layout) =
-                    self.bind(key, window, (stream.values, stream.writing))?;
+                let (traversal, layout) = self.bind(
+                    key,
+                    window,
+                    (stream.values, stream.writing, stream.prediction),
+                )?;
                 if stream.geometry.1 != Some(key.store) {
                     // Each store's plan carries its own geometry state.
                     stream.geometry = (GeometryTraversal::default(), Some(key.store));
@@ -545,10 +576,7 @@ impl<'a> ObservationSource<'a> {
                 (&batch, key.store, partition, layout),
                 &self.geometry,
                 &self.keep,
-                (
-                    stream.values,
-                    stream.writing && route.write_back().is_some_and(WriteBack::by_band),
-                ),
+                (stream.values, stream.writing, stream.prediction),
                 &mut self.scratch,
                 out,
             )?;
@@ -594,6 +622,19 @@ impl BoundedSource for ObservationSource<'_> {
             Some(write_back) if values => write_back.writing()?,
             _ => false,
         };
+        let prediction = writing
+            && self
+                .route
+                .write_back()
+                .is_some_and(|write| !write.by_band());
+        if prediction {
+            for (key, window) in &mut windows {
+                let partition = &self.route.stores[key.store].selection.partitions[key.partition];
+                if let Some(channels) = &partition.prediction_channels {
+                    *window = (!channels.is_empty()).then_some(0..channels.len());
+                }
+            }
+        }
         if values && !writing {
             self.skip_density_only(&mut windows)?;
         }
@@ -603,6 +644,7 @@ impl BoundedSource for ObservationSource<'_> {
         self.state = State::Streaming(Box::new(Stream {
             values,
             writing,
+            prediction,
             windows,
             next: 0,
             current: None,

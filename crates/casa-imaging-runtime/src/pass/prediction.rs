@@ -790,7 +790,7 @@ impl PredictionChunk<'_> {
         let model: &PreparedModelGrids = &domain.model;
         scratch.begin(npol);
         for position in rows.clone() {
-            let row = block.row(index, row_at(block, ordered, position));
+            let row = block.prediction_row(index, row_at(block, ordered, position));
             let placed =
                 domain
                     .resampler

@@ -53,30 +53,33 @@ fn row_spectrum<'a>(windows: impl Iterator<Item = &'a SpectralWindowSelection>) 
     let mut spectrum = RowSpectrum::evenly_spaced(0);
     let mut known = true;
     for window in windows {
-        let channels = window.channel_indices();
-        spectrum.channels = spectrum.channels.max(channels.len());
-        let frequency = |index: usize| {
-            let catalog = window.coordinate_catalog()?;
-            catalog.channel_frequency_hz(*channels.get(index)? as usize)
-        };
-        if channels.len() < 2 {
-            continue;
-        }
-        let (Some(first), Some(second), Some(last)) =
-            (frequency(0), frequency(1), frequency(channels.len() - 1))
-        else {
-            known = false;
-            continue;
-        };
-        let spacing = (second - first).abs() * (1.0 - FRAME_MARGIN);
-        if spacing > 0.0
-            && (spectrum.first_spacing_hz == 0.0 || spacing < spectrum.first_spacing_hz)
+        for channels in
+            std::iter::once(window.channel_indices()).chain(window.prediction_channels())
         {
-            spectrum.first_spacing_hz = spacing;
+            spectrum.channels = spectrum.channels.max(channels.len());
+            let frequency = |index: usize| {
+                let catalog = window.coordinate_catalog()?;
+                catalog.channel_frequency_hz(*channels.get(index)? as usize)
+            };
+            if channels.len() < 2 {
+                continue;
+            }
+            let (Some(first), Some(second), Some(last)) =
+                (frequency(0), frequency(1), frequency(channels.len() - 1))
+            else {
+                known = false;
+                continue;
+            };
+            let spacing = (second - first).abs() * (1.0 - FRAME_MARGIN);
+            if spacing > 0.0
+                && (spectrum.first_spacing_hz == 0.0 || spacing < spectrum.first_spacing_hz)
+            {
+                spectrum.first_spacing_hz = spacing;
+            }
+            spectrum.span_hz = spectrum
+                .span_hz
+                .max((last - first).abs() * (1.0 + FRAME_MARGIN));
         }
-        spectrum.span_hz = spectrum
-            .span_hz
-            .max((last - first).abs() * (1.0 + FRAME_MARGIN));
     }
     if known {
         spectrum

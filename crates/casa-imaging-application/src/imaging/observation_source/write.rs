@@ -32,11 +32,9 @@
 //! (`VisibilityIteratorImpl2::putColumnRows`), so that channel keeps its
 //! contents. `SynthesisImagerVi2::predictModel`, which overwrites it where
 //! tclean goes on to call it, reads the parent imager's selection, which is
-//! not tuned and so takes every channel at every time
-//! ([`WriteBack::by_band`]). There a channel a time's bands miss holds the
-//! prediction of a flagged sample, zero, where CASA extrapolates, and a
-//! channel the run doesn't read keeps its contents, where CASA writes it
-//! (#1134).
+//! not tuned: its per-time bands select the parent channels, including those
+//! that do not reach the cube. The source keeps these predictions distinct
+//! from the channels and flags used for gridding ([`WriteBack::by_band`]).
 
 use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
@@ -214,7 +212,7 @@ impl WriteBack {
         let patch = elements * (targets.len() * size_of::<Complex32>() + size_of::<bool>());
         // The blocks in flight and the one being written, each with its
         // batch's times and products and which channels each time reads.
-        let in_band = if bands && self.by_band {
+        let in_band = if bands {
             partition.times_per_batch * request.channels.len() * size_of::<bool>()
         } else {
             0
