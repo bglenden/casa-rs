@@ -1,0 +1,91 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "quantity",
+      "args": [
+        1,
+        "1"
+      ],
+      "result": {
+        "unit": "1",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        0.5,
+        "1"
+      ],
+      "result": {
+        "unit": "1",
+        "value": 0.5
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        "2 1"
+      ],
+      "result": {
+        "unit": "1",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        "0 1"
+      ],
+      "result": {
+        "unit": "1",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "quantity",
+      "args": [
+        {
+          "value": 0.5,
+          "unit": "1"
+        }
+      ],
+      "result": {
+        "unit": "1",
+        "value": 0.5
+      }
+    },
+    {
+      "method": "getunit",
+      "args": [
+        {
+          "value": 0.5,
+          "unit": "1"
+        }
+      ],
+      "result": "1"
+    },
+    {
+      "method": "add",
+      "args": [
+        {
+          "value": 0.5,
+          "unit": "1"
+        },
+        1.0
+      ],
+      "result": {
+        "unit": "1",
+        "value": 1.5
+      }
+    },
+    {
+      "method": "check",
+      "args": [
+        "2 1"
+      ],
+      "result": true
+    }
+  ]
+}

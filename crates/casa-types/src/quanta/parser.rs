@@ -29,7 +29,9 @@ use crate::quanta::unit_val::UnitVal;
 /// Returns `Err(UnitError::InvalidUnit)` if the string cannot be parsed.
 pub fn parse_unit(input: &str) -> Result<UnitVal, UnitError> {
     let input = input.trim();
-    if input.is_empty() {
+    // casacore accepts the literal unit "1" as dimensionless and retains
+    // its name on the Unit; compound numeric unit expressions are separate.
+    if input.is_empty() || input == "1" {
         return Ok(UnitVal::NODIM);
     }
 
@@ -275,6 +277,13 @@ mod tests {
     #[test]
     fn parse_empty() {
         let val = parse_unit("").unwrap();
+        assert_eq!(val.factor, 1.0);
+        assert!(val.dim.is_dimensionless());
+    }
+
+    #[test]
+    fn parse_one_is_dimensionless() {
+        let val = parse_unit("1").unwrap();
         assert_eq!(val.factor, 1.0);
         assert!(val.dim.is_dimensionless());
     }
