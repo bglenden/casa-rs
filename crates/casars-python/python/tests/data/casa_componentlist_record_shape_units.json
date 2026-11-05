@@ -1,0 +1,295 @@
+{
+  "casatools": "6.7.6-14",
+  "components": [
+    {
+      "shape": "point"
+    },
+    {
+      "shape": "Gaussian",
+      "majoraxis": "2arcsec",
+      "minoraxis": "1arcsec",
+      "positionangle": "30deg"
+    },
+    {
+      "shape": "disk",
+      "majoraxis": "0.5deg",
+      "minoraxis": "1arcmin",
+      "positionangle": "0.5rad"
+    },
+    {
+      "shape": "Gaussian",
+      "majoraxis": "2arcmin",
+      "minoraxis": "30arcsec",
+      "positionangle": "-30deg"
+    }
+  ],
+  "cases": [
+    {
+      "stage": "added",
+      "shapes": [
+        {
+          "type": "Point"
+        },
+        {
+          "type": "Gaussian",
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 1.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          }
+        },
+        {
+          "type": "Disk",
+          "majoraxis": {
+            "unit": "deg",
+            "value": 0.5
+          },
+          "minoraxis": {
+            "unit": "arcmin",
+            "value": 1.0
+          },
+          "positionangle": {
+            "unit": "rad",
+            "value": 0.5
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          }
+        },
+        {
+          "type": "Gaussian",
+          "majoraxis": {
+            "unit": "arcmin",
+            "value": 2.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 30.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 150.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "stage": "renamed",
+      "shapes": [
+        {
+          "type": "Point"
+        },
+        {
+          "type": "Gaussian",
+          "majoraxis": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 1.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          }
+        },
+        {
+          "type": "Disk",
+          "majoraxis": {
+            "unit": "deg",
+            "value": 0.5
+          },
+          "minoraxis": {
+            "unit": "arcmin",
+            "value": 1.0
+          },
+          "positionangle": {
+            "unit": "rad",
+            "value": 0.5
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          }
+        },
+        {
+          "type": "Gaussian",
+          "majoraxis": {
+            "unit": "arcmin",
+            "value": 2.0
+          },
+          "minoraxis": {
+            "unit": "arcsec",
+            "value": 30.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 150.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "stage": "reopened",
+      "shapes": [
+        {
+          "type": "Point"
+        },
+        {
+          "type": "Gaussian",
+          "majoraxis": {
+            "unit": "arcmin",
+            "value": 0.03333333333333333
+          },
+          "minoraxis": {
+            "unit": "arcmin",
+            "value": 0.016666666666666666
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 29.999999999999996
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          }
+        },
+        {
+          "type": "Disk",
+          "majoraxis": {
+            "unit": "arcmin",
+            "value": 30.000000000000004
+          },
+          "minoraxis": {
+            "unit": "arcmin",
+            "value": 1.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 28.64788975654116
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          }
+        },
+        {
+          "type": "Gaussian",
+          "majoraxis": {
+            "unit": "arcmin",
+            "value": 2.0
+          },
+          "minoraxis": {
+            "unit": "arcmin",
+            "value": 0.5
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 150.0
+          },
+          "majoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "minoraxiserror": {
+            "unit": "rad",
+            "value": 0.0
+          },
+          "positionangleerror": {
+            "unit": "rad",
+            "value": 0.0
+          }
+        }
+      ]
+    }
+  ]
+}

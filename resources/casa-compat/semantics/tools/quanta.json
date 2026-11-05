@@ -224,12 +224,11 @@
    ]
   },
   "getformat": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA's placeholder warns and returns 'F'; it does not change formatting.",
    "evidence": [
     "signature",
-    "refusals"
+    "format-placeholders-casa"
    ]
   },
   "getunit": {
@@ -373,12 +372,11 @@
    ]
   },
   "setformat": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA's placeholder warns and returns False; it does not change formatting.",
    "evidence": [
     "signature",
-    "refusals"
+    "format-placeholders-casa"
    ]
   },
   "sin": {
@@ -671,6 +669,18 @@
     "crates/casars-python/python/tests/test_quanta_spectral_conversion.py"
    ],
    "source_revision": "63be6c526c6fdaff7308f747d002372157a2b1bd"
+  },
+  "format-placeholders-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "28 CASA 6.7.6-14 calls cover the placeholders, text and bytes arguments, invalid types and defaults.",
+   "scope": "quanta.getformat and quanta.setformat.",
+   "links": [
+    "tools/simulation/quanta_format_placeholders_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_format_placeholders.json",
+    "crates/casars-python/python/tests/test_quanta_format_placeholders.py"
+   ],
+   "source_revision": "cc9c724bc6a5179cbfe50d8a78b88a138cede63c"
   },
   "record-complex-scalar-casa": {
    "kind": "CASA-recorded values",
