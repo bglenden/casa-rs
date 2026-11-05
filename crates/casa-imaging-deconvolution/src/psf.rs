@@ -311,4 +311,23 @@ mod tests {
             summary.sidelobe()
         );
     }
+    /// A PSF circular in world coordinates spans half as many pixels along
+    /// an axis whose increment is twice as large.
+    #[test]
+    fn a_fresh_psf_fit_uses_both_cell_sizes() {
+        let shape = PlaneShape::new(64, 64);
+        let mut psf = vec![0.0; shape.len()];
+        for x in 0..64 {
+            for y in 0..64 {
+                let dx = x as f64 - 32.0;
+                let dy = (y as f64 - 32.0) * 2.0;
+                psf[x * 64 + y] = (-4.0 * std::f64::consts::LN_2 * (dx * dx + dy * dy) / 64.0).exp();
+            }
+        }
+        let summary = PsfSummary::with_cutoff_and_cell(&psf, shape, 0.35, [1.0, 2.0]).unwrap();
+        let beam = summary.beam();
+        assert!((beam.major_fwhm_rad() / beam.minor_fwhm_rad() - 1.0).abs() < 0.05, "{beam:?}");
+        assert!(summary.sidelobe() < 0.03, "{}", summary.sidelobe());
+    }
+
 }
