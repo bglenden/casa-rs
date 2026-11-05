@@ -7,8 +7,9 @@
 //! CASA's simulation tasks call are implemented (`open`, `addcomponent`,
 //! `rename`, `close`, `done`, `length`, `torecord`, `getspectrum`,
 //! `getrefdir`), with the accessors `getcomponent`, `getfluxvalue`,
-//! `getfluxunit`, `getlabel`, `shapetype` and `spectrumtype`; the rest raise
-//! `NotImplementedError` naming #1053.
+//! `getfluxunit`, `getlabel`, `shapetype` and `spectrumtype`, and CASA's
+//! `iscomponentlist` placeholder; the rest raise `NotImplementedError`
+//! naming #1053.
 //!
 //! CASA's outcomes are kept ([`ops`] for the table, `add` for
 //! `addcomponent`): what CASA raises is a `RuntimeError` with CASA's
@@ -24,6 +25,7 @@
 
 mod add;
 mod ops;
+mod placeholder;
 mod selection;
 pub(crate) mod surface;
 
@@ -580,10 +582,27 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder logs a warning and returns false.
     #[pyo3(signature = (tool = None), text_signature = "($self, tool=[])")]
-    fn iscomponentlist(&self, tool: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("iscomponentlist")
+    fn iscomponentlist(
+        &self,
+        py: Python<'_>,
+        tool: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let pending = tool
+            .map(placeholder::pending_integer_overflow)
+            .transpose()?
+            .unwrap_or(false);
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning("is_componentlist not implemented yet"));
+            Ok(CasaValue::Bool(false))
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_iscomponentlist> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Check whether the selected components have physically possible fluxes.
