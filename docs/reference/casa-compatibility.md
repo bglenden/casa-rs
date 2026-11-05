@@ -1602,7 +1602,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
-| [quanta](#quanta) | `casars.tools` | 57 | yes | 53 | 0 | 4 | 0 | 0 | 0 |
+| [quanta](#quanta) | `casars.tools` | 57 | yes | 54 | 0 | 3 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 18 | 11 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 46 | 2 | 9 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
@@ -2072,7 +2072,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 53, Partial: 0, Not implemented: 4, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 54, Partial: 0, Not implemented: 3, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -2099,7 +2099,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `done` | `kill=False` | Implemented | As CASA's. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `eq` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
 | `exp` | `v=[]` | Implemented | Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors. | [signature](#quanta-evidence-signature), [logarithms-casa](#quanta-evidence-logarithms-casa) |
-| `fits` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `fits` |  | Implemented | Registers CASA FITS unit aliases process-wide, including the change of S from siemens to seconds. | [signature](#quanta-evidence-signature), [fits-units-casa](#quanta-evidence-fits-units-casa) |
 | `floor` | `v=[]` | Implemented | Rounds a scalar quantity in its own unit, preserving CASA conversion errors. | [signature](#quanta-evidence-signature), [rounding-casa](#quanta-evidence-rounding-casa) |
 | `formxxx` | `v=[], format='dms', prec=2` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `ge` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
@@ -2312,6 +2312,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/casa-compat/quantity_record_complex_scalar_oracle.py](https://github.com/bglenden/casa-rs/blob/5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e/tools/casa-compat/quantity_record_complex_scalar_oracle.py)
 - [crates/casars-python/python/tests/data/casa_quanta_record_complex_scalar.json](https://github.com/bglenden/casa-rs/blob/5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e/crates/casars-python/python/tests/data/casa_quanta_record_complex_scalar.json)
 - [crates/casars-python/python/tests/test_quanta_record_complex_scalar.py](https://github.com/bglenden/casa-rs/blob/5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e/crates/casars-python/python/tests/test_quanta_record_complex_scalar.py)
+
+<a id="quanta-evidence-fits-units-casa"></a>
+##### fits-units-casa
+
+**CASA-recorded values — measured.** CASA 6.7.6-14 comparisons cover 19 FITS aliases, prefixes and compounds before and after registration, converted values, repeat calls and a second instance. quanta.fits and its process-wide unit registry.
+
+- [tools/casa-compat/quanta_fits_oracle.py](https://github.com/bglenden/casa-rs/blob/f0c42837f0d70b1404fd726397431b5a01ebdd47/tools/casa-compat/quanta_fits_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_fits.json](https://github.com/bglenden/casa-rs/blob/f0c42837f0d70b1404fd726397431b5a01ebdd47/crates/casars-python/python/tests/data/casa_quanta_fits.json)
+- [crates/casars-python/python/tests/test_quanta_fits.py](https://github.com/bglenden/casa-rs/blob/f0c42837f0d70b1404fd726397431b5a01ebdd47/crates/casars-python/python/tests/test_quanta_fits.py)
 
 ### simulator
 

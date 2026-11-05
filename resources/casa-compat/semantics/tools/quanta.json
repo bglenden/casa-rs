@@ -191,12 +191,11 @@
    ]
   },
   "fits": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Registers CASA FITS unit aliases process-wide, including the change of S from siemens to seconds.",
    "evidence": [
     "signature",
-    "refusals"
+    "fits-units-casa"
    ]
   },
   "floor": {
@@ -693,6 +692,18 @@
     "crates/casars-python/python/tests/test_quanta_record_complex_scalar.py"
    ],
    "source_revision": "5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e"
+  },
+  "fits-units-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "CASA 6.7.6-14 comparisons cover 19 FITS aliases, prefixes and compounds before and after registration, converted values, repeat calls and a second instance.",
+   "scope": "quanta.fits and its process-wide unit registry.",
+   "links": [
+    "tools/casa-compat/quanta_fits_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_fits.json",
+    "crates/casars-python/python/tests/test_quanta_fits.py"
+   ],
+   "source_revision": "f0c42837f0d70b1404fd726397431b5a01ebdd47"
   }
  }
 }
