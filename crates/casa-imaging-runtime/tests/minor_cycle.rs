@@ -382,6 +382,40 @@ fn an_automatic_mask_reuses_its_saved_psf_beam() {
     saved_beam_is_used_by_minor_preparation(true);
 }
 
+/// A saved off-centre plane already has CASA's chosen beam; the other
+/// channel's larger beam must not replace it on restart.
+#[test]
+fn a_saved_off_centre_beam_is_not_resettled() {
+    const WIDTH: usize = 64;
+    let problem = problem(
+        WIDTH,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let psf = images.psf.as_mut().expect("PSF");
+        psf[..WIDTH * WIDTH].fill(0.0);
+        psf[8 * WIDTH + 50] = 1.0;
+        psf[32 * WIDTH + 32] = 0.99;
+    });
+    let first = casa_imaging_deconvolution::RestoringBeam::new(10.0, 6.0, 0.0).unwrap();
+    let second = casa_imaging_deconvolution::RestoringBeam::new(20.0, 8.0, 0.0).unwrap();
+    let mut setup = setup(&problem, None);
+    setup.psf_beams = Some(vec![first, second].into());
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    prepare_minor_cycle(
+        &completion,
+        &full_plane(&problem),
+        &setup,
+        &mut cache,
+        &team,
+    )
+    .expect("prepare");
+    assert_eq!(cache.summary(0, 0, 0).unwrap().beam(), first);
+}
+
 /// An incomplete saved beam grid is rejected instead of silently refitting.
 #[test]
 fn an_incomplete_saved_psf_beam_grid_is_refused() {
