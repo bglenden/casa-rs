@@ -112,9 +112,9 @@ pub(super) struct Survey {
     /// selected row (`msc.fieldId()(0)`) in a MeasurementSet in time order.
     pub(super) earliest_field_id: usize,
     pub(super) observation_ids: BTreeSet<i32>,
-    /// The earliest selected time: the anchor of the spectral frame and of
-    /// the image's observation date.
-    pub(super) first_time_mjd_seconds: f64,
+    /// The selected MS's first physical row time for an image conversion;
+    /// otherwise the earliest selected time.
+    pub(super) image_time_mjd_seconds: f64,
     pub(super) time_bounds_mjd_seconds: [f64; 2],
     /// Read only for native AW ([`first_cross_sample`]).
     pub(super) first_cross: Option<FirstCrossSample>,
@@ -159,6 +159,8 @@ pub(super) struct SurveyPlan<'a> {
     pub(super) msv2: Option<&'a Msv2Observation>,
     pub(super) candidates: Candidates,
     pub(super) row_selection: RowSelection,
+    /// A TOPO cube's image epoch is its first selected physical MAIN row.
+    pub(super) image_row_epoch: bool,
     /// Whether the survey reads UVW for the W range, besides a UV-distance
     /// interval's test.
     pub(super) w_range: bool,
@@ -194,6 +196,8 @@ struct Facts {
     first_visibility: Option<FirstVisibility>,
     earliest_field_id: Option<i32>,
     observation_ids: BTreeSet<i32>,
+    /// Lowest selected physical row and its time, for the image epoch.
+    image_first_row: Option<(u32, f64)>,
     time_bounds_mjd_seconds: [f64; 2],
     w: WRange,
     epochs: BTreeMap<usize, Vec<Epoch>>,
@@ -395,6 +399,7 @@ pub(super) fn survey(
         first_visibility: None,
         earliest_field_id: None,
         observation_ids: BTreeSet::new(),
+        image_first_row: None,
         time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
         w: WRange::EMPTY,
         epochs: epoch_bound
@@ -460,6 +465,14 @@ pub(super) fn survey(
     let first_visibility = facts
         .first_visibility
         .expect("a survey holding samples observed a first visibility");
+    let image_time_mjd_seconds = if plan.image_row_epoch && plan.msv2.is_some() {
+        facts
+            .image_first_row
+            .ok_or(PrepareError::NoSelectedSamples)?
+            .1
+    } else {
+        facts.time_bounds_mjd_seconds[0]
+    };
     Ok(Admitted {
         value: Survey {
             row_selection: plan.row_selection,
@@ -476,7 +489,7 @@ pub(super) fn survey(
             )
             .expect("a FIELD row is nonnegative"),
             observation_ids: facts.observation_ids,
-            first_time_mjd_seconds: facts.time_bounds_mjd_seconds[0],
+            image_time_mjd_seconds,
             time_bounds_mjd_seconds: facts.time_bounds_mjd_seconds,
             first_cross,
             w: facts.w,
@@ -527,6 +540,7 @@ fn survey_partition(
         .get_mut(&candidate.spectral_window)
         .expect("the survey bounds every candidate's window");
     let origin = MjdHighPrec::new(0.0, 0.0);
+    let mut image_first_row = facts.image_first_row;
     while let Some(event) = traversal.next(buffers)? {
         let ReadEvent::Batch(batch) = event else {
             continue;
@@ -535,7 +549,11 @@ fn survey_partition(
             if !plan.time_holds(&batch, time)? {
                 continue;
             }
-            let selected = if per_sample {
+            // Once physical row zero is selected no later row can precede it.
+            let find_first = plan.image_row_epoch
+                && plan.msv2.is_some()
+                && image_first_row.is_none_or(|(row, _)| row != 0);
+            let (selected, first_row) = if per_sample {
                 // UVW read only to tell rows apart leaves the W range alone.
                 let mut unused = WRange::EMPTY;
                 let w = if plan.reads_uvw() {
@@ -544,22 +562,35 @@ fn survey_partition(
                     &mut unused
                 };
                 rows.clear();
-                let held = observe_time(
+                let (held, first_row) = observe_time(
                     plan,
                     candidate,
                     (&batch, time),
                     w,
                     array.is_none().then_some(&mut rows),
+                    find_first,
                 )?;
                 samples += if counted { held } else { 0 };
-                held > 0
+                (held > 0, first_row)
             } else {
-                true
+                let first_row = if find_first {
+                    plan.msv2
+                        .expect("the first row is an MSv2 row")
+                        .first_main_row_at_time(candidate.id, batch.time.offsets_s()[time])
+                } else {
+                    None
+                };
+                (true, first_row)
             };
             if !selected {
                 continue;
             }
             let time_mjd_seconds = batch.time.seconds_since(time, origin);
+            if let Some(row) = first_row
+                && image_first_row.is_none_or(|(previous, _)| row < previous)
+            {
+                image_first_row = Some((row, time_mjd_seconds));
+            }
             let field_id = i32::try_from(batch.field[time].0).expect("a FIELD row is an i32 id");
             facts.fields.insert(field_id);
             let array = match array {
@@ -592,6 +623,7 @@ fn survey_partition(
             });
         }
     }
+    facts.image_first_row = image_first_row;
     if samples > 0 {
         let entry = plan.observation.catalogue().partition(candidate.id);
         facts
@@ -613,10 +645,12 @@ fn observe_time(
     (batch, time): (&VisibilityBatch<'_>, usize),
     w: &mut WRange,
     mut rows: Option<&mut Vec<usize>>,
-) -> Result<u64, PrepareError> {
+    find_first: bool,
+) -> Result<(u64, Option<u32>), PrepareError> {
     let uv = plan.row_selection.uv_distances();
     let per_time = batch.samples_per_time();
     let mut held = 0;
+    let mut first_row = None;
     for sample in time * per_time..(time + 1) * per_time {
         if !plan.baseline_holds(batch.baselines[sample % per_time]) {
             continue;
@@ -646,15 +680,22 @@ fn observe_time(
             }
             w.observe(uvw_m[2]);
         }
-        if let (Some(rows), Some(ms)) = (rows.as_deref_mut(), plan.msv2) {
+        if (find_first || rows.is_some())
+            && let Some(ms) = plan.msv2
+        {
             let baseline = batch.baselines[sample % per_time];
             if let Some(row) = ms.main_row(candidate.id, batch.time.offsets_s()[time], baseline) {
-                rows.push(row as usize);
+                if let Some(rows) = rows.as_deref_mut() {
+                    rows.push(row as usize);
+                }
+                if find_first {
+                    first_row = Some(first_row.map_or(row, |previous: u32| previous.min(row)));
+                }
             }
         }
         held += 1;
     }
-    Ok(held)
+    Ok((held, first_row))
 }
 
 /// Whether sample `sample` of `batch` is padding its store holds: every
@@ -889,6 +930,7 @@ mod tests {
                     UvSelection::All,
                     IntentSelection::All,
                 ),
+                image_row_epoch: false,
                 w_range: true,
                 first_cross: false,
             };
@@ -897,6 +939,7 @@ mod tests {
                 first_visibility: None,
                 earliest_field_id: None,
                 observation_ids: BTreeSet::new(),
+                image_first_row: None,
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
                 epochs: [(candidate.spectral_window, Vec::new())].into(),
@@ -1017,6 +1060,7 @@ mod tests {
                 UvSelection::All,
                 IntentSelection::All,
             ),
+            image_row_epoch: false,
             w_range: false,
             first_cross: true,
         };
@@ -1040,6 +1084,7 @@ mod tests {
                 UvSelection::All,
                 IntentSelection::All,
             ),
+            image_row_epoch: false,
             w_range: false,
             first_cross: false,
         };
@@ -1057,6 +1102,7 @@ mod tests {
                 first_visibility: None,
                 earliest_field_id: None,
                 observation_ids: BTreeSet::new(),
+                image_first_row: None,
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
                 epochs: [(candidate.spectral_window, Vec::new())].into(),
@@ -1138,6 +1184,7 @@ mod tests {
                 partitions: vec![],
             },
             row_selection,
+            image_row_epoch: false,
             w_range: false,
             first_cross: false,
         };
@@ -1155,6 +1202,7 @@ mod tests {
                 first_visibility: None,
                 earliest_field_id: None,
                 observation_ids: BTreeSet::new(),
+                image_first_row: None,
                 time_bounds_mjd_seconds: [f64::INFINITY, f64::NEG_INFINITY],
                 w: WRange::EMPTY,
                 epochs: [(candidate.spectral_window, Vec::new())].into(),

@@ -121,6 +121,37 @@ fn the_msv2_adapter_holds_at_most_its_bounds() {
     an_opening_beyond_its_budget_is_refused_before_its_grids(&root.path().join("jittered"));
     partially_filled_tree_nodes_fit_their_bound();
     many_small_partitions_fit_the_retained_charge(&root.path().join("partitions"));
+    first_row_lookup_allocates_nothing(&root.path().join("first-row"));
+}
+
+/// Looking up a physical row borrows the admitted index, even when the
+/// DATA_DESCRIPTION table contains many unused entries.
+fn first_row_lookup_allocates_nothing(root: &Path) {
+    std::fs::create_dir(root).expect("fixture directory");
+    let path = pointed_track(root, 2);
+    let mut ms = MeasurementSet::open(&path).expect("edit fixture");
+    let table = ms
+        .subtable_mut(casa_ms::SubtableId::DataDescription)
+        .expect("DATA_DESCRIPTION");
+    let row = table
+        .row_accessor()
+        .row(0)
+        .expect("first description")
+        .clone();
+    for _ in 0..1024 {
+        table.add_row(row.clone()).expect("unused description");
+    }
+    ms.save().expect("save fixture");
+    drop(ms);
+    let opened = Msv2Observation::open(&path).expect("open fixture");
+    let id = opened.catalogue().partition_ids()[0];
+    let grid = opened.grid(id, "base").expect("grid");
+    let time = grid.times_s[0];
+    let (row, held) = peak_of(|| {
+        std::hint::black_box(opened.first_main_row_at_time(id, std::hint::black_box(time)))
+    });
+    assert_eq!(row, Some(0));
+    assert_eq!(held, 0, "first-row lookup allocated {held} bytes");
 }
 
 /// Fixed-size maps with different insertion and removal histories exercise

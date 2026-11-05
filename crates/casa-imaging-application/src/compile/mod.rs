@@ -172,7 +172,7 @@ pub(crate) fn prepare(
         stores::one_store(&stores, "a moving phase centre")?;
     }
     let frame = FrameContext {
-        anchor_time_mjd_seconds: survey.first_time_mjd_seconds,
+        anchor_time_mjd_seconds: survey.image_time_mjd_seconds,
         field_id: centre.field_id,
         phase: centre.phase.clone(),
         direction: centre.direction,
@@ -390,6 +390,8 @@ fn survey_observation(
         msv2: store.msv2(),
         candidates,
         row_selection,
+        image_row_epoch: request.specmode == SpecMode::Cube
+            && request.outframe == FrequencyRef::TOPO,
         w_range: matches!(
             request.gridder,
             Gridder::Wproject { .. } | Gridder::Awproject(_)
@@ -948,8 +950,11 @@ fn deployment(
             primary_beam_centres,
             vla_selection_store: (primary_beam == Some(AnalyticPrimaryBeamModel::CasaVlaBand)
                 && request.specmode == SpecMode::Cube
-                && surveyed.spectral.output_frequency_reference == FrequencyRef::BARY)
-                .then_some(surveyed.reference),
+                && matches!(
+                    surveyed.spectral.output_frequency_reference,
+                    FrequencyRef::BARY | FrequencyRef::TOPO
+                ))
+            .then_some(surveyed.reference),
             writer: CasaImageWriter::for_domains(domains.iter().map(PreparedImageDomain::output)),
         },
         output_directories: domains

@@ -337,7 +337,7 @@ pub(crate) fn run(
         }
         publication.controls = controls;
     }
-    // CASA selects a BARY cube's VLA aperture through its LSRK conversion layer,
+    // CASA selects the cube's VLA aperture through its LSRK conversion layer,
     // but evaluates it at each output plane's own frequency.
     let vla_selection_hz = publication.vla_selection_store.map(|reference| {
         let factor = route.stores[reference]
