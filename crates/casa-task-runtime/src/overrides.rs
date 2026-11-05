@@ -47,7 +47,11 @@ pub(crate) fn normalize_overrides(
                 };
                 let note = error.binding_note(binding);
                 let message = if matches!(error, NormalizationError::Type(_)) && note.is_empty() {
-                    crate::casa_type_diagnostics::scalar_refusal(bundle.surface.id(), name, value)
+                    crate::casa_type_diagnostics::direct_type_refusal(
+                        bundle.surface.id(),
+                        name,
+                        value,
+                    )
                 } else {
                     None
                 }
