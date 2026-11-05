@@ -106,7 +106,10 @@ pub(super) fn quantity_of(
 
 /// A quantity record holding an array, else `None`.
 fn array_record(value: &Variant) -> ConvertResult<Option<Quantum>> {
-    if !matches!(value, Variant::Record(_)) {
+    let Variant::Record(record) = value else {
+        return Ok(None);
+    };
+    if matches!(record.get("value"), Some(Variant::Array { shape, .. }) if shape.is_empty()) {
         return Ok(None);
     }
     Ok(quantum_holder(value)?.filter(Quantum::is_array))

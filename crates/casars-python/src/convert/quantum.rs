@@ -132,6 +132,12 @@ fn record_quantum(record: &VariantRecord) -> ConvertResult<Quantum> {
             values.clone(),
             casacore_unit(unit).map_err(wrap)?,
         )),
+        (Some(Variant::Array { shape, values }), Some(Variant::Text(unit))) if shape.is_empty() => {
+            Ok(Quantum::vector(
+                values.clone(),
+                casacore_unit(unit).map_err(wrap)?,
+            ))
+        }
         (Some(Variant::Array { shape, values }), Some(Variant::Text(unit))) => Ok(Quantum {
             values: values.clone(),
             shape: Some(shape.clone()),
