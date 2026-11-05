@@ -61,7 +61,7 @@ IMPLEMENTED = {
     "addcomponent", "close", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
     "getfluxerror", "getfluxpol", "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
     "indices", "getrefdir", "getrefdirra", "getrefdirdec", "getrefdirframe", "getshape", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
-    "select", "deselect", "selected", "torecord", "isphysical",
+    "select", "deselect", "selected", "torecord", "isphysical", "iscomponentlist",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 

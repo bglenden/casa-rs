@@ -1,0 +1,549 @@
+{
+  "casatools": "6.7.6-14",
+  "cyclic_exit": -11,
+  "cases": [
+    {
+      "state": "empty",
+      "input": "default",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "none",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "empty",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "integer",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "text",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "boolean",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "record",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "array",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "array0",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "nested",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "bytes",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "complex",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "object",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "set",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "u64",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "huge",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "input": "negative_huge",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "input": "huge_list",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "input": "huge_tuple",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "input": "huge_record",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "input": "huge_key",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "object_array",
+      "result": false
+    },
+    {
+      "state": "empty",
+      "input": "huge_after_float",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "input": "huge_before_float",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "input": "huge_after_text",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "input": "huge_after_bool",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "input": "huge_after_none",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "input": "huge_nested_float",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "input": "huge_record_float",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "input": "default",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "none",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "empty",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "integer",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "text",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "boolean",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "record",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "array",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "array0",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "nested",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "bytes",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "complex",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "object",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "set",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "u64",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "huge",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "input": "negative_huge",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "input": "huge_list",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "input": "huge_tuple",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "input": "huge_record",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "input": "huge_key",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "object_array",
+      "result": false
+    },
+    {
+      "state": "populated",
+      "input": "huge_after_float",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "input": "huge_before_float",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "input": "huge_after_text",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "input": "huge_after_bool",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "input": "huge_after_none",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "input": "huge_nested_float",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "input": "huge_record_float",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "done",
+      "input": "default",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "none",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "empty",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "integer",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "text",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "boolean",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "record",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "array",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "array0",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "nested",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "bytes",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "complex",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "object",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "set",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "u64",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "huge",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "done",
+      "input": "negative_huge",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "done",
+      "input": "huge_list",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "done",
+      "input": "huge_tuple",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "done",
+      "input": "huge_record",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "done",
+      "input": "huge_key",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "object_array",
+      "result": false
+    },
+    {
+      "state": "done",
+      "input": "huge_after_float",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "done",
+      "input": "huge_before_float",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "done",
+      "input": "huge_after_text",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "done",
+      "input": "huge_after_bool",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "done",
+      "input": "huge_after_none",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "done",
+      "input": "huge_nested_float",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "done",
+      "input": "huge_record_float",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_iscomponentlist> returned a result with an exception set"
+      }
+    }
+  ]
+}
