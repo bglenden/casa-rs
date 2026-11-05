@@ -126,21 +126,19 @@
    ]
   },
   "convertdop": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Converts scalar quantities between dimensionless Doppler values and speeds using CASA unit equivalencies.",
    "evidence": [
     "signature",
-    "refusals"
+    "spectral-conversion-casa"
    ]
   },
   "convertfreq": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Converts scalar quantities between frequency, period, wavelength, angular frequency, wavenumber, energy, and momentum using CASA unit equivalencies.",
    "evidence": [
     "signature",
-    "refusals"
+    "spectral-conversion-casa"
    ]
   },
   "cos": {
@@ -647,6 +645,18 @@
     "crates/casars-python/python/tests/test_quanta_normalize.py"
    ],
    "source_revision": "53e13129e2058d0e97f8e7be3a943b9bf29d7d8c"
+  },
+  "spectral-conversion-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "215 CASA 6.7.6-14 conversions and argument cases cover supported dimensions, zero and non-finite values, incompatible units and argument errors.",
+   "scope": "quanta.convertfreq and convertdop.",
+   "links": [
+    "tools/simulation/quanta_spectral_conversion_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json",
+    "crates/casars-python/python/tests/test_quanta_spectral_conversion.py"
+   ],
+   "source_revision": "95c32e6f299b6a16a4f120b8f3125a3bf5bc7a42"
   }
  }
 }

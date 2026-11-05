@@ -7,10 +7,21 @@ import pytest
 from casars.tools import quanta
 
 
+def restore_nonfinite(value):
+    if isinstance(value, str) and value in ("NaN", "Infinity", "-Infinity"):
+        return float(value)
+    if isinstance(value, list):
+        return [restore_nonfinite(item) for item in value]
+    if isinstance(value, dict):
+        return {key: restore_nonfinite(item) for key, item in value.items()}
+    return value
+
+
 def test_conversions_match_casa() -> None:
     fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_spectral_conversion.json").read_text())
     qa = quanta()
-    for case in fixture["cases"]:
+    for raw_case in fixture["cases"]:
+        case = restore_nonfinite(raw_case)
         method = getattr(qa, case["method"])
         args = (case["value"],) if case["unit"] is None else (case["value"], case["unit"])
         if "error" in case:

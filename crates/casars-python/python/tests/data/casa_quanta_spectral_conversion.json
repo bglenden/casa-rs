@@ -268,7 +268,7 @@
       "unit": "m",
       "result": {
         "unit": "m",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -277,7 +277,7 @@
       "unit": "s",
       "result": {
         "unit": "s",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -322,7 +322,7 @@
       "unit": "Hz",
       "result": {
         "unit": "Hz",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -349,7 +349,7 @@
       "unit": "J",
       "result": {
         "unit": "J",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -385,7 +385,7 @@
       "unit": "Hz",
       "result": {
         "unit": "Hz",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -412,7 +412,7 @@
       "unit": "J",
       "result": {
         "unit": "J",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -457,7 +457,7 @@
       "unit": "m",
       "result": {
         "unit": "m",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -466,7 +466,7 @@
       "unit": "s",
       "result": {
         "unit": "s",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -1555,7 +1555,7 @@
       "unit": "m",
       "result": {
         "unit": "m",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -1564,7 +1564,7 @@
       "unit": "s",
       "result": {
         "unit": "s",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -1618,7 +1618,7 @@
       "unit": "m",
       "result": {
         "unit": "m",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -1627,7 +1627,7 @@
       "unit": "s",
       "result": {
         "unit": "s",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -1681,7 +1681,7 @@
       "unit": "m",
       "result": {
         "unit": "m",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -1690,7 +1690,7 @@
       "unit": "s",
       "result": {
         "unit": "s",
-        "value": Infinity
+        "value": "Infinity"
       }
     },
     {
@@ -1732,7 +1732,7 @@
     {
       "method": "convertfreq",
       "value": {
-        "value": NaN,
+        "value": "NaN",
         "unit": ""
       },
       "unit": null,
@@ -1744,7 +1744,7 @@
     {
       "method": "convertfreq",
       "value": {
-        "value": Infinity,
+        "value": "Infinity",
         "unit": "m/s"
       },
       "unit": null,
@@ -1783,25 +1783,25 @@
     {
       "method": "convertdop",
       "value": {
-        "value": NaN,
+        "value": "NaN",
         "unit": ""
       },
       "unit": null,
       "result": {
         "unit": "km/s",
-        "value": NaN
+        "value": "NaN"
       }
     },
     {
       "method": "convertdop",
       "value": {
-        "value": Infinity,
+        "value": "Infinity",
         "unit": "m/s"
       },
       "unit": null,
       "result": {
         "unit": "km/s",
-        "value": Infinity
+        "value": "Infinity"
       }
     }
   ],

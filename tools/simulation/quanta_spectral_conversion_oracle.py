@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Record CASA quanta frequency and Doppler conversions."""
 import json
+import math
 from casaconfig import config
 
 config.data_auto_update = False
@@ -41,4 +42,13 @@ for method in ("convertfreq", "convertdop"):
         except Exception as error:
             case["error"] = {"type": type(error).__name__, "message": str(error)}
         argument_cases.append(case)
-print("CASA_RESULT=" + json.dumps({"casatools": version_string(), "cases": results, "argument_cases": argument_cases}))
+def json_safe(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        return "NaN" if math.isnan(value) else ("Infinity" if value > 0 else "-Infinity")
+    if isinstance(value, list):
+        return [json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {key: json_safe(v) for key, v in value.items()}
+    return value
+
+print("CASA_RESULT=" + json.dumps(json_safe({"casatools": version_string(), "cases": results, "argument_cases": argument_cases}), allow_nan=False))
