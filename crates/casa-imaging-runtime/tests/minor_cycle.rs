@@ -1059,6 +1059,53 @@ fn clarkstokes_solves_each_polarization_separately() {
     assert!((trace[1].flux - 0.51).abs() < 1e-6);
 }
 
+/// With one polarization CASA's two Clark names use the same solver, and
+/// the one retained refresh is covered by the planned charge (#1126).
+#[test]
+fn single_plane_clarkstokes_matches_clark_and_its_refresh_charge() {
+    use casa_imaging_runtime::MinorLayout;
+    let mut traces = Vec::new();
+    for algorithm in [
+        ReconstructionAlgorithm::Clark,
+        ReconstructionAlgorithm::ClarkStokes,
+    ] {
+        let problem = problem(
+            64,
+            ReconstructionBasis::ChannelLocal { channels: 1 },
+            algorithm,
+        );
+        let scene = Scene::new(&problem).with_point([32, 32], &[1.0]);
+        let completion = completion(&problem, &scene, |_| {});
+        let setup = setup(&problem, None);
+        let team = WorkerTeam::new(1).expect("team");
+        let mut cache = PsfCache::default();
+        let prepared = prepare_minor_cycle(
+            &completion,
+            &full_plane(&problem),
+            &setup,
+            &mut cache,
+            &team,
+        )
+        .expect("prepare");
+        let outcome = run_minor_cycle(
+            prepared,
+            &completion,
+            &setup,
+            &controls(5, 0.2),
+            &mut cache,
+            &team,
+            (&HOST, &POLICY),
+        )
+        .expect("minor cycle");
+        let actual = cache.refresh_bytes(&completion);
+        let planned = MinorLayout::of(completion.normal_state()).refresh_bytes(&setup);
+        assert!(actual > 0, "Clark keeps its refresh");
+        assert_eq!(actual, planned, "the retained refresh is admitted");
+        traces.push(outcome.summary.trace);
+    }
+    assert_eq!(traces[0], traces[1], "the one-plane Clark solvers agree");
+}
+
 /// A channel with no samples does not disable joint Clark on a healthy
 /// channel in the same slab (#1140).
 #[test]
