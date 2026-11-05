@@ -656,7 +656,7 @@
     "crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json",
     "crates/casars-python/python/tests/test_quanta_spectral_conversion.py"
    ],
-   "source_revision": "95c32e6f299b6a16a4f120b8f3125a3bf5bc7a42"
+   "source_revision": "63be6c526c6fdaff7308f747d002372157a2b1bd"
   }
  }
 }

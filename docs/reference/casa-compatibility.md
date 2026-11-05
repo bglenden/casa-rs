@@ -2225,9 +2225,9 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **CASA-recorded values — measured.** 215 CASA 6.7.6-14 conversions and argument cases cover supported dimensions, zero and non-finite values, incompatible units and argument errors. quanta.convertfreq and convertdop.
 
-- [tools/simulation/quanta_spectral_conversion_oracle.py](https://github.com/bglenden/casa-rs/blob/95c32e6f299b6a16a4f120b8f3125a3bf5bc7a42/tools/simulation/quanta_spectral_conversion_oracle.py)
-- [crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json](https://github.com/bglenden/casa-rs/blob/95c32e6f299b6a16a4f120b8f3125a3bf5bc7a42/crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json)
-- [crates/casars-python/python/tests/test_quanta_spectral_conversion.py](https://github.com/bglenden/casa-rs/blob/95c32e6f299b6a16a4f120b8f3125a3bf5bc7a42/crates/casars-python/python/tests/test_quanta_spectral_conversion.py)
+- [tools/simulation/quanta_spectral_conversion_oracle.py](https://github.com/bglenden/casa-rs/blob/63be6c526c6fdaff7308f747d002372157a2b1bd/tools/simulation/quanta_spectral_conversion_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json](https://github.com/bglenden/casa-rs/blob/63be6c526c6fdaff7308f747d002372157a2b1bd/crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json)
+- [crates/casars-python/python/tests/test_quanta_spectral_conversion.py](https://github.com/bglenden/casa-rs/blob/63be6c526c6fdaff7308f747d002372157a2b1bd/crates/casars-python/python/tests/test_quanta_spectral_conversion.py)
 
 ### simulator
 
