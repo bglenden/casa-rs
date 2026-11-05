@@ -10,7 +10,7 @@
 //! [`UnitRegistry::put_user`] and [`UnitRegistry::remove_user`].
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Once, OnceLock, RwLock};
 
 use crate::quanta::dim::UnitDim;
@@ -57,6 +57,7 @@ pub struct PrefixEntry {
 struct CachedUnit {
     value: UnitVal,
     fits_enabled: bool,
+    user_generation: u64,
 }
 
 /// The global unit registry.
@@ -79,6 +80,10 @@ pub struct UnitRegistry {
     /// CASA installs the FITS aliases once per process.
     fits_once: Once,
     fits_enabled: AtomicBool,
+    /// User definitions may explicitly override otherwise immutable units.
+    has_builtin_overrides: AtomicBool,
+    /// Changes whenever a user definition is inserted, replaced or removed.
+    user_generation: AtomicU64,
 }
 
 impl UnitRegistry {
@@ -135,19 +140,20 @@ impl UnitRegistry {
             cache: RwLock::new(HashMap::new()),
             fits_once: Once::new(),
             fits_enabled: AtomicBool::new(false),
+            has_builtin_overrides: AtomicBool::new(false),
+            user_generation: AtomicU64::new(0),
         }
     }
 
     /// Looks up a unit by name.
     ///
-    /// Search order: defining → SI → customary → cache → user, except that
-    /// after FITS registration a user-defined `S` takes precedence.
-    /// The immutable built-in maps are otherwise checked first (lock-free).
+    /// User definitions override built-in names. The immutable built-in maps
+    /// remain lock-free until a caller explicitly overrides one.
     pub fn lookup_unit(&self, name: &str) -> Option<UnitVal> {
         // FITS redefines `S` from siemens to seconds. CASA's user map takes
         // precedence for that name, even if a caller already defined it.
-        if name == "S"
-            && self.fits_enabled.load(Ordering::Acquire)
+        if (self.has_builtin_overrides.load(Ordering::Acquire)
+            || (name == "S" && self.fits_enabled.load(Ordering::Acquire)))
             && let Some(entry) = self.user.read().unwrap().get(name)
         {
             return Some(entry.val);
@@ -165,6 +171,7 @@ impl UnitRegistry {
         // A parse begun before FITS registration can finish after the cache
         // is cleared. Its state tag prevents reusing stale `S` expressions.
         if let Some(cached) = self.cache.read().unwrap().get(name)
+            && cached.user_generation == self.user_generation()
             && (!name.contains('S')
                 || cached.fits_enabled == self.fits_enabled.load(Ordering::Acquire))
         {
@@ -184,7 +191,12 @@ impl UnitRegistry {
 
     /// Adds a parsed unit expression to the cache.
     pub fn cache_put(&self, name: &str, val: UnitVal) {
-        self.cache_put_at_fits_state(name, val, self.cache_fits_state(name));
+        self.cache_put_at_state(
+            name,
+            val,
+            self.cache_fits_state(name),
+            self.user_generation(),
+        );
     }
 
     /// Capture the relevant registry state before parsing a cache entry.
@@ -193,12 +205,24 @@ impl UnitRegistry {
     }
 
     /// Cache the value with the state captured before its parse began.
-    pub(crate) fn cache_put_at_fits_state(&self, name: &str, val: UnitVal, fits_enabled: bool) {
+    pub(crate) fn user_generation(&self) -> u64 {
+        self.user_generation.load(Ordering::Acquire)
+    }
+
+    /// Cache the value with the registry state captured before its parse.
+    pub(crate) fn cache_put_at_state(
+        &self,
+        name: &str,
+        val: UnitVal,
+        fits_enabled: bool,
+        user_generation: u64,
+    ) {
         self.cache.write().unwrap().insert(
             name.to_owned(),
             CachedUnit {
                 value: val,
                 fits_enabled,
+                user_generation,
             },
         );
     }
@@ -251,13 +275,19 @@ impl UnitRegistry {
     /// Registers a user-defined unit.
     ///
     /// If a unit with the same name already exists in the user map it is
-    /// replaced.  Built-in units are not affected.
+    /// replaced. An explicit user definition takes precedence over a built-in.
     pub fn put_user(&self, name: impl Into<String>, val: UnitVal, desc: impl Into<String>) {
         let name = name.into();
-        self.user
-            .write()
-            .unwrap()
-            .insert(name.clone(), UnitName::new(name, val, desc));
+        let overrides_builtin = self.defining.contains_key(&name)
+            || self.si.contains_key(&name)
+            || self.customary.contains_key(&name);
+        let mut user = self.user.write().unwrap();
+        user.insert(name.clone(), UnitName::new(name, val, desc));
+        if overrides_builtin {
+            self.has_builtin_overrides.store(true, Ordering::Release);
+        }
+        self.user_generation.fetch_add(1, Ordering::Release);
+        drop(user);
         // Invalidate the cache since user units affect lookup.
         self.cache.write().unwrap().clear();
     }
@@ -266,8 +296,11 @@ impl UnitRegistry {
     ///
     /// Returns `true` if the unit existed and was removed.
     pub fn remove_user(&self, name: &str) -> bool {
-        let removed = self.user.write().unwrap().remove(name).is_some();
+        let mut user = self.user.write().unwrap();
+        let removed = user.remove(name).is_some();
         if removed {
+            self.user_generation.fetch_add(1, Ordering::Release);
+            drop(user);
             self.cache.write().unwrap().clear();
         }
         removed
@@ -309,7 +342,7 @@ mod tests {
         assert_eq!(reg.lookup_unit("S").unwrap().dim, seconds.dim);
         assert!(reg.lookup_unit("S.m").is_none());
         // A parse begun before registration can finish after cache clearing.
-        reg.cache_put_at_fits_state("S.m", siemens, false);
+        reg.cache_put_at_state("S.m", siemens, false, reg.user_generation());
         assert!(reg.lookup_unit("S.m").is_none());
         reg.cache_put("S.m", seconds);
         assert_eq!(reg.lookup_unit("S.m").unwrap().dim, seconds.dim);
@@ -322,6 +355,37 @@ mod tests {
         existing.put_user("S", UnitVal::NODIM, "existing user override");
         existing.add_fits_units();
         assert_eq!(existing.lookup_unit("S").unwrap().dim, UnitVal::NODIM.dim);
+    }
+
+    #[test]
+    fn a_late_cache_write_cannot_restore_an_old_user_definition() {
+        let reg = UnitRegistry::from_builtin();
+        reg.put_user("custom", UnitVal::new(2.0, UnitDim::NODIM), "test");
+        let old_generation = reg.user_generation();
+        reg.put_user("custom", UnitVal::new(3.0, UnitDim::NODIM), "test");
+        // A parse started before redefinition can finish after cache clearing.
+        reg.cache_put_at_state(
+            "custom.custom",
+            UnitVal::new(4.0, UnitDim::NODIM),
+            false,
+            old_generation,
+        );
+        assert!(reg.lookup_unit("custom.custom").is_none());
+        reg.cache_put("custom.custom", UnitVal::new(9.0, UnitDim::NODIM));
+        assert_eq!(reg.lookup_unit("custom.custom").unwrap().factor, 9.0);
+        assert!(reg.remove_user("custom"));
+        assert!(reg.lookup_unit("custom.custom").is_none());
+    }
+
+    #[test]
+    fn explicit_user_definition_overrides_a_builtin_and_removal_restores_it() {
+        let reg = UnitRegistry::from_builtin();
+        assert_eq!(reg.lookup_unit("m").unwrap().dim, UnitVal::LENGTH.dim);
+        reg.put_user("m", UnitVal::new(2.0, UnitVal::TIME.dim), "override");
+        let value = reg.lookup_unit("m").unwrap();
+        assert_eq!((value.factor, value.dim), (2.0, UnitVal::TIME.dim));
+        assert!(reg.remove_user("m"));
+        assert_eq!(reg.lookup_unit("m").unwrap().dim, UnitVal::LENGTH.dim);
     }
 
     #[test]

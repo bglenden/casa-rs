@@ -12,7 +12,7 @@ use casa_types::quanta::casacore;
 use casa_types::quanta::format::{
     CalendarDate, angle_format, format_angle, format_time, time_format,
 };
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, unique_prefix_index};
+use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, UnitVal, unique_prefix_index};
 
 use crate::convert::holder::frequency_hz;
 use crate::convert::quantum::{self, Quantum, quantum_holder};
@@ -30,6 +30,15 @@ fn has(quantity: &Quantity, dimension: Dimension) -> bool {
 
 fn record(quantity: &Quantity) -> CasaValue {
     Quantum::scalar(quantity).to_value()
+}
+
+/// Define a user unit in casacore's process-wide unit registry.
+pub(super) fn define(name: &str, value: &Variant) -> ConvertResult<CasaValue> {
+    let quantity = quantity(value)?;
+    let unit = quantity.unit().val();
+    let definition = UnitVal::new(quantity.value() * unit.factor, unit.dim);
+    casa_types::quanta::registry::global_registry().put_user(name, definition, "User defined");
+    Ok(CasaValue::Bool(true))
 }
 
 /// CASA's physical constants use casacore's case-insensitive minimax lookup.

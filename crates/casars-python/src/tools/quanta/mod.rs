@@ -343,11 +343,17 @@ impl PyQuanta {
         call(py, || ops::trigonometry(&v, "cos"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (name, v = None), text_signature = "($self, name, v=[])")]
-    fn define(&self, name: &Bound<'_, PyAny>, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("define")
+    /// Define a process-wide unit from a scalar quantity.
+    #[pyo3(signature = (name, v = Variant::Empty), text_signature = "($self, name, v=[])")]
+    fn define(&self, py: Python<'_>, name: &Bound<'_, PyAny>, v: Variant) -> PyResult<Py<PyAny>> {
+        let name: String = if name.is_instance_of::<PyString>() {
+            name.extract()?
+        } else if name.is_instance_of::<PyBytes>() {
+            name.call_method1("decode", ("utf-8",))?.extract()?
+        } else {
+            return Err(PyTypeError::new_err("argument _name must be a string"));
+        };
+        call(py, || ops::define(&name, &v))
     }
 
     /// CASA's scalar quantity comparison.

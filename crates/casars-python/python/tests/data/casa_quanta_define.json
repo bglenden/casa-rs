@@ -1,0 +1,233 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "define",
+      "args": [
+        "casaUserLen",
+        "2m"
+      ],
+      "result": true
+    },
+    {
+      "method": "convert",
+      "args": [
+        "1casaUserLen",
+        "m"
+      ],
+      "result": {
+        "unit": "m",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "convert",
+      "args": [
+        "1casaUserLen.casaUserLen",
+        "m2"
+      ],
+      "result": {
+        "unit": "m2",
+        "value": 4.0
+      }
+    },
+    {
+      "method": "other_convert",
+      "args": [
+        "1casaUserLen",
+        "m"
+      ],
+      "result": {
+        "unit": "m",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "define",
+      "args": [
+        "casaUserLen",
+        "3cm"
+      ],
+      "result": true
+    },
+    {
+      "method": "convert",
+      "args": [
+        "1casaUserLen",
+        "m"
+      ],
+      "result": {
+        "unit": "m",
+        "value": 0.03
+      }
+    },
+    {
+      "method": "convert",
+      "args": [
+        "1casaUserLen.casaUserLen",
+        "m2"
+      ],
+      "result": {
+        "unit": "m2",
+        "value": 0.0009
+      }
+    },
+    {
+      "method": "other_convert",
+      "args": [
+        "1casaUserLen",
+        "m"
+      ],
+      "result": {
+        "unit": "m",
+        "value": 0.03
+      }
+    },
+    {
+      "method": "define",
+      "args": [
+        "casaUserLen",
+        "badquantity"
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"badquantity\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "convert",
+      "args": [
+        "1casaUserLen",
+        "m"
+      ],
+      "result": {
+        "unit": "m",
+        "value": 0.03
+      }
+    },
+    {
+      "method": "define",
+      "args": [
+        "casaUserTime",
+        {
+          "value": 4.0,
+          "unit": "s"
+        }
+      ],
+      "result": true
+    },
+    {
+      "method": "convert",
+      "args": [
+        "1casaUserTime",
+        "s"
+      ],
+      "result": {
+        "unit": "s",
+        "value": 4.0
+      }
+    },
+    {
+      "method": "define",
+      "args": [
+        "casaUserDefault"
+      ],
+      "result": true
+    },
+    {
+      "method": "define",
+      "args": [
+        "casaUserNone",
+        null
+      ],
+      "result": true
+    },
+    {
+      "method": "define",
+      "args": [
+        "casaUserNumber",
+        2.0
+      ],
+      "result": true
+    },
+    {
+      "method": "define",
+      "args": [
+        "casaUserList",
+        [
+          1.0,
+          2.0
+        ]
+      ],
+      "result": true
+    },
+    {
+      "method": "define",
+      "args": [
+        "m",
+        "2s"
+      ],
+      "result": true
+    },
+    {
+      "method": "convert",
+      "args": [
+        "1m",
+        "m"
+      ],
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "convert",
+      "args": [
+        "1m",
+        "s"
+      ],
+      "result": {
+        "unit": "s",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "fits",
+      "args": [],
+      "result": true
+    },
+    {
+      "method": "convert",
+      "args": [
+        "1M",
+        "s"
+      ],
+      "result": {
+        "unit": "s",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "convert",
+      "args": [
+        "1METERS",
+        "s"
+      ],
+      "result": {
+        "unit": "s",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "define",
+      "args": [
+        null,
+        "1m"
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _name must be a string"
+      }
+    }
+  ]
+}

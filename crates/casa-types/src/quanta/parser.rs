@@ -44,10 +44,11 @@ pub fn parse_unit(input: &str) -> Result<UnitVal, UnitError> {
         // installed during parsing, retry rather than return a mixture of
         // siemens and seconds. Registration can occur only once.
         let fits_enabled = reg.cache_fits_state(input);
+        let user_generation = reg.user_generation();
         let bytes = input.as_bytes();
         let mut pos = 0;
         let result = parse_expr(bytes, &mut pos);
-        if fits_enabled != reg.cache_fits_state(input) {
+        if fits_enabled != reg.cache_fits_state(input) || user_generation != reg.user_generation() {
             continue;
         }
         let result = result?;
@@ -57,7 +58,7 @@ pub fn parse_unit(input: &str) -> Result<UnitVal, UnitError> {
             });
         }
         // A late cache write retains the state under which parsing began.
-        reg.cache_put_at_fits_state(input, result, fits_enabled);
+        reg.cache_put_at_state(input, result, fits_enabled, user_generation);
         return Ok(result);
     }
 }
@@ -431,5 +432,28 @@ mod tests {
         assert_eq!(val.dim.get(Dimension::Time), -2);
         assert_eq!(val.dim.get(Dimension::Temperature), -1);
         assert_eq!(val.dim.get(Dimension::Amount), -1);
+    }
+
+    #[test]
+    fn concurrent_user_redefinitions_do_not_mix_one_expression() {
+        let reg = global_registry();
+        let unit = |factor| UnitVal::new(factor, crate::quanta::UnitDim::NODIM);
+        reg.put_user("casaRaceUnit", unit(2.0), "test");
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for i in 0..4000 {
+                    reg.put_user(
+                        "casaRaceUnit",
+                        unit(if i % 2 == 0 { 3.0 } else { 2.0 }),
+                        "test",
+                    );
+                }
+            });
+            for _ in 0..4000 {
+                let result = parse_unit("casaRaceUnit.casaRaceUnit").unwrap().factor;
+                assert!(result == 4.0 || result == 9.0, "mixed definition: {result}");
+            }
+        });
+        reg.remove_user("casaRaceUnit");
     }
 }
