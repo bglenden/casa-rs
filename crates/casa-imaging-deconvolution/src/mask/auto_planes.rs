@@ -640,6 +640,90 @@ mod tests {
         );
     }
 
+    /// A narrow 25-pixel island survives its own beam, but CASA prunes it
+    /// when a blank plane brings in a larger beam from the next block.
+    #[test]
+    fn a_blank_plane_changes_the_materialized_mask_through_its_block_beam() {
+        use crate::plane::PlaneShape;
+        use casa_imaging_model::{DirectionFrame, NoiseEstimate, Projection, SkyDirection};
+
+        let psf_shape = PlaneShape::new(64, 64);
+        let psf = (0..psf_shape.len())
+            .map(|index| {
+                let [x, y] = psf_shape.pixel(index);
+                let r2 = (x as f64 - 32.0).powi(2) + (y as f64 - 32.0).powi(2);
+                (-r2 / 8.0).exp()
+            })
+            .collect::<Vec<_>>();
+        let narrow = PsfSummary::new(&psf, psf_shape).unwrap();
+        let broad =
+            narrow.with_domain_beam(&psf, psf_shape, RestoringBeam::new(10.0, 8.0, 0.0).unwrap());
+        let coordinate = DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(DirectionFrame::J2000, 1.0, 0.5),
+            [450.0, 450.0],
+            [-1.0e-4, 1.0e-4],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 90.0],
+        );
+        let controls = AutoMultithreshControls {
+            sidelobe_factor: 2.0,
+            noise_factor: 4.25,
+            low_noise_factor: 1.5,
+            negative_factor: 0.0,
+            minimum_beam_fraction: 0.5,
+            smooth_factor: 1.0,
+            cut_threshold: 0.01,
+            grow_iterations: 0,
+            grow_prune: true,
+            minimum_percent_change: -1.0,
+            noise: NoiseEstimate::Fast,
+            verbose: false,
+        };
+        let shape = [900, 900];
+        let read = |key: MaskPlaneKey| {
+            if !matches!(key.channel, 0 | 10) {
+                return Ok::<_, MaskError>(None);
+            }
+            let mut residual = vec![0.0; shape[0] * shape[1]];
+            if key.channel == 0 {
+                for x in 448..453 {
+                    for y in 448..453 {
+                        residual[x * shape[1] + y] = 10.0;
+                    }
+                }
+            }
+            Ok(Some(AutoMaskPlane {
+                residual,
+                valid: vec![true; shape[0] * shape[1]],
+                statistics: None,
+            }))
+        };
+        let psfs = |key: MaskPlaneKey| match key.channel {
+            0 => Some(narrow),
+            10 => Some(broad),
+            _ => None,
+        };
+        let source = AutoMaskSource {
+            read: &read,
+            psf: &psfs,
+            workers: 1,
+        };
+        let state = AutoMaskState {
+            coordinate,
+            controls: &controls,
+            completed_major_cycles: 0,
+            threshold_reached: false,
+            previous: None,
+            stopped_channels: &[],
+        };
+        let (mask, evidence) =
+            auto_mask_domain(&state, 0, shape, MaskPlanes::new(11, 1).unwrap(), &source).unwrap();
+        let row = evidence.plane(0, 0).unwrap();
+        assert_eq!((row.regions, row.pruned_regions), (1, 1));
+        assert!(!mask.plane(0, 0).unwrap().iter().any(|pixel| *pixel));
+    }
+
     /// CASA's common-beam iteration visits every channel of a Stokes plane
     /// before the next Stokes plane, regardless of our plane storage order.
     #[test]
