@@ -105,7 +105,7 @@ pub(crate) fn quantum_holder(value: &Variant) -> ConvertResult<Option<Quantum>> 
 /// `QuantumHolder::fromRecord`: a value, or an array of values.
 fn record_quantum(record: &BTreeMap<String, Variant>) -> ConvertResult<Quantum> {
     let wrap = |error: String| {
-        if error.starts_with("Unit::check Illegal unit string ") {
+        if error.starts_with("Unit::check Illegal unit string ") || error.starts_with("Wrong") {
             ConvertError::runtime(error)
         } else {
             ConvertError::runtime(format!("Error {error} in converting quantity"))
