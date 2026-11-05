@@ -461,6 +461,7 @@ mod tests {
 
     fn setup(algorithm: ReconstructionAlgorithm) -> MinorCycleSetup<'static> {
         MinorCycleSetup {
+            psf_cutoff: 0.35,
             algorithm,
             accounting: HogbomIterationAccounting::Strict,
             response: None,

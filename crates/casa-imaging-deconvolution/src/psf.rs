@@ -46,6 +46,15 @@ impl PsfSummary {
     /// When the PSF has no positive finite peak or the main lobe cannot be
     /// fitted.
     pub fn new(psf: &[f64], shape: PlaneShape) -> Result<Self, Error> {
+        Self::with_cutoff(psf, shape, DEFAULT_PSF_FIT_CUTOFF)
+    }
+
+    /// Measure a PSF using the requested CASA main-lobe fit cutoff.
+    ///
+    /// # Errors
+    ///
+    /// When the PSF has no positive finite peak or the main lobe cannot be fitted.
+    pub fn with_cutoff(psf: &[f64], shape: PlaneShape, cutoff: f32) -> Result<Self, Error> {
         let peak = psf_peak(psf, shape).ok_or(Error::PsfPeak)?;
         if !(psf[peak].is_finite() && psf[peak] > 0.0) {
             return Err(Error::PsfPeak);
@@ -64,7 +73,7 @@ impl PsfSummary {
                 .fold(0.0_f64, |level, value| level.max(value.abs()));
             (RestoringBeam::new(1.0, 1.0, 0.0)?, level)
         } else {
-            let beam = fit_main_lobe(&single, axes, [1.0, 1.0], DEFAULT_PSF_FIT_CUTOFF)?;
+            let beam = fit_main_lobe(&single, axes, [1.0, 1.0], cutoff)?;
             let sidelobe = fitted_psf_sidelobe_fraction_with_beam(&single, axes, beam)?;
             (beam, sidelobe)
         };

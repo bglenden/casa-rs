@@ -74,6 +74,7 @@ fn setup(
     response: Option<MinorCycleImageResponse>,
 ) -> MinorCycleSetup<'static> {
     MinorCycleSetup {
+        psf_cutoff: 0.35,
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: HogbomIterationAccounting::Strict,
         response,
@@ -262,6 +263,80 @@ fn an_off_centre_plane_takes_its_domains_largest_beam_and_clarks_patch() {
     assert_eq!(off.clark().size, wide.clark().size);
     assert!(off.sidelobe() >= 1.0, "{}", off.sidelobe());
     assert!(off.clark().exterior_sidelobe >= 1.0);
+}
+
+/// A non-Gaussian PSF has different fitted beams at different cutoffs.
+/// Exercise both the ordinary path and the automatic-mask premeasurement.
+fn cutoff_changes_the_measured_beam(automatic: bool) {
+    const WIDTH: usize = 64;
+    let problem = problem(
+        WIDTH,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem).with_point([32, 32], &[1.0]);
+    let completion = completion(&problem, &scene, |images| {
+        let psf = images.psf.as_mut().expect("PSF");
+        for x in 0..WIDTH {
+            for y in 0..WIDTH {
+                let dx = x as f64 - 32.0;
+                let dy = y as f64 - 32.0;
+                let r2 = dx * dx + dy * dy;
+                psf[x * WIDTH + y] = (0.7 * (-r2 / 8.0).exp() + 0.3 * (-r2 / 72.0).exp()) as f32;
+            }
+        }
+    });
+    let plans = if automatic {
+        ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::AutoMultithresh {
+            coordinate: problem.geometry().domains()[0].direction(),
+            controls: casa_imaging_deconvolution::AutoMultithreshControls {
+                sidelobe_factor: 2.0,
+                noise_factor: 4.25,
+                low_noise_factor: 1.5,
+                negative_factor: 0.0,
+                minimum_beam_fraction: 0.3,
+                smooth_factor: 1.0,
+                cut_threshold: 0.01,
+                grow_iterations: 0,
+                grow_prune: false,
+                minimum_percent_change: -1.0,
+                noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
+                verbose: false,
+            },
+            completed_major_cycles: 0,
+            cycle_threshold_reached: false,
+            previous: None,
+            stopped_channels: Box::new([]),
+        }])
+        .expect("automatic mask")
+    } else {
+        full_plane(&problem)
+    };
+    let team = WorkerTeam::new(1).expect("team");
+    let beam = |cutoff| {
+        let mut setup = setup(&problem, None);
+        setup.psf_cutoff = cutoff;
+        setup.automask = automatic;
+        let mut cache = PsfCache::default();
+        prepare_minor_cycle(&completion, &plans, &setup, &mut cache, &team).expect("prepare");
+        cache
+            .summary(0, 0, 0)
+            .expect("measured beam")
+            .beam()
+            .major_fwhm_rad()
+    };
+    let (low, high) = (beam(0.15), beam(0.65));
+    assert!(low > high * 1.1, "low {low}, high {high}");
+}
+
+#[test]
+fn a_minor_cycle_fits_its_psf_at_the_requested_cutoff() {
+    cutoff_changes_the_measured_beam(false);
+}
+
+#[test]
+fn an_automatic_mask_measures_its_psf_at_the_requested_cutoff() {
+    cutoff_changes_the_measured_beam(true);
 }
 
 /// A multi-term component records each Taylor coefficient's flux, and the

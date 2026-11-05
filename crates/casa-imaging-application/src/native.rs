@@ -327,6 +327,7 @@ pub(crate) fn run(
     let outcome = imaging::run(
         imaging::ImagingInputs {
             problem,
+            psf_cutoff: publication.controls.psf_cutoff(),
             source: &route,
             masks,
             start_model,

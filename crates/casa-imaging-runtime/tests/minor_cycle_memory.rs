@@ -158,6 +158,7 @@ fn a_minor_cycle_holds_at_most_its_admission_whatever_its_planes() {
         pass.append(scene.pass_images(model, true)).expect("images");
         let completion = cycle.finish(SAMPLES, BLOCKS).expect("complete");
         let setup = MinorCycleSetup {
+            psf_cutoff: 0.35,
             algorithm: ReconstructionAlgorithm::Hogbom,
             accounting: HogbomIterationAccounting::Strict,
             response: None,
@@ -260,6 +261,7 @@ fn a_solve_measuring_through_a_beam_holds_at_most_its_admission() {
         vec![[362.0, 362.0]],
     )]);
     let setup = MinorCycleSetup {
+        psf_cutoff: 0.35,
         algorithm: ReconstructionAlgorithm::Hogbom,
         accounting: HogbomIterationAccounting::Strict,
         response: None,
@@ -598,6 +600,7 @@ fn a_preparation_that_reads_the_beam_holds_at_most_its_admission() {
             BeamReading::PbMask | BeamReading::MaskOnly => 0.3,
         };
         let setup = MinorCycleSetup {
+            psf_cutoff: 0.35,
             algorithm: ReconstructionAlgorithm::Hogbom,
             accounting: HogbomIterationAccounting::Strict,
             response: None,
@@ -676,6 +679,7 @@ fn automask_setup<'a>(
     (with_beam, with_response): (bool, bool),
 ) -> MinorCycleSetup<'a> {
     MinorCycleSetup {
+        psf_cutoff: 0.35,
         algorithm,
         accounting: HogbomIterationAccounting::Strict,
         response: with_response.then(|| {
@@ -754,6 +758,7 @@ fn measure_joint_clark(channels: usize, workers: usize) {
     pass.append(images).expect("images");
     let completion = cycle.finish(SAMPLES, BLOCKS).expect("completion");
     let setup = MinorCycleSetup {
+        psf_cutoff: 0.35,
         algorithm: ReconstructionAlgorithm::Clark,
         accounting: HogbomIterationAccounting::Strict,
         response: None,

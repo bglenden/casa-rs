@@ -59,6 +59,7 @@ pub(crate) use continuation::Forms;
 /// What one native imaging run needs besides the compiled problem.
 pub(crate) struct ImagingInputs<'a> {
     pub(crate) problem: &'a CompiledProblem,
+    pub(crate) psf_cutoff: f32,
     /// The observation's batches the passes read.
     pub(crate) source: &'a BatchRoute,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
@@ -241,6 +242,7 @@ pub(crate) fn run(
         problem,
         (inputs.image_response, inputs.primary_beam),
         &inputs.masks,
+        inputs.psf_cutoff,
     );
     let mut mask_plans = inputs.masks.clone();
     let cancel = inputs.cancel.clone();
@@ -566,9 +568,11 @@ fn minor_setup<'a>(
         Option<AnalyticPrimaryBeam<'a>>,
     ),
     masks: &ImageDomainReconstructionMaskPlans,
+    psf_cutoff: f32,
 ) -> MinorCycleSetup<'a> {
     let controls = problem.reconstruction().controls();
     MinorCycleSetup {
+        psf_cutoff,
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: controls.hogbom_iteration_accounting(),
         response,

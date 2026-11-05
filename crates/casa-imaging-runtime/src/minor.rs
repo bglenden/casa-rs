@@ -90,6 +90,8 @@ pub enum MinorCycleRunError {
 /// What every minor cycle of a run shares.
 #[derive(Clone, Debug)]
 pub struct MinorCycleSetup<'a> {
+    /// The PSF main-lobe fit cutoff.
+    pub psf_cutoff: f32,
     /// The deconvolver.
     pub algorithm: ReconstructionAlgorithm,
     /// Högbom's iteration accounting.
@@ -341,7 +343,7 @@ pub fn prepare_minor_cycle(
         // An automatic mask smooths by its channel block's common beam and
         // thresholds by the image's sidelobe level, so every plane's PSF is
         // measured first.
-        measure_psfs(normal, taylor, cache, &keys, team)?;
+        measure_psfs(normal, taylor, cache, &keys, setup.psf_cutoff, team)?;
         let shared = &*cache;
         let reading = Reading {
             normal,
@@ -402,7 +404,7 @@ pub fn prepare_minor_cycle(
         };
         let summary = match shared.summaries.get(key) {
             Some(summary) => *summary,
-            None => PsfSummary::new(&plane.psf[0], plane.shape)?,
+            None => PsfSummary::with_cutoff(&plane.psf[0], plane.shape, setup.psf_cutoff)?,
         };
         let pixels = plane_pixels(&inputs, *key, &plane)?;
         let mut statistics = PlaneStatistics::measure(
@@ -760,6 +762,7 @@ fn measure_psfs(
     taylor: bool,
     cache: &mut PsfCache,
     keys: &[PlaneKey],
+    cutoff: f32,
     team: &WorkerTeam,
 ) -> Result<(), MinorCycleRunError> {
     let mut slots = keys
@@ -771,7 +774,11 @@ fn measure_psfs(
         let shape = plane_shape(normal, *key);
         let psf = read_psf(normal, taylor, *key)?;
         let peak = psf_peak_value(&psf, shape)?;
-        *summary = Some(PsfSummary::new(&normalise(psf, peak), shape)?);
+        *summary = Some(PsfSummary::with_cutoff(
+            &normalise(psf, peak),
+            shape,
+            cutoff,
+        )?);
         Ok::<_, MinorCycleRunError>(())
     })?;
     for (key, summary) in slots {
