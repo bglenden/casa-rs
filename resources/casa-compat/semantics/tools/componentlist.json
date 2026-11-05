@@ -141,12 +141,11 @@
    ]
   },
   "getfluxerror": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Returns the real parts of the four stored component flux errors, with CASA index handling.",
    "evidence": [
     "signature",
-    "refusals"
+    "fluxerror-casa"
    ]
   },
   "getfluxpol": {
@@ -741,6 +740,19 @@
     "crates/casars-python/python/tests/test_componentlist_indices.py"
    ],
    "source_revision": "aae16abef1d08ee2d1533befddec5c4e05d8bfb6"
+  },
+  "fluxerror-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Twelve CASA 6.7.6-14 calls cover nonzero real and complex errors, index narrowing and argument errors; the CASA-created table is retained.",
+   "scope": "componentlist.getfluxerror.",
+   "links": [
+    "tools/simulation/componentlist_fluxerror_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_fluxerror.json",
+    "crates/casars-python/python/tests/data/casa_fluxerrors.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_fluxerror.py"
+   ],
+   "source_revision": "5074e93e7172c2d348f11beaa04daf83895a6e62"
   }
  }
 }
