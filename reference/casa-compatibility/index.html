@@ -2717,6 +2717,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#record-empty-float-vector-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        record-empty-float-vector-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6484,6 +6495,17 @@
     <span class="md-ellipsis">
       
         fits-units-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#record-empty-float-vector-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        record-empty-float-vector-casa
       
     </span>
   </a>
@@ -11620,7 +11642,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>v=[], a=[]</code></td>
 <td>Implemented</td>
 <td>Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a>, <a href="#quanta-evidence-bare-complex-scalar-casa">bare-complex-scalar-casa</a></td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a>, <a href="#quanta-evidence-bare-complex-scalar-casa">bare-complex-scalar-casa</a>, <a href="#quanta-evidence-record-empty-float-vector-casa">record-empty-float-vector-casa</a></td>
 </tr>
 <tr>
 <td><code>angle</code></td>
@@ -11704,7 +11726,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>v=[], outunit=[]</code></td>
 <td>Implemented</td>
 <td>Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance).</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a></td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-empty-float-vector-casa">record-empty-float-vector-casa</a></td>
 </tr>
 <tr>
 <td><code>convertdop</code></td>
@@ -11802,14 +11824,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>v=[]</code></td>
 <td>Implemented</td>
 <td>Reads a quantity's value and unit back.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a>, <a href="#quanta-evidence-bare-complex-scalar-casa">bare-complex-scalar-casa</a></td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a>, <a href="#quanta-evidence-bare-complex-scalar-casa">bare-complex-scalar-casa</a>, <a href="#quanta-evidence-record-empty-float-vector-casa">record-empty-float-vector-casa</a></td>
 </tr>
 <tr>
 <td><code>getvalue</code></td>
 <td><code>v=[]</code></td>
 <td>Implemented</td>
 <td>Reads a quantity's value and unit back.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a></td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-empty-float-vector-casa">record-empty-float-vector-casa</a></td>
 </tr>
 <tr>
 <td><code>gt</code></td>
@@ -11914,7 +11936,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>v=[], unitname='', keepshape=False</code></td>
 <td>Implemented</td>
 <td>Builds quantities and quantity arrays from strings, numbers and records, as CASA does.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a>, <a href="#quanta-evidence-bare-complex-scalar-casa">bare-complex-scalar-casa</a></td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-casa-values">casa-values</a>, <a href="#quanta-evidence-record-complex-scalar-casa">record-complex-scalar-casa</a>, <a href="#quanta-evidence-record-complex-array-casa">record-complex-array-casa</a>, <a href="#quanta-evidence-bare-complex-scalar-casa">bare-complex-scalar-casa</a>, <a href="#quanta-evidence-record-empty-float-vector-casa">record-empty-float-vector-casa</a></td>
 </tr>
 <tr>
 <td><code>setformat</code></td>
@@ -12182,6 +12204,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/f0c42837f0d70b1404fd726397431b5a01ebdd47/tools/casa-compat/quanta_fits_oracle.py">tools/casa-compat/quanta_fits_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/f0c42837f0d70b1404fd726397431b5a01ebdd47/crates/casars-python/python/tests/data/casa_quanta_fits.json">crates/casars-python/python/tests/data/casa_quanta_fits.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/f0c42837f0d70b1404fd726397431b5a01ebdd47/crates/casars-python/python/tests/test_quanta_fits.py">crates/casars-python/python/tests/test_quanta_fits.py</a></li>
+</ul>
+<p><a id="quanta-evidence-record-empty-float-vector-casa"></a></p>
+<h5 id="record-empty-float-vector-casa">record-empty-float-vector-casa<a class="headerlink" href="#record-empty-float-vector-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 56 CASA 6.7.6-14 calls compare empty NumPy vectors, element types, valid and invalid units, and scalar and array operations. Empty quantity-record vectors in quanta.quantity, getunit, getvalue, add and convert.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a9bed31f4033c1c34490c96cef9b87889aad0f28/tools/casa-compat/quantity_record_empty_array_oracle.py">tools/casa-compat/quantity_record_empty_array_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a9bed31f4033c1c34490c96cef9b87889aad0f28/crates/casars-python/python/tests/data/casa_quantity_record_empty_array.json">crates/casars-python/python/tests/data/casa_quantity_record_empty_array.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a9bed31f4033c1c34490c96cef9b87889aad0f28/crates/casars-python/python/tests/test_quanta_record_empty_array.py">crates/casars-python/python/tests/test_quanta_record_empty_array.py</a></li>
 </ul>
 <h3 id="simulator">simulator<a class="headerlink" href="#simulator" title="Permanent link">&para;</a></h3>
 <h4 id="simulator-method-implementation">simulator method implementation<a class="headerlink" href="#simulator-method-implementation" title="Permanent link">&para;</a></h4>
