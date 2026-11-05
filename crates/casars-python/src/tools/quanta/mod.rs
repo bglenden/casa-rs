@@ -13,6 +13,7 @@
 mod ops;
 pub(crate) mod surface;
 
+use pyo3::exceptions::{PyOverflowError, PySystemError, PyTypeError};
 use pyo3::prelude::*;
 
 use crate::convert::value::CasaValue;
@@ -21,6 +22,11 @@ use crate::tools::{LogLine, emit, not_yet_implemented_in};
 
 /// The Python logger the tool's warnings go to.
 const LOGGER: &str = "casars.tools.quanta";
+
+/// Keep an explicitly supplied `None` distinct from an omitted argument.
+fn supplied<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
+    Ok(Some(value.clone()))
+}
 
 /// CASA's `quanta` tool.
 #[pyclass(name = "quanta", module = "casars.tools", frozen)]
@@ -434,15 +440,31 @@ impl PyQuanta {
         stub("norm")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=1)")]
+    /// Raise a scalar quantity to an integer power.
+    #[pyo3(signature = (v = Variant::Empty, a = None), text_signature = "($self, v=[], a=1)")]
     fn pow(
         &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        v: Variant,
+        #[pyo3(from_py_with = supplied)] a: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("pow")
+        let (power, system_error) = match a {
+            None => (1, false),
+            Some(value) => match value.extract::<i64>() {
+                Ok(number) => (number as i32, false),
+                Err(error) if value.is_none() || error.is_instance_of::<PyOverflowError>(py) => {
+                    (-1, true)
+                }
+                Err(_) => return Err(PyTypeError::new_err("argument _a must be an integer")),
+            },
+        };
+        let result = call(py, || ops::power(&v, power))?;
+        if system_error {
+            return Err(PySystemError::new_err(
+                "<built-in function quanta_pow> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Not yet implemented in casa-rs.

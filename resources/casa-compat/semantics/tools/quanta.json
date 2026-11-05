@@ -358,12 +358,11 @@
    ]
   },
   "pow": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar integer powers, with original unit spelling, C-int narrowing, non-finite values and exponent limits.",
    "evidence": [
     "signature",
-    "refusals"
+    "power-casa"
    ]
   },
   "quantity": {
@@ -625,6 +624,18 @@
     "crates/casars-python/python/tests/test_tools_quanta.py"
    ],
    "source_revision": "8c90f0f745b09bf5a7ec439598eb4502c8ff5b3d"
+  },
+  "power-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "113 CASA 6.7.6-14 cases cover powers, compound units, signed zero, non-finite values, exponent limits and argument errors.",
+   "scope": "quanta.pow.",
+   "links": [
+    "tools/simulation/quanta_power_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_power.json",
+    "crates/casars-python/python/tests/test_quanta_power.py"
+   ],
+   "source_revision": "e8d45e80390ed698567a28e6d13cf97578b3d92b"
   }
  }
 }

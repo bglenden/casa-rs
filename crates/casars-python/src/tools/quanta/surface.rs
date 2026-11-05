@@ -151,7 +151,7 @@ const METHODS: &[Method] = &[
         "pow",
         &[param("v", K::Quantity, Empty), param("a", K::Int, Int(1))],
         R::Record,
-        No,
+        Yes,
     ),
     method("quantity", &QUANTITY, R::Record, Yes),
     method(
