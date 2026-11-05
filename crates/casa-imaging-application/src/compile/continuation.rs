@@ -22,7 +22,7 @@ pub(crate) struct Continuation {
     pub(crate) start_model: Option<StartModel>,
     /// Charges for a reused CLEAN mask and saved beams, held through publication.
     pub(crate) mask_resident: Reservation,
-    /// The PSF, sums of weights and residual read in place of a pass.
+    /// Earlier products or their metadata, including images read in place of a pass.
     pub(crate) existing: Option<ExistingProducts>,
 }
 
@@ -112,7 +112,16 @@ pub(super) fn prepare(
         ));
     }
     let residual = restart::reads_residual(request);
-    if !request.calcpsf || residual {
+    // CASA retains an existing residual's beam even when it forms new pixels.
+    let residual_name = family
+        .names("residual")
+        .into_iter()
+        .next()
+        .expect("a residual name");
+    let mask_beam = request.usemask == UseMask::AutoMultithresh
+        && request.niter > 0
+        && restart::product_path(&request.imagename, &residual_name).exists();
+    if !request.calcpsf || residual || mask_beam {
         let mut existing = ExistingProducts::new(
             &request.imagename,
             family,
@@ -132,7 +141,7 @@ pub(super) fn prepare(
             charge.retain(existing.beam_resident_bytes());
             continuation.mask_resident.join(charge);
         }
-        if residual && request.usemask == UseMask::AutoMultithresh && request.niter > 0 {
+        if mask_beam {
             let mut charge = admit(
                 &context.host,
                 &context.policy,

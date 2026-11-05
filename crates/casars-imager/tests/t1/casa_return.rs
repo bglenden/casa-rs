@@ -809,7 +809,8 @@ fn tclean_restart_reuses_the_saved_psf_beam() {
 }
 
 /// On restart CASA automask uses the residual's beam, or the PSF beam when
-/// the residual has none. The two headers deliberately disagree.
+/// the residual has none, including when image pixels are recomputed.
+/// The two headers deliberately disagree.
 #[test]
 fn tclean_automatic_restart_prefers_the_residual_beam() {
     use casa_images::{GaussianBeam, ImageBeamSet, PagedImage};
@@ -817,10 +818,14 @@ fn tclean_automatic_restart_prefers_the_residual_beam() {
     let directory = observation.scratch("restart-mask-beam");
     std::fs::create_dir_all(&directory).unwrap();
     let cell = 0.012_f64.to_radians() / 3600.0;
-    for (name, psf_size, residual_size, expected_mask) in [
-        ("residual-broad", 2.5, Some(10.0), false),
-        ("residual-narrow", 10.0, Some(2.5), true),
-        ("residual-absent", 10.0, None, false),
+    for (name, psf_size, residual_size, recompute, recompute_psf, expected_mask) in [
+        ("residual-broad", 2.5, Some(10.0), false, false, false),
+        ("residual-narrow", 10.0, Some(2.5), false, false, true),
+        ("residual-absent", 10.0, None, false, false, false),
+        ("recomputed-broad", 2.5, Some(50.0), true, false, false),
+        ("recomputed-narrow", 2.5, Some(2.5), true, false, true),
+        ("both-recomputed-broad", 2.5, Some(50.0), true, true, false),
+        ("both-recomputed-narrow", 2.5, Some(2.5), true, true, true),
     ] {
         let mut values = json!({
             "vis": observation.measurement_set(), "imagename": directory.join(name),
@@ -865,10 +870,10 @@ fn tclean_automatic_restart_prefers_the_residual_beam() {
         sumwt.save().unwrap();
         drop(sumwt);
         values["niter"] = json!(1);
-        values["calcpsf"] = json!(false);
-        values["calcres"] = json!(false);
+        values["calcpsf"] = json!(recompute_psf);
+        values["calcres"] = json!(recompute);
         values["usemask"] = json!("auto-multithresh");
-        values["sidelobethreshold"] = json!(2.0);
+        values["sidelobethreshold"] = json!(if recompute { 0.01 } else { 2.0 });
         values["noisethreshold"] = json!(4.25);
         values["lownoisethreshold"] = json!(1.5);
         values["minbeamfrac"] = json!(0.5);

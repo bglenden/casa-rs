@@ -172,9 +172,6 @@ impl ExistingProducts {
         channels: usize,
         cell_rad: f64,
     ) -> Result<(), PrepareError> {
-        if !self.residual {
-            return Ok(());
-        }
         let name = self
             .family
             .names("residual")
@@ -221,7 +218,7 @@ impl ExistingProducts {
             .sum()
     }
 
-    /// Bound the PSF image header and beam conversion read together.
+    /// Bound an image beam header and beam conversion read together.
     /// Each beam is three quantity records (one field and two nested fields
     /// each), plus the channel and Stokes records. The table keyword tree,
     /// the decoded beam grid, and the converted grid may coexist.
