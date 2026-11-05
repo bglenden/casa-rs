@@ -92,3 +92,25 @@ fn row_spectrum<'a>(windows: impl Iterator<Item = &'a SpectralWindowSelection>) 
 /// quotes its own requirements: how far its batches grow beyond one time,
 /// and what a phase centre's ephemeris table may hold.
 pub const BOOTSTRAP_SOURCE_BYTES: usize = 64 << 20;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_imaging_model::SpectralWindowCoordinateCatalog;
+
+    /// The source and pass reserve for the wider final prediction as well
+    /// as the channels selected for gridding.
+    #[test]
+    fn row_spectrum_bounds_the_prediction_selection() {
+        let catalogue =
+            SpectralWindowCoordinateCatalog::new(vec![1.0e9, 1.1e9, 1.2e9, 1.3e9, 1.4e9], 1.0e8)
+                .expect("coordinates");
+        let window = SpectralWindowSelection::new(0, vec![2, 3])
+            .with_coordinate_catalog(catalogue)
+            .with_prediction_read(vec![0, 1, 2, 3, 4], None);
+        let spectrum = row_spectrum(std::iter::once(&window));
+        assert_eq!(spectrum.channels, 5);
+        assert!((spectrum.first_spacing_hz - 0.99e8).abs() < 1e-6);
+        assert!((spectrum.span_hz - 4.04e8).abs() < 1e-6);
+    }
+}
