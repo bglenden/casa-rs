@@ -59,10 +59,35 @@ TOOL = json.loads((DATA / "casa_componentlist_tool.json").read_text(encoding="ut
 
 IMPLEMENTED = {
     "addcomponent", "close", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
+    "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
     "getrefdir", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
     "torecord",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
+
+
+def test_frequency_getter_placeholders_match_casa(caplog: pytest.LogCaptureFixture) -> None:
+    fixture = json.loads((DATA / "casa_componentlist_frequency.json").read_text())
+    cl = componentlist()
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        for case in fixture["cases"]:
+            caplog.clear()
+            method = getattr(cl, case["method"])
+            if "error" in case:
+                expected = case["error"]
+                error_type = {"TypeError": TypeError, "SystemError": SystemError}[expected["type"]]
+                with pytest.raises(error_type) as error:
+                    method(case["input"])
+                assert str(error.value) == expected["message"]
+            else:
+                result = method(case["input"])
+                assert result == case["result"] and type(result) is type(case["result"])
+            expected_warning = "error" not in case or case["error"]["type"] == "SystemError"
+            assert caplog.messages == ([f"{case['method']} not implemented yet"] if expected_warning else [])
+
+        # CASA also accepts NumPy integer scalars and zero-dimensional arrays.
+        for value in (np.int32(2), np.int64(2), np.array(2)):
+            assert cl.getfreq(value) == {}
 
 #: Radians, hertz or janskys in each unit the records use.
 SI = {

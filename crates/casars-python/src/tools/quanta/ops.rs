@@ -145,6 +145,17 @@ pub(super) fn abs(value: &Variant) -> ConvertResult<CasaValue> {
     )))
 }
 
+/// `qa.ceil(v)` and `qa.floor(v)` preserve the input quantity's unit.
+pub(super) fn round_integer(value: &Variant, upward: bool) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    let rounded = if upward {
+        value.value().ceil()
+    } else {
+        value.value().floor()
+    };
+    Ok(record(&Quantity::with_unit(rounded, value.unit().clone())))
+}
+
 /// CASA's scalar trigonometric functions, with angular unit checking.
 pub(super) fn trigonometry(value: &Variant, method: &str) -> ConvertResult<CasaValue> {
     let value = quantity(value)?;

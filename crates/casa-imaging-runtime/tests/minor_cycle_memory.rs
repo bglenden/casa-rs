@@ -702,3 +702,112 @@ fn automask_setup<'a>(
         pbmask: 0.0,
     }
 }
+
+/// A joint Clark solve holds all of a channel's polarization planes and
+/// refreshes under its run admission (#1140).
+#[test]
+fn joint_clark_holds_at_most_its_admission() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    for (channels, workers) in [(1, 1), (4, 4)] {
+        measure_joint_clark(channels, workers);
+    }
+}
+
+fn measure_joint_clark(channels: usize, workers: usize) {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+    let width = 128;
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [width, width],
+        channels,
+        1,
+        ReconstructionBasis::ChannelLocal { channels },
+        ReconstructionAlgorithm::Clark,
+        ReconstructionControls::new(300, 0.1, 0.0),
+        vec![StokesI, StokesQ, StokesU, StokesV],
+    );
+    let scene = Scene::new(&problem).with_point([width / 2, width / 2], &vec![1.0; channels]);
+    let lifecycle = model_lifecycle(&problem);
+    let mut cycle = MajorCycle::initial(
+        &problem,
+        empty_final_model(&lifecycle),
+        scene.resident_storage(),
+    )
+    .expect("major cycle");
+    let (model, mut pass) = cycle.parts();
+    let mut images = scene.pass_images(model, true);
+    images.polarizations = 4;
+    let psf = images.psf.take().unwrap();
+    let residual = images.residual.clone();
+    let cells = width * width;
+    images.psf = Some(
+        psf.chunks_exact(cells)
+            .flat_map(|plane| plane.repeat(4))
+            .collect(),
+    );
+    images.residual = residual
+        .chunks_exact(cells)
+        .flat_map(|plane| plane.repeat(4))
+        .collect();
+    images.sum_weights = vec![1.0; 4 * channels];
+    images.published_sum_weights = vec![1.0; 4 * channels];
+    pass.append(images).expect("images");
+    let completion = cycle.finish(SAMPLES, BLOCKS).expect("completion");
+    let setup = MinorCycleSetup {
+        algorithm: ReconstructionAlgorithm::Clark,
+        accounting: HogbomIterationAccounting::Strict,
+        response: None,
+        nsigma: 0.0,
+        noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
+        automask: false,
+        primary_beam: None,
+        residual_pixel_mask: false,
+        pbmask: 0.0,
+    };
+    let masks = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::FullPlane {
+        coordinate: problem.geometry().domains()[0].direction(),
+    }])
+    .expect("mask");
+    let controls = CycleControls {
+        iterations: 300,
+        threshold: 0.0,
+        threshold_reached: true,
+        gain: 0.1,
+        nsigma: 0.0,
+    };
+    let team = WorkerTeam::new(workers).expect("team");
+    let mut cache = PsfCache::default();
+    let prepared =
+        prepare_minor_cycle(&completion, &masks, &setup, &mut cache, &team).expect("prepare");
+    ADMITTED.store(held(), Ordering::Relaxed);
+    let solving = admit(
+        &HOST,
+        &POLICY,
+        &Demand {
+            phase: "minor cycle",
+            memory: run_bytes(&completion, &setup, &controls, &cache, workers),
+        },
+    )
+    .expect("admit");
+    EXCESS.store(i64::MIN, Ordering::Relaxed);
+    BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+    MEASURING.store(true, Ordering::Relaxed);
+    let outcome = run_minor_cycle(
+        prepared,
+        &completion,
+        &setup,
+        &controls,
+        &mut cache,
+        &team,
+        (&HOST, &POLICY),
+    );
+    MEASURING.store(false, Ordering::Relaxed);
+    drop(solving);
+    let outcome = outcome.expect("minor cycle");
+    assert!(outcome.summary.components > 0);
+    let excess = EXCESS.load(Ordering::Relaxed);
+    assert!(
+        excess <= 0,
+        "joint Clark with {channels} channels and {workers} workers held {excess} bytes more than admitted"
+    );
+}

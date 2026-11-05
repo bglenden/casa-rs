@@ -78,12 +78,11 @@
    ]
   },
   "ceil": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Rounds a scalar quantity in its own unit, preserving CASA conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "rounding-casa"
    ]
   },
   "check": {
@@ -207,12 +206,11 @@
    ]
   },
   "floor": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Rounds a scalar quantity in its own unit, preserving CASA conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "rounding-casa"
    ]
   },
   "formxxx": {
@@ -567,6 +565,18 @@
     "crates/casars-python/python/tests/test_tools_quanta.py"
    ],
    "source_revision": "88e8c2fd7b7742de78eeb75e16164b5b40367c90"
+  },
+  "rounding-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Forty cases recorded with CASA 6.7.6-14 cover both rounding directions, scalar units, signed zero, records and errors.",
+   "scope": "quanta.ceil and quanta.floor.",
+   "links": [
+    "tools/simulation/quanta_rounding_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_rounding.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "a05f4c2dbdfdff1a6a46575c02d4c714875281c6"
   }
  }
 }

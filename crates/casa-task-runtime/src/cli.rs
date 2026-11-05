@@ -268,7 +268,7 @@ pub(crate) fn checked_value(
         let note = error.binding_note(binding);
         if matches!(error, crate::NormalizationError::Type(_))
             && note.is_empty()
-            && let Some(message) = crate::casa_type_diagnostics::scalar_refusal(
+            && let Some(message) = crate::casa_type_diagnostics::direct_type_refusal(
                 bundle.surface.id(),
                 &binding.name,
                 value,

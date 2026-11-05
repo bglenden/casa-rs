@@ -258,11 +258,10 @@ impl PyQuanta {
         stub("atan2")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn ceil(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("ceil")
+    /// Round a scalar quantity upward in its own unit.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn ceil(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::round_integer(&v, true))
     }
 
     /// Not yet implemented in casa-rs.
@@ -337,11 +336,10 @@ impl PyQuanta {
         stub("fits")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn floor(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("floor")
+    /// Round a scalar quantity downward in its own unit.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn floor(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::round_integer(&v, false))
     }
 
     /// An angle or time as text: `hms`, `dms`, `deg`, `rad` or `+deg`. Any
