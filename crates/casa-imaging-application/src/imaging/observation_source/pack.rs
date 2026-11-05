@@ -84,6 +84,41 @@ impl Layout {
         })
     }
 
+    /// Keep a time's selected channels while preserving offsets into the
+    /// original batch's channel span.
+    fn compact(&self, selected: &[bool]) -> Option<Self> {
+        assert_eq!(selected.len(), self.channels.len());
+        let count = selected.iter().filter(|keep| **keep).count();
+        if count == 0 {
+            return None;
+        }
+        let mut compact = Self {
+            channels: Vec::with_capacity(count),
+            channel_indices: Vec::with_capacity(count),
+            native_hz: Vec::with_capacity(count),
+            half_widths_hz: Vec::with_capacity(count),
+            correlations: self.correlations.clone(),
+            correlation_indices: self.correlation_indices.clone(),
+            parallel: self.parallel.clone(),
+        };
+        for (index, keep) in selected.iter().enumerate() {
+            if *keep {
+                compact.channels.push(self.channels[index]);
+                compact.channel_indices.push(self.channel_indices[index]);
+                compact.native_hz.push(self.native_hz[index]);
+                compact.half_widths_hz.push(self.half_widths_hz[index]);
+            }
+        }
+        Some(compact)
+    }
+
+    /// Heap bound for a compacted layout beside the original layout.
+    fn compacted_bound(shape: BlockShape) -> usize {
+        2 * (shape.channels() * (size_of::<usize>() + size_of::<u32>() + 2 * size_of::<f64>())
+            + shape.correlations
+                * (size_of::<Correlation>() + size_of::<u32>() + size_of::<bool>()))
+    }
+
     /// The native channels a binding reads: from the first channel the
     /// block holds to the last.
     pub(super) fn native_channels(&self) -> std::ops::Range<usize> {
@@ -176,6 +211,7 @@ impl PackScratch {
         2 * (layout.domains * size_of::<DomainProjection>()
             + layout.channels() * (size_of::<f64>() + 2 * size_of::<bool>())
             + layout.correlations * (size_of::<usize>() + size_of::<f32>()))
+            + Layout::compacted_bound(layout)
     }
 }
 
@@ -221,6 +257,48 @@ impl<'b> Arrays<'b> {
 }
 
 impl Packer<'_> {
+    /// A parent prediction's physically selected channels at its sole time.
+    /// An empty selection contributes no block or write.
+    pub(super) fn prediction_layout(
+        &self,
+        (batch, store, partition, layout): (
+            &VisibilityBatch<'_>,
+            usize,
+            &SelectedPartition,
+            &Layout,
+        ),
+        geometry: &BatchGeometry,
+        scratch: &mut PackScratch,
+    ) -> Result<Option<Layout>, SourceError> {
+        let bands = partition
+            .prediction_bands
+            .as_ref()
+            .expect("time-varying parent bands");
+        if batch.times() != 1 {
+            return Err("a compact prediction batch must hold one time".into());
+        }
+        let frequencies = geometry.frequencies_hz(0);
+        scratch.frequencies_hz.clear();
+        scratch
+            .frequencies_hz
+            .extend(layout.channels.iter().map(|channel| frequencies[*channel]));
+        let factor = self.plans[store].frequency_factor(
+            bands.frame().frequency_ref(),
+            batch.field[0],
+            batch.time.seconds_since(0, MjdHighPrec::new(0.0, 0.0)),
+            batch.time.reference(),
+        )?;
+        scratch.in_prediction.clear();
+        in_band(
+            bands,
+            factor,
+            layout,
+            &scratch.frequencies_hz,
+            &mut scratch.in_prediction,
+        );
+        Ok(layout.compact(&scratch.in_prediction))
+    }
+
     /// Pack `batch`'s samples `keep` names into `out` under `layout`, with
     /// `geometry` applied to those samples; the rows are keyed as store
     /// `store`'s ([`StoreKeys`]). Unread visibilities are zero.
@@ -636,4 +714,49 @@ fn pointing_offset(
         (pixel[0] - reference[0]) * increment[0],
         (pixel[1] - reference[1]) * increment[1],
     ])
+}
+
+#[cfg(test)]
+mod compact_layout_tests {
+    use super::*;
+
+    /// A compact row addresses the original batch span, including gaps
+    /// before and between its channels; the write uses the same indices.
+    #[test]
+    fn compacting_channels_preserves_batch_offsets_and_admission() {
+        let layout = Layout {
+            channels: vec![0, 2, 5, 9],
+            channel_indices: vec![10, 12, 15, 19],
+            native_hz: vec![100.0, 102.0, 105.0, 109.0],
+            half_widths_hz: vec![0.1, 0.2, 0.3, 0.4],
+            correlations: vec![Correlation::XX, Correlation::YY],
+            correlation_indices: vec![1, 3],
+            parallel: vec![true, true],
+        };
+        let selected = layout
+            .compact(&[false, true, false, true])
+            .expect("two channels");
+        assert_eq!(selected.channels, [2, 9]);
+        assert_eq!(selected.channel_indices, [12, 19]);
+        assert_eq!(selected.native_hz, [102.0, 109.0]);
+        assert_eq!(selected.half_widths_hz, [0.2, 0.4]);
+        assert_eq!(selected.correlation_indices, [1, 3]);
+        assert!(layout.compact(&[false; 4]).is_none());
+        let allocated = selected.channels.capacity() * size_of::<usize>()
+            + selected.channel_indices.capacity() * size_of::<u32>()
+            + (selected.native_hz.capacity() + selected.half_widths_hz.capacity())
+                * size_of::<f64>()
+            + selected.correlations.capacity() * size_of::<Correlation>()
+            + selected.correlation_indices.capacity() * size_of::<u32>()
+            + selected.parallel.capacity() * size_of::<bool>();
+        let shape = BlockShape {
+            spectrum: casa_imaging_operator::RowSpectrum::evenly_spaced(4),
+            correlations: 2,
+            ..BlockShape::default()
+        };
+        assert!(
+            allocated <= Layout::compacted_bound(shape),
+            "{allocated} bytes exceed compact layout admission"
+        );
+    }
 }

@@ -182,9 +182,16 @@ impl BatchRoute {
             .first()
             .ok_or("an estimate without its partition")?
             .held_bytes_per_time();
+        // A native block has one channel layout. A time-varying parent
+        // prediction therefore reads one integration per batch, so its
+        // physically selected channels can form that layout.
+        let times = if prediction && partition.prediction_bands.is_some() {
+            1
+        } else {
+            self.batching.times_per_batch(key.store, key.partition)
+        };
         let request = AccessRequest {
-            batch_bytes: held
-                .saturating_mul(self.batching.times_per_batch(key.store, key.partition)),
+            batch_bytes: held.saturating_mul(times),
             ..probe
         };
         Ok((request, layout))
@@ -572,6 +579,25 @@ impl<'a> ObservationSource<'a> {
                 &mut stream.geometry.0,
                 &mut self.geometry,
             )?;
+            // CASA's parent iterator physically omits channels outside a
+            // time's bands; flagging a wider row changes interpolation.
+            let compact = if stream.prediction
+                && partition.prediction_channels.is_some()
+                && partition.prediction_bands.is_some()
+            {
+                let Some(compact) = self.packer.prediction_layout(
+                    (&batch, key.store, partition, layout),
+                    &self.geometry,
+                    &mut self.scratch,
+                )?
+                else {
+                    continue;
+                };
+                Some(compact)
+            } else {
+                None
+            };
+            let layout = compact.as_ref().unwrap_or(layout);
             self.packer.pack(
                 (&batch, key.store, partition, layout),
                 &self.geometry,
