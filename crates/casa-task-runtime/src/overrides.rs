@@ -46,10 +46,13 @@ pub(crate) fn normalize_overrides(
                     _ => DiagnosticCode::InvalidValue,
                 };
                 let note = error.binding_note(binding);
-                refusals.push(
-                    Diagnostic::error(code, format!("invalid value for {name}: {error}{note}"))
-                        .for_parameter(name.clone()),
-                );
+                let message = if matches!(error, NormalizationError::Type(_)) && note.is_empty() {
+                    crate::casa_type_diagnostics::scalar_refusal(bundle.surface.id(), name, value)
+                } else {
+                    None
+                }
+                .unwrap_or_else(|| format!("invalid value for {name}: {error}{note}"));
+                refusals.push(Diagnostic::error(code, message).for_parameter(name.clone()));
             }
         }
     }
@@ -65,6 +68,59 @@ mod tests {
     use casa_provider_contracts::builtin_surface_bundle;
 
     use super::*;
+
+    #[test]
+    fn casa_integer_type_refusals_name_the_parameter_and_casa_type() {
+        for (surface, name, value) in [
+            ("simobserve", "comp_nchan", ParameterValue::Float(-1.0)),
+            (
+                "simobserve",
+                "sdant",
+                ParameterValue::String("badname".into()),
+            ),
+            ("simobserve", "seed", ParameterValue::String("bad".into())),
+            ("tclean", "niter", ParameterValue::String("bad".into())),
+        ] {
+            let bundle = builtin_surface_bundle(surface).unwrap();
+            let values = BTreeMap::from([(name.to_string(), value)]);
+            let Err(ProfileError::Diagnostics(diagnostics)) = normalize_overrides(&bundle, &values)
+            else {
+                panic!("{surface}.{name} must refuse the value");
+            };
+            assert_eq!(diagnostics[0].code, DiagnosticCode::InvalidType);
+            assert_eq!(
+                diagnostics[0].message,
+                format!("{{'{name}': ['must be of cInt type']}}")
+            );
+        }
+    }
+
+    #[test]
+    fn a_bool_casa_accepts_as_an_integer_is_not_misreported_as_a_casa_refusal() {
+        let bundle = builtin_surface_bundle("simobserve").unwrap();
+        let values = BTreeMap::from([("comp_nchan".to_string(), ParameterValue::Bool(true))]);
+        let Err(ProfileError::Diagnostics(diagnostics)) = normalize_overrides(&bundle, &values)
+        else {
+            panic!("casa-rs currently refuses booleans for integers");
+        };
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("invalid value for comp_nchan")
+        );
+    }
+
+    #[test]
+    fn a_bool_casa_coerces_to_float_is_not_misreported_as_a_casa_refusal() {
+        let bundle = builtin_surface_bundle("tclean").unwrap();
+        let values = BTreeMap::from([("robust".to_string(), ParameterValue::Bool(true))]);
+        let Err(ProfileError::Diagnostics(diagnostics)) = normalize_overrides(&bundle, &values)
+        else {
+            panic!("casa-rs currently refuses booleans for floats");
+        };
+        assert!(diagnostics[0].message.contains("invalid value for robust"));
+        assert!(!diagnostics[0].message.contains("must be of cFloat type"));
+    }
 
     #[test]
     fn a_wrong_type_and_a_bad_value_are_told_apart_and_named() {

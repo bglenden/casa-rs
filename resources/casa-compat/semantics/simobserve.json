@@ -11,7 +11,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "casa-suite-20261103"
+    "casa-suite-20261103",
+    "refusals-1099-20261104"
    ],
    "behaviors": [
     "outputs"
@@ -129,7 +130,8 @@
     "task-tests",
     "parity-20261103",
     "skymodel-fixture",
-    "casa-suite-20261103"
+    "casa-suite-20261103",
+    "refusals-1099-20261104"
    ],
    "behaviors": [
     "sky-model"
@@ -322,7 +324,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "casa-suite-20261103"
+    "casa-suite-20261103",
+    "refusals-1099-20261104"
    ],
    "behaviors": [
     "antennas"
@@ -413,7 +416,8 @@
     "signature",
     "task-tests",
     "parity-20261103",
-    "noise-seeds-20261103"
+    "noise-seeds-20261103",
+    "refusals-1099-20261104"
    ],
    "behaviors": [
     "noise"
@@ -766,6 +770,23 @@
    "revision": "d5c88b52b718e4b3834447724d66371f269a0083",
    "command": "CASAPY tools/simulation/simobserve_noise_seeds.py --casatestdata LOCAL_COPY --casars-bin TARGET/release/simobserve --out OUT (bg-mac-mini)",
    "receipt": "resources/casa-compat/evidence/simobserve-noise-seeds-20261103.json"
+  },
+  "refusals-1099-20261104": {
+   "kind": "CASA simobserve refusal comparisons",
+   "state": "measured",
+   "result": "CASA's testBad_comp_nchan, testBad_sdant and test_noProject each pass with both CASA and casa-rs. The substring filter also selected testBad_sdantlist, which failed in both controls because no sky input was found; it is not counted as a comparison. A separate CASA probe records the seed type refusal, and the Python binding agrees.",
+   "scope": "Integer type refusal messages and the empty project path; exception classes retain the #931 casa-rs decision.",
+   "links": [
+    "tools/simulation/simobserve_casa_suite.py",
+    "tools/simulation/simobserve_refusals_oracle.py",
+    "crates/casars-simulation/tests/casa_refusals.rs",
+    "crates/casars-python/python/tests/test_simobserve_refusals.py"
+   ],
+   "casa_version": "casatasks 6.7.6.14, casatools 6.7.6-14",
+   "revision": "17c8206388b05beaf30c3c4ffadb4aedfa2c4e97",
+   "source_revision": "17c8206388b05beaf30c3c4ffadb4aedfa2c4e97",
+   "command": "CASAPY tools/simulation/simobserve_casa_suite.py --test-file CASA6/casatasks/tests/tasks/test_task_simobserve.py --casatestdata LOCAL_COPY --casars-bin TARGET/release/simobserve --out OUT --only testBad_comp_nchan testBad_sdant test_noProject (bg-mac-mini)",
+   "receipt": "resources/casa-compat/evidence/simobserve-refusals-1099-20261104.json"
   }
  }
 }

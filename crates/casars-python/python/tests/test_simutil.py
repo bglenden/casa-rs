@@ -36,11 +36,11 @@ CASA = casa_signatures("simutil")
 
 #: The methods casa-rs implements; CASA's others refuse, naming #1053.
 IMPLEMENTED = {
-    "approxBeam", "average_direction", "bandname", "baselineLengths", "calc_pointings2", "cellsize",
+    "applyRotate", "approxBeam", "average_direction", "bandname", "baselineLengths", "calc_pointings2", "cellsize",
     "closereport", "convimage", "dir_m2s", "dir_s2m", "direction_splitter", "flatimage", "getdatum",
     "getBaseTriangularTiling", "getShiftTriangularTiling", "getTrianglePoints", "getTriangularTiling",
-    "is4d", "isdirection", "ismstp", "isquantity", "isreport", "itrf2loc", "itrf2locname",
-    "locxyz2itrf", "long2xyz", "median_direction", "modifymodel", "msg", "noisetemp", "openreport",
+    "is4d", "isEven", "isdirection", "ismstp", "isquantity", "isreport", "itrf2loc", "itrf2locname",
+    "locxyz2itrf", "long2xyz", "median_direction", "modifymodel", "msg", "needsFiller", "noisetemp", "openreport",
     "polsettings", "read_pointings", "readantenna", "setcfg", "spectral", "statim", "tconpc",
     "tmgeod", "utm2long", "utm2xyz", "wrapang", "write_pointings", "xyz2long", "xyz2long_old",
 }
@@ -104,6 +104,38 @@ def test_direct_tilings_match_casa() -> None:
         assert isinstance(actual, tuple)
         assert all(isinstance(axis, list) for axis in actual)
         np.testing.assert_allclose(actual, case["result"], rtol=1e-13, atol=1e-13)
+
+
+def test_arithmetic_helpers_match_casa() -> None:
+    cases = json.loads((Path(__file__).parent / "data" / "casa_simutil_arithmetic.json").read_text())
+    u = simutil.simutil()
+
+    def value(spec: Any) -> Any:
+        if isinstance(spec, dict) and "array" in spec:
+            return np.array(spec["array"], dtype=spec["dtype"])
+        if isinstance(spec, dict) and "scalar" in spec:
+            return np.dtype(spec["dtype"]).type(spec["scalar"])
+        return spec
+
+    def describe_result(result: Any) -> dict[str, Any]:
+        if isinstance(result, tuple):
+            return {"type": "tuple", "items": [describe_result(item) for item in result]}
+        if isinstance(result, np.ndarray):
+            return {"type": "ndarray", "dtype": str(result.dtype), "value": result.tolist()}
+        if isinstance(result, np.generic):
+            return {"type": type(result).__name__, "value": result.item()}
+        return {"type": type(result).__name__, "value": result}
+
+    for case in cases:
+        method = getattr(u, case["method"])
+        arguments = [value(arg) for arg in case["args"]]
+        if "error" in case:
+            error_type = {"TypeError": TypeError, "ValueError": ValueError}[case["error"]["type"]]
+            with pytest.raises(error_type) as error:
+                method(*arguments)
+            assert str(error.value) == case["error"]["message"]
+        else:
+            assert describe_result(method(*arguments)) == case["result"], case
 
 @pytest.mark.parametrize("method", sorted(set(CASA["methods"]) - IMPLEMENTED))
 def test_methods_casa_rs_does_not_implement_yet_refuse_naming_the_issue(method: str) -> None:

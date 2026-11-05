@@ -251,6 +251,11 @@ impl<'a> Run<'a> {
             true
         };
         let directory = PathBuf::from(&parameters.project);
+        if parameters.project.is_empty() {
+            return Err(SimobserveError::raised(
+                "[Errno 2] No such file or directory: ''",
+            ));
+        }
         if !directory.exists() {
             std::fs::create_dir(&directory).map_err(SimobserveError::io(&directory))?;
         }
