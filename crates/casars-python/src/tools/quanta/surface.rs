@@ -160,7 +160,7 @@ const METHODS: &[Method] = &[
     ),
     unary("sin", R::Record, Yes),
     unary("splitdate", R::Record, Yes),
-    unary("sqrt", R::Record, No),
+    unary("sqrt", R::Record, Yes),
     binary("sub", R::Record, Yes),
     unary("tan", R::Record, Yes),
     method("time", &FORMAT, R::Texts, Yes),

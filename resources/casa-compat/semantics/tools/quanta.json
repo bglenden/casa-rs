@@ -410,12 +410,11 @@
    ]
   },
   "sqrt": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar square root in CASA's canonical units, with dimension and quantity conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "sqrt-casa"
    ]
   },
   "sub": {
@@ -588,6 +587,18 @@
     "crates/casars-python/python/tests/test_tools_quanta.py"
    ],
    "source_revision": "4d86ba7a97255eaafab86a745b660adc694aa3c7"
+  },
+  "sqrt-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Twenty-eight CASA 6.7.6-14 cases cover scaled, compound and illegal units, signed zero, NaN results and conversion errors.",
+   "scope": "quanta.sqrt.",
+   "links": [
+    "tools/simulation/quanta_sqrt_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_sqrt.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "8c90f0f745b09bf5a7ec439598eb4502c8ff5b3d"
   }
  }
 }
