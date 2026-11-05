@@ -1562,7 +1562,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
-| [quanta](#quanta) | `casars.tools` | 57 | yes | 36 | 0 | 21 | 0 | 0 | 0 |
+| [quanta](#quanta) | `casars.tools` | 57 | yes | 37 | 0 | 20 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 18 | 11 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 46 | 2 | 9 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
@@ -1971,7 +1971,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 36, Partial: 0, Not implemented: 21, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 37, Partial: 0, Not implemented: 20, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1988,7 +1988,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `check` | `v` | Implemented | Answers as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `checkfreq` | `cm=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
 | `compare` | `v=[], a=[]` | Implemented | Answers as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
-| `constants` | `v='pi'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `constants` | `v='pi'` | Implemented | CASA's named physical constants and case-insensitive minimax lookup, including ambiguous names. | [signature](#quanta-evidence-signature), [constants-casa](#quanta-evidence-constants-casa) |
 | `convert` | `v=[], outunit=[]` | Implemented | Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance). | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `convertdop` | `v=[], outunit='km/s'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
 | `convertfreq` | `v=[], outunit='Hz'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
@@ -2130,6 +2130,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/quanta_sqrt_oracle.py](https://github.com/bglenden/casa-rs/blob/8c90f0f745b09bf5a7ec439598eb4502c8ff5b3d/tools/simulation/quanta_sqrt_oracle.py)
 - [crates/casars-python/python/tests/data/casa_quanta_sqrt.json](https://github.com/bglenden/casa-rs/blob/8c90f0f745b09bf5a7ec439598eb4502c8ff5b3d/crates/casars-python/python/tests/data/casa_quanta_sqrt.json)
 - [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/8c90f0f745b09bf5a7ec439598eb4502c8ff5b3d/crates/casars-python/python/tests/test_tools_quanta.py)
+
+<a id="quanta-evidence-constants-casa"></a>
+##### constants-casa
+
+**CASA-recorded values — measured.** Fifty-one CASA 6.7.6-14 cases cover its constants, case-insensitive and ambiguous prefixes, unknown names and argument errors. quanta.constants.
+
+- [tools/simulation/quanta_constants_oracle.py](https://github.com/bglenden/casa-rs/blob/04e5d05779e6ebde034ac1b1b64ff71dea223084/tools/simulation/quanta_constants_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_constants.json](https://github.com/bglenden/casa-rs/blob/04e5d05779e6ebde034ac1b1b64ff71dea223084/crates/casars-python/python/tests/data/casa_quanta_constants.json)
+- [crates/casars-python/python/tests/test_tools_quanta.py](https://github.com/bglenden/casa-rs/blob/04e5d05779e6ebde034ac1b1b64ff71dea223084/crates/casars-python/python/tests/test_tools_quanta.py)
 
 ### simulator
 
