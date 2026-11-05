@@ -8,8 +8,10 @@ with the object-surface bundle. Every expected value and message is CASA
 
 from __future__ import annotations
 
+import json
 import logging
 import math
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -28,11 +30,25 @@ from _casa_tools import (
 CASA = casa_signatures("quanta")
 
 IMPLEMENTED = {
-    "abs", "add", "angle", "canon", "canonical", "check", "compare", "convert", "div", "done",
+    "abs", "add", "angle", "canon", "canonical", "check", "checkfreq", "compare", "convert", "div", "done",
     "formxxx", "getunit", "getvalue", "isquantity", "mul", "neg", "quantity", "splitdate", "sub", "time",
     "toangle", "tos", "totime", "type", "unit",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
+
+
+def test_checkfreq_matches_casa() -> None:
+    fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_checkfreq.json").read_text())
+    qa = quanta()
+    for case in fixture["cases"]:
+        if "error" in case:
+            assert case["error"]["type"] == "RuntimeError"
+            with pytest.raises(RuntimeError) as error:
+                qa.checkfreq(case["input"])
+            assert str(error.value) == case["error"]["message"]
+        else:
+            assert qa.checkfreq(case["input"]) is case["result"]
+    assert qa.checkfreq() is False
 
 
 def q(value: Any, unit: str) -> dict[str, Any]:

@@ -56,7 +56,12 @@ const METHODS: &[Method] = &[
     unary("canonical", R::Record, Yes),
     unary("ceil", R::Record, No),
     method("check", &[param("v", K::Text, Required)], R::Bool, Yes),
-    method("checkfreq", &[param("cm", K::Quantity, Empty)], R::Bool, No),
+    method(
+        "checkfreq",
+        &[param("cm", K::Quantity, Empty)],
+        R::Bool,
+        Yes,
+    ),
     binary("compare", R::Bool, Yes),
     method(
         "constants",
