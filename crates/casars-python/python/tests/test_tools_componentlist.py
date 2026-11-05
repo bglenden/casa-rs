@@ -59,15 +59,16 @@ TOOL = json.loads((DATA / "casa_componentlist_tool.json").read_text(encoding="ut
 
 IMPLEMENTED = {
     "addcomponent", "close", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
-    "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
+    "getfluxpol", "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
     "getrefdir", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
     "torecord",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 
 
-def test_frequency_getter_placeholders_match_casa(caplog: pytest.LogCaptureFixture) -> None:
-    fixture = json.loads((DATA / "casa_componentlist_frequency.json").read_text())
+@pytest.mark.parametrize("fixture_name", ["casa_componentlist_frequency.json", "casa_componentlist_fluxpol.json"])
+def test_getter_placeholders_match_casa(fixture_name: str, caplog: pytest.LogCaptureFixture) -> None:
+    fixture = json.loads((DATA / fixture_name).read_text())
     cl = componentlist()
     with caplog.at_level(logging.WARNING, logger=LOGGER):
         for case in fixture["cases"]:
