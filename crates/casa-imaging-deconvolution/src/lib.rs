@@ -78,8 +78,8 @@ pub use normal_state::{
 pub use normal_values::{NormalValues, SensitivityValues};
 
 pub use beam::{
-    DEFAULT_PSF_FIT_CUTOFF, FitAttemptFailure, PsfBeamFitError, RestoringBeam, fit_restoring_beam,
-    psf_fit_workspace_bytes,
+    CASA_TINY_PSF_BEAM_RAD, DEFAULT_PSF_FIT_CUTOFF, FitAttemptFailure, PsfBeamFitError,
+    RestoringBeam, fit_restoring_beam, psf_fit_workspace_bytes,
 };
 pub use clark::{Clark, ClarkPolarized, ClarkState};
 pub use controller::{
