@@ -25,7 +25,8 @@
    "scope": "Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "record-complex-scalar-casa"
    ]
   },
   "angle": {
@@ -238,7 +239,8 @@
    "scope": "Reads a quantity's value and unit back.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "record-complex-scalar-casa"
    ]
   },
   "getvalue": {
@@ -368,7 +370,8 @@
    "scope": "Builds quantities and quantity arrays from strings, numbers and records, as CASA does.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "record-complex-scalar-casa"
    ]
   },
   "setformat": {
@@ -658,6 +661,18 @@
     "crates/casars-python/python/tests/test_quanta_normalize.py"
    ],
    "source_revision": "53e13129e2058d0e97f8e7be3a943b9bf29d7d8c"
+  },
+  "record-complex-scalar-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "36 CASA 6.7.6-14 cases distinguish NumPy complex64 from complex128 and Python complex scalars with valid and invalid units.",
+   "scope": "Quantity-record scalar conversion in quanta.quantity, getunit and add.",
+   "links": [
+    "tools/casa-compat/quantity_record_complex_scalar_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_record_complex_scalar.json",
+    "crates/casars-python/python/tests/test_quanta_record_complex_scalar.py"
+   ],
+   "source_revision": "5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e"
   }
  }
 }
