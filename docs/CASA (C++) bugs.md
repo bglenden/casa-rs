@@ -97,9 +97,9 @@ Component-list behaviours casa-rs does not follow:
 [a negative component under the primary beam](#a-negative-component-turns-positive-under-the-primary-beam),
 [a single spectral index](#a-single-spectral-index-is-read-past-its-end),
 [the beam's component spectrum frame](#the-primary-beams-component-spectrum-labels-topocentric-samples-lsrk),
-[`addcomponent`'s single-precision flux](#claddcomponent-stores-the-flux-in-single-precision),
-[the `cl` tool's record units](#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given).
+[`addcomponent`'s single-precision flux](#claddcomponent-stores-the-flux-in-single-precision).
 Component-list behaviours casa-rs follows:
+[the `cl` tool's record units](#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given),
 [`addcomponent`'s polarization](#claddcomponent-stores-four-flux-values-as-stokes),
 [a shape `addcomponent` cannot make](#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make).
 Concatenation behaviours casa-rs does not follow:
@@ -1136,7 +1136,7 @@ CASA's by at most one single-precision rounding, 6e-8 relative.
 ## The `cl` tool records a shape's axes in the units it was given
 
 - Date noted: 2026-10-23
-- Status: CASA behaviour casa-rs does not follow (#841)
+- Status: CASA behaviour casa-rs follows (#1187)
 - Affected code: `components/ComponentModels/TwoSidedShape.cc` (`toRecord`,
   lines 265-330)
 
@@ -1144,10 +1144,11 @@ CASA's by at most one single-precision rounding, 6e-8 relative.
 gives them in those units: a Gaussian made by `addcomponent` with
 `majoraxis='1arcsec'` records `{'unit': 'arcsec', 'value': 1.0}`. A shape
 read from a table has the units `readTable` sets: arcmin for the axes and
-degrees for the position angle, with the errors in radians. casa-rs holds
-radians and records every shape as CASA records one read from a table
-(`{'unit': 'arcmin', 'value': 0.016666666666666666}`); the quantities are the
-same, and the table is the same either way.
+degrees for the position angle, with the errors in radians. casa-rs keeps the
+input units while the component remains in memory, and uses the table units
+after reopening. It previously always reported the table units, which have
+the same physical value but differ in the record. The owner approved matching
+CASA's in-memory units on 2026-11-05.
 
 ## `cl.addcomponent` keeps a point for a shape it cannot make
 

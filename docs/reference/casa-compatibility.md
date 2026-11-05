@@ -1602,7 +1602,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
-| [quanta](#quanta) | `casars.tools` | 57 | yes | 51 | 0 | 6 | 0 | 0 | 0 |
+| [quanta](#quanta) | `casars.tools` | 57 | yes | 53 | 0 | 4 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 18 | 11 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 46 | 2 | 9 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
@@ -1677,7 +1677,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `sort` | `criteria='Flux', log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `spectrumtype` | `which` | Implemented | A component's spectrum name. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `summarize` | `which=-1` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `torecord` |  | Implemented | CASA's record of the list. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `torecord` |  | Implemented | CASA's list record, including shape units supplied in memory and table units after reopening. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa), [record-shape-units-casa](#componentlist-evidence-record-shape-units-casa) |
 
 #### componentlist interacting modes and tool behavior
 
@@ -1725,17 +1725,6 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 - Rationale: Avoids a needless single-precision rounding.
 - User impact: Fluxes differ from CASA's by at most 6e-8 relative.
 - Owner decision: Owner approved on 2026-11-05; see docs/simulation/owner-decisions-20261105.md.
-- Evidence: [bugs-record](#componentlist-evidence-bugs-record).
-
-##### shape-axes-recorded-units: Unfinished
-
-- Record: [The `cl` tool records a shape's axes in the units it was given](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given)
-- Inputs: cl.addcomponent(majoraxis='1arcsec', ...) then reading the shape record.
-- CASA: TwoSidedShape remembers the units its axes were set in and records them so ({'unit':'arcsec','value':1.0}); a shape read from a table records arcmin axes and degree position angle.
-- casa-rs: Holds radians and records every shape as CASA records one read from a table (arcmin, 0.016666666666666666).
-- Rationale: Match CASA units in memory; the physical quantities and persisted table already agree.
-- User impact: The record's unit and value differ from the input's but denote the same quantity.
-- Owner decision: Owner approved matching CASA input units on 2026-11-05; see #1187 and docs/simulation/owner-decisions-20261105.md.
 - Evidence: [bugs-record](#componentlist-evidence-bugs-record).
 
 ##### addcomponent-point-for-bad-shape: Previously agreed
@@ -1890,6 +1879,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/componentlist_getshape_oracle.py](https://github.com/bglenden/casa-rs/blob/cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244/tools/simulation/componentlist_getshape_oracle.py)
 - [crates/casars-python/python/tests/data/casa_componentlist_getshape.json](https://github.com/bglenden/casa-rs/blob/cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244/crates/casars-python/python/tests/data/casa_componentlist_getshape.json)
 - [crates/casars-python/python/tests/test_componentlist_getshape.py](https://github.com/bglenden/casa-rs/blob/cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244/crates/casars-python/python/tests/test_componentlist_getshape.py)
+
+<a id="componentlist-evidence-record-shape-units-casa"></a>
+##### record-shape-units-casa
+
+**CASA-recorded values — measured.** Four point, Gaussian and disk shapes at each of three stages: added, renamed and reopened, including axis and angle units. componentlist.torecord shape records.
+
+- [tools/simulation/componentlist_record_shape_units_oracle.py](https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/tools/simulation/componentlist_record_shape_units_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_record_shape_units.json](https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/crates/casars-python/python/tests/data/casa_componentlist_record_shape_units.json)
+- [crates/casars-python/python/tests/test_componentlist_record_shape_units.py](https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/crates/casars-python/python/tests/test_componentlist_record_shape_units.py)
 
 ### measures
 
@@ -2074,7 +2072,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 51, Partial: 0, Not implemented: 6, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 53, Partial: 0, Not implemented: 4, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -2105,7 +2103,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `floor` | `v=[]` | Implemented | Rounds a scalar quantity in its own unit, preserving CASA conversion errors. | [signature](#quanta-evidence-signature), [rounding-casa](#quanta-evidence-rounding-casa) |
 | `formxxx` | `v=[], format='dms', prec=2` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `ge` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
-| `getformat` | `t=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `getformat` | `t=''` | Implemented | CASA's placeholder warns and returns 'F'; it does not change formatting. | [signature](#quanta-evidence-signature), [format-placeholders-casa](#quanta-evidence-format-placeholders-casa) |
 | `getunit` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa), [record-complex-array-casa](#quanta-evidence-record-complex-array-casa) |
 | `getvalue` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `gt` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
@@ -2123,7 +2121,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `norm` | `v=[], a=-0.5` | Implemented | CASA scalar angle normalization in a one-turn range, returned in degrees. | [signature](#quanta-evidence-signature), [normalize-casa](#quanta-evidence-normalize-casa) |
 | `pow` | `v=[], a=1` | Implemented | CASA scalar integer powers, with original unit spelling, C-int narrowing, non-finite values and exponent limits. | [signature](#quanta-evidence-signature), [power-casa](#quanta-evidence-power-casa) |
 | `quantity` | `v=[], unitname='', keepshape=False` | Implemented | Builds quantities and quantity arrays from strings, numbers and records, as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa), [record-complex-array-casa](#quanta-evidence-record-complex-array-casa) |
-| `setformat` | `t='', v='F'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `setformat` | `t='', v='F'` | Implemented | CASA's placeholder warns and returns False; it does not change formatting. | [signature](#quanta-evidence-signature), [format-placeholders-casa](#quanta-evidence-format-placeholders-casa) |
 | `sin` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
 | `splitdate` | `v=[]` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `sqrt` | `v=[]` | Implemented | Scalar square root in CASA's canonical units, with dimension and quantity conversion errors. | [signature](#quanta-evidence-signature), [sqrt-casa](#quanta-evidence-sqrt-casa) |
@@ -2296,6 +2294,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/quanta_spectral_conversion_oracle.py](https://github.com/bglenden/casa-rs/blob/63be6c526c6fdaff7308f747d002372157a2b1bd/tools/simulation/quanta_spectral_conversion_oracle.py)
 - [crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json](https://github.com/bglenden/casa-rs/blob/63be6c526c6fdaff7308f747d002372157a2b1bd/crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json)
 - [crates/casars-python/python/tests/test_quanta_spectral_conversion.py](https://github.com/bglenden/casa-rs/blob/63be6c526c6fdaff7308f747d002372157a2b1bd/crates/casars-python/python/tests/test_quanta_spectral_conversion.py)
+
+<a id="quanta-evidence-format-placeholders-casa"></a>
+##### format-placeholders-casa
+
+**CASA-recorded values — measured.** 28 CASA 6.7.6-14 calls cover the placeholders, text and bytes arguments, invalid types and defaults. quanta.getformat and quanta.setformat.
+
+- [tools/simulation/quanta_format_placeholders_oracle.py](https://github.com/bglenden/casa-rs/blob/cc9c724bc6a5179cbfe50d8a78b88a138cede63c/tools/simulation/quanta_format_placeholders_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_format_placeholders.json](https://github.com/bglenden/casa-rs/blob/cc9c724bc6a5179cbfe50d8a78b88a138cede63c/crates/casars-python/python/tests/data/casa_quanta_format_placeholders.json)
+- [crates/casars-python/python/tests/test_quanta_format_placeholders.py](https://github.com/bglenden/casa-rs/blob/cc9c724bc6a5179cbfe50d8a78b88a138cede63c/crates/casars-python/python/tests/test_quanta_format_placeholders.py)
 
 <a id="quanta-evidence-record-complex-scalar-casa"></a>
 ##### record-complex-scalar-casa
