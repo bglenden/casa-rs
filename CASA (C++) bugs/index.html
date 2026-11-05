@@ -1018,6 +1018,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
 <a href="#casa-discards-the-values-of-bare-complex-quantity-arrays">complex quantity-array values</a>,
+<a href="#casa-discards-bare-numpy-complex64-quantity-values">bare complex64 quantity values</a>,
 <a href="#automatic-mask-convolution-requires-square-pixels-in-casa">automatic-mask convolution on rectangular pixels</a>,
 <a href="#casa-misreads-big-endian-integer-quantity-arrays">byte order of integer quantity arrays</a>,
 <a href="#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero">a Taylor run with no weight on its first correlation</a>,
@@ -4673,6 +4674,17 @@ complex128 arrays. A complex number cannot be converted to a real quantity
 without losing information, so casa-rs raises <code>Wrong QuantumHolder to convert
 asQuantumDouble</code> instead. Complex arrays used as ordinary record data retain
 their values and shape.</p>
+<h2 id="casa-discards-bare-numpy-complex64-quantity-values">CASA discards bare NumPy complex64 quantity values<a class="headerlink" href="#casa-discards-bare-numpy-complex64-quantity-values" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-05</li>
+<li>Status: CASA silently loses input values; casa-rs raises an error (#1170).</li>
+<li>Evidence: <code>tools/casa-compat/quantity_bare_complex_scalar_oracle.py</code>, CASA 6.7.6-14 on the Mac mini.</li>
+</ul>
+<p><code>qa.quantity(np.complex64(1+2j))</code> returns a dimensionless zero in CASA,
+while an equivalent Python complex or NumPy complex128 value raises an error.
+CASA also treats the complex64 value as zero in other quantity operations.
+casa-rs preserves both parts and raises <code>Wrong QuantumHolder to convert
+asQuantumDouble</code> rather than silently discarding them.</p>
 
 
 
