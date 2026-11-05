@@ -264,11 +264,10 @@ impl PyQuanta {
         call(py, || ops::round_integer(&v, true))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (cm = None), text_signature = "($self, cm=[])")]
-    fn checkfreq(&self, cm: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("checkfreq")
+    /// Whether a scalar quantity can represent a frequency.
+    #[pyo3(signature = (cm = Variant::Empty), text_signature = "($self, cm=[])")]
+    fn checkfreq(&self, py: Python<'_>, cm: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::checkfreq(&cm))
     }
 
     /// Not yet implemented in casa-rs.
