@@ -50,6 +50,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install NumPy for Rust tests
+        run: python -m pip install 'numpy>=2,<3'
+
       # PyO3 configures itself once per build cache: the restored cache keeps
       # the library directory of the interpreter it was built with. Naming
       # the interpreter by its versioned path makes PyO3 configure itself

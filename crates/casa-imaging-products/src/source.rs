@@ -40,6 +40,7 @@ pub struct ContinuumProductInputs<'a> {
     reconstruction_mask: Option<&'a ReconstructionMask>,
     domain_reconstruction_masks: Option<&'a ImageDomainReconstructionMasks>,
     primary_beam_centres: Option<&'a PrimaryBeamCentres>,
+    vla_selection_hz: Option<f64>,
     facet_sum_weights: Option<&'a FacetSumWeights>,
     saved_psf_beams: Option<&'a [RestoringBeam]>,
 }
@@ -111,6 +112,7 @@ impl<'a> ContinuumProductInputs<'a> {
             reconstruction_mask: None,
             domain_reconstruction_masks: None,
             primary_beam_centres: None,
+            vla_selection_hz: None,
             facet_sum_weights: None,
             saved_psf_beams: None,
         }
@@ -254,6 +256,19 @@ impl<'a> ContinuumProductInputs<'a> {
         self
     }
 
+    /// Select the legacy VLA aperture at `frequency_hz`, while evaluating
+    /// it at each output plane's own frequency.
+    ///
+    /// # Panics
+    ///
+    /// If the selection frequency is non-finite or not positive.
+    #[must_use]
+    pub fn with_vla_selection_frequency(mut self, frequency_hz: f64) -> Self {
+        assert!(frequency_hz.is_finite() && frequency_hz > 0.0);
+        self.vla_selection_hz = Some(frequency_hz);
+        self
+    }
+
     /// The run's analytic primary beam of `model`, centred on the bound
     /// pointings; `None` for the mosaic's, which is each plane's weight
     /// image. Planning checked its frequencies
@@ -262,7 +277,11 @@ impl<'a> ContinuumProductInputs<'a> {
         &self,
         model: AnalyticPrimaryBeamModel,
     ) -> Option<AnalyticPrimaryBeam<'a>> {
-        AnalyticPrimaryBeam::bind(self.problem, model, self.primary_beam_centres)
+        AnalyticPrimaryBeam::bind(self.problem, model, self.primary_beam_centres).map(|beam| {
+            self.vla_selection_hz.map_or(beam, |frequency| {
+                beam.with_vla_selection_frequency(frequency)
+            })
+        })
     }
 
     /// Borrow the exact compiled problem behind these payloads.

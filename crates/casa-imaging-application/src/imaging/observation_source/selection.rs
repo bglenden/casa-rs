@@ -34,6 +34,9 @@ pub(crate) struct SelectedPartition {
     /// The bands that select them at each time, unless every time reads them
     /// all.
     pub(crate) density_bands: Option<casa_imaging_model::FrequencyBands>,
+    /// The untuned parent selection used by the final model prediction.
+    pub(crate) prediction_channels: Option<Vec<u32>>,
+    pub(crate) prediction_bands: Option<casa_imaging_model::FrequencyBands>,
     /// The correlation products the operator routes, in its order.
     pub(crate) correlations: Vec<Correlation>,
     /// The window's reference wavelength, when a UV-distance interval is
@@ -80,6 +83,20 @@ impl PartitionSelection {
             + self.baselines.allocated_bytes()
             + size_of::<TimeSelection>()
             + self.times.allocated_bytes()
+            + self
+                .partitions
+                .iter()
+                .map(|partition| {
+                    partition
+                        .prediction_channels
+                        .as_ref()
+                        .map_or(0, |channels| channels.capacity() * size_of::<u32>())
+                        + partition
+                            .prediction_bands
+                            .as_ref()
+                            .map_or(0, casa_imaging_model::FrequencyBands::allocated_bytes)
+                })
+                .sum::<usize>()
     }
 
     /// Whether the antenna selection holds `baseline`.
@@ -123,6 +140,45 @@ impl PartitionSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prediction_selection_charge_tracks_owned_channels_and_bands() {
+        let mut channels = Vec::with_capacity(19);
+        channels.extend([1, 3]);
+        let mut intervals = Vec::with_capacity(7);
+        intervals.push([1.0, 2.0]);
+        let expected =
+            channels.capacity() * size_of::<u32>() + intervals.capacity() * size_of::<[f64; 2]>();
+        let bands = casa_imaging_model::FrequencyBands::new(
+            casa_imaging_model::FrequencyFrame::Topocentric,
+            intervals,
+        )
+        .unwrap();
+        let mut selection = PartitionSelection {
+            data_group: String::new(),
+            partitions: vec![],
+            fields: FieldSelection::All,
+            scans: IdSelection::All,
+            baselines: BaselineSelection::All,
+            times: TimeSelection::All,
+            uv: UvSelection::All,
+        };
+        let baseline = selection.predicate_bytes();
+        selection.partitions.push(SelectedPartition {
+            id: PartitionId(0),
+            spectral_window: 0,
+            channels: vec![0],
+            frequency_bands: None,
+            density_only: false,
+            density_channels: None,
+            density_bands: None,
+            prediction_channels: Some(channels),
+            prediction_bands: Some(bands),
+            correlations: vec![],
+            wavelength_m: None,
+        });
+        assert_eq!(selection.predicate_bytes(), baseline + expected);
+    }
 
     #[test]
     fn predicate_charge_tracks_owned_capacity() {

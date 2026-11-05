@@ -137,6 +137,11 @@ pub(crate) enum Variant {
     /// A NumPy array of two or more dimensions, its values in Fortran
     /// (column-major) order, as casatools' `variant` holds them.
     Array { shape: Vec<usize>, values: Vec<f64> },
+    /// A complex NumPy array, retaining its shape and Fortran-order values.
+    ComplexArray {
+        shape: Vec<usize>,
+        values: Vec<Complex64>,
+    },
     /// A `dict` with `str` keys.
     Record(VariantRecord),
     /// Anything else, kept as its `repr` for messages.
@@ -144,6 +149,12 @@ pub(crate) enum Variant {
 }
 
 impl Variant {
+    /// Whether this has the empty-vector behavior of CASA's variant.
+    pub(crate) fn is_empty_sequence(&self) -> bool {
+        matches!(self, Self::Empty)
+            || matches!(self, Self::ComplexArray { values, .. } if values.is_empty())
+    }
+
     /// The value as CASA's `variant::toString` would show it in a message.
     pub(crate) fn describe(&self) -> String {
         match self {
@@ -169,7 +180,7 @@ impl Variant {
             ),
             // C++'s `std::complex` output.
             Self::Complex(value) => format!("({},{})", value.re, value.im),
-            Self::Complexes(values) => format!(
+            Self::Complexes(values) | Self::ComplexArray { values, .. } => format!(
                 "[{}]",
                 values
                     .iter()
@@ -355,8 +366,8 @@ fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarK
     Ok(narrowed.map(|value| RecordScalarKind::IntegerVector(Some(value))))
 }
 
-/// A numeric NumPy array of two or more dimensions as [`Variant::Array`];
-/// `None` for anything else (one-dimensional arrays are sequences).
+/// A numeric NumPy array with a retained shape. Complex arrays also handle
+/// zero and one dimensions without discarding their imaginary parts.
 fn numeric_array(object: &Bound<'_, PyAny>) -> PyResult<Option<Variant>> {
     let Ok(ndim) = object
         .getattr("ndim")
@@ -364,13 +375,25 @@ fn numeric_array(object: &Bound<'_, PyAny>) -> PyResult<Option<Variant>> {
     else {
         return Ok(None);
     };
-    if ndim < 2 || !object.hasattr("astype")? {
+    if !object.hasattr("astype")? {
         return Ok(None);
     }
     let kind = object
         .getattr("dtype")
         .and_then(|dtype| dtype.getattr("kind"))
         .and_then(|kind| kind.extract::<String>());
+    if matches!(kind.as_deref(), Ok("c"))
+        && object.is_instance(&object.py().import("numpy")?.getattr("ndarray")?)?
+    {
+        let complexes = object.call_method1("astype", ("complex128",))?;
+        let array = complexes.extract::<PyReadonlyArrayDyn<'_, Complex64>>()?;
+        let shape = array.shape().to_vec();
+        let values = array.as_array().t().iter().copied().collect();
+        return Ok(Some(Variant::ComplexArray { shape, values }));
+    }
+    if ndim < 2 {
+        return Ok(None);
+    }
     if !matches!(kind.as_deref(), Ok("f" | "i" | "u")) {
         return Ok(None);
     }
@@ -626,7 +649,7 @@ pub(crate) fn quantity(value: &Variant) -> ConvertResult<Quantity> {
         }),
         Variant::Number(number) => Ok(Quantity::dimensionless(*number)),
         Variant::Bool(flag) => Ok(Quantity::dimensionless(f64::from(u8::from(*flag)))),
-        Variant::Complex(_) => Err(ConvertError::runtime(
+        Variant::Complex(_) | Variant::ComplexArray { .. } => Err(ConvertError::runtime(
             "Wrong QuantumHolder to convert asQuantumDouble",
         )),
         Variant::Empty
@@ -647,6 +670,7 @@ pub(crate) fn complex_values(value: &Variant) -> Option<Vec<Complex64>> {
         Variant::Numbers(numbers) => Some(numbers.iter().copied().map(real).collect()),
         Variant::Complex(value) => Some(vec![*value]),
         Variant::Complexes(values) => Some(values.clone()),
+        Variant::ComplexArray { shape, values } if shape.len() <= 1 => Some(values.clone()),
         _ => None,
     }
 }
@@ -744,7 +768,8 @@ pub(crate) fn quantity_record(record: &BTreeMap<String, Variant>) -> Result<Quan
         Variant::Numbers(_)
         | Variant::Array { .. }
         | Variant::Complex(_)
-        | Variant::Complexes(_) => {
+        | Variant::Complexes(_)
+        | Variant::ComplexArray { .. } => {
             casacore_unit(unit)?;
             return Err("Wrong QuantumHolder to convert asQuantumDouble".to_string());
         }
