@@ -168,7 +168,7 @@ fn a_saved_psf_beam_grid_fits_its_reading_and_resident_charges() {
     let shape = [2, 2, 1, PLANES];
     write(&prefix.with_extension("psf"), &shape, |_| 1.0);
     write(&prefix.with_extension("sumwt"), &[1, 1, 1, PLANES], |_| 1.0);
-    let mut psf = PagedImage::<f32>::open(&prefix.with_extension("psf")).unwrap();
+    let mut psf = PagedImage::<f32>::open(prefix.with_extension("psf")).unwrap();
     let mut info = psf.image_info().unwrap();
     info.beam_set = ImageBeamSet::from_grid(
         (0..PLANES)
@@ -218,7 +218,7 @@ fn a_saved_residual_beam_grid_fits_its_reading_and_resident_charges() {
     write(&prefix.with_extension("psf"), &shape, |_| 1.0);
     write(&prefix.with_extension("residual"), &shape, |_| 1.0);
     write(&prefix.with_extension("sumwt"), &[1, 1, 1, PLANES], |_| 1.0);
-    let mut image = PagedImage::<f32>::open(&prefix.with_extension("residual")).unwrap();
+    let mut image = PagedImage::<f32>::open(prefix.with_extension("residual")).unwrap();
     let mut info = image.image_info().unwrap();
     info.beam_set = ImageBeamSet::from_grid(
         (0..PLANES)

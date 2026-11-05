@@ -171,6 +171,7 @@ fn setup<'a>(beam: Option<AnalyticPrimaryBeam<'a>>) -> MinorCycleSetup<'a> {
     MinorCycleSetup {
         psf_cutoff: 0.35,
         psf_beams: None,
+        mask_beams: None,
         algorithm: ReconstructionAlgorithm::Hogbom,
         accounting: HogbomIterationAccounting::Strict,
         response: None,
