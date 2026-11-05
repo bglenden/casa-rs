@@ -83,6 +83,14 @@ pub(super) fn spectral_line_measurement_set(root: &Path) -> PathBuf {
     )
 }
 
+pub(super) fn line_model_measurement_set(root: &Path, channels: usize) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "line-model-input.ms",
+        MeasurementSetFixtureOptions::new(true, false, channels, 1, 2, 1, false),
+    )
+}
+
 pub(super) fn spectral_line_many_row_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,

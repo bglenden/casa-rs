@@ -612,3 +612,105 @@ fn briggs_density_ignores_continuum_fit_only_channels() {
         );
     }
 }
+
+/// A nonconstant multi-plane model predicted after continuum fitting agrees
+/// with the same fit materialized in a physically output-only observation.
+#[test]
+fn final_continuum_prediction_matches_a_compact_materialized_spectrum() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let original_root = root.path().join("original");
+    let compact_root = root.path().join("compact");
+    std::fs::create_dir(&original_root).unwrap();
+    std::fs::create_dir(&compact_root).unwrap();
+    let original = line_model_measurement_set(&original_root, 40);
+    let compact = line_model_measurement_set(&compact_root, 10);
+    let raw = MeasurementSet::open(&original).unwrap();
+    let data = raw.data_column(VisibilityDataColumn::Data).unwrap();
+    let ArrayValue::Complex32(raw_values) = data.get(0).unwrap() else {
+        panic!("DATA")
+    };
+    let mut corrected = ArrayD::zeros(vec![4, 10]);
+    for correlation in 0..4 {
+        let continuum = (raw_values[[correlation, 0]] + raw_values[[correlation, 39]]) / 2.0;
+        for channel in 0..10 {
+            corrected[[correlation, channel]] = raw_values[[correlation, channel + 17]] - continuum;
+        }
+    }
+    drop(raw);
+    let mut reference = MeasurementSet::open(&compact).unwrap();
+    reference
+        .main_table_mut()
+        .row_accessor_mut()
+        .set_cell(0, "DATA", Value::Array(ArrayValue::Complex32(corrected)))
+        .unwrap();
+    let frequencies = (17..27)
+        .map(|channel| 44.0e9 + f64::from(channel) * 1.0e6)
+        .collect();
+    let window = reference.subtable_mut(SubtableId::SpectralWindow).unwrap();
+    window
+        .row_accessor_mut()
+        .set_cell(0, "REF_FREQUENCY", float(44.017e9))
+        .unwrap();
+    window
+        .row_accessor_mut()
+        .set_cell(
+            0,
+            "CHAN_FREQ",
+            Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(vec![10], frequencies).unwrap(),
+            )),
+        )
+        .unwrap();
+    reference.save().unwrap();
+    drop(reference);
+    let controls = json!({
+        "channel_start": null, "channel_count": 2, "specmode": "cube", "outframe": "TOPO",
+        "spw": "0", "start": "44.02025GHz", "width": "1MHz", "niter": 5,
+        "nsigma": 0.01, "savemodel": "modelcolumn", "fitspw": "0:0;39", "fitorder": 0,
+    });
+    let fitted = request(&original, &original_root.join("image"), controls.clone());
+    assert_eq!(
+        casa_imaging_application::source_law::gridding_layouts(&fitted, &context()).unwrap(),
+        [(17..27).collect::<Vec<_>>()],
+    );
+    execute_writing(&fitted);
+    let mut reference_controls = controls;
+    reference_controls["fitspw"] = serde_json::Value::Null;
+    let reference = request(&compact, &compact_root.join("image"), reference_controls);
+    execute_writing(&reference);
+    let original = MeasurementSet::open(&original).unwrap();
+    let compact = MeasurementSet::open(&compact).unwrap();
+    let original_model = original
+        .data_column(VisibilityDataColumn::ModelData)
+        .unwrap();
+    let compact_model = compact
+        .data_column(VisibilityDataColumn::ModelData)
+        .unwrap();
+    let ArrayValue::Complex32(original_model) = original_model.get(0).unwrap() else {
+        panic!("MODEL_DATA")
+    };
+    let ArrayValue::Complex32(compact_model) = compact_model.get(0).unwrap() else {
+        panic!("MODEL_DATA")
+    };
+    for correlation in 0..4 {
+        for channel in 0..10 {
+            let actual = original_model[[correlation, channel + 17]];
+            let expected = compact_model[[correlation, channel]];
+            assert!(
+                (actual - expected).norm() <= 1.0e-5 * expected.norm().max(1.0),
+                "{correlation}/{channel}: {actual} != {expected}"
+            );
+        }
+        for channel in (0..17).chain(27..40) {
+            assert_eq!(
+                original_model[[correlation, channel]],
+                Complex32::new(9.0, 9.0)
+            );
+        }
+    }
+    assert!(
+        (compact_model[[0, 3]] - compact_model[[0, 4]]).norm() > 1.0e-3,
+        "the prediction varies over the output spectrum"
+    );
+}
