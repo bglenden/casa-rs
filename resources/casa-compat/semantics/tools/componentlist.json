@@ -97,7 +97,7 @@
   },
   "deselect": {
    "status": "Implemented",
-   "scope": "Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite inputs are safely refused (#1176).",
+   "scope": "Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176).",
    "evidence": [
     "signature",
     "selection-casa"
@@ -397,7 +397,7 @@
   },
   "select": {
    "status": "Implemented",
-   "scope": "Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite inputs are safely refused (#1176).",
+   "scope": "Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176).",
    "evidence": [
     "signature",
     "selection-casa"
@@ -405,7 +405,7 @@
   },
   "selected": {
    "status": "Implemented",
-   "scope": "Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite inputs are safely refused (#1176).",
+   "scope": "Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176).",
    "evidence": [
     "signature",
     "selection-casa"
@@ -741,15 +741,17 @@
   "selection-casa": {
    "kind": "CASA-recorded values",
    "state": "measured",
-   "result": "33 CASA 6.7.6-14 selection and conversion cases plus selection lifecycle checks; CASA scalar NaN/infinity crashes are tracked in #1176.",
+   "result": "33 CASA 6.7.6-14 selection and conversion cases plus lifecycle checks; isolated scalar NaN, infinity and cyclic-list crashes are tracked in #1176.",
    "scope": "componentlist.select, deselect and selected.",
    "links": [
     "tools/simulation/componentlist_selection_oracle.py",
     "crates/casars-python/python/tests/data/casa_componentlist_selection.json",
     "crates/casars-python/python/tests/test_componentlist_selection.py",
-    "crates/casars-python/python/tests/test_componentlist_indices.py"
+    "crates/casars-python/python/tests/test_componentlist_indices.py",
+    "tools/simulation/componentlist_selection_crashes_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_selection_crashes.json"
    ],
-   "source_revision": "6a8031c0f6297406ee1fb720fd2aa5d40ec9dc2d"
+   "source_revision": "af82eb587576b8bc14bccff2f08da9a3112d14eb"
   },
   "fluxerror-casa": {
    "kind": "CASA-recorded values",
