@@ -178,12 +178,11 @@
    ]
   },
   "eq": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
    "evidence": [
     "signature",
-    "refusals"
+    "relational-casa"
    ]
   },
   "exp": {
@@ -220,12 +219,11 @@
    ]
   },
   "ge": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
    "evidence": [
     "signature",
-    "refusals"
+    "relational-casa"
    ]
   },
   "getformat": {
@@ -254,12 +252,11 @@
    ]
   },
   "gt": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
    "evidence": [
     "signature",
-    "refusals"
+    "relational-casa"
    ]
   },
   "isangle": {
@@ -279,12 +276,11 @@
    ]
   },
   "le": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
    "evidence": [
     "signature",
-    "refusals"
+    "relational-casa"
    ]
   },
   "log": {
@@ -304,12 +300,11 @@
    ]
   },
   "lt": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
    "evidence": [
     "signature",
-    "refusals"
+    "relational-casa"
    ]
   },
   "map": {
@@ -339,12 +334,11 @@
    ]
   },
   "ne": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values.",
    "evidence": [
     "signature",
-    "refusals"
+    "relational-casa"
    ]
   },
   "neg": {
@@ -597,6 +591,18 @@
     "crates/casars-python/python/tests/test_tools_quanta.py"
    ],
    "source_revision": "83c3308ca779c3ca84f29d47fa4203e2f7ae5a50"
+  },
+  "relational-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "168 CASA 6.7.6-14 comparisons cover units, incompatible dimensions, numeric edge cases, arrays and errors.",
+   "scope": "quanta.eq, ne, lt, le, gt and ge.",
+   "links": [
+    "tools/simulation/quanta_relational_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_relational.json",
+    "crates/casars-python/python/tests/test_quanta_relational.py"
+   ],
+   "source_revision": "1bc8a2fca31e5ac5361cf95fc12705fea6954a94"
   }
  }
 }
