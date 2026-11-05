@@ -867,6 +867,60 @@ fn tclean_saved_psf_sidelobe_uses_both_cell_sizes() {
     assert!((sidelobe - 0.4375).abs() < 1e-6, "{sidelobe}");
 }
 
+/// CASA subtracts a saved off-centre PSF beam at the image centre.
+#[test]
+fn tclean_saved_off_centre_psf_subtracts_the_beam_at_image_centre() {
+    use casa_images::{GaussianBeam, ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("offcentre-saved-psf");
+    std::fs::create_dir_all(&directory).unwrap();
+    let cell = 0.012_f64.to_radians() / 3600.0;
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": directory.join("image"),
+        "imsize": 64, "cell": ["0.012arcsec", "0.012arcsec"], "backend": "cpu",
+        "specmode": "cube", "nchan": 1, "start": 0, "width": 1,
+        "deconvolver": "hogbom", "niter": 0, "restoration": false,
+    });
+    let seed = json_run(&directory, values.clone());
+    assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
+    let mut psf = PagedImage::<f32>::open(directory.join("image.psf")).unwrap();
+    let mut info = psf.image_info().unwrap();
+    info.beam_set = ImageBeamSet::new(GaussianBeam {
+        major: 40.0 * cell,
+        minor: 40.0 * cell,
+        position_angle: 0.0,
+    });
+    psf.set_image_info(&info).unwrap();
+    let mut data = psf.get().unwrap();
+    data.fill(0.0);
+    data[[15, 32, 0, 0]] = 1.0;
+    psf.put_slice(&data, &[0; 4]).unwrap();
+    psf.save().unwrap();
+    drop(psf);
+    let mut residual = PagedImage::<f32>::open(directory.join("image.residual")).unwrap();
+    let mut data = residual.get().unwrap();
+    data.fill(0.0);
+    data[[32, 32, 0, 0]] = 1.0;
+    residual.put_slice(&data, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    let mut sumwt = PagedImage::<f32>::open(directory.join("image.sumwt")).unwrap();
+    let mut weights = sumwt.get().unwrap();
+    weights.fill(1.0);
+    sumwt.put_slice(&weights, &[0; 4]).unwrap();
+    sumwt.save().unwrap();
+    drop(sumwt);
+    values["niter"] = json!(1);
+    values["calcpsf"] = json!(false);
+    values["calcres"] = json!(false);
+    let result = match json_run(&directory, values) {
+        TaskReply::Succeeded { value, .. } => value,
+        other => panic!("{other:?}"),
+    };
+    let sidelobe = scalar(&result, "maxpsfsidelobe");
+    assert!((sidelobe - 0.39395368).abs() < 1e-6, "{sidelobe}");
+}
+
 /// `makeImageBeamSet` keeps an existing complete beam even after calcpsf
 /// recomputes PSF pixels; CASA does so with and without minor iterations.
 #[test]

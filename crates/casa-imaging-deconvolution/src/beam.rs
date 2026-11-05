@@ -368,8 +368,10 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_cell(
             shape,
         });
     }
-    let (peak_index, peak) = positive_peak(psf)?;
-    let peak_pixel = [peak_index / shape[1], peak_index % shape[1]];
+    let (_, peak) = positive_peak(psf)?;
+    // CASA's MakeGaussianPSF puts the beam at the image reference pixel,
+    // not at the PSF's (possibly off-centre) maximum.
+    let peak_pixel = [shape[0] / 2, shape[1] / 2];
     let sigma_major = beam.major_fwhm_rad() / 2.354_820_045_030_949_3;
     let sigma_minor = beam.minor_fwhm_rad() / 2.354_820_045_030_949_3;
     let cos_pa = beam.position_angle_rad().cos();
@@ -1208,8 +1210,8 @@ mod tests {
     }
 
     fn full_plane_sidelobe_reference(psf: &[f32], shape: [usize; 2], beam: RestoringBeam) -> f64 {
-        let (peak_index, peak) = peak_flat(psf).unwrap();
-        let centre = [peak_index / shape[1], peak_index % shape[1]];
+        let (_, peak) = peak_flat(psf).unwrap();
+        let centre = [shape[0] / 2, shape[1] / 2];
         let sigma_major = beam.major_fwhm_rad() / 2.354_820_045_030_949_3;
         let sigma_minor = beam.minor_fwhm_rad() / 2.354_820_045_030_949_3;
         let cos_pa = beam.position_angle_rad().cos();

@@ -136,23 +136,22 @@ impl PsfSummary {
         }
         let single = psf.iter().map(|value| *value as f32).collect::<Vec<_>>();
         let axes = [shape.nx, shape.ny];
-        // A plane peaking away from its centre has no beam of its own in CASA,
-        // which takes its domain's largest and subtracts a Gaussian at the
-        // centre, far from that peak, which so stays the sidelobe. Its beam
-        // here is a pixel until the run knows the other planes
-        // ([`Self::with_domain_beam`]).
+        // An off-centre plane without a saved beam takes its domain's largest
+        // later. With a saved beam, CASA subtracts that beam at the image
+        // centre even if it overlaps the off-centre PSF peak.
         let off_centre = peak_outside_inner_quarter(&single, axes)?;
         let (beam, sidelobe) = if off_centre {
-            let level = psf
-                .iter()
-                .fold(0.0_f64, |level, value| level.max(value.abs()));
-            (
-                match saved_beam {
-                    Some(beam) => beam,
-                    None => RestoringBeam::new(1.0, 1.0, 0.0)?,
-                },
-                level,
-            )
+            match saved_beam {
+                Some(beam) => (
+                    beam,
+                    fitted_psf_sidelobe_fraction_with_cell(&single, axes, beam, cell)?,
+                ),
+                None => (
+                    RestoringBeam::new(1.0, 1.0, 0.0)?,
+                    psf.iter()
+                        .fold(0.0_f64, |level, value| level.max(value.abs())),
+                ),
+            }
         } else {
             let beam = match saved_beam {
                 Some(beam) => beam,
@@ -332,5 +331,21 @@ mod tests {
             "{beam:?}"
         );
         assert!(summary.sidelobe() < 0.03, "{}", summary.sidelobe());
+    }
+    /// CASA subtracts the saved beam at the image centre even when the PSF
+    /// peaks outside the inner quarter (CASA 6.7.6.14: 0.39395368).
+    #[test]
+    fn an_off_centre_psf_subtracts_its_saved_beam_at_the_image_centre() {
+        let shape = PlaneShape::new(64, 64);
+        let mut psf = vec![0.0; shape.len()];
+        psf[15 * 64 + 32] = 1.0;
+        let beam = RestoringBeam::new(40.0, 40.0, 0.0).unwrap();
+        let summary = PsfSummary::with_saved_beam(&psf, shape, beam).unwrap();
+        assert!(summary.off_centre());
+        assert!(
+            (summary.sidelobe() - 0.39395368).abs() < 1e-6,
+            "{}",
+            summary.sidelobe()
+        );
     }
 }
