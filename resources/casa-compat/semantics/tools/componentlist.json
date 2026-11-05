@@ -781,15 +781,18 @@
   "isphysical-casa": {
    "kind": "CASA-recorded values",
    "state": "measured",
-   "result": "18 CASA 6.7.6-14 cases cover physical and nonphysical Stokes fluxes, selections and index errors; an empty index vector returns true. The empty default selection terminates an isolated CASA process (#1158).",
+   "result": "18 CASA 6.7.6-14 cases cover physical and nonphysical Stokes fluxes, selections and index errors; an empty index vector returns true. The empty default selection terminates an isolated CASA process (#1158). Six additional CASA-created table rows test complex Stokes and correlation-basis fluxes.",
    "scope": "componentlist.isphysical.",
    "links": [
     "tools/simulation/componentlist_isphysical_oracle.py",
     "crates/casars-python/python/tests/data/casa_componentlist_isphysical.json",
     "crates/casars-python/python/tests/test_componentlist_isphysical.py",
-    "docs/CASA (C++) bugs.md"
+    "docs/CASA (C++) bugs.md",
+    "tools/simulation/componentlist_physical_flux_table_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_physical_fluxes.json",
+    "crates/casars-python/python/tests/data/casa_physical_fluxes.cl.tgz"
    ],
-   "source_revision": "26aea2bafc6b19e6f790667ddc268daa976622df"
+   "source_revision": "f19c17971aa90799e053910a45eed46cd0ec744e"
   }
  }
 }

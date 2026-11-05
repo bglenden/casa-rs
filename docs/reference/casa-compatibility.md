@@ -1857,12 +1857,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="componentlist-evidence-isphysical-casa"></a>
 ##### isphysical-casa
 
-**CASA-recorded values — measured.** 18 CASA 6.7.6-14 cases cover physical and nonphysical Stokes fluxes, selections and index errors; an empty index vector returns true. The empty default selection terminates an isolated CASA process (#1158). componentlist.isphysical.
+**CASA-recorded values — measured.** 18 CASA 6.7.6-14 cases cover physical and nonphysical Stokes fluxes, selections and index errors; an empty index vector returns true. The empty default selection terminates an isolated CASA process (#1158). Six additional CASA-created table rows test complex Stokes and correlation-basis fluxes. componentlist.isphysical.
 
-- [tools/simulation/componentlist_isphysical_oracle.py](https://github.com/bglenden/casa-rs/blob/26aea2bafc6b19e6f790667ddc268daa976622df/tools/simulation/componentlist_isphysical_oracle.py)
-- [crates/casars-python/python/tests/data/casa_componentlist_isphysical.json](https://github.com/bglenden/casa-rs/blob/26aea2bafc6b19e6f790667ddc268daa976622df/crates/casars-python/python/tests/data/casa_componentlist_isphysical.json)
-- [crates/casars-python/python/tests/test_componentlist_isphysical.py](https://github.com/bglenden/casa-rs/blob/26aea2bafc6b19e6f790667ddc268daa976622df/crates/casars-python/python/tests/test_componentlist_isphysical.py)
-- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/26aea2bafc6b19e6f790667ddc268daa976622df/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- [tools/simulation/componentlist_isphysical_oracle.py](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/tools/simulation/componentlist_isphysical_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_isphysical.json](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/crates/casars-python/python/tests/data/casa_componentlist_isphysical.json)
+- [crates/casars-python/python/tests/test_componentlist_isphysical.py](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/crates/casars-python/python/tests/test_componentlist_isphysical.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- [tools/simulation/componentlist_physical_flux_table_oracle.py](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/tools/simulation/componentlist_physical_flux_table_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_physical_fluxes.json](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/crates/casars-python/python/tests/data/casa_componentlist_physical_fluxes.json)
+- [crates/casars-python/python/tests/data/casa_physical_fluxes.cl.tgz](https://github.com/bglenden/casa-rs/blob/f19c17971aa90799e053910a45eed46cd0ec744e/crates/casars-python/python/tests/data/casa_physical_fluxes.cl.tgz)
 
 ### measures
 
