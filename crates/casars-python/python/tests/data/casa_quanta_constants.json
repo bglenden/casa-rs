@@ -1,0 +1,364 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "input": "pi",
+      "result": {
+        "unit": "",
+        "value": 3.141592653589793
+      }
+    },
+    {
+      "input": "ee",
+      "result": {
+        "unit": "",
+        "value": 2.718281828459045
+      }
+    },
+    {
+      "input": "c",
+      "result": {
+        "unit": "m/s",
+        "value": 299792458.0
+      }
+    },
+    {
+      "input": "G",
+      "result": {
+        "unit": "N.m2/kg2",
+        "value": 6.67259e-11
+      }
+    },
+    {
+      "input": "h",
+      "result": {
+        "unit": "J.s",
+        "value": 6.6260755e-34
+      }
+    },
+    {
+      "input": "HI",
+      "result": {
+        "unit": "MHz",
+        "value": 1420.405751786
+      }
+    },
+    {
+      "input": "R",
+      "result": {
+        "unit": "J/K/mol",
+        "value": 8.31451
+      }
+    },
+    {
+      "input": "NA",
+      "result": {
+        "unit": "mol-1",
+        "value": 6.0221367e+23
+      }
+    },
+    {
+      "input": "e",
+      "result": {
+        "unit": "C",
+        "value": 1.60217733e-19
+      }
+    },
+    {
+      "input": "mp",
+      "result": {
+        "unit": "kg",
+        "value": 1.6726231e-27
+      }
+    },
+    {
+      "input": "mp_me",
+      "result": {
+        "unit": "",
+        "value": 1836.152701
+      }
+    },
+    {
+      "input": "mu0",
+      "result": {
+        "unit": "H/m",
+        "value": 1.2566370614359173e-06
+      }
+    },
+    {
+      "input": "epsilon0",
+      "result": {
+        "unit": "F/m",
+        "value": 8.854187817620389e-12
+      }
+    },
+    {
+      "input": "k",
+      "result": {
+        "unit": "J/K",
+        "value": 1.3806577987510647e-23
+      }
+    },
+    {
+      "input": "F",
+      "result": {
+        "unit": "C/mol",
+        "value": 96485.3089890101
+      }
+    },
+    {
+      "input": "me",
+      "result": {
+        "unit": "kg",
+        "value": 9.109389971155782e-31
+      }
+    },
+    {
+      "input": "re",
+      "result": {
+        "unit": "m",
+        "value": 2.8179e-15
+      }
+    },
+    {
+      "input": "a0",
+      "result": {
+        "unit": "m",
+        "value": 5.2918e-11
+      }
+    },
+    {
+      "input": "R0",
+      "result": {
+        "unit": "m",
+        "value": 695990000.0
+      }
+    },
+    {
+      "input": "k2",
+      "result": {
+        "unit": "AU3/d2/S0",
+        "value": 0.00029591220828559115
+      }
+    },
+    {
+      "input": "",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "p",
+      "result": {
+        "unit": "",
+        "value": 3.141592653589793
+      }
+    },
+    {
+      "input": "PI",
+      "result": {
+        "unit": "",
+        "value": 3.141592653589793
+      }
+    },
+    {
+      "input": "pii",
+      "result": {
+        "unit": "",
+        "value": 3.141592653589793
+      }
+    },
+    {
+      "input": "E",
+      "result": {
+        "unit": "C",
+        "value": 1.60217733e-19
+      }
+    },
+    {
+      "input": "ep",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "eps",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "eps0",
+      "result": {
+        "unit": "C",
+        "value": 1.60217733e-19
+      }
+    },
+    {
+      "input": "epsilon",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "epsilon1",
+      "result": {
+        "unit": "C",
+        "value": 1.60217733e-19
+      }
+    },
+    {
+      "input": "eeextra",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "h",
+      "result": {
+        "unit": "J.s",
+        "value": 6.6260755e-34
+      }
+    },
+    {
+      "input": "hy",
+      "result": {
+        "unit": "J.s",
+        "value": 6.6260755e-34
+      }
+    },
+    {
+      "input": "hi",
+      "result": {
+        "unit": "MHz",
+        "value": 1420.405751786
+      }
+    },
+    {
+      "input": "m",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "mp_",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "mp_meX",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "mpp",
+      "result": {
+        "unit": "kg",
+        "value": 1.6726231e-27
+      }
+    },
+    {
+      "input": "mu",
+      "result": {
+        "unit": "H/m",
+        "value": 1.2566370614359173e-06
+      }
+    },
+    {
+      "input": "muu",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "k3",
+      "result": {
+        "unit": "J/K",
+        "value": 1.3806577987510647e-23
+      }
+    },
+    {
+      "input": "R0foo",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "fTurn",
+      "result": {
+        "unit": "C/mol",
+        "value": 96485.3089890101
+      }
+    },
+    {
+      "input": "qTurn",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "foo",
+      "result": {
+        "unit": "C/mol",
+        "value": 96485.3089890101
+      }
+    },
+    {
+      "input": " \u03c0",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": "unknown",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "input": null,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _v must be a string"
+      }
+    },
+    {
+      "input": 1,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _v must be a string"
+      }
+    },
+    {
+      "input": [],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _v must be a string"
+      }
+    },
+    {
+      "input": {
+        "x": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _v must be a string"
+      }
+    }
+  ]
+}

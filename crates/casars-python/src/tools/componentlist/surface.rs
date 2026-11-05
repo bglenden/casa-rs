@@ -119,7 +119,7 @@ const METHODS: &[Method] = &[
         "deselect",
         &[param("which", K::Ints, Required)],
         R::Bool,
-        No,
+        Yes,
     ),
     method("done", &[], R::Bool, Yes),
     method("edit", &[WHICH, LOG], R::Bool, No),
@@ -170,7 +170,7 @@ const METHODS: &[Method] = &[
     of_one("getshape", R::Record, No),
     of_one("getspectrum", R::Record, Yes),
     method("haskeyword", &[KEYWORD], R::Bool, No),
-    method("indices", &[], R::Ints, No),
+    method("indices", &[], R::Ints, Yes),
     method(
         "iscomponentlist",
         &[param("tool", K::Any, Empty)],
@@ -221,8 +221,8 @@ const METHODS: &[Method] = &[
         R::Floats,
         No,
     ),
-    method("select", &[param("which", K::Ints, Required)], R::Bool, No),
-    method("selected", &[], R::Ints, No),
+    method("select", &[param("which", K::Ints, Required)], R::Bool, Yes),
+    method("selected", &[], R::Ints, Yes),
     method(
         "setflux",
         &[

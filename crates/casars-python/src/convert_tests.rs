@@ -13,7 +13,8 @@ fn record(fields: &[(&str, Variant)]) -> Variant {
         fields
             .iter()
             .map(|(key, value)| ((*key).to_string(), value.clone()))
-            .collect(),
+            .collect::<BTreeMap<_, _>>()
+            .into(),
     )
 }
 
@@ -149,4 +150,22 @@ fn numbers_read_as_complex_vectors_and_a_complex_is_no_quantity() {
     );
     let vector = quantity(&Variant::Complexes(vec![complex(0.0, 1.0)])).unwrap();
     assert_eq!((vector.value(), vector.unit().name()), (0.0, ""));
+}
+
+#[test]
+fn record_scalar_metadata_changes_only_quantity_interpretation() {
+    let fields = BTreeMap::from([
+        ("value".to_string(), Variant::Number(i64::MAX as f64)),
+        ("unit".to_string(), Variant::Text("m".to_string())),
+    ]);
+    let ordinary = Variant::Record(fields.clone().into());
+    let typed = Variant::Record(VariantRecord {
+        fields,
+        scalar_kind: Some(RecordScalarKind::NativeInteger(i64::MAX)),
+    });
+    assert_eq!(
+        value::CasaValue::from_variant(&ordinary),
+        value::CasaValue::from_variant(&typed)
+    );
+    assert_eq!(quantity(&typed).unwrap().value(), -1.0);
 }

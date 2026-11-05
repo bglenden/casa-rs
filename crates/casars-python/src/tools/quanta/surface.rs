@@ -67,7 +67,7 @@ const METHODS: &[Method] = &[
         "constants",
         &[param("v", K::Text, Text("pi"))],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "convert",
@@ -145,13 +145,13 @@ const METHODS: &[Method] = &[
             param("a", K::Float, Float(-0.5)),
         ],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "pow",
         &[param("v", K::Quantity, Empty), param("a", K::Int, Int(1))],
         R::Record,
-        No,
+        Yes,
     ),
     method("quantity", &QUANTITY, R::Record, Yes),
     method(
@@ -165,7 +165,7 @@ const METHODS: &[Method] = &[
     ),
     unary("sin", R::Record, Yes),
     unary("splitdate", R::Record, Yes),
-    unary("sqrt", R::Record, No),
+    unary("sqrt", R::Record, Yes),
     binary("sub", R::Record, Yes),
     unary("tan", R::Record, Yes),
     method("time", &FORMAT, R::Texts, Yes),
