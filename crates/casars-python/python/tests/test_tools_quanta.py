@@ -31,7 +31,7 @@ CASA = casa_signatures("quanta")
 
 IMPLEMENTED = {
     "abs", "acos", "add", "angle", "asin", "atan", "canon", "canonical", "check", "compare", "convert", "cos", "div", "done",
-    "formxxx", "getunit", "getvalue", "isquantity", "mul", "neg", "quantity", "sin", "splitdate", "sub", "tan", "time",
+    "formxxx", "getunit", "getvalue", "isangle", "isquantity", "mul", "neg", "quantity", "sin", "splitdate", "sub", "tan", "time",
     "toangle", "tos", "totime", "type", "unit",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
@@ -55,6 +55,20 @@ def test_trigonometry_matches_casa() -> None:
                 assert math.isnan(result["value"])
             else:
                 assert result["value"] == pytest.approx(expected["value"], rel=1e-14, abs=1e-15)
+
+
+def test_isangle_matches_casa() -> None:
+    fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_isangle.json").read_text())
+    qa = quanta()
+    for case in fixture["cases"]:
+        if "error" in case:
+            assert case["error"]["type"] == "RuntimeError"
+            with pytest.raises(RuntimeError) as error:
+                qa.isangle(case["input"])
+            assert str(error.value) == case["error"]["message"]
+        else:
+            assert qa.isangle(case["input"]) is case["result"]
+    assert qa.isangle() is False
 
 
 def q(value: Any, unit: str) -> dict[str, Any]:

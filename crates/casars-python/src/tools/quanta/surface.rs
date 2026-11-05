@@ -122,7 +122,7 @@ const METHODS: &[Method] = &[
     method("getunit", &[param("v", K::Any, Empty)], R::Text, Yes),
     method("getvalue", &[param("v", K::Any, Empty)], R::Floats, Yes),
     binary("gt", R::Bool, No),
-    unary("isangle", R::Bool, No),
+    unary("isangle", R::Bool, Yes),
     method("isquantity", &[param("v", K::Any, Empty)], R::Bool, Yes),
     binary("le", R::Bool, No),
     unary("log", R::Record, No),

@@ -267,12 +267,11 @@
    ]
   },
   "isangle": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Tests whether a scalar quantity has angle or time dimensions, with CASA conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "isangle-casa"
    ]
   },
   "isquantity": {
@@ -556,6 +555,18 @@
     "crates/casars-python/python/tests/test_tools_quanta.py"
    ],
    "source_revision": "6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad"
+  },
+  "isangle-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Twenty-two scalar, array, record, malformed and unit cases recorded with CASA 6.7.6-14.",
+   "scope": "quanta.isangle, including angle and time dimensions and scalar conversion errors.",
+   "links": [
+    "tools/simulation/quanta_isangle_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_isangle.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "88e8c2fd7b7742de78eeb75e16164b5b40367c90"
   }
  }
 }
