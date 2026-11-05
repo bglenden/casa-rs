@@ -93,12 +93,11 @@
    ]
   },
   "checkfreq": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Tests whether a scalar quantity has a frequency-compatible dimension, with CASA conversion errors.",
    "evidence": [
     "signature",
-    "refusals"
+    "checkfreq-casa"
    ]
   },
   "compare": {
@@ -541,17 +540,17 @@
     "docs/CASA (C++) bugs.md"
    ]
   },
-  "trigonometry-casa": {
+  "checkfreq-casa": {
    "kind": "CASA-recorded values",
    "state": "measured",
-   "result": "108 CASA 6.7.6-14 cases cover angle and dimensionless inputs, scaled units, out-of-domain results and errors for all six functions.",
-   "scope": "quanta.sin, cos, tan, asin, acos and atan.",
+   "result": "Thirty-two CASA 6.7.6-14 cases cover frequency, period, wavelength, energy, other dimensions and scalar conversion errors.",
+   "scope": "quanta.checkfreq.",
    "links": [
-    "tools/simulation/quanta_trigonometry_oracle.py",
-    "crates/casars-python/python/tests/data/casa_quanta_trigonometry.json",
+    "tools/simulation/quanta_checkfreq_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_checkfreq.json",
     "crates/casars-python/python/tests/test_tools_quanta.py"
    ],
-   "source_revision": "6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad"
+   "source_revision": "119771e30d19558740b3b799e5bd519b1a060ba7"
   },
   "isangle-casa": {
    "kind": "CASA-recorded values",
@@ -576,6 +575,18 @@
     "crates/casars-python/python/tests/test_tools_quanta.py"
    ],
    "source_revision": "a05f4c2dbdfdff1a6a46575c02d4c714875281c6"
+  },
+  "trigonometry-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "108 CASA 6.7.6-14 cases cover angle and dimensionless inputs, scaled units, out-of-domain results and errors for all six functions.",
+   "scope": "quanta.sin, cos, tan, asin, acos and atan.",
+   "links": [
+    "tools/simulation/quanta_trigonometry_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_trigonometry.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad"
   },
   "atan2-casa": {
    "kind": "CASA-recorded values",
