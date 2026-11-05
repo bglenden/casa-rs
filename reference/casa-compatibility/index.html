@@ -2531,6 +2531,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#sqrt-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sqrt-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#power-casa" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6121,6 +6132,17 @@
     <span class="md-ellipsis">
       
         atan2-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sqrt-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sqrt-casa
       
     </span>
   </a>
@@ -10060,9 +10082,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">57</td>
 <td>yes</td>
-<td style="text-align: right;">46</td>
+<td style="text-align: right;">47</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">11</td>
+<td style="text-align: right;">10</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -11166,7 +11188,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="quanta">quanta<a class="headerlink" href="#quanta" title="Permanent link">&para;</a></h3>
 <h4 id="quanta-method-implementation">quanta method implementation<a class="headerlink" href="#quanta-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 46, Partial: 0, Not implemented: 11, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 47, Partial: 0, Not implemented: 10, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -11517,9 +11539,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>sqrt</code></td>
 <td><code>v=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Scalar square root in CASA's canonical units, with dimension and quantity conversion errors.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-sqrt-casa">sqrt-casa</a></td>
 </tr>
 <tr>
 <td><code>sub</code></td>
@@ -11679,6 +11701,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/4d86ba7a97255eaafab86a745b660adc694aa3c7/tools/simulation/quanta_atan2_oracle.py">tools/simulation/quanta_atan2_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/4d86ba7a97255eaafab86a745b660adc694aa3c7/crates/casars-python/python/tests/data/casa_quanta_atan2.json">crates/casars-python/python/tests/data/casa_quanta_atan2.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/4d86ba7a97255eaafab86a745b660adc694aa3c7/crates/casars-python/python/tests/test_tools_quanta.py">crates/casars-python/python/tests/test_tools_quanta.py</a></li>
+</ul>
+<p><a id="quanta-evidence-sqrt-casa"></a></p>
+<h5 id="sqrt-casa">sqrt-casa<a class="headerlink" href="#sqrt-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> Twenty-eight CASA 6.7.6-14 cases cover scaled, compound and illegal units, signed zero, NaN results and conversion errors. quanta.sqrt.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/8c90f0f745b09bf5a7ec439598eb4502c8ff5b3d/tools/simulation/quanta_sqrt_oracle.py">tools/simulation/quanta_sqrt_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/8c90f0f745b09bf5a7ec439598eb4502c8ff5b3d/crates/casars-python/python/tests/data/casa_quanta_sqrt.json">crates/casars-python/python/tests/data/casa_quanta_sqrt.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/8c90f0f745b09bf5a7ec439598eb4502c8ff5b3d/crates/casars-python/python/tests/test_tools_quanta.py">crates/casars-python/python/tests/test_tools_quanta.py</a></li>
 </ul>
 <p><a id="quanta-evidence-power-casa"></a></p>
 <h5 id="power-casa">power-casa<a class="headerlink" href="#power-casa" title="Permanent link">&para;</a></h5>

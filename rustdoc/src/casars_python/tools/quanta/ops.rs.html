@@ -222,240 +222,258 @@
 <a href=#222 id=222 data-nosnippet>222</a>    )))
 <a href=#223 id=223 data-nosnippet>223</a>}
 <a href=#224 id=224 data-nosnippet>224</a>
-<a href=#225 id=225 data-nosnippet>225</a><span class="doccomment">/// `qa.pow(v, a)`: CASA multiplies or divides repeatedly in the original unit.
-<a href=#226 id=226 data-nosnippet>226</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>power(value: <span class="kw-2">&amp;</span>Variant, power: i32) -&gt; ConvertResult&lt;CasaValue&gt; {
-<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">let </span>quantity = quantity(value)<span class="question-mark">?</span>;
-<a href=#228 id=228 data-nosnippet>228</a>    <span class="kw">if </span>power.unsigned_abs() &gt;= <span class="number">100 </span>{
-<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(<span class="string">"Quantum::pow exponent too large"</span>));
-<a href=#230 id=230 data-nosnippet>230</a>    }
-<a href=#231 id=231 data-nosnippet>231</a>    <span class="kw">let </span>number = quantity.value();
-<a href=#232 id=232 data-nosnippet>232</a>    <span class="comment">// This initialization deliberately turns infinities into NaN, as CASA does.
-<a href=#233 id=233 data-nosnippet>233</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>result = number * <span class="number">0.0 </span>+ <span class="number">1.0</span>;
-<a href=#234 id=234 data-nosnippet>234</a>    <span class="kw">if </span>power &gt;= <span class="number">0 </span>{
-<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">for _ in </span><span class="number">0</span>..power {
-<a href=#236 id=236 data-nosnippet>236</a>            result <span class="kw-2">*</span>= number;
-<a href=#237 id=237 data-nosnippet>237</a>        }
-<a href=#238 id=238 data-nosnippet>238</a>    } <span class="kw">else </span>{
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">for _ in </span>power..<span class="number">0 </span>{
-<a href=#240 id=240 data-nosnippet>240</a>            result /= number;
-<a href=#241 id=241 data-nosnippet>241</a>        }
-<a href=#242 id=242 data-nosnippet>242</a>    }
-<a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">let </span>unit = <span class="kw">if </span>power == <span class="number">0 </span>|| quantity.unit().name().is_empty() {
-<a href=#244 id=244 data-nosnippet>244</a>        String::new()
-<a href=#245 id=245 data-nosnippet>245</a>    } <span class="kw">else </span>{
-<a href=#246 id=246 data-nosnippet>246</a>        <span class="macro">format!</span>(<span class="string">"({}){power}"</span>, quantity.unit().name())
-<a href=#247 id=247 data-nosnippet>247</a>    };
-<a href=#248 id=248 data-nosnippet>248</a>    <span class="prelude-val">Ok</span>(CasaValue::record([
-<a href=#249 id=249 data-nosnippet>249</a>        (<span class="string">"unit"</span>, CasaValue::Text(unit)),
-<a href=#250 id=250 data-nosnippet>250</a>        (<span class="string">"value"</span>, CasaValue::Float(result)),
-<a href=#251 id=251 data-nosnippet>251</a>    ]))
-<a href=#252 id=252 data-nosnippet>252</a>}
-<a href=#253 id=253 data-nosnippet>253</a>
-<a href=#254 id=254 data-nosnippet>254</a><span class="doccomment">/// `qa.compare(v, a)`: whether the units have the same dimensions.
-<a href=#255 id=255 data-nosnippet>255</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>compare(left: <span class="kw-2">&amp;</span>Variant, right: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
-<a href=#256 id=256 data-nosnippet>256</a>    <span class="prelude-val">Ok</span>(CasaValue::Bool(
-<a href=#257 id=257 data-nosnippet>257</a>        quantity(left)<span class="question-mark">?</span>.unit().val().dim == quantity(right)<span class="question-mark">?</span>.unit().val().dim,
-<a href=#258 id=258 data-nosnippet>258</a>    ))
-<a href=#259 id=259 data-nosnippet>259</a>}
-<a href=#260 id=260 data-nosnippet>260</a>
-<a href=#261 id=261 data-nosnippet>261</a><span class="doccomment">/// The six scalar relational operators convert the right value into the left
-<a href=#262 id=262 data-nosnippet>262</a>/// unit. Equality allows unlike dimensions; ordered comparisons reject them.
-<a href=#263 id=263 data-nosnippet>263</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>relational(left: <span class="kw-2">&amp;</span>Variant, right: <span class="kw-2">&amp;</span>Variant, op: <span class="kw-2">&amp;</span>str) -&gt; ConvertResult&lt;CasaValue&gt; {
-<a href=#264 id=264 data-nosnippet>264</a>    <span class="kw">let </span>(left, right) = (quantity(left)<span class="question-mark">?</span>, quantity(right)<span class="question-mark">?</span>);
-<a href=#265 id=265 data-nosnippet>265</a>    <span class="kw">let </span>conformant = left.unit().val().dim == right.unit().val().dim;
-<a href=#266 id=266 data-nosnippet>266</a>    <span class="kw">if </span>!conformant &amp;&amp; !<span class="macro">matches!</span>(op, <span class="string">"eq" </span>| <span class="string">"ne"</span>) {
-<a href=#267 id=267 data-nosnippet>267</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(<span class="macro">format!</span>(
-<a href=#268 id=268 data-nosnippet>268</a>            <span class="string">"Quantum::operator&lt; unequal units '{}, '{}'"</span>,
-<a href=#269 id=269 data-nosnippet>269</a>            left.unit().name(),
-<a href=#270 id=270 data-nosnippet>270</a>            right.unit().name()
-<a href=#271 id=271 data-nosnippet>271</a>        )));
-<a href=#272 id=272 data-nosnippet>272</a>    }
-<a href=#273 id=273 data-nosnippet>273</a>    <span class="kw">let </span>scaled = right.value() * (right.unit().val().factor / left.unit().val().factor);
-<a href=#274 id=274 data-nosnippet>274</a>    <span class="kw">let </span>order = left.value().partial_cmp(<span class="kw-2">&amp;</span>scaled);
-<a href=#275 id=275 data-nosnippet>275</a>    <span class="kw">let </span>equal = conformant &amp;&amp; order == <span class="prelude-val">Some</span>(std::cmp::Ordering::Equal);
-<a href=#276 id=276 data-nosnippet>276</a>    <span class="kw">let </span>result = <span class="kw">match </span>op {
-<a href=#277 id=277 data-nosnippet>277</a>        <span class="string">"eq" </span>=&gt; equal,
-<a href=#278 id=278 data-nosnippet>278</a>        <span class="string">"ne" </span>=&gt; !equal,
-<a href=#279 id=279 data-nosnippet>279</a>        <span class="string">"lt" </span>=&gt; order == <span class="prelude-val">Some</span>(std::cmp::Ordering::Less),
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="string">"gt" </span>=&gt; order == <span class="prelude-val">Some</span>(std::cmp::Ordering::Greater),
-<a href=#281 id=281 data-nosnippet>281</a>        <span class="comment">// casacore defines &lt;= as !(&gt;) and &gt;= as !(&lt;), including for NaN.
-<a href=#282 id=282 data-nosnippet>282</a>        </span><span class="string">"le" </span>=&gt; order != <span class="prelude-val">Some</span>(std::cmp::Ordering::Greater),
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="string">"ge" </span>=&gt; order != <span class="prelude-val">Some</span>(std::cmp::Ordering::Less),
-<a href=#284 id=284 data-nosnippet>284</a>        <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(<span class="string">"unknown quantity comparison"</span>),
-<a href=#285 id=285 data-nosnippet>285</a>    };
-<a href=#286 id=286 data-nosnippet>286</a>    <span class="prelude-val">Ok</span>(CasaValue::Bool(result))
-<a href=#287 id=287 data-nosnippet>287</a>}
-<a href=#288 id=288 data-nosnippet>288</a>
-<a href=#289 id=289 data-nosnippet>289</a><span class="doccomment">/// `qa.checkfreq(cm)`: the dimensions accepted by casacore's MVFrequency.
-<a href=#290 id=290 data-nosnippet>290</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>checkfreq(value: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
-<a href=#291 id=291 data-nosnippet>291</a>    <span class="kw">let </span>dimension = quantity(value)<span class="question-mark">?</span>.unit().val().dim;
-<a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">let </span>time = UnitDim::basis(Dimension::Time);
-<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">let </span>angle = UnitDim::basis(Dimension::Angle);
-<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">let </span>length = UnitDim::basis(Dimension::Length);
-<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">let </span>mass = UnitDim::basis(Dimension::Mass);
-<a href=#296 id=296 data-nosnippet>296</a>    <span class="kw">let </span>accepted = [
-<a href=#297 id=297 data-nosnippet>297</a>        time,
-<a href=#298 id=298 data-nosnippet>298</a>        UnitDim::NODIM / time,
-<a href=#299 id=299 data-nosnippet>299</a>        angle / time,
-<a href=#300 id=300 data-nosnippet>300</a>        length,
-<a href=#301 id=301 data-nosnippet>301</a>        UnitDim::NODIM / length,
-<a href=#302 id=302 data-nosnippet>302</a>        mass * length * length / time / time,
-<a href=#303 id=303 data-nosnippet>303</a>        mass * length,
-<a href=#304 id=304 data-nosnippet>304</a>    ];
-<a href=#305 id=305 data-nosnippet>305</a>    <span class="prelude-val">Ok</span>(CasaValue::Bool(accepted.contains(<span class="kw-2">&amp;</span>dimension)))
-<a href=#306 id=306 data-nosnippet>306</a>}
-<a href=#307 id=307 data-nosnippet>307</a>
-<a href=#308 id=308 data-nosnippet>308</a><span class="doccomment">/// `qa.isangle(v)`: angles and times are accepted by casacore's angle form.
-<a href=#309 id=309 data-nosnippet>309</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>isangle(value: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
-<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">let </span>value = quantity(value)<span class="question-mark">?</span>;
-<a href=#311 id=311 data-nosnippet>311</a>    <span class="prelude-val">Ok</span>(CasaValue::Bool(
-<a href=#312 id=312 data-nosnippet>312</a>        has(<span class="kw-2">&amp;</span>value, Dimension::Angle) || has(<span class="kw-2">&amp;</span>value, Dimension::Time),
-<a href=#313 id=313 data-nosnippet>313</a>    ))
-<a href=#314 id=314 data-nosnippet>314</a>}
-<a href=#315 id=315 data-nosnippet>315</a>
-<a href=#316 id=316 data-nosnippet>316</a><span class="doccomment">/// `qa.check(v)`: whether casacore reads the string as a quantity.
-<a href=#317 id=317 data-nosnippet>317</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>check(text: <span class="kw-2">&amp;</span>str) -&gt; CasaValue {
-<a href=#318 id=318 data-nosnippet>318</a>    CasaValue::Bool(Quantity::read(text).is_ok())
-<a href=#319 id=319 data-nosnippet>319</a>}
-<a href=#320 id=320 data-nosnippet>320</a>
-<a href=#321 id=321 data-nosnippet>321</a><span class="doccomment">/// `qa.isquantity(v)`: whether `v` is a string casacore reads as a
-<a href=#322 id=322 data-nosnippet>322</a>/// quantity, or a quantity record.
-<a href=#323 id=323 data-nosnippet>323</a>///
-<a href=#324 id=324 data-nosnippet>324</a>/// Divergence: CASA's records with an integer value are not quantities
-<a href=#325 id=325 data-nosnippet>325</a>/// (casacore holds them as integer quanta); here every quantity record is.
-<a href=#326 id=326 data-nosnippet>326</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>isquantity(value: <span class="kw-2">&amp;</span>Variant) -&gt; CasaValue {
-<a href=#327 id=327 data-nosnippet>327</a>    CasaValue::Bool(<span class="kw">match </span>value {
-<a href=#328 id=328 data-nosnippet>328</a>        Variant::Text(text) =&gt; Quantity::read(text).is_ok(),
-<a href=#329 id=329 data-nosnippet>329</a>        Variant::Record(<span class="kw">_</span>) =&gt; quantum_holder(value).is_ok(),
-<a href=#330 id=330 data-nosnippet>330</a>        <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
-<a href=#331 id=331 data-nosnippet>331</a>    })
+<a href=#225 id=225 data-nosnippet>225</a><span class="doccomment">/// `qa.sqrt(v)`: take the root in SI units, as casacore does.
+<a href=#226 id=226 data-nosnippet>226</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>sqrt(value: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
+<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">let </span>value = quantity(value)<span class="question-mark">?</span>;
+<a href=#228 id=228 data-nosnippet>228</a>    <span class="kw">let </span>dimension =
+<a href=#229 id=229 data-nosnippet>229</a>        value.unit().val().dim.sqrt().map_err(|<span class="kw">_</span>| {
+<a href=#230 id=230 data-nosnippet>230</a>            ConvertError::runtime(<span class="string">"UnitVal::UnitVal Illegal unit dimensions for root"</span>)
+<a href=#231 id=231 data-nosnippet>231</a>        })<span class="question-mark">?</span>;
+<a href=#232 id=232 data-nosnippet>232</a>    <span class="kw">let </span>result_unit = <span class="kw">if </span>dimension == UnitDim::NODIM {
+<a href=#233 id=233 data-nosnippet>233</a>        Unit::dimensionless()
+<a href=#234 id=234 data-nosnippet>234</a>    } <span class="kw">else </span>{
+<a href=#235 id=235 data-nosnippet>235</a>        unit(<span class="kw-2">&amp;</span>dimension.to_string())
+<a href=#236 id=236 data-nosnippet>236</a>    };
+<a href=#237 id=237 data-nosnippet>237</a>    <span class="kw">let </span>number = value.get_si_value();
+<a href=#238 id=238 data-nosnippet>238</a>    <span class="comment">// CASA's root calculation maps both signed zeros to positive zero.
+<a href=#239 id=239 data-nosnippet>239</a>    </span><span class="kw">let </span>result = <span class="kw">if </span>number == <span class="number">0.0 </span>{ <span class="number">0.0 </span>} <span class="kw">else </span>{ number.sqrt() };
+<a href=#240 id=240 data-nosnippet>240</a>    <span class="prelude-val">Ok</span>(record(<span class="kw-2">&amp;</span>Quantity::with_unit(result, result_unit)))
+<a href=#241 id=241 data-nosnippet>241</a>}
+<a href=#242 id=242 data-nosnippet>242</a>
+<a href=#243 id=243 data-nosnippet>243</a><span class="doccomment">/// `qa.pow(v, a)`: CASA multiplies or divides repeatedly in the original unit.
+<a href=#244 id=244 data-nosnippet>244</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>power(value: <span class="kw-2">&amp;</span>Variant, power: i32) -&gt; ConvertResult&lt;CasaValue&gt; {
+<a href=#245 id=245 data-nosnippet>245</a>    <span class="kw">let </span>quantity = quantity(value)<span class="question-mark">?</span>;
+<a href=#246 id=246 data-nosnippet>246</a>    <span class="kw">if </span>power.unsigned_abs() &gt;= <span class="number">100 </span>{
+<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(<span class="string">"Quantum::pow exponent too large"</span>));
+<a href=#248 id=248 data-nosnippet>248</a>    }
+<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">let </span>number = quantity.value();
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="comment">// This initialization deliberately turns infinities into NaN, as CASA does.
+<a href=#251 id=251 data-nosnippet>251</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>result = number * <span class="number">0.0 </span>+ <span class="number">1.0</span>;
+<a href=#252 id=252 data-nosnippet>252</a>    <span class="kw">if </span>power &gt;= <span class="number">0 </span>{
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">for _ in </span><span class="number">0</span>..power {
+<a href=#254 id=254 data-nosnippet>254</a>            result <span class="kw-2">*</span>= number;
+<a href=#255 id=255 data-nosnippet>255</a>        }
+<a href=#256 id=256 data-nosnippet>256</a>    } <span class="kw">else </span>{
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">for _ in </span>power..<span class="number">0 </span>{
+<a href=#258 id=258 data-nosnippet>258</a>            result /= number;
+<a href=#259 id=259 data-nosnippet>259</a>        }
+<a href=#260 id=260 data-nosnippet>260</a>    }
+<a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">let </span>unit = <span class="kw">if </span>power == <span class="number">0 </span>|| quantity.unit().name().is_empty() {
+<a href=#262 id=262 data-nosnippet>262</a>        String::new()
+<a href=#263 id=263 data-nosnippet>263</a>    } <span class="kw">else </span>{
+<a href=#264 id=264 data-nosnippet>264</a>        <span class="macro">format!</span>(<span class="string">"({}){power}"</span>, quantity.unit().name())
+<a href=#265 id=265 data-nosnippet>265</a>    };
+<a href=#266 id=266 data-nosnippet>266</a>    <span class="prelude-val">Ok</span>(CasaValue::record([
+<a href=#267 id=267 data-nosnippet>267</a>        (<span class="string">"unit"</span>, CasaValue::Text(unit)),
+<a href=#268 id=268 data-nosnippet>268</a>        (<span class="string">"value"</span>, CasaValue::Float(result)),
+<a href=#269 id=269 data-nosnippet>269</a>    ]))
+<a href=#270 id=270 data-nosnippet>270</a>}
+<a href=#271 id=271 data-nosnippet>271</a>
+<a href=#272 id=272 data-nosnippet>272</a><span class="doccomment">/// `qa.compare(v, a)`: whether the units have the same dimensions.
+<a href=#273 id=273 data-nosnippet>273</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>compare(left: <span class="kw-2">&amp;</span>Variant, right: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
+<a href=#274 id=274 data-nosnippet>274</a>    <span class="prelude-val">Ok</span>(CasaValue::Bool(
+<a href=#275 id=275 data-nosnippet>275</a>        quantity(left)<span class="question-mark">?</span>.unit().val().dim == quantity(right)<span class="question-mark">?</span>.unit().val().dim,
+<a href=#276 id=276 data-nosnippet>276</a>    ))
+<a href=#277 id=277 data-nosnippet>277</a>}
+<a href=#278 id=278 data-nosnippet>278</a>
+<a href=#279 id=279 data-nosnippet>279</a><span class="doccomment">/// The six scalar relational operators convert the right value into the left
+<a href=#280 id=280 data-nosnippet>280</a>/// unit. Equality allows unlike dimensions; ordered comparisons reject them.
+<a href=#281 id=281 data-nosnippet>281</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>relational(left: <span class="kw-2">&amp;</span>Variant, right: <span class="kw-2">&amp;</span>Variant, op: <span class="kw-2">&amp;</span>str) -&gt; ConvertResult&lt;CasaValue&gt; {
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">let </span>(left, right) = (quantity(left)<span class="question-mark">?</span>, quantity(right)<span class="question-mark">?</span>);
+<a href=#283 id=283 data-nosnippet>283</a>    <span class="kw">let </span>conformant = left.unit().val().dim == right.unit().val().dim;
+<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">if </span>!conformant &amp;&amp; !<span class="macro">matches!</span>(op, <span class="string">"eq" </span>| <span class="string">"ne"</span>) {
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(ConvertError::runtime(<span class="macro">format!</span>(
+<a href=#286 id=286 data-nosnippet>286</a>            <span class="string">"Quantum::operator&lt; unequal units '{}, '{}'"</span>,
+<a href=#287 id=287 data-nosnippet>287</a>            left.unit().name(),
+<a href=#288 id=288 data-nosnippet>288</a>            right.unit().name()
+<a href=#289 id=289 data-nosnippet>289</a>        )));
+<a href=#290 id=290 data-nosnippet>290</a>    }
+<a href=#291 id=291 data-nosnippet>291</a>    <span class="kw">let </span>scaled = right.value() * (right.unit().val().factor / left.unit().val().factor);
+<a href=#292 id=292 data-nosnippet>292</a>    <span class="kw">let </span>order = left.value().partial_cmp(<span class="kw-2">&amp;</span>scaled);
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="kw">let </span>equal = conformant &amp;&amp; order == <span class="prelude-val">Some</span>(std::cmp::Ordering::Equal);
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">let </span>result = <span class="kw">match </span>op {
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="string">"eq" </span>=&gt; equal,
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="string">"ne" </span>=&gt; !equal,
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="string">"lt" </span>=&gt; order == <span class="prelude-val">Some</span>(std::cmp::Ordering::Less),
+<a href=#298 id=298 data-nosnippet>298</a>        <span class="string">"gt" </span>=&gt; order == <span class="prelude-val">Some</span>(std::cmp::Ordering::Greater),
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="comment">// casacore defines &lt;= as !(&gt;) and &gt;= as !(&lt;), including for NaN.
+<a href=#300 id=300 data-nosnippet>300</a>        </span><span class="string">"le" </span>=&gt; order != <span class="prelude-val">Some</span>(std::cmp::Ordering::Greater),
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="string">"ge" </span>=&gt; order != <span class="prelude-val">Some</span>(std::cmp::Ordering::Less),
+<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(<span class="string">"unknown quantity comparison"</span>),
+<a href=#303 id=303 data-nosnippet>303</a>    };
+<a href=#304 id=304 data-nosnippet>304</a>    <span class="prelude-val">Ok</span>(CasaValue::Bool(result))
+<a href=#305 id=305 data-nosnippet>305</a>}
+<a href=#306 id=306 data-nosnippet>306</a>
+<a href=#307 id=307 data-nosnippet>307</a><span class="doccomment">/// `qa.checkfreq(cm)`: the dimensions accepted by casacore's MVFrequency.
+<a href=#308 id=308 data-nosnippet>308</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>checkfreq(value: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
+<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">let </span>dimension = quantity(value)<span class="question-mark">?</span>.unit().val().dim;
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">let </span>time = UnitDim::basis(Dimension::Time);
+<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">let </span>angle = UnitDim::basis(Dimension::Angle);
+<a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">let </span>length = UnitDim::basis(Dimension::Length);
+<a href=#313 id=313 data-nosnippet>313</a>    <span class="kw">let </span>mass = UnitDim::basis(Dimension::Mass);
+<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">let </span>accepted = [
+<a href=#315 id=315 data-nosnippet>315</a>        time,
+<a href=#316 id=316 data-nosnippet>316</a>        UnitDim::NODIM / time,
+<a href=#317 id=317 data-nosnippet>317</a>        angle / time,
+<a href=#318 id=318 data-nosnippet>318</a>        length,
+<a href=#319 id=319 data-nosnippet>319</a>        UnitDim::NODIM / length,
+<a href=#320 id=320 data-nosnippet>320</a>        mass * length * length / time / time,
+<a href=#321 id=321 data-nosnippet>321</a>        mass * length,
+<a href=#322 id=322 data-nosnippet>322</a>    ];
+<a href=#323 id=323 data-nosnippet>323</a>    <span class="prelude-val">Ok</span>(CasaValue::Bool(accepted.contains(<span class="kw-2">&amp;</span>dimension)))
+<a href=#324 id=324 data-nosnippet>324</a>}
+<a href=#325 id=325 data-nosnippet>325</a>
+<a href=#326 id=326 data-nosnippet>326</a><span class="doccomment">/// `qa.isangle(v)`: angles and times are accepted by casacore's angle form.
+<a href=#327 id=327 data-nosnippet>327</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>isangle(value: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
+<a href=#328 id=328 data-nosnippet>328</a>    <span class="kw">let </span>value = quantity(value)<span class="question-mark">?</span>;
+<a href=#329 id=329 data-nosnippet>329</a>    <span class="prelude-val">Ok</span>(CasaValue::Bool(
+<a href=#330 id=330 data-nosnippet>330</a>        has(<span class="kw-2">&amp;</span>value, Dimension::Angle) || has(<span class="kw-2">&amp;</span>value, Dimension::Time),
+<a href=#331 id=331 data-nosnippet>331</a>    ))
 <a href=#332 id=332 data-nosnippet>332</a>}
 <a href=#333 id=333 data-nosnippet>333</a>
-<a href=#334 id=334 data-nosnippet>334</a><span class="doccomment">/// casacore's `MVTime(Quantity)`: MJD days of a time, or turns of an angle.
-<a href=#335 id=335 data-nosnippet>335</a></span><span class="kw">fn </span>time_days(value: <span class="kw-2">&amp;</span>Quantity) -&gt; ConvertResult&lt;f64&gt; {
-<a href=#336 id=336 data-nosnippet>336</a>    <span class="kw">let </span>base = value.get_si_value();
-<a href=#337 id=337 data-nosnippet>337</a>    <span class="kw">if </span>has(value, Dimension::Angle) {
-<a href=#338 id=338 data-nosnippet>338</a>        <span class="prelude-val">Ok</span>(base / CIRCLE)
-<a href=#339 id=339 data-nosnippet>339</a>    } <span class="kw">else if </span>has(value, Dimension::Time) {
-<a href=#340 id=340 data-nosnippet>340</a>        <span class="prelude-val">Ok</span>(base / DAY_S)
-<a href=#341 id=341 data-nosnippet>341</a>    } <span class="kw">else </span>{
-<a href=#342 id=342 data-nosnippet>342</a>        <span class="prelude-val">Err</span>(non_conforming(value))
-<a href=#343 id=343 data-nosnippet>343</a>    }
-<a href=#344 id=344 data-nosnippet>344</a>}
-<a href=#345 id=345 data-nosnippet>345</a>
-<a href=#346 id=346 data-nosnippet>346</a><span class="doccomment">/// casacore's `MVAngle(Quantity)`: radians of an angle, or of a time at 360
-<a href=#347 id=347 data-nosnippet>347</a>/// degrees a day.
-<a href=#348 id=348 data-nosnippet>348</a></span><span class="kw">fn </span>angle_radians(value: <span class="kw-2">&amp;</span>Quantity) -&gt; ConvertResult&lt;f64&gt; {
-<a href=#349 id=349 data-nosnippet>349</a>    <span class="kw">let </span>base = value.get_si_value();
-<a href=#350 id=350 data-nosnippet>350</a>    <span class="kw">if </span>has(value, Dimension::Angle) {
-<a href=#351 id=351 data-nosnippet>351</a>        <span class="prelude-val">Ok</span>(base)
-<a href=#352 id=352 data-nosnippet>352</a>    } <span class="kw">else if </span>has(value, Dimension::Time) {
-<a href=#353 id=353 data-nosnippet>353</a>        <span class="prelude-val">Ok</span>(base * (CIRCLE / DAY_S))
-<a href=#354 id=354 data-nosnippet>354</a>    } <span class="kw">else </span>{
-<a href=#355 id=355 data-nosnippet>355</a>        <span class="prelude-val">Err</span>(non_conforming(value))
-<a href=#356 id=356 data-nosnippet>356</a>    }
-<a href=#357 id=357 data-nosnippet>357</a>}
-<a href=#358 id=358 data-nosnippet>358</a>
-<a href=#359 id=359 data-nosnippet>359</a><span class="doccomment">/// casatools passes a `long` precision on as an unsigned one.
-<a href=#360 id=360 data-nosnippet>360</a></span><span class="kw">fn </span>digits(precision: i64) -&gt; u32 {
-<a href=#361 id=361 data-nosnippet>361</a>    u32::try_from(precision).unwrap_or(u32::MAX)
+<a href=#334 id=334 data-nosnippet>334</a><span class="doccomment">/// `qa.check(v)`: whether casacore reads the string as a quantity.
+<a href=#335 id=335 data-nosnippet>335</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>check(text: <span class="kw-2">&amp;</span>str) -&gt; CasaValue {
+<a href=#336 id=336 data-nosnippet>336</a>    CasaValue::Bool(Quantity::read(text).is_ok())
+<a href=#337 id=337 data-nosnippet>337</a>}
+<a href=#338 id=338 data-nosnippet>338</a>
+<a href=#339 id=339 data-nosnippet>339</a><span class="doccomment">/// `qa.isquantity(v)`: whether `v` is a string casacore reads as a
+<a href=#340 id=340 data-nosnippet>340</a>/// quantity, or a quantity record.
+<a href=#341 id=341 data-nosnippet>341</a>///
+<a href=#342 id=342 data-nosnippet>342</a>/// Divergence: CASA's records with an integer value are not quantities
+<a href=#343 id=343 data-nosnippet>343</a>/// (casacore holds them as integer quanta); here every quantity record is.
+<a href=#344 id=344 data-nosnippet>344</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>isquantity(value: <span class="kw-2">&amp;</span>Variant) -&gt; CasaValue {
+<a href=#345 id=345 data-nosnippet>345</a>    CasaValue::Bool(<span class="kw">match </span>value {
+<a href=#346 id=346 data-nosnippet>346</a>        Variant::Text(text) =&gt; Quantity::read(text).is_ok(),
+<a href=#347 id=347 data-nosnippet>347</a>        Variant::Record(<span class="kw">_</span>) =&gt; quantum_holder(value).is_ok(),
+<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
+<a href=#349 id=349 data-nosnippet>349</a>    })
+<a href=#350 id=350 data-nosnippet>350</a>}
+<a href=#351 id=351 data-nosnippet>351</a>
+<a href=#352 id=352 data-nosnippet>352</a><span class="doccomment">/// casacore's `MVTime(Quantity)`: MJD days of a time, or turns of an angle.
+<a href=#353 id=353 data-nosnippet>353</a></span><span class="kw">fn </span>time_days(value: <span class="kw-2">&amp;</span>Quantity) -&gt; ConvertResult&lt;f64&gt; {
+<a href=#354 id=354 data-nosnippet>354</a>    <span class="kw">let </span>base = value.get_si_value();
+<a href=#355 id=355 data-nosnippet>355</a>    <span class="kw">if </span>has(value, Dimension::Angle) {
+<a href=#356 id=356 data-nosnippet>356</a>        <span class="prelude-val">Ok</span>(base / CIRCLE)
+<a href=#357 id=357 data-nosnippet>357</a>    } <span class="kw">else if </span>has(value, Dimension::Time) {
+<a href=#358 id=358 data-nosnippet>358</a>        <span class="prelude-val">Ok</span>(base / DAY_S)
+<a href=#359 id=359 data-nosnippet>359</a>    } <span class="kw">else </span>{
+<a href=#360 id=360 data-nosnippet>360</a>        <span class="prelude-val">Err</span>(non_conforming(value))
+<a href=#361 id=361 data-nosnippet>361</a>    }
 <a href=#362 id=362 data-nosnippet>362</a>}
 <a href=#363 id=363 data-nosnippet>363</a>
-<a href=#364 id=364 data-nosnippet>364</a><span class="doccomment">/// `qa.time(v, prec, form, showform)`: one string, formatted by casacore's
-<a href=#365 id=365 data-nosnippet>365</a>/// `MVTime` with the named formats added to `TIME`.
-<a href=#366 id=366 data-nosnippet>366</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>time(value: <span class="kw-2">&amp;</span>Variant, precision: i64, form: <span class="kw-2">&amp;</span>[String]) -&gt; ConvertResult&lt;CasaValue&gt; {
-<a href=#367 id=367 data-nosnippet>367</a>    <span class="kw">let </span>days = time_days(<span class="kw-2">&amp;</span>quantity(value)<span class="question-mark">?</span>)<span class="question-mark">?</span>;
-<a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">let </span>format = form.iter().fold(time_format(<span class="string">"time"</span>), |format, name| {
-<a href=#369 id=369 data-nosnippet>369</a>        format | time_format(name)
-<a href=#370 id=370 data-nosnippet>370</a>    });
-<a href=#371 id=371 data-nosnippet>371</a>    <span class="prelude-val">Ok</span>(CasaValue::List(<span class="macro">vec!</span>[CasaValue::Text(format_time(
-<a href=#372 id=372 data-nosnippet>372</a>        days,
-<a href=#373 id=373 data-nosnippet>373</a>        format,
-<a href=#374 id=374 data-nosnippet>374</a>        digits(precision),
-<a href=#375 id=375 data-nosnippet>375</a>    ))]))
-<a href=#376 id=376 data-nosnippet>376</a>}
-<a href=#377 id=377 data-nosnippet>377</a>
-<a href=#378 id=378 data-nosnippet>378</a><span class="doccomment">/// `qa.angle(v, prec, form, showform)`: one string, formatted by casacore's
-<a href=#379 id=379 data-nosnippet>379</a>/// `MVAngle` with the named formats added to `ANGLE`.
-<a href=#380 id=380 data-nosnippet>380</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>angle(value: <span class="kw-2">&amp;</span>Variant, precision: i64, form: <span class="kw-2">&amp;</span>[String]) -&gt; ConvertResult&lt;CasaValue&gt; {
-<a href=#381 id=381 data-nosnippet>381</a>    <span class="kw">let </span>radians = angle_radians(<span class="kw-2">&amp;</span>quantity(value)<span class="question-mark">?</span>)<span class="question-mark">?</span>;
-<a href=#382 id=382 data-nosnippet>382</a>    <span class="kw">let </span>format = form.iter().fold(angle_format(<span class="string">"angle"</span>), |format, name| {
-<a href=#383 id=383 data-nosnippet>383</a>        format | angle_format(name)
-<a href=#384 id=384 data-nosnippet>384</a>    });
-<a href=#385 id=385 data-nosnippet>385</a>    <span class="prelude-val">Ok</span>(CasaValue::List(<span class="macro">vec!</span>[CasaValue::Text(format_angle(
-<a href=#386 id=386 data-nosnippet>386</a>        radians,
-<a href=#387 id=387 data-nosnippet>387</a>        format,
-<a href=#388 id=388 data-nosnippet>388</a>        digits(precision),
-<a href=#389 id=389 data-nosnippet>389</a>    ))]))
-<a href=#390 id=390 data-nosnippet>390</a>}
-<a href=#391 id=391 data-nosnippet>391</a>
-<a href=#392 id=392 data-nosnippet>392</a><span class="doccomment">/// `qa.formxxx(v, format, prec)`: `None` for a format CASA does not
-<a href=#393 id=393 data-nosnippet>393</a>/// understand (it writes an empty string and warns).
-<a href=#394 id=394 data-nosnippet>394</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>formxxx(
-<a href=#395 id=395 data-nosnippet>395</a>    value: <span class="kw-2">&amp;</span>Variant,
-<a href=#396 id=396 data-nosnippet>396</a>    format: <span class="kw-2">&amp;</span>str,
-<a href=#397 id=397 data-nosnippet>397</a>    precision: i64,
-<a href=#398 id=398 data-nosnippet>398</a>) -&gt; ConvertResult&lt;<span class="prelude-ty">Option</span>&lt;String&gt;&gt; {
-<a href=#399 id=399 data-nosnippet>399</a>    <span class="prelude-val">Ok</span>(casacore::formxxx(<span class="kw-2">&amp;</span>quantity(value)<span class="question-mark">?</span>, format, precision)<span class="question-mark">?</span>)
-<a href=#400 id=400 data-nosnippet>400</a>}
-<a href=#401 id=401 data-nosnippet>401</a>
-<a href=#402 id=402 data-nosnippet>402</a><span class="doccomment">/// `qa.tos(v, prec)`.
-<a href=#403 id=403 data-nosnippet>403</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>tos(value: <span class="kw-2">&amp;</span>Variant, precision: i64) -&gt; ConvertResult&lt;CasaValue&gt; {
-<a href=#404 id=404 data-nosnippet>404</a>    <span class="prelude-val">Ok</span>(CasaValue::Text(casacore::tos(<span class="kw-2">&amp;</span>quantity(value)<span class="question-mark">?</span>, precision)))
-<a href=#405 id=405 data-nosnippet>405</a>}
-<a href=#406 id=406 data-nosnippet>406</a>
-<a href=#407 id=407 data-nosnippet>407</a><span class="doccomment">/// `qa.totime(v)`: a time as it is, an angle as days.
-<a href=#408 id=408 data-nosnippet>408</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>totime(value: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
-<a href=#409 id=409 data-nosnippet>409</a>    <span class="kw">let </span>value = quantity(value)<span class="question-mark">?</span>;
-<a href=#410 id=410 data-nosnippet>410</a>    <span class="kw">if </span>has(<span class="kw-2">&amp;</span>value, Dimension::Time) {
-<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(record(<span class="kw-2">&amp;</span>value));
-<a href=#412 id=412 data-nosnippet>412</a>    }
-<a href=#413 id=413 data-nosnippet>413</a>    <span class="kw">let </span>days = time_days(<span class="kw-2">&amp;</span>value)<span class="question-mark">?</span>;
-<a href=#414 id=414 data-nosnippet>414</a>    <span class="prelude-val">Ok</span>(record(<span class="kw-2">&amp;</span>Quantity::with_unit(days, unit(<span class="string">"d"</span>))))
-<a href=#415 id=415 data-nosnippet>415</a>}
-<a href=#416 id=416 data-nosnippet>416</a>
-<a href=#417 id=417 data-nosnippet>417</a><span class="doccomment">/// `qa.toangle(v)`: an angle as it is, a time as radians.
-<a href=#418 id=418 data-nosnippet>418</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>toangle(value: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
-<a href=#419 id=419 data-nosnippet>419</a>    <span class="kw">let </span>value = quantity(value)<span class="question-mark">?</span>;
-<a href=#420 id=420 data-nosnippet>420</a>    <span class="kw">if </span>has(<span class="kw-2">&amp;</span>value, Dimension::Angle) {
-<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(record(<span class="kw-2">&amp;</span>value));
-<a href=#422 id=422 data-nosnippet>422</a>    }
-<a href=#423 id=423 data-nosnippet>423</a>    <span class="kw">let </span>radians = angle_radians(<span class="kw-2">&amp;</span>value)<span class="question-mark">?</span>;
-<a href=#424 id=424 data-nosnippet>424</a>    <span class="prelude-val">Ok</span>(record(<span class="kw-2">&amp;</span>Quantity::with_unit(radians, unit(<span class="string">"rad"</span>))))
-<a href=#425 id=425 data-nosnippet>425</a>}
-<a href=#426 id=426 data-nosnippet>426</a>
-<a href=#427 id=427 data-nosnippet>427</a><span class="kw">fn </span>unit(name: <span class="kw-2">&amp;</span>str) -&gt; Unit {
-<a href=#428 id=428 data-nosnippet>428</a>    Unit::new(name).expect(<span class="string">"a casacore base unit"</span>)
-<a href=#429 id=429 data-nosnippet>429</a>}
-<a href=#430 id=430 data-nosnippet>430</a>
-<a href=#431 id=431 data-nosnippet>431</a><span class="doccomment">/// `qa.splitdate(v)`: a time's calendar fields and time of day.
-<a href=#432 id=432 data-nosnippet>432</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>splitdate(value: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
-<a href=#433 id=433 data-nosnippet>433</a>    <span class="kw">let </span>mjd = time_days(<span class="kw-2">&amp;</span>quantity(value)<span class="question-mark">?</span>)<span class="question-mark">?</span>;
-<a href=#434 id=434 data-nosnippet>434</a>    <span class="kw">let </span>date = CalendarDate::of(mjd);
-<a href=#435 id=435 data-nosnippet>435</a>    <span class="comment">// casatools' chain of `fmod`s and truncations.
-<a href=#436 id=436 data-nosnippet>436</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>fraction = mjd % <span class="number">1.0</span>;
-<a href=#437 id=437 data-nosnippet>437</a>    <span class="kw">let </span>hour = (fraction * <span class="number">24.0</span>) <span class="kw">as </span>i64;
-<a href=#438 id=438 data-nosnippet>438</a>    fraction = (fraction * <span class="number">24.0</span>) % <span class="number">1.0</span>;
-<a href=#439 id=439 data-nosnippet>439</a>    <span class="kw">let </span>minute = (fraction * <span class="number">60.0</span>) <span class="kw">as </span>i64;
-<a href=#440 id=440 data-nosnippet>440</a>    fraction = (fraction * <span class="number">60.0</span>) % <span class="number">1.0</span>;
-<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">let </span>second = (fraction * <span class="number">60.0</span>) <span class="kw">as </span>i64;
-<a href=#442 id=442 data-nosnippet>442</a>    <span class="kw">let </span>seconds = fraction * <span class="number">60.0</span>;
-<a href=#443 id=443 data-nosnippet>443</a>    fraction = (fraction * <span class="number">60.0</span>) % <span class="number">1.0</span>;
-<a href=#444 id=444 data-nosnippet>444</a>    <span class="kw">let </span>int = CasaValue::Int;
-<a href=#445 id=445 data-nosnippet>445</a>    <span class="prelude-val">Ok</span>(CasaValue::record([
-<a href=#446 id=446 data-nosnippet>446</a>        (<span class="string">"mjd"</span>, CasaValue::Float(mjd)),
-<a href=#447 id=447 data-nosnippet>447</a>        (<span class="string">"year"</span>, int(date.year)),
-<a href=#448 id=448 data-nosnippet>448</a>        (<span class="string">"yearday"</span>, int(date.yearday)),
-<a href=#449 id=449 data-nosnippet>449</a>        (<span class="string">"month"</span>, int(date.month)),
-<a href=#450 id=450 data-nosnippet>450</a>        (<span class="string">"monthday"</span>, int(date.monthday)),
-<a href=#451 id=451 data-nosnippet>451</a>        (<span class="string">"week"</span>, int(date.week)),
-<a href=#452 id=452 data-nosnippet>452</a>        (<span class="string">"weekday"</span>, int(date.weekday)),
-<a href=#453 id=453 data-nosnippet>453</a>        (<span class="string">"hour"</span>, int(hour)),
-<a href=#454 id=454 data-nosnippet>454</a>        (<span class="string">"min"</span>, int(minute)),
-<a href=#455 id=455 data-nosnippet>455</a>        (<span class="string">"sec"</span>, int(second)),
-<a href=#456 id=456 data-nosnippet>456</a>        (<span class="string">"s"</span>, CasaValue::Float(seconds)),
-<a href=#457 id=457 data-nosnippet>457</a>        (<span class="string">"msec"</span>, int((fraction * <span class="number">1000.0</span>) <span class="kw">as </span>i64)),
-<a href=#458 id=458 data-nosnippet>458</a>        (<span class="string">"usec"</span>, int((fraction * <span class="number">1.0e6</span>) <span class="kw">as </span>i64)),
-<a href=#459 id=459 data-nosnippet>459</a>    ]))
-<a href=#460 id=460 data-nosnippet>460</a>}
+<a href=#364 id=364 data-nosnippet>364</a><span class="doccomment">/// casacore's `MVAngle(Quantity)`: radians of an angle, or of a time at 360
+<a href=#365 id=365 data-nosnippet>365</a>/// degrees a day.
+<a href=#366 id=366 data-nosnippet>366</a></span><span class="kw">fn </span>angle_radians(value: <span class="kw-2">&amp;</span>Quantity) -&gt; ConvertResult&lt;f64&gt; {
+<a href=#367 id=367 data-nosnippet>367</a>    <span class="kw">let </span>base = value.get_si_value();
+<a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">if </span>has(value, Dimension::Angle) {
+<a href=#369 id=369 data-nosnippet>369</a>        <span class="prelude-val">Ok</span>(base)
+<a href=#370 id=370 data-nosnippet>370</a>    } <span class="kw">else if </span>has(value, Dimension::Time) {
+<a href=#371 id=371 data-nosnippet>371</a>        <span class="prelude-val">Ok</span>(base * (CIRCLE / DAY_S))
+<a href=#372 id=372 data-nosnippet>372</a>    } <span class="kw">else </span>{
+<a href=#373 id=373 data-nosnippet>373</a>        <span class="prelude-val">Err</span>(non_conforming(value))
+<a href=#374 id=374 data-nosnippet>374</a>    }
+<a href=#375 id=375 data-nosnippet>375</a>}
+<a href=#376 id=376 data-nosnippet>376</a>
+<a href=#377 id=377 data-nosnippet>377</a><span class="doccomment">/// casatools passes a `long` precision on as an unsigned one.
+<a href=#378 id=378 data-nosnippet>378</a></span><span class="kw">fn </span>digits(precision: i64) -&gt; u32 {
+<a href=#379 id=379 data-nosnippet>379</a>    u32::try_from(precision).unwrap_or(u32::MAX)
+<a href=#380 id=380 data-nosnippet>380</a>}
+<a href=#381 id=381 data-nosnippet>381</a>
+<a href=#382 id=382 data-nosnippet>382</a><span class="doccomment">/// `qa.time(v, prec, form, showform)`: one string, formatted by casacore's
+<a href=#383 id=383 data-nosnippet>383</a>/// `MVTime` with the named formats added to `TIME`.
+<a href=#384 id=384 data-nosnippet>384</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>time(value: <span class="kw-2">&amp;</span>Variant, precision: i64, form: <span class="kw-2">&amp;</span>[String]) -&gt; ConvertResult&lt;CasaValue&gt; {
+<a href=#385 id=385 data-nosnippet>385</a>    <span class="kw">let </span>days = time_days(<span class="kw-2">&amp;</span>quantity(value)<span class="question-mark">?</span>)<span class="question-mark">?</span>;
+<a href=#386 id=386 data-nosnippet>386</a>    <span class="kw">let </span>format = form.iter().fold(time_format(<span class="string">"time"</span>), |format, name| {
+<a href=#387 id=387 data-nosnippet>387</a>        format | time_format(name)
+<a href=#388 id=388 data-nosnippet>388</a>    });
+<a href=#389 id=389 data-nosnippet>389</a>    <span class="prelude-val">Ok</span>(CasaValue::List(<span class="macro">vec!</span>[CasaValue::Text(format_time(
+<a href=#390 id=390 data-nosnippet>390</a>        days,
+<a href=#391 id=391 data-nosnippet>391</a>        format,
+<a href=#392 id=392 data-nosnippet>392</a>        digits(precision),
+<a href=#393 id=393 data-nosnippet>393</a>    ))]))
+<a href=#394 id=394 data-nosnippet>394</a>}
+<a href=#395 id=395 data-nosnippet>395</a>
+<a href=#396 id=396 data-nosnippet>396</a><span class="doccomment">/// `qa.angle(v, prec, form, showform)`: one string, formatted by casacore's
+<a href=#397 id=397 data-nosnippet>397</a>/// `MVAngle` with the named formats added to `ANGLE`.
+<a href=#398 id=398 data-nosnippet>398</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>angle(value: <span class="kw-2">&amp;</span>Variant, precision: i64, form: <span class="kw-2">&amp;</span>[String]) -&gt; ConvertResult&lt;CasaValue&gt; {
+<a href=#399 id=399 data-nosnippet>399</a>    <span class="kw">let </span>radians = angle_radians(<span class="kw-2">&amp;</span>quantity(value)<span class="question-mark">?</span>)<span class="question-mark">?</span>;
+<a href=#400 id=400 data-nosnippet>400</a>    <span class="kw">let </span>format = form.iter().fold(angle_format(<span class="string">"angle"</span>), |format, name| {
+<a href=#401 id=401 data-nosnippet>401</a>        format | angle_format(name)
+<a href=#402 id=402 data-nosnippet>402</a>    });
+<a href=#403 id=403 data-nosnippet>403</a>    <span class="prelude-val">Ok</span>(CasaValue::List(<span class="macro">vec!</span>[CasaValue::Text(format_angle(
+<a href=#404 id=404 data-nosnippet>404</a>        radians,
+<a href=#405 id=405 data-nosnippet>405</a>        format,
+<a href=#406 id=406 data-nosnippet>406</a>        digits(precision),
+<a href=#407 id=407 data-nosnippet>407</a>    ))]))
+<a href=#408 id=408 data-nosnippet>408</a>}
+<a href=#409 id=409 data-nosnippet>409</a>
+<a href=#410 id=410 data-nosnippet>410</a><span class="doccomment">/// `qa.formxxx(v, format, prec)`: `None` for a format CASA does not
+<a href=#411 id=411 data-nosnippet>411</a>/// understand (it writes an empty string and warns).
+<a href=#412 id=412 data-nosnippet>412</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>formxxx(
+<a href=#413 id=413 data-nosnippet>413</a>    value: <span class="kw-2">&amp;</span>Variant,
+<a href=#414 id=414 data-nosnippet>414</a>    format: <span class="kw-2">&amp;</span>str,
+<a href=#415 id=415 data-nosnippet>415</a>    precision: i64,
+<a href=#416 id=416 data-nosnippet>416</a>) -&gt; ConvertResult&lt;<span class="prelude-ty">Option</span>&lt;String&gt;&gt; {
+<a href=#417 id=417 data-nosnippet>417</a>    <span class="prelude-val">Ok</span>(casacore::formxxx(<span class="kw-2">&amp;</span>quantity(value)<span class="question-mark">?</span>, format, precision)<span class="question-mark">?</span>)
+<a href=#418 id=418 data-nosnippet>418</a>}
+<a href=#419 id=419 data-nosnippet>419</a>
+<a href=#420 id=420 data-nosnippet>420</a><span class="doccomment">/// `qa.tos(v, prec)`.
+<a href=#421 id=421 data-nosnippet>421</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>tos(value: <span class="kw-2">&amp;</span>Variant, precision: i64) -&gt; ConvertResult&lt;CasaValue&gt; {
+<a href=#422 id=422 data-nosnippet>422</a>    <span class="prelude-val">Ok</span>(CasaValue::Text(casacore::tos(<span class="kw-2">&amp;</span>quantity(value)<span class="question-mark">?</span>, precision)))
+<a href=#423 id=423 data-nosnippet>423</a>}
+<a href=#424 id=424 data-nosnippet>424</a>
+<a href=#425 id=425 data-nosnippet>425</a><span class="doccomment">/// `qa.totime(v)`: a time as it is, an angle as days.
+<a href=#426 id=426 data-nosnippet>426</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>totime(value: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
+<a href=#427 id=427 data-nosnippet>427</a>    <span class="kw">let </span>value = quantity(value)<span class="question-mark">?</span>;
+<a href=#428 id=428 data-nosnippet>428</a>    <span class="kw">if </span>has(<span class="kw-2">&amp;</span>value, Dimension::Time) {
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(record(<span class="kw-2">&amp;</span>value));
+<a href=#430 id=430 data-nosnippet>430</a>    }
+<a href=#431 id=431 data-nosnippet>431</a>    <span class="kw">let </span>days = time_days(<span class="kw-2">&amp;</span>value)<span class="question-mark">?</span>;
+<a href=#432 id=432 data-nosnippet>432</a>    <span class="prelude-val">Ok</span>(record(<span class="kw-2">&amp;</span>Quantity::with_unit(days, unit(<span class="string">"d"</span>))))
+<a href=#433 id=433 data-nosnippet>433</a>}
+<a href=#434 id=434 data-nosnippet>434</a>
+<a href=#435 id=435 data-nosnippet>435</a><span class="doccomment">/// `qa.toangle(v)`: an angle as it is, a time as radians.
+<a href=#436 id=436 data-nosnippet>436</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>toangle(value: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="kw">let </span>value = quantity(value)<span class="question-mark">?</span>;
+<a href=#438 id=438 data-nosnippet>438</a>    <span class="kw">if </span>has(<span class="kw-2">&amp;</span>value, Dimension::Angle) {
+<a href=#439 id=439 data-nosnippet>439</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(record(<span class="kw-2">&amp;</span>value));
+<a href=#440 id=440 data-nosnippet>440</a>    }
+<a href=#441 id=441 data-nosnippet>441</a>    <span class="kw">let </span>radians = angle_radians(<span class="kw-2">&amp;</span>value)<span class="question-mark">?</span>;
+<a href=#442 id=442 data-nosnippet>442</a>    <span class="prelude-val">Ok</span>(record(<span class="kw-2">&amp;</span>Quantity::with_unit(radians, unit(<span class="string">"rad"</span>))))
+<a href=#443 id=443 data-nosnippet>443</a>}
+<a href=#444 id=444 data-nosnippet>444</a>
+<a href=#445 id=445 data-nosnippet>445</a><span class="kw">fn </span>unit(name: <span class="kw-2">&amp;</span>str) -&gt; Unit {
+<a href=#446 id=446 data-nosnippet>446</a>    Unit::new(name).expect(<span class="string">"a casacore base unit"</span>)
+<a href=#447 id=447 data-nosnippet>447</a>}
+<a href=#448 id=448 data-nosnippet>448</a>
+<a href=#449 id=449 data-nosnippet>449</a><span class="doccomment">/// `qa.splitdate(v)`: a time's calendar fields and time of day.
+<a href=#450 id=450 data-nosnippet>450</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>splitdate(value: <span class="kw-2">&amp;</span>Variant) -&gt; ConvertResult&lt;CasaValue&gt; {
+<a href=#451 id=451 data-nosnippet>451</a>    <span class="kw">let </span>mjd = time_days(<span class="kw-2">&amp;</span>quantity(value)<span class="question-mark">?</span>)<span class="question-mark">?</span>;
+<a href=#452 id=452 data-nosnippet>452</a>    <span class="kw">let </span>date = CalendarDate::of(mjd);
+<a href=#453 id=453 data-nosnippet>453</a>    <span class="comment">// casatools' chain of `fmod`s and truncations.
+<a href=#454 id=454 data-nosnippet>454</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>fraction = mjd % <span class="number">1.0</span>;
+<a href=#455 id=455 data-nosnippet>455</a>    <span class="kw">let </span>hour = (fraction * <span class="number">24.0</span>) <span class="kw">as </span>i64;
+<a href=#456 id=456 data-nosnippet>456</a>    fraction = (fraction * <span class="number">24.0</span>) % <span class="number">1.0</span>;
+<a href=#457 id=457 data-nosnippet>457</a>    <span class="kw">let </span>minute = (fraction * <span class="number">60.0</span>) <span class="kw">as </span>i64;
+<a href=#458 id=458 data-nosnippet>458</a>    fraction = (fraction * <span class="number">60.0</span>) % <span class="number">1.0</span>;
+<a href=#459 id=459 data-nosnippet>459</a>    <span class="kw">let </span>second = (fraction * <span class="number">60.0</span>) <span class="kw">as </span>i64;
+<a href=#460 id=460 data-nosnippet>460</a>    <span class="kw">let </span>seconds = fraction * <span class="number">60.0</span>;
+<a href=#461 id=461 data-nosnippet>461</a>    fraction = (fraction * <span class="number">60.0</span>) % <span class="number">1.0</span>;
+<a href=#462 id=462 data-nosnippet>462</a>    <span class="kw">let </span>int = CasaValue::Int;
+<a href=#463 id=463 data-nosnippet>463</a>    <span class="prelude-val">Ok</span>(CasaValue::record([
+<a href=#464 id=464 data-nosnippet>464</a>        (<span class="string">"mjd"</span>, CasaValue::Float(mjd)),
+<a href=#465 id=465 data-nosnippet>465</a>        (<span class="string">"year"</span>, int(date.year)),
+<a href=#466 id=466 data-nosnippet>466</a>        (<span class="string">"yearday"</span>, int(date.yearday)),
+<a href=#467 id=467 data-nosnippet>467</a>        (<span class="string">"month"</span>, int(date.month)),
+<a href=#468 id=468 data-nosnippet>468</a>        (<span class="string">"monthday"</span>, int(date.monthday)),
+<a href=#469 id=469 data-nosnippet>469</a>        (<span class="string">"week"</span>, int(date.week)),
+<a href=#470 id=470 data-nosnippet>470</a>        (<span class="string">"weekday"</span>, int(date.weekday)),
+<a href=#471 id=471 data-nosnippet>471</a>        (<span class="string">"hour"</span>, int(hour)),
+<a href=#472 id=472 data-nosnippet>472</a>        (<span class="string">"min"</span>, int(minute)),
+<a href=#473 id=473 data-nosnippet>473</a>        (<span class="string">"sec"</span>, int(second)),
+<a href=#474 id=474 data-nosnippet>474</a>        (<span class="string">"s"</span>, CasaValue::Float(seconds)),
+<a href=#475 id=475 data-nosnippet>475</a>        (<span class="string">"msec"</span>, int((fraction * <span class="number">1000.0</span>) <span class="kw">as </span>i64)),
+<a href=#476 id=476 data-nosnippet>476</a>        (<span class="string">"usec"</span>, int((fraction * <span class="number">1.0e6</span>) <span class="kw">as </span>i64)),
+<a href=#477 id=477 data-nosnippet>477</a>    ]))
+<a href=#478 id=478 data-nosnippet>478</a>}
 </code></pre></div></section></main></body></html>
