@@ -48,6 +48,8 @@ pub(crate) struct ExistingProducts {
     residual: bool,
     /// A complete PSF beam set read from the earlier image, channel-major.
     psf_beams: Option<Arc<[RestoringBeam]>>,
+    /// The same beam grid in pixels for minor-cycle preparation.
+    psf_pixel_beams: Option<Arc<[RestoringBeam]>>,
 }
 
 impl ExistingProducts {
@@ -104,12 +106,17 @@ impl ExistingProducts {
             psf,
             residual,
             psf_beams: None,
+            psf_pixel_beams: None,
         })
     }
 
     /// Read the earlier PSF's complete beam grid, as `makeImageBeamSet`
     /// reuses it before looking at the new run's cutoff.
-    pub(crate) fn read_psf_beams(&mut self, channels: usize) -> Result<(), PrepareError> {
+    pub(crate) fn read_psf_beams(
+        &mut self,
+        channels: usize,
+        cell_rad: f64,
+    ) -> Result<(), PrepareError> {
         if !self.psf {
             return Ok(());
         }
@@ -132,10 +139,27 @@ impl ExistingProducts {
         self.psf_beams =
             complete_psf_beams(&info.beam_set, planes, self.polarizations).map_err(|error| {
                 PrepareError::Restart {
-                    path,
+                    path: path.clone(),
                     reason: error.to_string(),
                 }
             })?;
+        if let Some(beams) = &self.psf_beams {
+            let pixels = beams
+                .iter()
+                .map(|beam| {
+                    RestoringBeam::new(
+                        beam.major_fwhm_rad() / cell_rad,
+                        beam.minor_fwhm_rad() / cell_rad,
+                        beam.position_angle_rad(),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| PrepareError::Restart {
+                    path,
+                    reason: error.to_string(),
+                })?;
+            self.psf_pixel_beams = Some(pixels.into());
+        }
         Ok(())
     }
 
@@ -144,11 +168,18 @@ impl ExistingProducts {
         self.psf_beams.clone()
     }
 
+    /// Shared beam grid in pixels for the minor cycle.
+    pub(crate) fn psf_pixel_beams(&self) -> Option<Arc<[RestoringBeam]>> {
+        self.psf_pixel_beams.clone()
+    }
+
     /// Retained heap of the shared beam grid, including the `Arc` counters.
     pub(crate) fn beam_resident_bytes(&self) -> u64 {
-        self.psf_beams.as_ref().map_or(0, |beams| {
-            (std::mem::size_of_val(beams.as_ref()) + 2 * size_of::<usize>()) as u64
-        })
+        [&self.psf_beams, &self.psf_pixel_beams]
+            .into_iter()
+            .flatten()
+            .map(|beams| (std::mem::size_of_val(beams.as_ref()) + 2 * size_of::<usize>()) as u64)
+            .sum()
     }
 
     /// Bound the PSF image header and beam conversion read together.
@@ -161,7 +192,7 @@ impl ExistingProducts {
         let record = fields * (size_of::<casa_types::RecordField>() + 3 * size_of::<String>());
         let per_plane = 3 * record
             + size_of::<casa_images::GaussianBeam>()
-            + 2 * size_of::<RestoringBeam>()
+            + 4 * size_of::<RestoringBeam>()
             + size_of::<Vec<casa_images::GaussianBeam>>();
         (planes.saturating_mul(per_plane) + 4 * CACHE_BYTES + 2 * size_of::<usize>()) as u64
     }

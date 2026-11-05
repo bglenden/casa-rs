@@ -312,6 +312,9 @@ pub(crate) fn run(
         image_response,
         virtual_model,
     } = run;
+    let psf_beams = existing
+        .as_ref()
+        .and_then(crate::restart::ExistingProducts::psf_pixel_beams);
     let teams = OnceCell::new();
     let primary_beam = match publication.controls.primary_beam_model() {
         Some(model) => {
@@ -327,7 +330,12 @@ pub(crate) fn run(
     let outcome = imaging::run(
         imaging::ImagingInputs {
             problem,
-            psf_cutoff: publication.controls.psf_cutoff(),
+            psf_cutoff: if !forms.psf && psf_beams.is_none() {
+                casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF
+            } else {
+                publication.controls.psf_cutoff()
+            },
+            psf_beams,
             source: &route,
             masks,
             start_model,

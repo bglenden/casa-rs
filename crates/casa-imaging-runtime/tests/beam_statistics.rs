@@ -170,6 +170,7 @@ fn classical(residual: &[f32], kept: &[bool]) -> (f64, f64) {
 fn setup<'a>(beam: Option<AnalyticPrimaryBeam<'a>>) -> MinorCycleSetup<'a> {
     MinorCycleSetup {
         psf_cutoff: 0.35,
+        psf_beams: None,
         algorithm: ReconstructionAlgorithm::Hogbom,
         accounting: HogbomIterationAccounting::Strict,
         response: None,

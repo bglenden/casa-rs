@@ -55,6 +55,46 @@ impl PsfSummary {
     ///
     /// When the PSF has no positive finite peak or the main lobe cannot be fitted.
     pub fn with_cutoff(psf: &[f64], shape: PlaneShape, cutoff: f32) -> Result<Self, Error> {
+        Self::measure(psf, shape, cutoff, None)
+    }
+
+    /// Measure a PSF with a fitted beam recovered from its image metadata.
+    /// The beam widths use pixels, as in [`Self::beam`].
+    ///
+    /// # Errors
+    ///
+    /// When the PSF has no positive finite peak.
+    pub fn with_saved_beam(
+        psf: &[f64],
+        shape: PlaneShape,
+        beam: RestoringBeam,
+    ) -> Result<Self, Error> {
+        Self::measure(psf, shape, DEFAULT_PSF_FIT_CUTOFF, Some(beam))
+    }
+
+    /// A blank plane's saved beam for automatic-mask common-beam selection.
+    /// No solver may use its peak or patch: the plane has no PSF samples.
+    #[must_use]
+    pub fn blank_with_saved_beam(beam: RestoringBeam) -> Self {
+        Self {
+            peak: 0,
+            beam,
+            sidelobe: 0.0,
+            clark: ClarkPatch {
+                radius: [0, 0],
+                size: [0, 0],
+                exterior_sidelobe: 0.0,
+            },
+            off_centre: false,
+        }
+    }
+
+    fn measure(
+        psf: &[f64],
+        shape: PlaneShape,
+        cutoff: f32,
+        saved_beam: Option<RestoringBeam>,
+    ) -> Result<Self, Error> {
         let peak = psf_peak(psf, shape).ok_or(Error::PsfPeak)?;
         if !(psf[peak].is_finite() && psf[peak] > 0.0) {
             return Err(Error::PsfPeak);
@@ -71,9 +111,18 @@ impl PsfSummary {
             let level = psf
                 .iter()
                 .fold(0.0_f64, |level, value| level.max(value.abs()));
-            (RestoringBeam::new(1.0, 1.0, 0.0)?, level)
+            (
+                match saved_beam {
+                    Some(beam) => beam,
+                    None => RestoringBeam::new(1.0, 1.0, 0.0)?,
+                },
+                level,
+            )
         } else {
-            let beam = fit_main_lobe(&single, axes, [1.0, 1.0], cutoff)?;
+            let beam = match saved_beam {
+                Some(beam) => beam,
+                None => fit_main_lobe(&single, axes, [1.0, 1.0], cutoff)?,
+            };
             let sidelobe = fitted_psf_sidelobe_fraction_with_beam(&single, axes, beam)?;
             (beam, sidelobe)
         };

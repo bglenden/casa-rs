@@ -60,6 +60,7 @@ pub(crate) use continuation::Forms;
 pub(crate) struct ImagingInputs<'a> {
     pub(crate) problem: &'a CompiledProblem,
     pub(crate) psf_cutoff: f32,
+    pub(crate) psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
     /// The observation's batches the passes read.
     pub(crate) source: &'a BatchRoute,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
@@ -243,6 +244,7 @@ pub(crate) fn run(
         (inputs.image_response, inputs.primary_beam),
         &inputs.masks,
         inputs.psf_cutoff,
+        inputs.psf_beams.clone(),
     );
     let mut mask_plans = inputs.masks.clone();
     let cancel = inputs.cancel.clone();
@@ -569,10 +571,12 @@ fn minor_setup<'a>(
     ),
     masks: &ImageDomainReconstructionMaskPlans,
     psf_cutoff: f32,
+    psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
 ) -> MinorCycleSetup<'a> {
     let controls = problem.reconstruction().controls();
     MinorCycleSetup {
         psf_cutoff,
+        psf_beams,
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: controls.hogbom_iteration_accounting(),
         response,

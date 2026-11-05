@@ -75,6 +75,7 @@ fn setup(
 ) -> MinorCycleSetup<'static> {
     MinorCycleSetup {
         psf_cutoff: 0.35,
+        psf_beams: None,
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: HogbomIterationAccounting::Strict,
         response,
@@ -265,6 +266,34 @@ fn an_off_centre_plane_takes_its_domains_largest_beam_and_clarks_patch() {
     assert!(off.clark().exterior_sidelobe >= 1.0);
 }
 
+fn automatic_plan(
+    problem: &CompiledProblem,
+    minimum_beam_fraction: f64,
+) -> ImageDomainReconstructionMaskPlans {
+    ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::AutoMultithresh {
+        coordinate: problem.geometry().domains()[0].direction(),
+        controls: casa_imaging_deconvolution::AutoMultithreshControls {
+            sidelobe_factor: 2.0,
+            noise_factor: 4.25,
+            low_noise_factor: 1.5,
+            negative_factor: 0.0,
+            minimum_beam_fraction,
+            smooth_factor: 1.0,
+            cut_threshold: 0.01,
+            grow_iterations: 0,
+            grow_prune: false,
+            minimum_percent_change: -1.0,
+            noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
+            verbose: false,
+        },
+        completed_major_cycles: 0,
+        cycle_threshold_reached: false,
+        previous: None,
+        stopped_channels: Box::new([]),
+    }])
+    .expect("automatic mask")
+}
+
 /// A non-Gaussian PSF has different fitted beams at different cutoffs.
 /// Exercise both the ordinary path and the automatic-mask premeasurement.
 fn cutoff_changes_the_measured_beam(automatic: bool) {
@@ -287,28 +316,7 @@ fn cutoff_changes_the_measured_beam(automatic: bool) {
         }
     });
     let plans = if automatic {
-        ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::AutoMultithresh {
-            coordinate: problem.geometry().domains()[0].direction(),
-            controls: casa_imaging_deconvolution::AutoMultithreshControls {
-                sidelobe_factor: 2.0,
-                noise_factor: 4.25,
-                low_noise_factor: 1.5,
-                negative_factor: 0.0,
-                minimum_beam_fraction: 0.3,
-                smooth_factor: 1.0,
-                cut_threshold: 0.01,
-                grow_iterations: 0,
-                grow_prune: false,
-                minimum_percent_change: -1.0,
-                noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
-                verbose: false,
-            },
-            completed_major_cycles: 0,
-            cycle_threshold_reached: false,
-            previous: None,
-            stopped_channels: Box::new([]),
-        }])
-        .expect("automatic mask")
+        automatic_plan(&problem, 0.3)
     } else {
         full_plane(&problem)
     };
@@ -337,6 +345,113 @@ fn a_minor_cycle_fits_its_psf_at_the_requested_cutoff() {
 #[test]
 fn an_automatic_mask_measures_its_psf_at_the_requested_cutoff() {
     cutoff_changes_the_measured_beam(true);
+}
+
+/// A saved beam is authoritative for a restart, whatever the new cutoff.
+fn saved_beam_is_used_by_minor_preparation(automatic: bool) {
+    let problem = problem(
+        64,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem).with_point([32, 32], &[1.0]);
+    let completion = completion(&problem, &scene, |_| {});
+    let beam = casa_imaging_deconvolution::RestoringBeam::new(10.0, 6.0, 0.2).unwrap();
+    let mut setup = setup(&problem, None);
+    setup.psf_cutoff = 0.65;
+    setup.psf_beams = Some(vec![beam].into());
+    setup.automask = automatic;
+    let plans = if automatic {
+        automatic_plan(&problem, 0.3)
+    } else {
+        full_plane(&problem)
+    };
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    prepare_minor_cycle(&completion, &plans, &setup, &mut cache, &team).expect("prepare");
+    assert_eq!(cache.summary(0, 0, 0).expect("measured beam").beam(), beam);
+}
+
+#[test]
+fn a_minor_cycle_reuses_its_saved_psf_beam() {
+    saved_beam_is_used_by_minor_preparation(false);
+}
+
+#[test]
+fn an_automatic_mask_reuses_its_saved_psf_beam() {
+    saved_beam_is_used_by_minor_preparation(true);
+}
+
+/// An incomplete saved beam grid is rejected instead of silently refitting.
+#[test]
+fn an_incomplete_saved_psf_beam_grid_is_refused() {
+    let problem = problem(
+        64,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem).with_point([32, 32], &[1.0]);
+    let completion = completion(&problem, &scene, |_| {});
+    let mut setup = setup(&problem, None);
+    setup.psf_beams = Some(Vec::new().into());
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    assert!(matches!(
+        prepare_minor_cycle(
+            &completion,
+            &full_plane(&problem),
+            &setup,
+            &mut cache,
+            &team
+        ),
+        Err(
+            casa_imaging_runtime::MinorCycleRunError::SavedBeamGridLength {
+                expected: 1,
+                actual: 0
+            }
+        )
+    ));
+}
+
+/// A blank channel's saved beam participates in its mask block's common
+/// beam, even if that beam is larger than the data channel's.
+#[test]
+fn a_blank_channels_saved_beam_controls_automatic_mask_pruning() {
+    let problem = problem(
+        64,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Hogbom,
+    );
+    let scene = Scene::new(&problem).with_weights(vec![1.0, 0.0]);
+    let completion = completion(&problem, &scene, |images| {
+        images.residual.fill(0.0);
+        for x in 30..35 {
+            for y in 30..35 {
+                images.residual[x * 64 + y] = 10.0;
+            }
+        }
+    });
+    let narrow = casa_imaging_deconvolution::RestoringBeam::new(2.5, 2.5, 0.0).unwrap();
+    let broad = casa_imaging_deconvolution::RestoringBeam::new(10.0, 8.0, 0.0).unwrap();
+    let mut setup = setup(&problem, None);
+    setup.automask = true;
+    setup.psf_beams = Some(vec![narrow, broad].into());
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    let result = prepare_minor_cycle(
+        &completion,
+        &automatic_plan(&problem, 0.5),
+        &setup,
+        &mut cache,
+        &team,
+    )
+    .expect("prepare");
+    let row = result.auto_masks()[0]
+        .as_ref()
+        .unwrap()
+        .plane(0, 0)
+        .unwrap();
+    assert_eq!((row.regions, row.pruned_regions), (1, 1));
 }
 
 /// A multi-term component records each Taylor coefficient's flux, and the

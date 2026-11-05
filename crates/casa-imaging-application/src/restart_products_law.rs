@@ -47,7 +47,22 @@ impl Input {
     /// # Errors
     /// The metadata is unreadable or contains an invalid beam.
     pub fn read_psf_beams(&mut self, channels: usize) -> Result<(), crate::PrepareError> {
-        self.0.read_psf_beams(channels)
+        self.0.read_psf_beams(channels, 1e-5)
+    }
+
+    /// The angular and pixel beam at `index`, for the reader's law.
+    #[must_use]
+    pub fn beam_pair(
+        &self,
+        index: usize,
+    ) -> Option<(
+        casa_imaging_deconvolution::RestoringBeam,
+        casa_imaging_deconvolution::RestoringBeam,
+    )> {
+        Some((
+            *self.0.psf_beams()?.get(index)?,
+            *self.0.psf_pixel_beams()?.get(index)?,
+        ))
     }
 
     /// Retained beam-grid allocation.

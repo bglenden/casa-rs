@@ -199,4 +199,10 @@ fn a_saved_psf_beam_grid_fits_its_reading_and_resident_charges() {
     assert!(peak <= admitted, "peak {peak}, admission {admitted}");
     assert!(held <= retained, "held {held}, retained {retained}");
     assert!(retained > 0, "the saved beams were retained");
+    let (world, pixels) = input
+        .beam_pair(PLANES - 1)
+        .expect("saved angular and pixel beams");
+    assert_eq!(pixels.major_fwhm_rad(), world.major_fwhm_rad() / 1e-5);
+    assert_eq!(pixels.minor_fwhm_rad(), world.minor_fwhm_rad() / 1e-5);
+    assert_eq!(pixels.position_angle_rad(), world.position_angle_rad());
 }

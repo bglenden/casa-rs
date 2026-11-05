@@ -128,7 +128,7 @@ pub(super) fn prepare(
                     memory: ExistingProducts::beam_reading_bytes(planes, polarizations),
                 },
             )?;
-            existing.read_psf_beams(channels)?;
+            existing.read_psf_beams(channels, main.direction.increment_rad()[0].abs())?;
             charge.retain(existing.beam_resident_bytes());
             continuation.mask_resident.join(charge);
         }
