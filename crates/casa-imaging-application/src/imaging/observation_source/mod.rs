@@ -149,13 +149,24 @@ impl BatchRoute {
         key: PartitionKey,
         window: Range<usize>,
         values: bool,
+        prediction: bool,
+        single_time: bool,
     ) -> Result<(AccessRequest, Layout), SourceError> {
         let route = &self.stores[key.store];
         let partition = &route.selection.partitions[key.partition];
         let entry = route.observation().catalogue().partition(partition.id);
-        let channels = match &partition.density_channels {
-            Some(channels) if !values => channels,
-            _ => &partition.channels,
+        let channels = if prediction {
+            partition
+                .prediction_channels
+                .as_ref()
+                .unwrap_or(&partition.channels)
+        } else if !values {
+            partition
+                .density_channels
+                .as_ref()
+                .unwrap_or(&partition.channels)
+        } else {
+            &partition.channels
         };
         let layout = Layout::new(partition, entry, &channels[window])?;
         let probe = requests::payload(
@@ -172,9 +183,21 @@ impl BatchRoute {
             .first()
             .ok_or("an estimate without its partition")?
             .held_bytes_per_time();
+        // A native block has one channel layout. A time-varying parent
+        // prediction therefore reads one integration per batch, so its
+        // physically selected channels can form that layout.
+        let time_varying = if prediction {
+            partition.prediction_bands.is_some()
+        } else {
+            values && partition.frequency_bands.is_some()
+        };
+        let times = if time_varying || single_time {
+            1
+        } else {
+            self.batching.times_per_batch(key.store, key.partition)
+        };
         let request = AccessRequest {
-            batch_bytes: held
-                .saturating_mul(self.batching.times_per_batch(key.store, key.partition)),
+            batch_bytes: held.saturating_mul(times),
             ..probe
         };
         Ok((request, layout))
@@ -195,13 +218,39 @@ impl BatchRoute {
             .try_fold(WriteCharge::default(), |most, key| {
                 let route = &self.stores[key.store];
                 let partition = &route.selection.partitions[key.partition];
-                let channels = partition.channels.len();
-                let (request, _) = self.request(key, 0..channels, true)?;
                 let session = route
                     .session()
                     .ok_or("a writing run's store was opened to read only")?;
-                let bands = partition.frequency_bands.is_some();
-                Ok::<_, SourceError>(most.most(write_back.write_bytes(session, &request, bands)?))
+                let mut most = most;
+                // A split write may visit the tuned fit/output union and
+                // the parent selection separately. Bound both traversals.
+                for prediction in [false, true] {
+                    if prediction
+                        && (write_back.by_band() || partition.prediction_channels.is_none())
+                    {
+                        continue;
+                    }
+                    let channels = if prediction {
+                        partition
+                            .prediction_channels
+                            .as_ref()
+                            .expect("prediction selection")
+                            .len()
+                    } else {
+                        partition.channels.len()
+                    };
+                    if channels == 0 {
+                        continue;
+                    }
+                    let (request, _) = self.request(key, 0..channels, true, prediction, false)?;
+                    let bands = if prediction {
+                        partition.prediction_bands.is_some()
+                    } else {
+                        partition.frequency_bands.is_some()
+                    };
+                    most = most.most(write_back.write_bytes(session, &request, bands)?);
+                }
+                Ok::<_, SourceError>(most)
             })?;
         Ok(charge.bytes())
     }
@@ -213,6 +262,8 @@ struct Stream<'a> {
     /// Whether the traversal's blocks are written back: each partition it
     /// binds and each block it fills is queued for the sink.
     writing: bool,
+    /// Whether a final write reads the parent imager's untuned selection.
+    prediction: bool,
     /// Each partition's selected channels the wave reads, as ordinals of
     /// its selected channels, store by store; `None` when none reaches the
     /// wave.
@@ -456,10 +507,11 @@ impl<'a> ObservationSource<'a> {
         &self,
         key: PartitionKey,
         window: Range<usize>,
-        (values, writing): (bool, bool),
+        (values, writing, prediction): (bool, bool, bool),
     ) -> Result<(Traversal<'a>, Layout), SourceError> {
         let route: &'a BatchRoute = self.route;
-        let (request, layout) = route.request(key, window, values)?;
+        let single_time = self.packer.problem.visibility_transform().is_some();
+        let (request, layout) = route.request(key, window, values, prediction, single_time)?;
         let traversal = route.stores[key.store].observation().bind_read(&request)?;
         if writing && let Some(write_back) = route.write_back() {
             write_back.deliver(Delivered::Partition {
@@ -509,8 +561,11 @@ impl<'a> ObservationSource<'a> {
                 };
                 let (key, window) = stream.windows[next].clone();
                 let window = window.expect("a window");
-                let (traversal, layout) =
-                    self.bind(key, window, (stream.values, stream.writing))?;
+                let (traversal, layout) = self.bind(
+                    key,
+                    window,
+                    (stream.values, stream.writing, stream.prediction),
+                )?;
                 if stream.geometry.1 != Some(key.store) {
                     // Each store's plan carries its own geometry state.
                     stream.geometry = (GeometryTraversal::default(), Some(key.store));
@@ -541,14 +596,44 @@ impl<'a> ObservationSource<'a> {
                 &mut stream.geometry.0,
                 &mut self.geometry,
             )?;
+            // CASA's iterators physically omit channels outside a time's
+            // bands; flagging a wider row changes interpolation.
+            let bands = if stream.prediction && partition.prediction_channels.is_some() {
+                partition.prediction_bands.as_ref()
+            } else if stream.values {
+                partition.frequency_bands.as_ref()
+            } else {
+                None
+            };
+            let rule = self
+                .packer
+                .problem
+                .visibility_transform()
+                .and_then(|transform| {
+                    transform.rule(batch.field[0].0 as i32, partition.spectral_window)
+                });
+            let compact = if bands.is_some() || rule.is_some() {
+                let Some(compact) = self.packer.time_layout(
+                    (&batch, key.store, layout),
+                    &self.geometry,
+                    bands,
+                    rule,
+                    &mut self.scratch,
+                )?
+                else {
+                    continue;
+                };
+                Some(compact)
+            } else {
+                None
+            };
+            let input_layout = &*layout;
+            let layout = compact.as_ref().unwrap_or(input_layout);
             self.packer.pack(
-                (&batch, key.store, partition, layout),
+                (&batch, key.store, partition, layout, input_layout),
                 &self.geometry,
                 &self.keep,
-                (
-                    stream.values,
-                    stream.writing && route.write_back().is_some_and(WriteBack::by_band),
-                ),
+                (stream.values, stream.writing, stream.prediction),
                 &mut self.scratch,
                 out,
             )?;
@@ -590,19 +675,34 @@ impl BoundedSource for ObservationSource<'_> {
         self.state = State::Failed;
         let mut windows = self.windows(planes, restrict)?;
         let values = content == SampleContent::Visibilities;
+        let prediction_only = content == SampleContent::Prediction;
         let writing = match self.route.write_back() {
-            Some(write_back) if values => write_back.writing()?,
+            Some(write_back) if values || prediction_only => write_back.writing()?,
             _ => false,
         };
+        let prediction = writing
+            && self
+                .route
+                .write_back()
+                .is_some_and(WriteBack::parent_prediction);
+        if prediction {
+            for (key, window) in &mut windows {
+                let partition = &self.route.stores[key.store].selection.partitions[key.partition];
+                if let Some(channels) = &partition.prediction_channels {
+                    *window = (!channels.is_empty()).then_some(0..channels.len());
+                }
+            }
+        }
         if values && !writing {
             self.skip_density_only(&mut windows)?;
         }
-        if !values {
+        if content == SampleContent::FlagsAndWeights {
             windows = self.density_windows(windows);
         }
         self.state = State::Streaming(Box::new(Stream {
             values,
             writing,
+            prediction,
             windows,
             next: 0,
             current: None,

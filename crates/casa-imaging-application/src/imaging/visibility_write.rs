@@ -21,6 +21,37 @@ impl<'a> VisibilityWriteTarget<'a> {
         self.0.write_bytes()
     }
 
+    /// Whether CASA follows the final major cycle with a separate parent
+    /// model prediction.
+    pub(crate) fn predicts_final_model(&self) -> bool {
+        self.0
+            .write_back()
+            .is_some_and(|write| write.predicts_final_model())
+    }
+
+    /// Whether a tuned pass must persist continuum-corrected values.
+    pub(crate) fn writes_corrected(&self) -> bool {
+        self.0
+            .write_back()
+            .is_some_and(|write| write.writes_corrected())
+    }
+
+    /// Begin a model-only traversal of the parent selection.
+    pub(crate) fn begin_prediction(
+        &self,
+        transform: Option<&'a SequentialContinuumTransform>,
+    ) -> Result<VisibilityWriter<'a>, SourceError> {
+        VisibilityWriter::begin_targets(self.0, transform, true, false, true)
+    }
+
+    /// Begin a tuned, corrected-data-only traversal.
+    pub(crate) fn begin_corrected(
+        &self,
+        transform: Option<&'a SequentialContinuumTransform>,
+    ) -> Result<VisibilityWriter<'a>, SourceError> {
+        VisibilityWriter::begin_targets(self.0, transform, false, true, false)
+    }
+
     /// Begin the write; `transform` is the continuum transform whose output
     /// `CORRECTED_DATA` holds.
     pub(crate) fn begin(
