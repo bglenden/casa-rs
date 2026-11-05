@@ -61,6 +61,7 @@ def test_sqrt_matches_casa() -> None:
     assert qa.sqrt() == {"unit": "", "value": 0.0}
     assert qa.sqrt("4_-2") == {"unit": "_-1", "value": 2.0}
     assert qa.sqrt("4_._") == {"unit": "_", "value": 2.0}
+    assert qa.sqrt("4_+2") == {"unit": "_", "value": 2.0}
 
 def test_atan2_matches_casa() -> None:
     fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_atan2.json").read_text())
