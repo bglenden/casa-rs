@@ -86,6 +86,7 @@ pub(crate) type ConvertResult<T> = Result<T, ConvertError>;
 pub(crate) enum RecordScalarKind {
     NativeInteger(i64),
     IntegerVector(Option<i32>),
+    EmptyFloatVector,
     NumpyUnsupported,
 }
 
@@ -220,12 +221,20 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
             Some(value) => is_numpy_complex64_scalar(&value)?,
             None => false,
         };
+        let has_unit = dict.get_item("unit")?.is_some();
         let mut record = BTreeMap::new();
         for (key, value) in dict.iter() {
             let key = key
                 .extract::<String>()
                 .map_err(|_| PyTypeError::new_err("a CASA record argument must have str keys"))?;
-            let converted = variant_from_python(&value)?;
+            let converted = if key == "value" && has_unit {
+                match zero_dim_record_float(&value)? {
+                    Some(array) => array,
+                    None => variant_from_python(&value)?,
+                }
+            } else {
+                variant_from_python(&value)?
+            };
             record.insert(key, converted);
         }
         let scalar_kind = if complex64_scalar {
@@ -320,6 +329,24 @@ fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarK
         .getattr("dtype")
         .and_then(|d| d.getattr("kind"))
         .and_then(|k| k.extract::<String>());
+    if matches!(array_kind.as_deref(), Ok("f"))
+        && matches!(
+            value
+                .getattr("dtype")
+                .and_then(|d| d.getattr("itemsize"))
+                .and_then(|n| n.extract::<usize>()),
+            Ok(4 | 8)
+        )
+        && value
+            .getattr("ndim")
+            .and_then(|n| n.extract::<usize>())
+            .ok()
+            == Some(1)
+        && value.is_instance(&value.py().import("numpy")?.getattr("ndarray")?)?
+        && value.len()? == 0
+    {
+        return Ok(Some(RecordScalarKind::EmptyFloatVector));
+    }
     let is_array = matches!(array_kind.as_deref(), Ok("i" | "u" | "b"))
         && value
             .getattr("ndim")
@@ -364,6 +391,50 @@ fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarK
             .flatten()
     });
     Ok(narrowed.map(|value| RecordScalarKind::IntegerVector(Some(value))))
+}
+
+/// Preserve a zero-dimensional floating array inside a quantity-like record.
+/// Bare arguments keep their existing conversion until their callers can
+/// handle arrays without discarding their values.
+fn zero_dim_record_float(object: &Bound<'_, PyAny>) -> PyResult<Option<Variant>> {
+    if object.is_instance_of::<PyFloat>()
+        || object.is_instance_of::<PyInt>()
+        || object.is_instance_of::<PyString>()
+        || object.is_instance_of::<PyComplex>()
+        || object
+            .getattr("ndim")
+            .and_then(|n| n.extract::<usize>())
+            .ok()
+            != Some(0)
+    {
+        return Ok(None);
+    }
+    let is_float = matches!(
+        object
+            .getattr("dtype")
+            .and_then(|dtype| dtype.getattr("kind"))
+            .and_then(|kind| kind.extract::<String>())
+            .as_deref(),
+        Ok("f")
+    );
+    if !is_float
+        || !matches!(
+            object
+                .getattr("dtype")
+                .and_then(|dtype| dtype.getattr("itemsize"))
+                .and_then(|size| size.extract::<usize>()),
+            Ok(4 | 8)
+        )
+        || !object.is_instance(&object.py().import("numpy")?.getattr("ndarray")?)?
+    {
+        return Ok(None);
+    }
+    let doubles = object.call_method1("astype", ("float64",))?;
+    let array = doubles.extract::<PyReadonlyArrayDyn<'_, f64>>()?;
+    Ok(Some(Variant::Array {
+        shape: array.shape().to_vec(),
+        values: array.as_array().iter().copied().collect(),
+    }))
 }
 
 /// A numeric NumPy array with a retained shape. Complex arrays also handle
@@ -743,7 +814,7 @@ pub(crate) fn quantity_variant_record(record: &VariantRecord) -> Result<Quantity
         Some(RecordScalarKind::IntegerVector(Some(value))) => {
             Ok(Quantity::with_unit(f64::from(value), casacore_unit(unit)?))
         }
-        Some(RecordScalarKind::IntegerVector(None)) => {
+        Some(RecordScalarKind::IntegerVector(None) | RecordScalarKind::EmptyFloatVector) => {
             casacore_unit(unit)?;
             Err("Wrong QuantumHolder to convert asQuantumDouble".to_string())
         }

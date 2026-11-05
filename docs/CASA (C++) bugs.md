@@ -3892,3 +3892,17 @@ that channel widths are generally interchangeable. The per-row frame conversion
 can itself move a channel across a cell boundary, so casa-rs recovers the stored
 channel frequency for AW cell selection while retaining the converted frequency
 for UV placement. Rounding near an exact cell tie remains permitted.
+
+## CASA discards zero-dimensional floating quantity-record values
+
+- Date noted: 2026-11-05
+- Status: CASA silently loses input values; casa-rs preserves them (#1170).
+- Owner decision: Correct CASA data corruption as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/casa-compat/quantity_record_zero_dim_oracle.py`, CASA 6.7.6-14 on the Mac mini.
+
+For `qa.quantity({'value': np.array(1.25, dtype='float64'), 'unit': 'm'})`,
+CASA returns a one-element array containing `0.0 m`. `qa.convert` likewise
+converts zero. CASA handles the same array correctly when passed without a
+record. casa-rs preserves `1.25 m` and converts it to `125 cm`, using the
+same one-element output shape. Its `getunit`, `getvalue` and scalar arithmetic
+still report CASA's wrong-holder error for the record.

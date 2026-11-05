@@ -158,7 +158,11 @@ impl MinorLayout {
     /// one; any other keeps none.
     #[must_use]
     pub fn refresh_bytes(&self, setup: &MinorCycleSetup) -> u64 {
-        if matches!(setup.algorithm, ReconstructionAlgorithm::Clark) && self.planes == 1 {
+        if matches!(
+            setup.algorithm,
+            ReconstructionAlgorithm::Clark | ReconstructionAlgorithm::ClarkStokes
+        ) && self.planes == 1
+        {
             casa_imaging_deconvolution::LinearRefresh::bytes(self.shape)
         } else {
             0
@@ -347,7 +351,11 @@ pub fn run_bytes_for(
 ) -> u64 {
     let fft_threads = super::scale_fft_threads(layout.planes, workers);
     let (solve, _) = solve_bound(layout, setup, iterations, fft_threads);
-    let solve = if matches!(setup.algorithm, ReconstructionAlgorithm::Clark) && layout.planes == 1 {
+    let solve = if matches!(
+        setup.algorithm,
+        ReconstructionAlgorithm::Clark | ReconstructionAlgorithm::ClarkStokes
+    ) && layout.planes == 1
+    {
         solve.saturating_sub(refresh)
     } else {
         solve
@@ -427,7 +435,9 @@ fn solve_bound(
     let components = iterations + 1;
     match &setup.algorithm {
         ReconstructionAlgorithm::Hogbom => bound(&Hogbom::new(false), layout, components),
-        ReconstructionAlgorithm::Clark => bound(&Clark::new(None), layout, components),
+        ReconstructionAlgorithm::Clark | ReconstructionAlgorithm::ClarkStokes => {
+            bound(&Clark::new(None), layout, components)
+        }
         ReconstructionAlgorithm::Multiscale {
             scales_px,
             small_scale_bias,

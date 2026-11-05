@@ -1,0 +1,725 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "dtype": "float32",
+      "value": 0.0,
+      "unit": "m",
+      "method": "quantity",
+      "result": {
+        "unit": "m",
+        "value": [
+          0.0
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 0.0,
+      "unit": "m",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 0.0,
+      "unit": "m",
+      "method": "getvalue",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 0.0,
+      "unit": "m",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 0.0,
+      "unit": "m",
+      "method": "convert",
+      "result": {
+        "unit": "cm",
+        "value": [
+          0.0
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 0.0,
+      "unit": "not_a_unit",
+      "method": "quantity",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 0.0,
+      "unit": "not_a_unit",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 0.0,
+      "unit": "not_a_unit",
+      "method": "getvalue",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 0.0,
+      "unit": "not_a_unit",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 0.0,
+      "unit": "not_a_unit",
+      "method": "convert",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 1.25,
+      "unit": "m",
+      "method": "quantity",
+      "result": {
+        "unit": "m",
+        "value": [
+          0.0
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 1.25,
+      "unit": "m",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 1.25,
+      "unit": "m",
+      "method": "getvalue",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 1.25,
+      "unit": "m",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 1.25,
+      "unit": "m",
+      "method": "convert",
+      "result": {
+        "unit": "cm",
+        "value": [
+          0.0
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 1.25,
+      "unit": "not_a_unit",
+      "method": "quantity",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 1.25,
+      "unit": "not_a_unit",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 1.25,
+      "unit": "not_a_unit",
+      "method": "getvalue",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 1.25,
+      "unit": "not_a_unit",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 1.25,
+      "unit": "not_a_unit",
+      "method": "convert",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": -2.5,
+      "unit": "m",
+      "method": "quantity",
+      "result": {
+        "unit": "m",
+        "value": [
+          0.0
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": -2.5,
+      "unit": "m",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": -2.5,
+      "unit": "m",
+      "method": "getvalue",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": -2.5,
+      "unit": "m",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": -2.5,
+      "unit": "m",
+      "method": "convert",
+      "result": {
+        "unit": "cm",
+        "value": [
+          0.0
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": -2.5,
+      "unit": "not_a_unit",
+      "method": "quantity",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": -2.5,
+      "unit": "not_a_unit",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": -2.5,
+      "unit": "not_a_unit",
+      "method": "getvalue",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": -2.5,
+      "unit": "not_a_unit",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": -2.5,
+      "unit": "not_a_unit",
+      "method": "convert",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 0.0,
+      "unit": "m",
+      "method": "quantity",
+      "result": {
+        "unit": "m",
+        "value": [
+          0.0
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 0.0,
+      "unit": "m",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 0.0,
+      "unit": "m",
+      "method": "getvalue",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 0.0,
+      "unit": "m",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 0.0,
+      "unit": "m",
+      "method": "convert",
+      "result": {
+        "unit": "cm",
+        "value": [
+          0.0
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 0.0,
+      "unit": "not_a_unit",
+      "method": "quantity",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 0.0,
+      "unit": "not_a_unit",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 0.0,
+      "unit": "not_a_unit",
+      "method": "getvalue",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 0.0,
+      "unit": "not_a_unit",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 0.0,
+      "unit": "not_a_unit",
+      "method": "convert",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 1.25,
+      "unit": "m",
+      "method": "quantity",
+      "result": {
+        "unit": "m",
+        "value": [
+          0.0
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 1.25,
+      "unit": "m",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 1.25,
+      "unit": "m",
+      "method": "getvalue",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 1.25,
+      "unit": "m",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 1.25,
+      "unit": "m",
+      "method": "convert",
+      "result": {
+        "unit": "cm",
+        "value": [
+          0.0
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 1.25,
+      "unit": "not_a_unit",
+      "method": "quantity",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 1.25,
+      "unit": "not_a_unit",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 1.25,
+      "unit": "not_a_unit",
+      "method": "getvalue",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 1.25,
+      "unit": "not_a_unit",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 1.25,
+      "unit": "not_a_unit",
+      "method": "convert",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": -2.5,
+      "unit": "m",
+      "method": "quantity",
+      "result": {
+        "unit": "m",
+        "value": [
+          0.0
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": -2.5,
+      "unit": "m",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": -2.5,
+      "unit": "m",
+      "method": "getvalue",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": -2.5,
+      "unit": "m",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": -2.5,
+      "unit": "m",
+      "method": "convert",
+      "result": {
+        "unit": "cm",
+        "value": [
+          0.0
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": -2.5,
+      "unit": "not_a_unit",
+      "method": "quantity",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": -2.5,
+      "unit": "not_a_unit",
+      "method": "getunit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": -2.5,
+      "unit": "not_a_unit",
+      "method": "getvalue",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": -2.5,
+      "unit": "not_a_unit",
+      "method": "add",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": -2.5,
+      "unit": "not_a_unit",
+      "method": "convert",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 1.25,
+      "method": "bare_quantity",
+      "keepshape": false,
+      "result": {
+        "unit": "",
+        "value": [
+          1.25
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float32",
+      "value": 1.25,
+      "method": "bare_quantity",
+      "keepshape": true,
+      "result": {
+        "unit": "",
+        "value": [
+          1.25
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 1.25,
+      "method": "bare_quantity",
+      "keepshape": false,
+      "result": {
+        "unit": "",
+        "value": [
+          1.25
+        ],
+        "shape": [
+          1
+        ]
+      }
+    },
+    {
+      "dtype": "float64",
+      "value": 1.25,
+      "method": "bare_quantity",
+      "keepshape": true,
+      "result": {
+        "unit": "",
+        "value": [
+          1.25
+        ],
+        "shape": [
+          1
+        ]
+      }
+    }
+  ]
+}

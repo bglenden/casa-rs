@@ -112,6 +112,16 @@ fn record_quantum(record: &VariantRecord) -> ConvertResult<Quantum> {
             ConvertError::runtime(format!("Error {error} in converting quantity"))
         }
     };
+    if matches!(
+        record.scalar_kind,
+        Some(super::RecordScalarKind::EmptyFloatVector)
+    ) && let Some(Variant::Text(unit)) = record.get("unit")
+    {
+        return Ok(Quantum::vector(
+            Vec::new(),
+            casacore_unit(unit).map_err(wrap)?,
+        ));
+    }
     if record.scalar_kind.is_some() {
         return quantity_variant_record(record)
             .map(|quantity| Quantum::scalar(&quantity))
@@ -122,6 +132,12 @@ fn record_quantum(record: &VariantRecord) -> ConvertResult<Quantum> {
             values.clone(),
             casacore_unit(unit).map_err(wrap)?,
         )),
+        (Some(Variant::Array { shape, values }), Some(Variant::Text(unit))) if shape.is_empty() => {
+            Ok(Quantum::vector(
+                values.clone(),
+                casacore_unit(unit).map_err(wrap)?,
+            ))
+        }
         (Some(Variant::Array { shape, values }), Some(Variant::Text(unit))) => Ok(Quantum {
             values: values.clone(),
             shape: Some(shape.clone()),

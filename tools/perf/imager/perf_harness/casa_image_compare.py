@@ -1307,6 +1307,10 @@ def metadata_beam_area_pixels(metadata):
         or len(units) < 2
     ):
         return None
+    if "beams" in beam:
+        beam = display_plane_restoring_beam(beam, coordinates, metadata.get("shape"))
+        if beam is None:
+            return None
     major = angular_quantity_radians(beam.get("major"))
     minor = angular_quantity_radians(beam.get("minor"))
     x_increment = angular_value_radians(increments[0], units[0])
@@ -1322,6 +1326,51 @@ def metadata_beam_area_pixels(metadata):
         * abs(major * minor)
         / abs(x_increment * y_increment)
     )
+
+
+def display_plane_restoring_beam(record, coordinates, shape):
+    """Select the CASA channel/Stokes beam for the source display plane.
+
+    CASA stores per-plane beams by channel, then Stokes.  A singleton beam
+    dimension applies to all planes; otherwise use the coordinate's pixel map
+    and the same central-plane selection as source_region_statistics.
+    """
+    if not isinstance(shape, list):
+        return None
+    indexes = []
+    for coordinate_name, count_name in (
+        ("spectral", "nChannels"),
+        ("stokes", "nStokes"),
+    ):
+        count = record.get(count_name)
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            return None
+        if count == 1:
+            indexes.append(0)
+            continue
+        matches = [key for key in coordinates if str(key).startswith(coordinate_name)]
+        if len(matches) != 1:
+            return None
+        suffix = str(matches[0])[len(coordinate_name):]
+        pixelmap = coordinates.get("pixelmap" + suffix)
+        if not isinstance(pixelmap, list) or len(pixelmap) != 1:
+            return None
+        axis = pixelmap[0]
+        if (
+            not isinstance(axis, int)
+            or isinstance(axis, bool)
+            or axis < 2
+            or axis >= len(shape)
+            or shape[axis] != count
+        ):
+            return None
+        indexes.append(display_plane_bounds(shape)[0][axis])
+    beams = record.get("beams")
+    for index in indexes:
+        if not isinstance(beams, dict):
+            return None
+        beams = beams.get(f"*{index}")
+    return beams if isinstance(beams, dict) else None
 
 
 def angular_quantity_radians(quantity):
