@@ -62,6 +62,22 @@ def test_selection_lifecycle_and_casa_crash_refusal(tmp_path: Path) -> None:
     assert cl.select([float("inf")])
     assert cl.selected().tolist() == [0, 1]
     assert cl.deselect([-1])
+    nested = 1
+    for _ in range(100):
+        nested = [nested]
+    assert cl.select(nested)
+    assert cl.selected().tolist() == [1]
+    assert cl.deselect([-1])
+    cyclic = []
+    cyclic.append(cyclic)
+    with pytest.raises(ValueError, match="CASA crash: #1176"):
+        cl.select(cyclic)
+    too_deep = 1
+    for _ in range(512):
+        too_deep = [too_deep]
+    assert cl.select(too_deep)
+    assert cl.selected().tolist() == [1]
+    assert cl.deselect([-1])
     for value in (float("nan"), float("inf")):
         with pytest.raises(ValueError, match="CASA crash: #1176"):
             cl.select(value)
