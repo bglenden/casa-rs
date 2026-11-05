@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_imaging_deconvolution::{FinalNormalState, RestoringBeam};
+use casa_imaging_deconvolution::{FinalNormalState, ModelGeneration, RestoringBeam};
 
 use super::{MinorCycleRunError, PsfCache, normalise, plane_shape, psf_peak_value, read_psf};
 
@@ -16,6 +16,7 @@ use super::{MinorCycleRunError, PsfCache, normalise, plane_shape, psf_peak_value
 /// rarely.
 pub(super) fn settle_off_centre(
     normal: &FinalNormalState,
+    base: &ModelGeneration,
     taylor: bool,
     cache: &mut PsfCache,
     preserve_main: bool,
@@ -40,11 +41,17 @@ pub(super) fn settle_off_centre(
         let Some(beam) = largest.get(&key.domain).copied() else {
             continue;
         };
-        if summary.off_centre() && summary.beam() != beam {
+        if summary.off_centre() && (summary.needs_domain_beam() || summary.beam() != beam) {
             let shape = plane_shape(normal, *key);
             let psf = read_psf(normal, taylor, *key)?;
             let peak = psf_peak_value(&psf, shape)?;
-            *summary = summary.with_domain_beam(&normalise(psf, peak), shape, beam);
+            let increment = base
+                .shape()
+                .direction(key.domain)
+                .expect("domain direction")
+                .increment_rad();
+            let cell = [1.0, (increment[1] / increment[0]).abs()];
+            *summary = summary.settle_domain_beam(&normalise(psf, peak), shape, beam, cell)?;
         }
     }
     Ok(())

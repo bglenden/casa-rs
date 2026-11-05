@@ -826,3 +826,91 @@ fn measure_joint_clark(channels: usize, workers: usize) {
         "joint Clark with {channels} channels and {workers} workers held {excess} bytes more than admitted"
     );
 }
+
+/// Settling a fresh off-centre PSF rereads its plane and measures the
+/// largest fitted beam's Gaussian within the preparation and cache charges.
+#[test]
+fn settling_an_off_centre_psf_holds_at_most_its_admission() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    for workers in [1, 4] {
+        let width = 128;
+        let problem = reconstruction_problem(
+            31,
+            width,
+            2,
+            ReconstructionBasis::ChannelLocal { channels: 2 },
+            ReconstructionAlgorithm::Hogbom,
+            ReconstructionControls::new(10, 0.1, 0.0),
+        );
+        let scene = Scene::new(&problem);
+        let lifecycle = model_lifecycle(&problem);
+        let mut cycle = MajorCycle::initial(
+            &problem,
+            empty_final_model(&lifecycle),
+            scene.resident_storage(),
+        )
+        .expect("major cycle");
+        let (model, mut pass) = cycle.parts();
+        let mut images = scene.pass_images(model, true);
+        let psf = images.psf.as_mut().expect("initial PSF");
+        psf.fill(0.0);
+        for x in 0..width {
+            for y in 0..width {
+                let dx = x as f64 - 64.0;
+                let dy = y as f64 - 64.0;
+                psf[x * width + y] =
+                    (-4.0 * std::f64::consts::LN_2 * (dx * dx + dy * dy) / 3600.0).exp() as f32;
+            }
+        }
+        psf[width * width + 31 * width + 64] = 1.0;
+        pass.append(images).expect("images");
+        let completion = cycle.finish(SAMPLES, BLOCKS).expect("complete");
+        let setup = MinorCycleSetup {
+            psf_cutoff: 0.35,
+            psf_beams: None,
+            mask_beams: None,
+            algorithm: ReconstructionAlgorithm::Hogbom,
+            accounting: HogbomIterationAccounting::Strict,
+            response: None,
+            nsigma: 0.0,
+            noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
+            automask: false,
+            primary_beam: None,
+            residual_pixel_mask: false,
+            pbmask: 0.0,
+        };
+        let plans = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::FullPlane {
+            coordinate: problem.geometry().domains()[0].direction(),
+        }])
+        .expect("full mask");
+        let team = WorkerTeam::new(workers).expect("team");
+        let mut cache = PsfCache::default();
+        let charge = prepare_bytes(&completion, &plans, &setup, &cache, workers)
+            + psf_cache_bytes(&completion);
+        let preparing = admit(
+            &HOST,
+            &POLICY,
+            &Demand {
+                phase: "minor-cycle preparation",
+                memory: charge,
+            },
+        )
+        .expect("admitted");
+        ADMITTED.store(held() - charge, Ordering::Relaxed);
+        EXCESS.store(i64::MIN, Ordering::Relaxed);
+        BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let prepared = prepare_minor_cycle(&completion, &plans, &setup, &mut cache, &team);
+        MEASURING.store(false, Ordering::Relaxed);
+        drop(preparing);
+        prepared.expect("prepared");
+        let excess = EXCESS.load(Ordering::Relaxed);
+        assert!(
+            excess <= 0,
+            "{workers} workers held {excess} bytes over admission"
+        );
+        let off = cache.summary(0, 1, 0).expect("off-centre summary");
+        assert!(off.off_centre() && !off.needs_domain_beam());
+        assert!(off.sidelobe() < 1.0, "{}", off.sidelobe());
+    }
+}
