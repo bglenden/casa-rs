@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use casa_imaging_deconvolution::{
     FinalNormalState, ImageDomainReconstructionMasks, MajorCycleCompletion, ModelGeneration,
-    NormalBasis, ReconstructionMask,
+    NormalBasis, ReconstructionMask, RestoringBeam,
 };
 use casa_imaging_model::{
     CompiledImageDomain, CompiledProblem, ImageDomainRole, ReconstructionBasis,
@@ -41,6 +41,7 @@ pub struct ContinuumProductInputs<'a> {
     domain_reconstruction_masks: Option<&'a ImageDomainReconstructionMasks>,
     primary_beam_centres: Option<&'a PrimaryBeamCentres>,
     facet_sum_weights: Option<&'a FacetSumWeights>,
+    saved_psf_beams: Option<&'a [RestoringBeam]>,
 }
 
 /// Each faceted image domain's facets' own sums of weights, by domain
@@ -111,7 +112,33 @@ impl<'a> ContinuumProductInputs<'a> {
             domain_reconstruction_masks: None,
             primary_beam_centres: None,
             facet_sum_weights: None,
+            saved_psf_beams: None,
         }
+    }
+
+    /// Bind the complete PSF beam grid retained from an earlier run.
+    ///
+    /// # Errors
+    /// The grid does not cover the main image's channels and polarizations.
+    pub fn with_saved_psf_beams(
+        mut self,
+        beams: &'a [RestoringBeam],
+    ) -> Result<Self, crate::ProductsError> {
+        let channels = self.normal_state.channel_count();
+        let expected = channels * self.normal_state.polarization_count();
+        if beams.len() != expected {
+            return Err(crate::ProductsError::BeamGrid {
+                beams: beams.len(),
+                channels,
+            });
+        }
+        self.saved_psf_beams = Some(beams);
+        Ok(self)
+    }
+
+    /// The main image's saved PSF beams, channel-major.
+    pub(crate) fn saved_psf_beams(&self) -> Option<&'a [RestoringBeam]> {
+        self.saved_psf_beams
     }
 
     /// Bind each faceted domain's facets' own sums of weights, which its

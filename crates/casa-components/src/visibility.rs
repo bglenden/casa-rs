@@ -34,6 +34,21 @@ use crate::{Flux, SkyComponent};
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 
 impl Flux {
+    /// Whether the flux is physical in CASA's Stokes convention.
+    ///
+    /// CASA requires imaginary Stokes values to be within 1e-13 of zero and
+    /// squared Stokes I to be at least the sum of squared Q, U, and V. It does
+    /// not reject a negative I on its own.
+    #[must_use]
+    pub fn is_physical(&self) -> bool {
+        let [i, q, u, v] = to_stokes(*self.values(), self.polarisation());
+        if ![i, q, u, v].iter().all(|value| value.im.abs() <= 1e-13) {
+            return false;
+        }
+        (i.re * i.re).partial_cmp(&(q.re * q.re + u.re * u.re + v.re * v.re))
+            != Some(std::cmp::Ordering::Less)
+    }
+
     /// The flux as real Stokes I, Q, U and V in Jy: `convertUnit("Jy")`, then
     /// `FluxRep::value(Vector<Double>&)`, which converts to Stokes and keeps
     /// the real parts.

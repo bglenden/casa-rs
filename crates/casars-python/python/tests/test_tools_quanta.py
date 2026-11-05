@@ -31,7 +31,8 @@ CASA = casa_signatures("quanta")
 
 IMPLEMENTED = {
     'abs', 'acos', 'add', 'angle', 'asin', 'atan', 'atan2', 'canon',
-    'canonical', 'ceil', 'check', 'checkfreq', 'compare', 'constants', 'convert', 'cos',
+    'canonical', 'ceil', 'check', 'checkfreq', 'compare', 'constants', 'convert',
+    'convertdop', 'convertfreq', 'cos',
     'div', 'done', 'exp', 'floor', 'formxxx', 'getunit', 'getvalue',
     'isangle', 'isquantity', 'log', 'log10', 'mul', 'neg', 'norm', 'pow', 'quantity',
     'sin', 'splitdate', 'sqrt', 'sub', 'tan', 'time', 'toangle', 'tos',

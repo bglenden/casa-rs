@@ -177,7 +177,7 @@ const METHODS: &[Method] = &[
         R::Bool,
         No,
     ),
-    method("isphysical", &[WHICH_ALL], R::Bool, No),
+    method("isphysical", &[WHICH_ALL], R::Bool, Yes),
     method("length", &[], R::Int, Yes),
     method(
         "open",
