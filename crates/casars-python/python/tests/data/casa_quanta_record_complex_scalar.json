@@ -1,0 +1,473 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "quantity",
+      "value": {
+        "dtype": "complex64",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "dtype": "complex64",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "dtype": "complex64",
+        "real": -3.0,
+        "imag": 0.0
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "dtype": "complex64",
+        "real": -3.0,
+        "imag": 0.0
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "dtype": "complex64",
+        "real": 0.0,
+        "imag": 0.0
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "dtype": "complex64",
+        "real": 0.0,
+        "imag": 0.0
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "dtype": "complex64",
+        "real": 1e-10,
+        "imag": 10000000000.0
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "dtype": "complex64",
+        "real": 1e-10,
+        "imag": 10000000000.0
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "dtype": "complex128",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "dtype": "complex128",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "dtype": "python_complex",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "dtype": "python_complex",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "dtype": "complex64",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "dtype": "complex64",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "dtype": "complex64",
+        "real": -3.0,
+        "imag": 0.0
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "dtype": "complex64",
+        "real": -3.0,
+        "imag": 0.0
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "dtype": "complex64",
+        "real": 0.0,
+        "imag": 0.0
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "dtype": "complex64",
+        "real": 0.0,
+        "imag": 0.0
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "dtype": "complex64",
+        "real": 1e-10,
+        "imag": 10000000000.0
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "dtype": "complex64",
+        "real": 1e-10,
+        "imag": 10000000000.0
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "dtype": "complex128",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "dtype": "complex128",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "dtype": "python_complex",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "dtype": "python_complex",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "dtype": "complex64",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "dtype": "complex64",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "dtype": "complex64",
+        "real": -3.0,
+        "imag": 0.0
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "dtype": "complex64",
+        "real": -3.0,
+        "imag": 0.0
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "dtype": "complex64",
+        "real": 0.0,
+        "imag": 0.0
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "dtype": "complex64",
+        "real": 0.0,
+        "imag": 0.0
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "dtype": "complex64",
+        "real": 1e-10,
+        "imag": 10000000000.0
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "dtype": "complex64",
+        "real": 1e-10,
+        "imag": 10000000000.0
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "dtype": "complex128",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "dtype": "complex128",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "dtype": "python_complex",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "dtype": "python_complex",
+        "real": 1.25,
+        "imag": 2.5
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    }
+  ]
+}

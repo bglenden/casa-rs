@@ -943,10 +943,15 @@ fn a_whole_selection_density_counts_channels_the_axis_misses() {
 /// A track of 40 TOPO channels of 2 kHz at 44 GHz, where the LSRK drift is
 /// several channels wide.
 fn drifting_track() -> Observation {
+    drifting_track_with_width(2.0e3)
+}
+
+/// The same track with a chosen native channel width.
+fn drifting_track_with_width(width_hz: f64) -> Observation {
     use casa_ms::MeasurementSet;
     use casa_types::measures::frequency::FrequencyRef;
     let mut setup = super::fixture::Setup::vla_q_band(40);
-    setup.spectral_windows[0].channel_width_hz = 2.0e3;
+    setup.spectral_windows[0].channel_width_hz = width_hz;
     let observation = Observation::synthesise_setup(setup, &[("point", POINT)]);
     let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
     ms.spectral_window_mut()
@@ -1091,24 +1096,315 @@ fn a_times_model_column_holds_only_the_channels_its_band_selects() {
     );
 }
 
-/// tclean's final write after a run with `nsigma` or an automatic mask is
-/// `predictModel`, on the parent imager's selection, which is not tuned, so
-/// every time takes every channel it reads. CASA 6.7.6.14 on `test_cube_1`'s
-/// cube fills the channel past the band's end at every time under either;
-/// the values it writes there, and past that channel, are #1134's.
+/// CASA's final `predictModel` uses the parent imager's untuned bands. On
+/// this drifting named range, the interior channels are written at every
+/// time and each outer channel is written at one end of the track. CASA
+/// 6.7.6.14 gives the same selection for `nsigma` and automatic masking.
 #[test]
-fn predicting_the_final_model_writes_every_time_of_a_channel_read() {
+fn predicting_the_final_model_uses_the_parent_imagers_time_dependent_bands() {
     for (label, controls) in [
         ("nsigma", json!({ "nsigma": 0.01 })),
         ("auto", json!({ "usemask": "auto-multithresh" })),
     ] {
         let written = model_written_over_a_drift(label, controls);
         let all = written[0].len();
-        for (channel, rows) in written.iter().enumerate().take(36) {
-            let count = rows.iter().filter(|row| **row).count();
-            assert_eq!(count, all, "{label}: channel {channel}");
+        for (channel, rows) in written.iter().enumerate().take(35).skip(5) {
+            assert!(
+                rows.iter().all(|written| *written),
+                "{label}: channel {channel}"
+            );
+        }
+        for (channel, rows) in written
+            .iter()
+            .enumerate()
+            .take(5)
+            .chain(written.iter().enumerate().skip(35))
+        {
+            let count = rows.iter().filter(|written| **written).count();
+            assert!(
+                (1..all).contains(&count),
+                "{label}: channel {channel}, {count} rows"
+            );
+            assert_eq!(
+                rows.windows(2).filter(|pair| pair[0] != pair[1]).count(),
+                1,
+                "{label}: channel {channel}"
+            );
+        }
+        let counts = written
+            .iter()
+            .map(|rows| rows.iter().filter(|written| **written).count())
+            .collect::<Vec<_>>();
+        assert!(
+            counts[..5].windows(2).all(|pair| pair[0] < pair[1]),
+            "{label}: {counts:?}"
+        );
+        assert!(
+            counts[35..].windows(2).all(|pair| pair[0] > pair[1]),
+            "{label}: {counts:?}"
+        );
+    }
+}
+
+/// CASA 6.7.6.14's parent iterator physically selects these channel sets
+/// over the drift for `spw=0:20`, rather than flagging a union row.
+#[test]
+fn parent_prediction_rows_match_casas_drifting_channel_layouts() {
+    let observation = drifting_track();
+    let request = observation.request(
+        "compact-prediction-rows",
+        json!({
+            "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 1,
+            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn",
+        }),
+    );
+    let layouts = casa_imaging_application::source_law::prediction_layouts(
+        &request,
+        &super::fixture::run_context(&request),
+    )
+    .expect("the parent prediction traversal");
+    let mut actual = layouts
+        .iter()
+        .map(|layout| layout.channels.clone())
+        .collect::<Vec<_>>();
+    actual.sort();
+    let mut casa = (15..=19)
+        .flat_map(|first| {
+            [
+                (first..first + 6).collect::<Vec<_>>(),
+                (first..first + 7).collect::<Vec<_>>(),
+            ]
+        })
+        .chain(std::iter::once((20..26).collect::<Vec<_>>()))
+        .collect::<Vec<_>>();
+    casa.sort();
+    assert_eq!(
+        actual, casa,
+        "CASA's physical parent selections over the drift"
+    );
+    assert!(
+        layouts
+            .iter()
+            .all(|layout| layout.flags.iter().all(|flag| !flag)),
+        "the selected unflagged cells remain unflagged: {layouts:?}"
+    );
+}
+
+/// With 20 kHz native channels, CASA reads channel 20 alone for most of
+/// the track and one adjacent channel at either end. A physically singleton
+/// row takes CASA's nearest prediction path even under linear interpolation.
+#[test]
+fn parent_prediction_rows_include_casas_singleton_channel() {
+    let observation = drifting_track_with_width(20_000.0);
+    let request = observation.request(
+        "compact-singleton-rows",
+        json!({
+            "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 2,
+            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn",
+        }),
+    );
+    let layouts = casa_imaging_application::source_law::prediction_layouts(
+        &request,
+        &super::fixture::run_context(&request),
+    )
+    .expect("the parent prediction traversal");
+    let mut actual = layouts
+        .iter()
+        .map(|layout| layout.channels.clone())
+        .collect::<Vec<_>>();
+    actual.sort();
+    assert_eq!(
+        actual,
+        [vec![19, 20], vec![20], vec![20, 21]],
+        "CASA's parent selections"
+    );
+    assert!(
+        layouts
+            .iter()
+            .all(|layout| layout.flags.iter().all(|flag| !flag))
+    );
+}
+
+/// CASA grids the physically selected one-channel rows as nearest rather
+/// than interpolating a wider, mostly flagged union. On this two-plane
+/// 20 kHz track CASA 6.7.6.14 reports these sums of weights.
+#[test]
+fn tuned_singleton_rows_match_casas_sum_of_weights() {
+    let observation = drifting_track_with_width(20_000.0);
+    let (_, products) = observation.image(
+        "tuned-singleton-sumwt",
+        json!({
+            "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 2,
+            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn",
+        }),
+    );
+    let actual = products.get(".sumwt").channel_values();
+    assert_eq!(
+        actual,
+        [101_790.0, 3_510.0],
+        "CASA's singleton gridding weights"
+    );
+}
+
+/// The native `fitspw` extension reads its fit-only channels but keeps
+/// the channels named by `spw` as outputs. Fit channels 0 and 39 must not
+/// become interpolation neighbors of the selected output channel 20.
+#[test]
+fn continuum_fit_only_channels_do_not_enter_tuned_gridding_rows() {
+    let observation = drifting_track_with_width(20_000.0);
+    let request = observation.request(
+        "fitted-grid-layout",
+        json!({
+            "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 2,
+            "niter": 0, "fitspw": "0:0;39",
+        }),
+    );
+    let layouts = casa_imaging_application::source_law::gridding_layouts(
+        &request,
+        &super::fixture::run_context(&request),
+    )
+    .expect("the tuned gridding traversal");
+    assert_eq!(
+        layouts,
+        [vec![20]],
+        "fit-only channels cannot enter a gridding row"
+    );
+}
+
+/// A continuum fit may read a wider union than its output. Both the tuned
+/// traversal and the final predictor must physically use the output roles.
+#[test]
+fn final_prediction_excludes_continuum_fit_only_channels() {
+    let observation = drifting_track_with_width(20_000.0);
+    let request = observation.request(
+        "fitted-prediction-layout",
+        json!({
+            "specmode": "cube", "spw": "0", "start": 20, "width": 1, "nchan": 2,
+            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn", "fitspw": "0:0;39",
+        }),
+    );
+    let context = super::fixture::run_context(&request);
+    let mut tuned = casa_imaging_application::source_law::gridding_layouts(&request, &context)
+        .expect("the tuned gridding traversal");
+    let mut predicted =
+        casa_imaging_application::source_law::prediction_layouts(&request, &context)
+            .expect("the final prediction traversal")
+            .into_iter()
+            .map(|layout| layout.channels)
+            .collect::<Vec<_>>();
+    tuned.sort();
+    predicted.sort();
+    assert_eq!(
+        predicted, tuned,
+        "prediction must not interpolate through fit-only or unrelated channels"
+    );
+    assert!(
+        predicted
+            .iter()
+            .all(|channels| !channels.contains(&0) && !channels.contains(&39))
+    );
+}
+
+/// A corrected-only final major cycle uses the same tuned rows as a run
+/// without a visibility write, even when nsigma is enabled.
+#[test]
+fn corrected_only_nsigma_uses_the_tuned_continuum_rows() {
+    use casa_ms::MeasurementSet;
+    use casa_tables::ColumnSchema;
+    use casa_types::{ArrayValue, PrimitiveType, Value};
+
+    let observation = drifting_track_with_width(20_000.0);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    let Some(Value::Array(ArrayValue::Complex32(data))) = ms
+        .main_table()
+        .column_accessor("DATA")
+        .unwrap()
+        .get(0)
+        .unwrap()
+        .cloned()
+    else {
+        panic!("DATA is a complex array");
+    };
+    let shape = data.shape().to_vec();
+    ms.main_table_mut()
+        .add_column(
+            ColumnSchema::array_fixed("CORRECTED_DATA", PrimitiveType::Complex32, shape.clone()),
+            Some(Value::Array(ArrayValue::Complex32(ndarray::ArrayD::zeros(
+                shape,
+            )))),
+        )
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let controls = json!({
+        "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 2,
+        "niter": 0, "nsigma": 0.01, "fitspw": "0:0;39",
+    });
+    let ordinary = observation
+        .image("continuum-without-write", controls.clone())
+        .1;
+    let mut corrected_controls = controls;
+    corrected_controls["save_continuum_residual"] = json!(true);
+    let request = observation.request("corrected-only-source", corrected_controls.clone());
+    assert!(
+        !casa_imaging_application::source_law::ordinary_write_uses_parent_selection(
+            &request,
+            &super::fixture::run_context(&request),
+        )
+        .expect("corrected-only writer"),
+        "a corrected-only writer must request tuned rows",
+    );
+    let corrected = observation
+        .image("continuum-corrected-only", corrected_controls)
+        .1;
+    assert_eq!(
+        corrected.get(".sumwt").channel_values(),
+        ordinary.get(".sumwt").channel_values(),
+        "the visibility writer must not select the parent prediction source",
+    );
+    assert_eq!(
+        corrected.get(".residual").values(),
+        ordinary.get(".residual").values()
+    );
+}
+
+/// `predictModel` visits the whole parent selection and writes zero where
+/// the cube has no spectral support, rather than leaving the initial model.
+#[test]
+fn predicting_the_final_model_zeroes_channels_beyond_the_cube() {
+    let observation = drifting_track();
+    observation.image(
+        "predict-outside",
+        json!({
+            "specmode": "cube", "spw": "0", "start": 10, "width": 1, "nchan": 10,
+            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn",
+        }),
+    );
+    let rows = super::vis_list::model_rows(observation.measurement_set());
+    assert!(!rows.is_empty());
+    for row in &rows {
+        for channel in [0, 39] {
+            assert!(
+                row.column(channel)
+                    .iter()
+                    .all(|value| *value == Complex32::new(0.0, 0.0)),
+                "channel {channel}"
+            );
         }
     }
+    // CASA 6.7.6.14 extrapolates channel 21 on 10,179 of the 52,650 rows.
+    let extrapolated = rows
+        .iter()
+        .filter(|row| {
+            row.column(21)
+                .iter()
+                .any(|value| *value != Complex32::new(0.0, 0.0))
+        })
+        .count();
+    assert!(
+        (5_000..15_000).contains(&extrapolated),
+        "channel 21: {extrapolated} extrapolated rows"
+    );
 }
 
 /// Two adjacent Q-band windows of `channels` 128 MHz channels each, the

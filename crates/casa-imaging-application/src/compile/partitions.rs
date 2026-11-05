@@ -252,6 +252,8 @@ pub(crate) fn resolve_partitions(
             density_only: window_selection.density_only(),
             density_channels: window_selection.density_channels().map(<[u32]>::to_vec),
             density_bands: window_selection.density_bands().cloned(),
+            prediction_channels: window_selection.prediction_channels().map(<[u32]>::to_vec),
+            prediction_bands: window_selection.prediction_bands().cloned(),
             correlations,
             wavelength_m: wavelength(catalogue, entry, rows)?,
         });

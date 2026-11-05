@@ -969,6 +969,46 @@ fn a_visibility_write_stays_within_its_admission() {
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
 
+/// A final parent-model traversal keeps its prepared grids, predictor,
+/// source block and writer within the run's admission, at one and four
+/// workers. `nsigma` selects the separate CASA prediction path.
+#[test]
+fn a_separate_final_prediction_stays_within_its_admission() {
+    if !alone("a_separate_final_prediction_stays_within_its_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = observation(root.path(), 4);
+    warm(&measurement_set, root.path());
+    let mut breaches = Vec::new();
+    for (imsize, workers) in [(256, 1), (1024, 4)] {
+        let prediction = request(
+            &measurement_set,
+            &root.path().join(format!("separate-prediction-{imsize}")),
+            imsize,
+            json!({ "specmode": "cube", "nchan": 4, "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn" }),
+        );
+        let measured = check(
+            &mut breaches,
+            "separate final prediction",
+            &prediction,
+            workers,
+            AMPLE,
+        );
+        let completion = measured
+            .outcome
+            .as_ref()
+            .expect("prediction run")
+            .visibility_products
+            .expect("model write completed");
+        assert!(
+            completion.sample_count() > 0,
+            "the separate pass wrote model samples"
+        );
+    }
+    assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
 /// A cleaned run that saves its model as CASA's virtual model: once its
 /// products are published, the selection's models are cleared, its
 /// combinations read a chunk at a time, and the final model's grid formed
