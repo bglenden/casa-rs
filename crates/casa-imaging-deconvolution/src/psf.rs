@@ -89,6 +89,14 @@ impl PsfSummary {
         }
     }
 
+    /// Copy this summary with the beam used by automatic masking. The PSF's
+    /// sidelobe and Clark patch remain those measured from the PSF beam.
+    #[must_use]
+    pub const fn with_mask_beam(mut self, beam: RestoringBeam) -> Self {
+        self.beam = beam;
+        self
+    }
+
     fn measure(
         psf: &[f64],
         shape: PlaneShape,

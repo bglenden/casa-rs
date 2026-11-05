@@ -80,8 +80,8 @@ pub enum MinorCycleRunError {
     /// The solver failed.
     #[error(transparent)]
     Solver(#[from] casa_imaging_deconvolution::Error),
-    /// A saved PSF beam grid does not cover the image's channels and polarizations.
-    #[error("saved PSF beam grid has {actual} planes; expected {expected}")]
+    /// A saved beam grid does not cover the image's channels and polarizations.
+    #[error("saved beam grid has {actual} planes; expected {expected}")]
     SavedBeamGridLength {
         /// Number of beam planes required.
         expected: usize,
@@ -103,6 +103,8 @@ pub struct MinorCycleSetup<'a> {
     pub psf_cutoff: f32,
     /// A complete saved PSF beam grid in pixels, channel-major, for the main image.
     pub psf_beams: Option<Arc<[RestoringBeam]>>,
+    /// Saved residual beams in pixels, preferred by automatic masking.
+    pub mask_beams: Option<Arc<[RestoringBeam]>>,
     /// The deconvolver.
     pub algorithm: ReconstructionAlgorithm,
     /// Högbom's iteration accounting.
@@ -336,7 +338,7 @@ pub fn prepare_minor_cycle(
     let normal = completion.normal_state();
     let base = completion.final_model();
     let taylor = is_taylor(normal);
-    if let Some(beams) = &setup.psf_beams {
+    for beams in [&setup.psf_beams, &setup.mask_beams].into_iter().flatten() {
         let channels = if taylor {
             1
         } else {
@@ -382,9 +384,15 @@ pub fn prepare_minor_cycle(
         let read = |key: MaskPlaneKey| automask_plane(&reading, absolute(normal, taylor, key));
         let psf = |key: MaskPlaneKey| {
             let key = absolute(normal, taylor, key);
-            shared.summaries.get(&key).copied().or_else(|| {
+            let summary = shared.summaries.get(&key).copied().or_else(|| {
                 saved_psf_beam(normal, setup, key).map(PsfSummary::blank_with_saved_beam)
-            })
+            });
+            let beam = saved_beam(normal, &setup.mask_beams, key);
+            match (summary, beam) {
+                (Some(summary), Some(beam)) => Some(summary.with_mask_beam(beam)),
+                (None, Some(beam)) => Some(PsfSummary::blank_with_saved_beam(beam)),
+                (summary, None) => summary,
+            }
         };
         let source = AutoMaskSource {
             read: &read,
@@ -786,10 +794,17 @@ fn saved_psf_beam(
     setup: &MinorCycleSetup<'_>,
     key: PlaneKey,
 ) -> Option<RestoringBeam> {
+    saved_beam(normal, &setup.psf_beams, key)
+}
+
+fn saved_beam(
+    normal: &FinalNormalState,
+    beams: &Option<Arc<[RestoringBeam]>>,
+    key: PlaneKey,
+) -> Option<RestoringBeam> {
     (key.domain == 0)
         .then(|| {
-            setup
-                .psf_beams
+            beams
                 .as_ref()?
                 .get(key.channel * normal.polarization_count() + key.polarization)
                 .copied()

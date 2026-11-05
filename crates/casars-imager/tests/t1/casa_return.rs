@@ -808,6 +808,90 @@ fn tclean_restart_reuses_the_saved_psf_beam() {
     }
 }
 
+/// On restart CASA automask uses the residual's beam, or the PSF beam when
+/// the residual has none. The two headers deliberately disagree.
+#[test]
+fn tclean_automatic_restart_prefers_the_residual_beam() {
+    use casa_images::{GaussianBeam, ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("restart-mask-beam");
+    std::fs::create_dir_all(&directory).unwrap();
+    let cell = 0.012_f64.to_radians() / 3600.0;
+    for (name, psf_size, residual_size, expected_mask) in [
+        ("residual-broad", 2.5, Some(10.0), false),
+        ("residual-narrow", 10.0, Some(2.5), true),
+        ("residual-absent", 10.0, None, false),
+    ] {
+        let mut values = json!({
+            "vis": observation.measurement_set(), "imagename": directory.join(name),
+            "imsize": 64, "cell": "0.012arcsec", "backend": "cpu",
+            "specmode": "cube", "nchan": 1, "start": 0, "width": 1,
+            "deconvolver": "hogbom", "niter": 0, "restoration": false,
+        });
+        let seed = json_run(&directory, values.clone());
+        assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
+        for (product, size) in [("psf", Some(psf_size)), ("residual", residual_size)] {
+            let mut image =
+                PagedImage::<f32>::open(directory.join(format!("{name}.{product}"))).unwrap();
+            let mut info = image.image_info().unwrap();
+            info.beam_set = size.map_or_else(ImageBeamSet::empty, |width| {
+                ImageBeamSet::new(GaussianBeam {
+                    major: width * cell,
+                    minor: width * cell,
+                    position_angle: 0.0,
+                })
+            });
+            image.set_image_info(&info).unwrap();
+            let mut data = image.get().unwrap();
+            for x in 0..64 {
+                for y in 0..64 {
+                    let d2 = ((x as f64 - 32.0).powi(2) + (y as f64 - 32.0).powi(2)) / 8.0;
+                    data[[x, y, 0, 0]] = if product == "psf" {
+                        (-d2).exp() as f32
+                    } else if (30..35).contains(&x) && (30..35).contains(&y) {
+                        10.0
+                    } else {
+                        0.0
+                    };
+                }
+            }
+            image.put_slice(&data, &[0; 4]).unwrap();
+            image.save().unwrap();
+        }
+        let mut sumwt = PagedImage::<f32>::open(directory.join(format!("{name}.sumwt"))).unwrap();
+        let mut weights = sumwt.get().unwrap();
+        weights.fill(1.0);
+        sumwt.put_slice(&weights, &[0; 4]).unwrap();
+        sumwt.save().unwrap();
+        drop(sumwt);
+        values["niter"] = json!(1);
+        values["calcpsf"] = json!(false);
+        values["calcres"] = json!(false);
+        values["usemask"] = json!("auto-multithresh");
+        values["sidelobethreshold"] = json!(2.0);
+        values["noisethreshold"] = json!(4.25);
+        values["lownoisethreshold"] = json!(1.5);
+        values["minbeamfrac"] = json!(0.5);
+        values["smoothfactor"] = json!(1.0);
+        values["cutthreshold"] = json!(0.01);
+        values["growiterations"] = json!(0);
+        let result = json_run(&directory, values);
+        assert!(
+            matches!(result, TaskReply::Succeeded { .. }),
+            "{name}: {result:?}"
+        );
+        let mask = PagedImage::<f32>::open(directory.join(format!("{name}.mask")))
+            .unwrap()
+            .get()
+            .unwrap();
+        assert_eq!(
+            mask.iter().any(|value| *value != 0.0),
+            expected_mask,
+            "{name}"
+        );
+    }
+}
+
 /// A Taylor-family restart also keeps the fitted beam of its saved tt0 PSF.
 #[test]
 fn mtmfs_restart_reuses_the_saved_psf_beam() {

@@ -160,6 +160,7 @@ fn a_minor_cycle_holds_at_most_its_admission_whatever_its_planes() {
         let setup = MinorCycleSetup {
             psf_cutoff: 0.35,
             psf_beams: None,
+            mask_beams: None,
             algorithm: ReconstructionAlgorithm::Hogbom,
             accounting: HogbomIterationAccounting::Strict,
             response: None,
@@ -264,6 +265,7 @@ fn a_solve_measuring_through_a_beam_holds_at_most_its_admission() {
     let setup = MinorCycleSetup {
         psf_cutoff: 0.35,
         psf_beams: None,
+        mask_beams: None,
         algorithm: ReconstructionAlgorithm::Hogbom,
         accounting: HogbomIterationAccounting::Strict,
         response: None,
@@ -604,6 +606,7 @@ fn a_preparation_that_reads_the_beam_holds_at_most_its_admission() {
         let setup = MinorCycleSetup {
             psf_cutoff: 0.35,
             psf_beams: None,
+            mask_beams: None,
             algorithm: ReconstructionAlgorithm::Hogbom,
             accounting: HogbomIterationAccounting::Strict,
             response: None,
@@ -684,6 +687,7 @@ fn automask_setup<'a>(
     MinorCycleSetup {
         psf_cutoff: 0.35,
         psf_beams: None,
+        mask_beams: None,
         algorithm,
         accounting: HogbomIterationAccounting::Strict,
         response: with_response.then(|| {
@@ -764,6 +768,7 @@ fn measure_joint_clark(channels: usize, workers: usize) {
     let setup = MinorCycleSetup {
         psf_cutoff: 0.35,
         psf_beams: None,
+        mask_beams: None,
         algorithm: ReconstructionAlgorithm::Clark,
         accounting: HogbomIterationAccounting::Strict,
         response: None,

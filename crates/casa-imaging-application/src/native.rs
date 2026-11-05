@@ -318,6 +318,9 @@ pub(crate) fn run(
     let psf_beams = existing
         .as_ref()
         .and_then(crate::restart::ExistingProducts::psf_pixel_beams);
+    let mask_beams = existing
+        .as_ref()
+        .and_then(crate::restart::ExistingProducts::mask_beams);
     let teams = OnceCell::new();
     let primary_beam = match publication.controls.primary_beam_model() {
         Some(model) => {
@@ -339,6 +342,7 @@ pub(crate) fn run(
                 publication.controls.psf_cutoff()
             },
             psf_beams,
+            mask_beams,
             source: &route,
             masks,
             start_model,

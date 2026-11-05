@@ -76,6 +76,7 @@ fn setup(
     MinorCycleSetup {
         psf_cutoff: 0.35,
         psf_beams: None,
+        mask_beams: None,
         algorithm: problem.reconstruction().algorithm().clone(),
         accounting: HogbomIterationAccounting::Strict,
         response,
@@ -486,6 +487,49 @@ fn a_blank_channels_saved_beam_controls_automatic_mask_pruning() {
         .plane(0, 0)
         .unwrap();
     assert_eq!((row.regions, row.pruned_regions), (1, 1));
+}
+
+/// CASA's autoMask uses the residual beam when both images have beams.
+/// Its choice must not change the PSF sidelobe used by minor-cycle control.
+#[test]
+fn automatic_mask_prefers_the_residual_beam() {
+    let problem = problem(
+        64,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Hogbom,
+    );
+    let scene = Scene::new(&problem).with_weights(vec![1.0, 0.0]);
+    let completion = completion(&problem, &scene, |images| {
+        images.residual.fill(0.0);
+        for x in 30..35 {
+            for y in 30..35 {
+                images.residual[x * 64 + y] = 10.0;
+            }
+        }
+    });
+    let narrow = casa_imaging_deconvolution::RestoringBeam::new(2.5, 2.5, 0.0).unwrap();
+    let broad = casa_imaging_deconvolution::RestoringBeam::new(10.0, 8.0, 0.0).unwrap();
+    let team = WorkerTeam::new(1).unwrap();
+    for (psf, residual, pruned) in [(narrow, broad, 1), (broad, narrow, 0)] {
+        let mut setup = setup(&problem, None);
+        setup.automask = true;
+        setup.psf_beams = Some(vec![psf; 2].into());
+        setup.mask_beams = Some(vec![residual; 2].into());
+        let result = prepare_minor_cycle(
+            &completion,
+            &automatic_plan(&problem, 0.5),
+            &setup,
+            &mut PsfCache::default(),
+            &team,
+        )
+        .expect("prepare");
+        let row = result.auto_masks()[0]
+            .as_ref()
+            .unwrap()
+            .plane(0, 0)
+            .unwrap();
+        assert_eq!((row.regions, row.pruned_regions), (1, pruned));
+    }
 }
 
 /// A multi-term component records each Taylor coefficient's flux, and the

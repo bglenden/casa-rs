@@ -463,6 +463,7 @@ mod tests {
         MinorCycleSetup {
             psf_cutoff: 0.35,
             psf_beams: None,
+            mask_beams: None,
             algorithm,
             accounting: HogbomIterationAccounting::Strict,
             response: None,

@@ -50,6 +50,20 @@ impl Input {
         self.0.read_psf_beams(channels, 1e-5)
     }
 
+    /// Read and retain the residual beam metadata for automatic masking.
+    ///
+    /// # Errors
+    /// The metadata is unreadable or contains an invalid beam.
+    pub fn read_mask_beams(&mut self, channels: usize) -> Result<(), crate::PrepareError> {
+        self.0.read_mask_beams(channels, 1e-5)
+    }
+
+    /// A residual beam in pixels, for the reader's law.
+    #[must_use]
+    pub fn mask_beam(&self, index: usize) -> Option<casa_imaging_deconvolution::RestoringBeam> {
+        self.0.mask_beams()?.get(index).copied()
+    }
+
     /// The angular and pixel beam at `index`, for the reader's law.
     #[must_use]
     pub fn beam_pair(

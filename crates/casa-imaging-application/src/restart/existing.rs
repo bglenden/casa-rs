@@ -50,6 +50,8 @@ pub(crate) struct ExistingProducts {
     psf_beams: Option<Arc<[RestoringBeam]>>,
     /// The same beam grid in pixels for minor-cycle preparation.
     psf_pixel_beams: Option<Arc<[RestoringBeam]>>,
+    /// The residual beam grid in pixels, used for automatic masking.
+    mask_beams: Option<Arc<[RestoringBeam]>>,
 }
 
 impl ExistingProducts {
@@ -107,6 +109,7 @@ impl ExistingProducts {
             residual,
             psf_beams: None,
             psf_pixel_beams: None,
+            mask_beams: None,
         })
     }
 
@@ -163,6 +166,42 @@ impl ExistingProducts {
         Ok(())
     }
 
+    /// Read the residual beam that `SDMaskHandler::autoMask` prefers over the PSF.
+    pub(crate) fn read_mask_beams(
+        &mut self,
+        channels: usize,
+        cell_rad: f64,
+    ) -> Result<(), PrepareError> {
+        if !self.residual {
+            return Ok(());
+        }
+        let name = self
+            .family
+            .names("residual")
+            .into_iter()
+            .next()
+            .expect("a residual name");
+        let path = product_path(&self.prefix, &name);
+        let image = open(&path)?;
+        let info = image.image_info().map_err(|error| PrepareError::Restart {
+            path: path.clone(),
+            reason: error.to_string(),
+        })?;
+        let planes = match self.family {
+            Family::Single => channels,
+            Family::Taylor { .. } => 1,
+        };
+        self.mask_beams =
+            residual_pixel_beams(&info.beam_set, planes, self.polarizations, cell_rad)
+                .map_err(|reason| PrepareError::Restart { path, reason })?;
+        Ok(())
+    }
+
+    /// Residual beam grid in pixels for automatic masking.
+    pub(crate) fn mask_beams(&self) -> Option<Arc<[RestoringBeam]>> {
+        self.mask_beams.clone()
+    }
+
     /// Shared beam grid retained through imaging and publication.
     pub(crate) fn psf_beams(&self) -> Option<Arc<[RestoringBeam]>> {
         self.psf_beams.clone()
@@ -175,7 +214,7 @@ impl ExistingProducts {
 
     /// Retained heap of the shared beam grid, including the `Arc` counters.
     pub(crate) fn beam_resident_bytes(&self) -> u64 {
-        [&self.psf_beams, &self.psf_pixel_beams]
+        [&self.psf_beams, &self.psf_pixel_beams, &self.mask_beams]
             .into_iter()
             .flatten()
             .map(|beams| (std::mem::size_of_val(beams.as_ref()) + 2 * size_of::<usize>()) as u64)
@@ -423,6 +462,38 @@ fn complete_psf_beams(
     Ok(Some(beams.into()))
 }
 
+fn residual_pixel_beams(
+    set: &ImageBeamSet,
+    channels: usize,
+    polarizations: usize,
+    cell_rad: f64,
+) -> Result<Option<Arc<[RestoringBeam]>>, String> {
+    if set.is_empty() {
+        return Ok(None);
+    }
+    let (nc, np) = set.shape();
+    if (nc != 1 && nc != channels) || (np != 1 && np != polarizations) {
+        return Err(format!(
+            "residual beam grid has shape ({nc}, {np}), expected ({channels}, {polarizations}) or an axis of length one"
+        ));
+    }
+    let mut beams = Vec::with_capacity(channels * polarizations);
+    for channel in 0..channels {
+        for polarization in 0..polarizations {
+            let beam = set.beam(channel, polarization);
+            beams.push(
+                RestoringBeam::new(
+                    beam.major / cell_rad,
+                    beam.minor / cell_rad,
+                    beam.position_angle,
+                )
+                .map_err(|error| error.to_string())?,
+            );
+        }
+    }
+    Ok(Some(beams.into()))
+}
+
 fn open(path: &Path) -> Result<PagedImage<f32>, PrepareError> {
     PagedImage::<f32>::open_with_cache(path, CACHE_BYTES).map_err(|error| PrepareError::Restart {
         path: path.to_path_buf(),
@@ -460,6 +531,24 @@ mod beam_tests {
         assert!(complete_psf_beams(&set, 4, 1).unwrap().is_none());
         assert!(
             complete_psf_beams(&ImageBeamSet::empty(), 2, 2)
+                .unwrap()
+                .is_none()
+        );
+    }
+    #[test]
+    fn residual_beams_expand_single_axes_in_channel_major_order() {
+        let set = ImageBeamSet::from_grid(vec![vec![beam(2.0), beam(4.0)]]);
+        let pixels = residual_pixel_beams(&set, 3, 2, 2.0).unwrap().unwrap();
+        assert_eq!(
+            pixels
+                .iter()
+                .map(|b| b.major_fwhm_rad())
+                .collect::<Vec<_>>(),
+            [1.0, 2.0, 1.0, 2.0, 1.0, 2.0]
+        );
+        assert!(residual_pixel_beams(&set, 3, 3, 2.0).is_err());
+        assert!(
+            residual_pixel_beams(&ImageBeamSet::empty(), 3, 2, 2.0)
                 .unwrap()
                 .is_none()
         );

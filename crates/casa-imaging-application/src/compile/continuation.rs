@@ -20,7 +20,7 @@ use crate::{ImagingRequest, RunContext, UseMask};
 pub(crate) struct Continuation {
     /// The earlier model, on the image's own grid.
     pub(crate) start_model: Option<StartModel>,
-    /// The charge of a reused CLEAN mask's support, held through publication.
+    /// Charges for a reused CLEAN mask and saved beams, held through publication.
     pub(crate) mask_resident: Reservation,
     /// The PSF, sums of weights and residual read in place of a pass.
     pub(crate) existing: Option<ExistingProducts>,
@@ -130,6 +130,20 @@ pub(super) fn prepare(
             )?;
             existing.read_psf_beams(channels, main.direction.increment_rad()[0].abs())?;
             charge.retain(existing.beam_resident_bytes());
+            continuation.mask_resident.join(charge);
+        }
+        if residual && request.usemask == UseMask::AutoMultithresh && request.niter > 0 {
+            let mut charge = admit(
+                &context.host,
+                &context.policy,
+                &Demand {
+                    phase: "restart residual beam metadata",
+                    memory: ExistingProducts::beam_reading_bytes(planes, polarizations),
+                },
+            )?;
+            let before = existing.beam_resident_bytes();
+            existing.read_mask_beams(channels, main.direction.increment_rad()[0].abs())?;
+            charge.retain(existing.beam_resident_bytes() - before);
             continuation.mask_resident.join(charge);
         }
         continuation.existing = Some(existing);
