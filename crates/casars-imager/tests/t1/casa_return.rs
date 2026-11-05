@@ -741,3 +741,124 @@ fn tclean_uses_psfcutoff_in_its_minor_cycle() {
     let (low, high) = (run("low", 0.15), run("high", 0.65));
     assert!((low - high).abs() > 1e-5, "low {low}, high {high}");
 }
+
+/// A `calcpsf=False` restart keeps the PSF beam fitted by the first run,
+/// including in its minor-cycle sidelobe and republished PSF metadata.
+#[test]
+fn tclean_restart_reuses_the_saved_psf_beam() {
+    use casa_images::PagedImage;
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("restart-psfcutoff");
+    std::fs::create_dir_all(&directory).expect("run directory");
+    let geometry = observation.geometry();
+    let run = |name: &str, cutoff: f64, niter: usize, restart: bool| {
+        let values = json!({
+            "vis": observation.measurement_set(),
+            "imagename": directory.join(name),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend": "cpu",
+            "deconvolver": "clark",
+            "niter": niter,
+            "psfcutoff": cutoff,
+            "calcpsf": !restart,
+            "calcres": !restart,
+            "restoration": false,
+        });
+        match json_run(&directory, values) {
+            TaskReply::Succeeded { value, .. } => value,
+            other => panic!("{name}: {other:?}"),
+        }
+    };
+    let beam = |name: &str| {
+        PagedImage::<f32>::open(directory.join(format!("{name}.psf")))
+            .unwrap()
+            .image_info()
+            .unwrap()
+            .beam_set
+            .single_beam()
+            .expect("one PSF beam")
+    };
+    for (name, original, changed) in [("low", 0.15, 0.65), ("high", 0.65, 0.15)] {
+        let reference = run(&format!("{name}-fresh"), original, 20, false);
+        run(name, original, 0, false);
+        let before = beam(name);
+        let continued = run(name, changed, 20, true);
+        let after = beam(name);
+        assert!(
+            (after.major / before.major - 1.0).abs() < 1e-7,
+            "{name}: {before:?} -> {after:?}"
+        );
+        assert!(
+            (after.minor / before.minor - 1.0).abs() < 1e-7,
+            "{name}: {before:?} -> {after:?}"
+        );
+        assert!(
+            (after.position_angle - before.position_angle).abs() < 1e-7,
+            "{name}: {before:?} -> {after:?}"
+        );
+        let (expected, actual) = (
+            scalar(&reference, "maxpsfsidelobe"),
+            scalar(&continued, "maxpsfsidelobe"),
+        );
+        assert!(
+            (expected - actual).abs() < 1e-5,
+            "{name}: fresh {expected}, restart {actual}"
+        );
+    }
+}
+
+/// A Taylor-family restart also keeps the fitted beam of its saved tt0 PSF.
+#[test]
+fn mtmfs_restart_reuses_the_saved_psf_beam() {
+    use casa_images::PagedImage;
+    let observation = Observation::synthesise_band(16, &[("point", POINT)]);
+    let directory = observation.scratch("restart-mtmfs-psfcutoff");
+    std::fs::create_dir_all(&directory).expect("run directory");
+    let geometry = observation.geometry();
+    let run = |cutoff: f64, niter: usize, restart: bool| {
+        let values = json!({
+            "vis": observation.measurement_set(),
+            "imagename": directory.join("image"),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend": "cpu",
+            "deconvolver": "mtmfs",
+            "nterms": 2,
+            "niter": niter,
+            "psfcutoff": cutoff,
+            "calcpsf": !restart,
+            "calcres": !restart,
+            "restoration": false,
+        });
+        match json_run(&directory, values) {
+            TaskReply::Succeeded { .. } => (),
+            other => panic!("MT-MFS restart: {other:?}"),
+        }
+    };
+    let beam = || {
+        PagedImage::<f32>::open(directory.join("image.psf.tt0"))
+            .unwrap()
+            .image_info()
+            .unwrap()
+            .beam_set
+            .single_beam()
+            .expect("one PSF beam")
+    };
+    run(0.65, 0, false);
+    let before = beam();
+    run(0.15, 3, true);
+    let after = beam();
+    assert!(
+        (after.major / before.major - 1.0).abs() < 1e-7,
+        "{before:?} -> {after:?}"
+    );
+    assert!(
+        (after.minor / before.minor - 1.0).abs() < 1e-7,
+        "{before:?} -> {after:?}"
+    );
+    assert!(
+        (after.position_angle - before.position_angle).abs() < 1e-7,
+        "{before:?} -> {after:?}"
+    );
+}

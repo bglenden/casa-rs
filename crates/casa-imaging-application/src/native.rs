@@ -312,6 +312,9 @@ pub(crate) fn run(
         image_response,
         virtual_model,
     } = run;
+    let saved_psf_beams = existing
+        .as_ref()
+        .and_then(crate::restart::ExistingProducts::psf_beams);
     let psf_beams = existing
         .as_ref()
         .and_then(crate::restart::ExistingProducts::psf_pixel_beams);
@@ -377,6 +380,7 @@ pub(crate) fn run(
                     scientific: outcome.scientific,
                     masks: outcome.masks,
                     facet_sum_weights: outcome.facet_sum_weights,
+                    saved_psf_beams,
                 },
                 &runtime,
                 publication,
@@ -441,6 +445,7 @@ struct ProductSource {
     scientific: MajorCycleCompletion,
     masks: Option<ReconstructionMaskSet>,
     facet_sum_weights: FacetSumWeights,
+    saved_psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
 }
 
 /// What `problem`'s products hold on one lane, before the run
@@ -475,8 +480,12 @@ fn publish_products(
         scientific,
         masks: reconstruction_masks,
         facet_sum_weights,
+        saved_psf_beams,
     } = source;
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
+    if let Some(beams) = saved_psf_beams.as_deref() {
+        inputs = inputs.with_saved_psf_beams(beams)?;
+    }
     if let Some(masks) = reconstruction_masks.as_ref() {
         inputs = match masks {
             ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask),
