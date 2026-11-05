@@ -51,6 +51,7 @@ pub struct AnalyticPrimaryBeam<'a> {
     law: BeamLaw,
     model: AnalyticPrimaryBeamModel,
     centres: Option<&'a PrimaryBeamCentres>,
+    vla_selection_hz: Option<f64>,
 }
 
 impl<'a> AnalyticPrimaryBeam<'a> {
@@ -110,7 +111,21 @@ impl<'a> AnalyticPrimaryBeam<'a> {
             law,
             model,
             centres,
+            vla_selection_hz: None,
         })
+    }
+
+    /// Select the legacy VLA aperture at `frequency_hz`; each output plane
+    /// still evaluates that aperture at its own frequency.
+    ///
+    /// # Panics
+    ///
+    /// If the selection frequency is non-finite or not positive.
+    #[must_use]
+    pub fn with_vla_selection_frequency(mut self, frequency_hz: f64) -> Self {
+        assert!(frequency_hz.is_finite() && frequency_hz > 0.0);
+        self.vla_selection_hz = Some(frequency_hz);
+        self
     }
 
     /// The beam's model.
@@ -165,7 +180,8 @@ impl<'a> AnalyticPrimaryBeam<'a> {
                     .spectral()
                     .channel_centre_hz(0)
                     .ok_or(ProductsError::UnsupportedProblem)?;
-                let table = vla_band_voltage_table(first_frequency_hz)?;
+                let table =
+                    vla_band_voltage_table(self.vla_selection_hz.unwrap_or(first_frequency_hz))?;
                 summed_beams(shape, &centres, |plane, centre| {
                     add_annular_aperture_power(
                         plane,

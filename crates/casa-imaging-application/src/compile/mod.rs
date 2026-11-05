@@ -59,6 +59,7 @@ use casa_ms::derived::engine::MsCalEngine;
 use casa_ms::observation_io::Msv2Observation;
 use casa_observation::Catalogue;
 use casa_types::measures::frame::MeasFrame;
+use casa_types::measures::frequency::FrequencyRef;
 
 use crate::native::OpenedObservation;
 use crate::{
@@ -945,6 +946,10 @@ fn deployment(
         publication: ApplicationPublication {
             controls,
             primary_beam_centres,
+            vla_selection_store: (primary_beam == Some(AnalyticPrimaryBeamModel::CasaVlaBand)
+                && request.specmode == SpecMode::Cube
+                && surveyed.spectral.output_frequency_reference == FrequencyRef::BARY)
+                .then_some(surveyed.reference),
             writer: CasaImageWriter::for_domains(domains.iter().map(PreparedImageDomain::output)),
         },
         output_directories: domains

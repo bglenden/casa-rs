@@ -129,6 +129,8 @@ pub(crate) struct AwCatalogDeployment {
 pub(crate) struct ApplicationPublication {
     pub(crate) controls: ContinuumProductControls,
     pub(crate) primary_beam_centres: Option<casa_imaging_products::PrimaryBeamCentres>,
+    /// Store whose observatory anchors the cube's LSRK beam selection.
+    pub(crate) vla_selection_store: Option<usize>,
     pub(crate) writer: casa_imaging_products::CasaImageWriter,
 }
 

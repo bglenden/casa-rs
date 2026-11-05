@@ -501,6 +501,13 @@ impl GeometryPlan {
         self.charts.len()
     }
 
+    /// Factor converting an output-frame frequency to LSRK at the image's
+    /// anchor, when the image has an LSRK conversion layer.
+    #[must_use]
+    pub const fn output_lsrk_factor(&self) -> Option<f64> {
+        self.output_in_lsrk
+    }
+
     /// Whether [`Self::apply`] needs the batch's pointing samples.
     #[must_use]
     pub fn reads_pointing(&self) -> bool {
