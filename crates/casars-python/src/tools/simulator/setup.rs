@@ -103,11 +103,18 @@ pub(super) fn observe(
     if !tool.is_open(py) {
         return Ok(false);
     }
+    let (start_s, stop_s) =
+        casa_types::quanta::registry::global_registry().with_stable_units(|| {
+            Ok::<_, ConvertError>((
+                quantity_value(&request.start, "s")?,
+                quantity_value(&request.stop, "s")?,
+            ))
+        })?;
     let spec = ObserveSpec {
         source: request.source.to_string(),
         spectral_window: request.spectral_window.to_string(),
-        start_s: quantity_value(&request.start, "s")?,
-        stop_s: quantity_value(&request.stop, "s")?,
+        start_s,
+        stop_s,
         add_observation: request.add_observation,
         state: state_spec(&request.state)?,
         observer: request.observer.to_string(),

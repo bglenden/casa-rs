@@ -64,11 +64,9 @@ fn format_argument(value: Option<Bound<'_, PyAny>>, name: &str) -> PyResult<()> 
 pub(crate) struct PyQuanta;
 
 /// Runs `work` with the GIL released and returns its value as Python.
-fn call(
-    py: Python<'_>,
-    work: impl FnOnce() -> ConvertResult<CasaValue> + Send,
-) -> PyResult<Py<PyAny>> {
-    py.detach(work)?.into_python(py)
+fn call(py: Python<'_>, work: impl Fn() -> ConvertResult<CasaValue> + Send) -> PyResult<Py<PyAny>> {
+    py.detach(|| casa_types::quanta::registry::global_registry().with_stable_units(work))?
+        .into_python(py)
 }
 
 /// A method casa-rs does not implement yet, refused naming #1053, which
@@ -343,11 +341,17 @@ impl PyQuanta {
         call(py, || ops::trigonometry(&v, "cos"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (name, v = None), text_signature = "($self, name, v=[])")]
-    fn define(&self, name: &Bound<'_, PyAny>, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("define")
+    /// Define a process-wide unit from a scalar quantity.
+    #[pyo3(signature = (name, v = Variant::Empty), text_signature = "($self, name, v=[])")]
+    fn define(&self, py: Python<'_>, name: &Bound<'_, PyAny>, v: Variant) -> PyResult<Py<PyAny>> {
+        let name: String = if name.is_instance_of::<PyString>() {
+            name.extract()?
+        } else if name.is_instance_of::<PyBytes>() {
+            name.call_method1("decode", ("utf-8",))?.extract()?
+        } else {
+            return Err(PyTypeError::new_err("argument _name must be a string"));
+        };
+        py.detach(|| ops::define(&name, &v))?.into_python(py)
     }
 
     /// CASA's scalar quantity comparison.
@@ -363,8 +367,8 @@ impl PyQuanta {
     }
 
     /// Register CASA's process-wide FITS unit aliases.
-    fn fits(&self) -> bool {
-        casa_types::quanta::registry::global_registry().add_fits_units();
+    fn fits(&self, py: Python<'_>) -> bool {
+        py.detach(|| casa_types::quanta::registry::global_registry().add_fits_units());
         true
     }
 
@@ -387,7 +391,10 @@ impl PyQuanta {
         format: String,
         prec: i64,
     ) -> PyResult<Py<PyAny>> {
-        let written = py.detach(|| ops::formxxx(&v, &format, prec))?;
+        let written = py.detach(|| {
+            casa_types::quanta::registry::global_registry()
+                .with_stable_units(|| ops::formxxx(&v, &format, prec))
+        })?;
         if written.is_none() {
             emit(
                 py,
