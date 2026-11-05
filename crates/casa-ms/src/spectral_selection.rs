@@ -239,6 +239,8 @@ pub struct CubeSpectralSetup {
     pub output_frame_reference_time_mjd_sec: f64,
     /// Field id used to define the output cube spectral frame.
     pub output_frame_field_id: usize,
+    /// An LSRK source-defined interpolation grid, when available.
+    pub source_lsrk_grid: Option<[f64; 2]>,
     /// Output cube channel frequencies in `output_freq_ref`.
     pub output_channel_frequencies_hz: Vec<f64>,
     /// Output cube channel widths in `output_freq_ref`.
@@ -878,6 +880,7 @@ impl CubeSpectralSetup {
             ),
             output_frame_reference_time_mjd_sec: reference_row_time_mjd_sec,
             output_frame_field_id: field_id,
+            source_lsrk_grid: None,
             output_channel_widths_hz: if output_channel_frequencies_hz.len() == 1 {
                 vec![channels.steps_hz[0].abs()]
             } else {
@@ -1000,6 +1003,30 @@ impl CubeSpectralSetup {
         } else {
             channel_widths_from_centers(&output_channel_frequencies_hz)?
         };
+        // A channel-defined grid from LSRK has an original interpolation
+        // axis before its output-frame conversion. Keep it separate from
+        // the output image WCS; this experiment tests whether its provenance
+        // prevents endpoint loss without changing strict spectral bounds.
+        let source_lsrk_grid = if source_freq_ref == FrequencyRef::LSRK
+            && matches!(axis_config.specmode, CubeSpecMode::Cube)
+            && matches!(output_freq_ref, FrequencyRef::TOPO | FrequencyRef::BARY)
+            && output_channel_frequencies_hz.len() > 1
+            && !casa_tabular_convention(axis_config.veltype)
+        {
+            let original = casa_image_spectral_axis_hz(
+                casa_transformed_channel_mode_output_centers(
+                    data_frequencies_hz,
+                    data_channel_widths_hz,
+                    start_channel,
+                    width_channels,
+                    Some(output_channel_frequencies_hz.len()),
+                )?,
+                axis_config.veltype,
+            );
+            Some([original[0], original[1] - original[0]])
+        } else {
+            None
+        };
         Ok(Self {
             source_freq_ref,
             output_freq_ref,
@@ -1009,6 +1036,7 @@ impl CubeSpectralSetup {
             ),
             output_frame_reference_time_mjd_sec: reference_row_time_mjd_sec,
             output_frame_field_id: field_id,
+            source_lsrk_grid,
             output_channel_widths_hz,
             output_channel_frequencies_hz,
         })
@@ -2968,6 +2996,38 @@ mod tests {
     }
 
     #[test]
+    fn channel_defined_lsrk_source_grid_survives_topocentric_output() {
+        let input = [
+            1_000_000_118.0,
+            1_050_000_118.0,
+            1_100_000_118.0,
+            1_150_000_118.0,
+            1_200_000_118.0,
+        ];
+        let axis = CubeAxisConfig {
+            specmode: CubeSpecMode::Cube,
+            outframe: FrequencyRef::TOPO,
+            start: Some(CubeAxisValue::Channel(0)),
+            width: Some(CubeAxisValue::Channel(1)),
+            ..CubeAxisConfig::default()
+        };
+        let setup = CubeSpectralSetup::for_casa_cube_axis(
+            FrequencyRef::LSRK,
+            &input,
+            &[50_000_000.0; 5],
+            Some(5),
+            &axis,
+            56_657.790_899_690_34 * 86_400.0,
+            0,
+            None,
+            &test_engine(),
+        )
+        .unwrap();
+        assert_ne!(setup.output_channel_frequencies_hz[0], input[0]);
+        assert_eq!(setup.source_lsrk_grid, Some([input[0], 50_000_000.0]));
+    }
+
+    #[test]
     fn for_casa_cube_axis_rejects_zero_output_channels() {
         let engine = test_engine();
         let error = CubeSpectralSetup::for_casa_cube_axis(
@@ -3239,6 +3299,7 @@ mod tests {
             interpolation_uses_native_source_frequencies: false,
             output_frame_reference_time_mjd_sec: 59_000.0 * 86_400.0,
             output_frame_field_id: 0,
+            source_lsrk_grid: None,
             output_channel_frequencies_hz: vec![1.0e9],
             output_channel_widths_hz: vec![5.0e7],
         };
@@ -3262,6 +3323,7 @@ mod tests {
             interpolation_uses_native_source_frequencies: true,
             output_frame_reference_time_mjd_sec: 59_000.0 * 86_400.0,
             output_frame_field_id: 0,
+            source_lsrk_grid: None,
             output_channel_frequencies_hz: vec![1.05e9],
             output_channel_widths_hz: vec![5.0e7],
         };
@@ -3295,6 +3357,7 @@ mod tests {
             interpolation_uses_native_source_frequencies: false,
             output_frame_reference_time_mjd_sec: 59_000.0 * 86_400.0,
             output_frame_field_id: 0,
+            source_lsrk_grid: None,
             output_channel_frequencies_hz: vec![2.0e9],
             output_channel_widths_hz: vec![1.0e6],
         };

@@ -1380,7 +1380,7 @@ fn writes_initially(problem: &CompiledProblem, forms: Forms) -> bool {
     problem.reconstruction().controls().max_minor_iterations() == 0 && forms.psf && forms.residual
 }
 
-/// The output-frame frequency envelope of a plane range of a channel-local
+/// The gridding-frame frequency envelope of a plane range of a channel-local
 /// basis: from the low edge of its first channel to the high edge of its
 /// last.
 pub(crate) fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
@@ -1399,6 +1399,11 @@ pub(crate) fn plane_bounds(problem: &CompiledProblem) -> Option<PlaneBounds> {
     else {
         return None;
     };
+    let (reference_pixel, reference_frequency_hz, increment_hz) =
+        match problem.geometry().spectral().source_lsrk_grid() {
+            Some([first, increment]) => (0.0, first, increment),
+            None => (reference_pixel, reference_frequency_hz, increment_hz),
+        };
     let centre = move |channel: u32| {
         reference_frequency_hz + (f64::from(channel) - reference_pixel) * increment_hz
     };

@@ -710,3 +710,76 @@ fn zero_major_limit_compiles_while_zero_minor_cycle_limit_is_rejected() {
         Err(CompileProblemError::InvalidCapabilityCombination { .. })
     ));
 }
+
+/// An auxiliary source-defined LSRK grid is valid only as a finite,
+/// nondegenerate axis on a tracked TOPO/BARY cube (#1198).
+#[test]
+fn an_invalid_source_lsrk_grid_is_refused() {
+    let spectral = SpectralCoordinateSpec::new(
+        FrequencyFrame::Lsrk,
+        FrequencyFrame::Topocentric,
+        conversion_anchor(59_000.25),
+        SpectralWcs::Linear {
+            channels: 2,
+            reference_pixel: 0.0,
+            reference_frequency_hz: 1.0e9,
+            increment_hz: 1.0e6,
+        },
+        RestFrequency::NotApplicable,
+        DopplerConvention::NotApplicable,
+    );
+    for grid in [[f64::NAN, 1.0e6], [1.0e9, 0.0], [1.0e9, -1.0e12]] {
+        let input = geometry().with_spectral(spectral.clone().with_source_lsrk_grid(Some(grid)));
+        assert!(matches!(
+            compile(request(input)),
+            Err(CompileProblemError::Geometry(
+                CompileGeometryError::InvalidSpectralWcs
+            ))
+        ));
+    }
+    let wrong_source = SpectralCoordinateSpec::new(
+        FrequencyFrame::Topocentric,
+        FrequencyFrame::Topocentric,
+        conversion_anchor(59_000.25),
+        spectral.wcs().clone(),
+        RestFrequency::NotApplicable,
+        DopplerConvention::NotApplicable,
+    )
+    .with_source_lsrk_grid(Some([1.0e9, 1.0e6]));
+    assert!(matches!(
+        compile(request(geometry().with_spectral(wrong_source))),
+        Err(CompileProblemError::Geometry(
+            CompileGeometryError::InvalidSpectralWcs
+        ))
+    ));
+}
+
+/// Replacing coordinate-defining inputs invalidates the remembered source grid.
+#[test]
+fn replacing_a_spectral_coordinate_discards_its_source_grid() {
+    let spectral = geometry()
+        .spectral()
+        .clone()
+        .with_source_lsrk_grid(Some([1.0e9, 1.0e6]));
+    assert_eq!(
+        spectral
+            .clone()
+            .with_output_frame(FrequencyFrame::Lsrk)
+            .source_lsrk_grid(),
+        None
+    );
+    assert_eq!(
+        spectral
+            .clone()
+            .with_anchor(conversion_anchor(59_000.25))
+            .source_lsrk_grid(),
+        None
+    );
+    assert_eq!(
+        spectral
+            .clone()
+            .with_wcs(spectral.wcs().clone())
+            .source_lsrk_grid(),
+        None
+    );
+}

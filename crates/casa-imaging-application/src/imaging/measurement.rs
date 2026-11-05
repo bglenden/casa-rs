@@ -570,8 +570,13 @@ fn resampler(problem: &CompiledProblem, basis: Basis) -> Result<SpectralResample
         }
     };
     let first_hz = reference_frequency_hz - reference_pixel * increment_hz;
+    let [first_hz, increment_hz] = problem
+        .geometry()
+        .spectral()
+        .source_lsrk_grid()
+        .unwrap_or([first_hz, *increment_hz]);
     Ok(SpectralResampler::channel_local(
-        SpectralAxis::new(first_hz, *increment_hz, planes)?,
+        SpectralAxis::new(first_hz, increment_hz, planes)?,
         kernel,
     ))
 }

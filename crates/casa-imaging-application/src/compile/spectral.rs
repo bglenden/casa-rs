@@ -43,6 +43,7 @@ pub(super) struct PreparedSpectralAxis {
     pub(super) output_frame: FrequencyFrame,
     pub(super) anchor: SpectralFrameAnchor,
     pub(super) wcs: SpectralWcs,
+    pub(super) source_lsrk_grid: Option<[f64; 2]>,
     pub(super) rest_frequency: RestFrequency,
     /// The spectral axis the image header records: the gridded axis, but
     /// for an MFS image's frame and rest frequencies.
@@ -68,6 +69,7 @@ impl PreparedSpectralAxis {
             self.rest_frequency,
             self.doppler,
         )
+        .with_source_lsrk_grid(self.source_lsrk_grid)
     }
 
     /// The source channels the axis reads from surveyed window `spw_id` of
@@ -126,6 +128,7 @@ struct AxisLaw {
     selected_source_channels: Vec<WindowChannels>,
     window_reads: Vec<WindowReads>,
     output_frequency_reference: FrequencyRef,
+    source_lsrk_grid: Option<[f64; 2]>,
     reference_frequency_hz: f64,
     increment_hz: f64,
     output_channels: usize,
@@ -179,6 +182,7 @@ pub(super) fn prepare_axis(
         window_reads: law.window_reads,
         source_frame,
         output_frequency_reference: law.output_frequency_reference,
+        source_lsrk_grid: law.source_lsrk_grid,
         output_frame,
         anchor: spectral_frame_anchor(source_frame, output_frame, request.specmode, frame)?,
         wcs: SpectralWcs::Linear {
@@ -261,6 +265,7 @@ fn continuum_law(
         selected_source_channels: channels.clone(),
         window_reads: vec![WindowReads::new(); channels.len()],
         output_frequency_reference: FrequencyRef::LSRK,
+        source_lsrk_grid: None,
         reference_frequency_hz,
         increment_hz,
         output_channels: 1,
@@ -802,6 +807,7 @@ fn cube_law(
         selected_source_channels,
         window_reads,
         output_frequency_reference: setup.output_freq_ref,
+        source_lsrk_grid: setup.source_lsrk_grid,
         reference_frequency_hz,
         increment_hz,
         output_channels,
@@ -883,6 +889,7 @@ fn source_frame_cube_law(
         selected_source_channels: vec![reads.channels],
         window_reads: vec![reads.windows],
         output_frequency_reference: FrequencyRef::REST,
+        source_lsrk_grid: None,
         reference_frequency_hz,
         increment_hz,
         output_channels,

@@ -198,6 +198,7 @@ pub struct GeometryPlan {
     /// `A`, the factor that takes an output-frame frequency to LSRK at the
     /// image's anchor, for a cube gridded through LSRK.
     output_in_lsrk: Option<f64>,
+    source_lsrk_grid: bool,
     parallactic: bool,
     responses: Responses,
     aw: Option<AwPointingGrouping>,
@@ -480,6 +481,7 @@ impl GeometryPlan {
         Ok(Self {
             catalogue: Arc::clone(catalogue),
             output_in_lsrk: output_in_lsrk(spectral, &frames)?,
+            source_lsrk_grid: spectral.source_lsrk_grid().is_some(),
             frames,
             phase,
             anchor,
@@ -685,7 +687,11 @@ impl GeometryPlan {
             }
             let machines = &reprojections.as_ref().expect("reprojections formed").1;
             // Exactly 1 but for a cube gridded through LSRK.
-            let in_lsrk = self.output_in_lsrk.unwrap_or(1.0);
+            let in_lsrk = if self.source_lsrk_grid {
+                1.0
+            } else {
+                self.output_in_lsrk.unwrap_or(1.0)
+            };
             for sample in context.row_samples() {
                 let raw = uvw.metres_at(sample);
                 for (chart, machine) in machines.iter().enumerate() {
@@ -981,6 +987,18 @@ impl GeometryPlan {
         direction: &MDirection,
         source: FrequencyRef,
     ) -> Result<RowFrequencies, BatchGeometryError> {
+        if self.source_lsrk_grid {
+            let frame = self
+                .frames
+                .observatory_at(time_mjd_s, scale)
+                .with_direction(direction.clone());
+            return Ok(RowFrequencies::Direct(PreparedFrequencyConversion::new(
+                source,
+                FrequencyRef::LSRK,
+                Some(&frame),
+                Some(&frame),
+            )?));
+        }
         if let Some(output_in_lsrk) = self.output_in_lsrk
             && source != FrequencyRef::REST
         {

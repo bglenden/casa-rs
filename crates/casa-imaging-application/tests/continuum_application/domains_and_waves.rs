@@ -100,6 +100,42 @@ fn dirty_cubes_in_waves_equal_the_resident_cube() {
     }
 }
 
+/// A source-defined LSRK grid and the waves that read it use the same
+/// frequency frame, although the published image is TOPO (#1198).
+#[test]
+fn source_lsrk_cube_waves_equal_the_resident_cube() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
+    let mut ms = MeasurementSet::open(&measurement_set).expect("open MS");
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_i32(0, "MEAS_FREQ_REF", 1)
+        .unwrap();
+    ms.save().expect("save LSRK frame");
+    drop(ms);
+    let cube = |name: &str, memory: u64| {
+        let image_name = root.path().join(name);
+        let imaging = line_cube(&measurement_set, &image_name, json!({"imsize": 128}));
+        let outcome =
+            casa_imaging_application::execute(&imaging, context_with(memory_policy(memory)))
+                .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+        (image_name, outcome.planes_per_wave)
+    };
+    let (resident, resident_waves) = cube("source-lsrk-resident", 4 << 30);
+    assert_eq!(resident_waves, None);
+    let (waved, waves) = cube("source-lsrk-waved", WAVED_MEMORY_BYTES);
+    assert!(waves.is_some_and(|planes| planes < 30), "waves: {waves:?}");
+    for suffix in DIRTY_PRODUCT_SUFFIXES {
+        let nrms = product_law::image_nrms(
+            &PathBuf::from(format!("{}{suffix}", resident.display())),
+            &PathBuf::from(format!("{}{suffix}", waved.display())),
+        )
+        .expect("both cubes");
+        assert!(nrms <= product_law::TOLERANCE, "{suffix}: NRMS {nrms:.3e}");
+    }
+}
+
 /// The density pass reads no visibilities but still applies the continuum
 /// transform's channel roles, which flag the fit-only channels (0 and 31)
 /// out of the output. On 2 MHz planes from 44.0005 GHz, plane 0 holds

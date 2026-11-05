@@ -841,6 +841,7 @@ pub struct SpectralCoordinateSpec {
     output_frame: FrequencyFrame,
     anchor: SpectralFrameAnchor,
     wcs: SpectralWcs,
+    source_lsrk_grid: Option<[f64; 2]>,
     rest_frequency: RestFrequency,
     doppler_convention: DopplerConvention,
 }
@@ -861,9 +862,23 @@ impl SpectralCoordinateSpec {
             output_frame,
             anchor,
             wcs,
+            source_lsrk_grid: None,
             rest_frequency,
             doppler_convention,
         }
+    }
+
+    /// Set the source-defined LSRK interpolation grid without changing the output WCS.
+    #[must_use]
+    pub const fn with_source_lsrk_grid(mut self, grid: Option<[f64; 2]>) -> Self {
+        self.source_lsrk_grid = grid;
+        self
+    }
+
+    /// Return the source-defined LSRK interpolation grid, when retained.
+    #[must_use]
+    pub const fn source_lsrk_grid(&self) -> Option<[f64; 2]> {
+        self.source_lsrk_grid
     }
 
     /// Return the source frame.
@@ -960,6 +975,7 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub const fn with_output_frame(mut self, output_frame: FrequencyFrame) -> Self {
         self.output_frame = output_frame;
+        self.source_lsrk_grid = None;
         self
     }
 
@@ -967,6 +983,7 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub const fn with_anchor(mut self, anchor: SpectralFrameAnchor) -> Self {
         self.anchor = anchor;
+        self.source_lsrk_grid = None;
         self
     }
 
@@ -988,6 +1005,7 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub fn with_wcs(mut self, wcs: SpectralWcs) -> Self {
         self.wcs = wcs;
+        self.source_lsrk_grid = None;
         self
     }
 }
@@ -1461,6 +1479,33 @@ fn canonicalize_spectral(
                 .map_err(|_| CompileGeometryError::InvalidSpectralAnchor)?;
             epoch.mjd_days = canonical_zero(epoch.mjd_days);
             canonicalize_f64_slice(&mut observatory_position.metres);
+        }
+    }
+    if let Some([first, increment]) = spectral.source_lsrk_grid {
+        let channels = match &spectral.wcs {
+            SpectralWcs::Linear { channels, .. } if *channels > 0 => *channels,
+            _ => return Err(CompileGeometryError::InvalidSpectralWcs),
+        };
+        let first_boundary = first - increment / 2.0;
+        let last_boundary = first + (channels as f64 - 0.5) * increment;
+        let last = first + (channels - 1) as f64 * increment;
+        if spectral.source_frame != FrequencyFrame::Lsrk
+            || !spectral.output_frame.gridded_through_lsrk()
+            || !matches!(spectral.anchor, SpectralFrameAnchor::Conversion { .. })
+            || !first.is_finite()
+            || first <= 0.0
+            || !increment.is_finite()
+            || increment == 0.0
+            || first + increment == first
+            || !last.is_finite()
+            || last <= 0.0
+            || last - increment == last
+            || !first_boundary.is_finite()
+            || first_boundary <= 0.0
+            || !last_boundary.is_finite()
+            || last_boundary <= 0.0
+        {
+            return Err(CompileGeometryError::InvalidSpectralWcs);
         }
     }
     match &mut spectral.wcs {

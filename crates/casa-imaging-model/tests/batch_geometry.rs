@@ -23,7 +23,7 @@ mod model_lifecycle_fixture;
 
 use batch_observation::{
     MJD_DAYS, REFERENCE, UVW_M, catalogue, catalogue_in, fill, j2000, measures, problem,
-    problem_framed,
+    problem_framed, problem_source_lsrk_grid,
 };
 
 /// The geometry of every sample of one time of `catalogue`'s first
@@ -341,6 +341,45 @@ fn a_topo_cube_is_gridded_through_lsrk() {
             (topo_phase - lsrk_phase).abs() <= 1.0e-12 * lsrk_phase.abs().max(1.0),
             "sample {sample}: phase {topo_phase} against {lsrk_phase}"
         );
+    }
+}
+
+/// A source-defined LSRK interpolation grid and an LSRK output grid use
+/// the same row-time conversion, uvw and phase, even for a TOPO input.
+#[test]
+fn a_source_lsrk_grid_uses_lsrk_row_geometry() {
+    let catalogue = catalogue_in(j2000(REFERENCE[0], REFERENCE[1]), 1, FrequencyRef::TOPO);
+    let source_grid = problem_source_lsrk_grid();
+    let lsrk = problem_framed(
+        PhaseCentreLaw::Observation,
+        FrequencyFrame::Lsrk,
+        FrequencyFrame::Lsrk,
+    );
+    let geometry_of = |problem: &CompiledProblem| {
+        let plan = GeometryPlan::compile(problem, &catalogue, measures(), None).unwrap();
+        let mut buffers = BatchBuffers::default();
+        fill(&mut buffers, &catalogue, 0, 2);
+        let mut geometry = BatchGeometry::default();
+        plan.apply(
+            &buffers.batch().unwrap(),
+            &[true; 6],
+            None,
+            &mut GeometryTraversal::default(),
+            &mut geometry,
+        )
+        .unwrap();
+        geometry
+    };
+    let actual = geometry_of(&source_grid);
+    let expected = geometry_of(&lsrk);
+    for time in 0..2 {
+        assert_eq!(actual.frequencies_hz(time), expected.frequencies_hz(time));
+    }
+    for sample in 0..6 {
+        let a = actual.projection(sample, 0);
+        let b = expected.projection(sample, 0);
+        assert_eq!(a.uvw_m, b.uvw_m);
+        assert_eq!(a.phase_shift_m, b.phase_shift_m);
     }
 }
 

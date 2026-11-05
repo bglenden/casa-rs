@@ -248,6 +248,30 @@ pub fn problem_framed(
     .expect("a compiled problem")
 }
 
+/// An LSRK-defined cube whose output WCS is TOPO and whose gridding grid
+/// retains its source-frame coordinates.
+pub fn problem_source_lsrk_grid() -> CompiledProblem {
+    let base = geometry(
+        PhaseCentreLaw::Observation,
+        FacetLayout::Single,
+        PsfPhaseCentreLaw::ImageDomainReference,
+        [FrequencyFrame::Lsrk, FrequencyFrame::Topocentric],
+        true,
+    )
+    .build();
+    let spectral = base
+        .spectral()
+        .clone()
+        .with_source_lsrk_grid(Some([1.4e9, 1.0e6]));
+    compile(ProblemInput::new(
+        specification(vec![PolarizationCoordinate::StokesI]),
+        base.with_spectral(spectral),
+        super::common::observation_snapshot(0),
+        super::model_lifecycle_fixture::model_lifecycle(),
+    ))
+    .expect("a source-defined LSRK grid")
+}
+
 /// The Stokes I problem of `phase` gridded as `MosaicFT` grids, each row
 /// pointed at its field's centre, on an image centred on [`REFERENCE`] in
 /// `frame`.
