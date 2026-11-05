@@ -485,7 +485,6 @@ pub fn prepare_minor_cycle(
     })?;
     let mut planes = Vec::with_capacity(keys.len());
     let mut blank = Vec::new();
-    let mut sidelobes = Vec::with_capacity(keys.len());
     let mut retained = None;
     for (key, measured, kept) in slots {
         let Some(Measured {
@@ -499,16 +498,12 @@ pub fn prepare_minor_cycle(
             ));
             continue;
         };
-        sidelobes.push(summary.sidelobe());
         cache.summaries.entry(key).or_insert(summary);
         planes.push((key, statistics));
         retained = retained.or(kept);
     }
-    // Only Clark's patch reads the settled beam here: an automatic mask's run
-    // settled it above.
-    if matches!(setup.algorithm, ReconstructionAlgorithm::Clark) {
-        beams::settle_off_centre(normal, taylor, cache, setup.psf_beams.is_some())?;
-    }
+    // Both cycle controls and Clark's patch use the settled PSF beam.
+    beams::settle_off_centre(normal, base, taylor, cache, setup.psf_beams.is_some())?;
     // Each image domain is one CASA image store.
     let mut statistics = ResidualStatistics::empty();
     let domains = planes
@@ -519,9 +514,8 @@ pub fn prepare_minor_cycle(
         statistics.include_store(
             planes
                 .iter()
-                .zip(&sidelobes)
-                .filter(|((key, _), _)| key.domain == domain)
-                .map(|((_, plane), sidelobe)| (plane, *sidelobe)),
+                .filter(|(key, _)| key.domain == domain)
+                .map(|(key, plane)| (plane, cache.summaries[key].sidelobe())),
             setup.nsigma,
         );
     }

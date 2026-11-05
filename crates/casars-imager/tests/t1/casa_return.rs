@@ -921,6 +921,65 @@ fn tclean_saved_off_centre_psf_subtracts_the_beam_at_image_centre() {
     assert!((sidelobe - 0.39395368).abs() < 1e-6, "{sidelobe}");
 }
 
+/// A fresh two-channel beam set gives the off-centre channel the largest
+/// beam before CASA measures the PSF sidelobe (CASA 6.7.6.14: 0.39395368).
+#[test]
+fn tclean_fresh_off_centre_psf_uses_its_domain_beam_for_sidelobes() {
+    use casa_images::{ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("offcentre-fresh-psf");
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": directory.join("image"),
+        "imsize": 64, "cell": ["0.012arcsec", "0.012arcsec"], "backend": "cpu",
+        "specmode": "cube", "nchan": 2, "start": 0, "width": 1,
+        "deconvolver": "hogbom", "niter": 0, "restoration": false,
+    });
+    let seed = json_run(&directory, values.clone());
+    assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
+    let mut psf = PagedImage::<f32>::open(directory.join("image.psf")).unwrap();
+    let mut info = psf.image_info().unwrap();
+    info.beam_set = ImageBeamSet::empty();
+    psf.set_image_info(&info).unwrap();
+    let mut data = psf.get().unwrap();
+    data.fill(0.0);
+    for x in 0..64 {
+        for y in 0..64 {
+            let dx = x as f64 - 32.0;
+            let dy = y as f64 - 32.0;
+            data[[x, y, 0, 0]] =
+                (-4.0 * std::f64::consts::LN_2 * (dx * dx + dy * dy) / 1600.0).exp() as f32;
+        }
+    }
+    data[[15, 32, 0, 1]] = 1.0;
+    psf.put_slice(&data, &[0; 4]).unwrap();
+    psf.save().unwrap();
+    drop(psf);
+    let mut residual = PagedImage::<f32>::open(directory.join("image.residual")).unwrap();
+    let mut data = residual.get().unwrap();
+    data.fill(0.0);
+    data[[32, 32, 0, 0]] = 1.0;
+    data[[32, 32, 0, 1]] = 1.0;
+    residual.put_slice(&data, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    let mut sumwt = PagedImage::<f32>::open(directory.join("image.sumwt")).unwrap();
+    let mut weights = sumwt.get().unwrap();
+    weights.fill(1.0);
+    sumwt.put_slice(&weights, &[0; 4]).unwrap();
+    sumwt.save().unwrap();
+    drop(sumwt);
+    values["niter"] = json!(1);
+    values["calcpsf"] = json!(false);
+    values["calcres"] = json!(false);
+    let result = match json_run(&directory, values) {
+        TaskReply::Succeeded { value, .. } => value,
+        other => panic!("{other:?}"),
+    };
+    let sidelobe = scalar(&result, "maxpsfsidelobe");
+    assert!((sidelobe - 0.39395368).abs() < 2e-5, "{sidelobe}");
+}
+
 /// MFS retains an existing PSF beam through recomputation; cube gridding
 /// forms a temporary image without that metadata and fits a fresh beam.
 #[test]
