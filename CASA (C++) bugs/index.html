@@ -1095,9 +1095,9 @@ Component-list behaviours casa-rs does not follow:
 <a href="#a-negative-component-turns-positive-under-the-primary-beam">a negative component under the primary beam</a>,
 <a href="#a-single-spectral-index-is-read-past-its-end">a single spectral index</a>,
 <a href="#the-primary-beams-component-spectrum-labels-topocentric-samples-lsrk">the beam's component spectrum frame</a>,
-<a href="#claddcomponent-stores-the-flux-in-single-precision"><code>addcomponent</code>'s single-precision flux</a>,
-<a href="#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given">the <code>cl</code> tool's record units</a>.
+<a href="#claddcomponent-stores-the-flux-in-single-precision"><code>addcomponent</code>'s single-precision flux</a>.
 Component-list behaviours casa-rs follows:
+<a href="#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given">the <code>cl</code> tool's record units</a>,
 <a href="#claddcomponent-stores-four-flux-values-as-stokes"><code>addcomponent</code>'s polarization</a>,
 <a href="#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make">a shape <code>addcomponent</code> cannot make</a>.
 Concatenation behaviours casa-rs does not follow:
@@ -2049,7 +2049,7 @@ CASA's by at most one single-precision rounding, 6e-8 relative.</p>
 <h2 id="the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given">The <code>cl</code> tool records a shape's axes in the units it was given<a class="headerlink" href="#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>
-<li>Status: CASA behaviour casa-rs does not follow (#841)</li>
+<li>Status: CASA behaviour casa-rs follows (#1187)</li>
 <li>Affected code: <code>components/ComponentModels/TwoSidedShape.cc</code> (<code>toRecord</code>,
   lines 265-330)</li>
 </ul>
@@ -2057,10 +2057,11 @@ CASA's by at most one single-precision rounding, 6e-8 relative.</p>
 gives them in those units: a Gaussian made by <code>addcomponent</code> with
 <code>majoraxis='1arcsec'</code> records <code>{'unit': 'arcsec', 'value': 1.0}</code>. A shape
 read from a table has the units <code>readTable</code> sets: arcmin for the axes and
-degrees for the position angle, with the errors in radians. casa-rs holds
-radians and records every shape as CASA records one read from a table
-(<code>{'unit': 'arcmin', 'value': 0.016666666666666666}</code>); the quantities are the
-same, and the table is the same either way.</p>
+degrees for the position angle, with the errors in radians. casa-rs keeps the
+input units while the component remains in memory, and uses the table units
+after reopening. It previously always reported the table units, which have
+the same physical value but differ in the record. The owner approved matching
+CASA's in-memory units on 2026-11-05.</p>
 <h2 id="claddcomponent-keeps-a-point-for-a-shape-it-cannot-make"><code>cl.addcomponent</code> keeps a point for a shape it cannot make<a class="headerlink" href="#claddcomponent-keeps-a-point-for-a-shape-it-cannot-make" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-23</li>

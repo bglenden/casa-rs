@@ -1983,17 +1983,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#shape-axes-recorded-units-unfinished" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        shape-axes-recorded-units: Unfinished
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#addcomponent-point-for-bad-shape-previously-agreed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2169,6 +2158,17 @@
     <span class="md-ellipsis">
       
         getshape-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#record-shape-units-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        record-shape-units-casa
       
     </span>
   </a>
@@ -2634,6 +2634,17 @@
     <span class="md-ellipsis">
       
         spectral-conversion-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#format-placeholders-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        format-placeholders-casa
       
     </span>
   </a>
@@ -5679,17 +5690,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#shape-axes-recorded-units-unfinished" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        shape-axes-recorded-units: Unfinished
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#addcomponent-point-for-bad-shape-previously-agreed" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5865,6 +5865,17 @@
     <span class="md-ellipsis">
       
         getshape-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#record-shape-units-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        record-shape-units-casa
       
     </span>
   </a>
@@ -6330,6 +6341,17 @@
     <span class="md-ellipsis">
       
         spectral-conversion-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#format-placeholders-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        format-placeholders-casa
       
     </span>
   </a>
@@ -10272,9 +10294,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">57</td>
 <td>yes</td>
-<td style="text-align: right;">51</td>
+<td style="text-align: right;">53</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">6</td>
+<td style="text-align: right;">4</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10756,8 +10778,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>torecord</code></td>
 <td></td>
 <td>Implemented</td>
-<td>CASA's record of the list.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-casa-values">casa-values</a>, <a href="#componentlist-evidence-casa-on-casa">casa-on-casa</a></td>
+<td>CASA's list record, including shape units supplied in memory and table units after reopening.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-casa-values">casa-values</a>, <a href="#componentlist-evidence-casa-on-casa">casa-on-casa</a>, <a href="#componentlist-evidence-record-shape-units-casa">record-shape-units-casa</a></td>
 </tr>
 </tbody>
 </table>
@@ -10805,17 +10827,6 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Rationale: Avoids a needless single-precision rounding.</li>
 <li>User impact: Fluxes differ from CASA's by at most 6e-8 relative.</li>
 <li>Owner decision: Owner approved on 2026-11-05; see docs/simulation/owner-decisions-20261105.md.</li>
-<li>Evidence: <a href="#componentlist-evidence-bugs-record">bugs-record</a>.</li>
-</ul>
-<h5 id="shape-axes-recorded-units-unfinished">shape-axes-recorded-units: Unfinished<a class="headerlink" href="#shape-axes-recorded-units-unfinished" title="Permanent link">&para;</a></h5>
-<ul>
-<li>Record: <a href="https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given">The <code>cl</code> tool records a shape's axes in the units it was given</a></li>
-<li>Inputs: cl.addcomponent(majoraxis='1arcsec', ...) then reading the shape record.</li>
-<li>CASA: TwoSidedShape remembers the units its axes were set in and records them so ({'unit':'arcsec','value':1.0}); a shape read from a table records arcmin axes and degree position angle.</li>
-<li>casa-rs: Holds radians and records every shape as CASA records one read from a table (arcmin, 0.016666666666666666).</li>
-<li>Rationale: Match CASA units in memory; the physical quantities and persisted table already agree.</li>
-<li>User impact: The record's unit and value differ from the input's but denote the same quantity.</li>
-<li>Owner decision: Owner approved matching CASA input units on 2026-11-05; see #1187 and docs/simulation/owner-decisions-20261105.md.</li>
 <li>Evidence: <a href="#componentlist-evidence-bugs-record">bugs-record</a>.</li>
 </ul>
 <h5 id="addcomponent-point-for-bad-shape-previously-agreed">addcomponent-point-for-bad-shape: Previously agreed<a class="headerlink" href="#addcomponent-point-for-bad-shape-previously-agreed" title="Permanent link">&para;</a></h5>
@@ -10955,6 +10966,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244/tools/simulation/componentlist_getshape_oracle.py">tools/simulation/componentlist_getshape_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244/crates/casars-python/python/tests/data/casa_componentlist_getshape.json">crates/casars-python/python/tests/data/casa_componentlist_getshape.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244/crates/casars-python/python/tests/test_componentlist_getshape.py">crates/casars-python/python/tests/test_componentlist_getshape.py</a></li>
+</ul>
+<p><a id="componentlist-evidence-record-shape-units-casa"></a></p>
+<h5 id="record-shape-units-casa">record-shape-units-casa<a class="headerlink" href="#record-shape-units-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> Four point, Gaussian and disk shapes at each of three stages: added, renamed and reopened, including axis and angle units. componentlist.torecord shape records.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/tools/simulation/componentlist_record_shape_units_oracle.py">tools/simulation/componentlist_record_shape_units_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/crates/casars-python/python/tests/data/casa_componentlist_record_shape_units.json">crates/casars-python/python/tests/data/casa_componentlist_record_shape_units.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/crates/casars-python/python/tests/test_componentlist_record_shape_units.py">crates/casars-python/python/tests/test_componentlist_record_shape_units.py</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>
@@ -11419,7 +11438,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="quanta">quanta<a class="headerlink" href="#quanta" title="Permanent link">&para;</a></h3>
 <h4 id="quanta-method-implementation">quanta method implementation<a class="headerlink" href="#quanta-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 51, Partial: 0, Not implemented: 6, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 53, Partial: 0, Not implemented: 4, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -11623,9 +11642,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>getformat</code></td>
 <td><code>t=''</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>CASA's placeholder warns and returns 'F'; it does not change formatting.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-format-placeholders-casa">format-placeholders-casa</a></td>
 </tr>
 <tr>
 <td><code>getunit</code></td>
@@ -11749,9 +11768,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>setformat</code></td>
 <td><code>t='', v='F'</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>CASA's placeholder warns and returns False; it does not change formatting.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-format-placeholders-casa">format-placeholders-casa</a></td>
 </tr>
 <tr>
 <td><code>sin</code></td>
@@ -11972,6 +11991,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/63be6c526c6fdaff7308f747d002372157a2b1bd/tools/simulation/quanta_spectral_conversion_oracle.py">tools/simulation/quanta_spectral_conversion_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/63be6c526c6fdaff7308f747d002372157a2b1bd/crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json">crates/casars-python/python/tests/data/casa_quanta_spectral_conversion.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/63be6c526c6fdaff7308f747d002372157a2b1bd/crates/casars-python/python/tests/test_quanta_spectral_conversion.py">crates/casars-python/python/tests/test_quanta_spectral_conversion.py</a></li>
+</ul>
+<p><a id="quanta-evidence-format-placeholders-casa"></a></p>
+<h5 id="format-placeholders-casa">format-placeholders-casa<a class="headerlink" href="#format-placeholders-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 28 CASA 6.7.6-14 calls cover the placeholders, text and bytes arguments, invalid types and defaults. quanta.getformat and quanta.setformat.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cc9c724bc6a5179cbfe50d8a78b88a138cede63c/tools/simulation/quanta_format_placeholders_oracle.py">tools/simulation/quanta_format_placeholders_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cc9c724bc6a5179cbfe50d8a78b88a138cede63c/crates/casars-python/python/tests/data/casa_quanta_format_placeholders.json">crates/casars-python/python/tests/data/casa_quanta_format_placeholders.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cc9c724bc6a5179cbfe50d8a78b88a138cede63c/crates/casars-python/python/tests/test_quanta_format_placeholders.py">crates/casars-python/python/tests/test_quanta_format_placeholders.py</a></li>
 </ul>
 <h3 id="simulator">simulator<a class="headerlink" href="#simulator" title="Permanent link">&para;</a></h3>
 <h4 id="simulator-method-implementation">simulator method implementation<a class="headerlink" href="#simulator-method-implementation" title="Permanent link">&para;</a></h4>
