@@ -185,7 +185,12 @@ impl BatchRoute {
         // A native block has one channel layout. A time-varying parent
         // prediction therefore reads one integration per batch, so its
         // physically selected channels can form that layout.
-        let times = if prediction && partition.prediction_bands.is_some() {
+        let time_varying = if prediction {
+            partition.prediction_bands.is_some()
+        } else {
+            values && partition.frequency_bands.is_some()
+        };
+        let times = if time_varying {
             1
         } else {
             self.batching.times_per_batch(key.store, key.partition)
@@ -589,15 +594,20 @@ impl<'a> ObservationSource<'a> {
                 &mut stream.geometry.0,
                 &mut self.geometry,
             )?;
-            // CASA's parent iterator physically omits channels outside a
-            // time's bands; flagging a wider row changes interpolation.
-            let compact = if stream.prediction
-                && partition.prediction_channels.is_some()
-                && partition.prediction_bands.is_some()
-            {
-                let Some(compact) = self.packer.prediction_layout(
-                    (&batch, key.store, partition, layout),
+            // CASA's iterators physically omit channels outside a time's
+            // bands; flagging a wider row changes interpolation.
+            let bands = if stream.prediction && partition.prediction_channels.is_some() {
+                partition.prediction_bands.as_ref()
+            } else if stream.values && self.packer.problem.visibility_transform().is_none() {
+                partition.frequency_bands.as_ref()
+            } else {
+                None
+            };
+            let compact = if let Some(bands) = bands {
+                let Some(compact) = self.packer.time_layout(
+                    (&batch, key.store, layout),
                     &self.geometry,
+                    bands,
                     &mut self.scratch,
                 )?
                 else {

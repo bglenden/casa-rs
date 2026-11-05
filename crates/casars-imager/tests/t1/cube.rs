@@ -1225,6 +1225,27 @@ fn parent_prediction_rows_include_casas_singleton_channel() {
     );
 }
 
+/// CASA grids the physically selected one-channel rows as nearest rather
+/// than interpolating a wider, mostly flagged union. On this two-plane
+/// 20 kHz track CASA 6.7.6.14 reports these sums of weights.
+#[test]
+fn tuned_singleton_rows_match_casas_sum_of_weights() {
+    let observation = drifting_track_with_width(20_000.0);
+    let (_, products) = observation.image(
+        "tuned-singleton-sumwt",
+        json!({
+            "specmode": "cube", "spw": "0:20", "start": 20, "width": 1, "nchan": 2,
+            "niter": 5, "nsigma": 0.01, "savemodel": "modelcolumn",
+        }),
+    );
+    let actual = products.get(".sumwt").channel_values();
+    assert_eq!(
+        actual,
+        [101_790.0, 3_510.0],
+        "CASA's singleton gridding weights"
+    );
+}
+
 /// `predictModel` visits the whole parent selection and writes zero where
 /// the cube has no spectral support, rather than leaving the initial model.
 #[test]

@@ -257,25 +257,17 @@ impl<'b> Arrays<'b> {
 }
 
 impl Packer<'_> {
-    /// A parent prediction's physically selected channels at its sole time.
-    /// An empty selection contributes no block or write.
-    pub(super) fn prediction_layout(
+    /// The physically selected channels at a batch's sole time. An empty
+    /// selection contributes no block or write.
+    pub(super) fn time_layout(
         &self,
-        (batch, store, partition, layout): (
-            &VisibilityBatch<'_>,
-            usize,
-            &SelectedPartition,
-            &Layout,
-        ),
+        (batch, store, layout): (&VisibilityBatch<'_>, usize, &Layout),
         geometry: &BatchGeometry,
+        bands: &FrequencyBands,
         scratch: &mut PackScratch,
     ) -> Result<Option<Layout>, SourceError> {
-        let bands = partition
-            .prediction_bands
-            .as_ref()
-            .expect("time-varying parent bands");
         if batch.times() != 1 {
-            return Err("a compact prediction batch must hold one time".into());
+            return Err("a compact batch must hold one time".into());
         }
         let frequencies = geometry.frequencies_hz(0);
         scratch.frequencies_hz.clear();
