@@ -370,7 +370,7 @@ pub fn prepare_minor_cycle(
         // An automatic mask smooths by its channel block's common beam and
         // thresholds by the image's sidelobe level, so every plane's PSF is
         // measured first.
-        measure_psfs(normal, taylor, cache, &keys, setup, team)?;
+        measure_psfs(normal, base, taylor, cache, &keys, setup, team)?;
         let shared = &*cache;
         let reading = Reading {
             normal,
@@ -437,7 +437,7 @@ pub fn prepare_minor_cycle(
         };
         let summary = match shared.summaries.get(key) {
             Some(summary) => *summary,
-            None => summarize_psf(normal, setup, *key, &plane.psf[0], plane.shape)?,
+            None => summarize_psf(normal, base, setup, *key, &plane.psf[0], plane.shape)?,
         };
         let pixels = plane_pixels(&inputs, *key, &plane)?;
         let mut statistics = PlaneStatistics::measure(
@@ -814,14 +814,21 @@ fn saved_beam(
 
 fn summarize_psf(
     normal: &FinalNormalState,
+    base: &ModelGeneration,
     setup: &MinorCycleSetup<'_>,
     key: PlaneKey,
     psf: &[f64],
     shape: PlaneShape,
 ) -> Result<PsfSummary, MinorCycleRunError> {
+    let increment = base
+        .shape()
+        .direction(key.domain)
+        .expect("domain direction")
+        .increment_rad();
+    let cell = [1.0, (increment[1] / increment[0]).abs()];
     Ok(match saved_psf_beam(normal, setup, key) {
-        Some(beam) => PsfSummary::with_saved_beam(psf, shape, beam)?,
-        None => PsfSummary::with_cutoff(psf, shape, setup.psf_cutoff)?,
+        Some(beam) => PsfSummary::with_saved_beam_and_cell(psf, shape, beam, cell)?,
+        None => PsfSummary::with_cutoff_and_cell(psf, shape, setup.psf_cutoff, cell)?,
     })
 }
 
@@ -829,6 +836,7 @@ fn summarize_psf(
 /// and is not yet measured, side by side on the team.
 fn measure_psfs(
     normal: &FinalNormalState,
+    base: &ModelGeneration,
     taylor: bool,
     cache: &mut PsfCache,
     keys: &[PlaneKey],
@@ -846,6 +854,7 @@ fn measure_psfs(
         let peak = psf_peak_value(&psf, shape)?;
         *summary = Some(summarize_psf(
             normal,
+            base,
             setup,
             *key,
             &normalise(psf, peak),

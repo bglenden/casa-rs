@@ -345,10 +345,22 @@ fn positive_peak(psf: &[f32]) -> Result<(usize, f32), PsfBeamFitError> {
 /// preserving the magnitude of the most-negative original PSF sample. The
 /// Gaussian is unit peak and is scaled to the measured PSF peak before the
 /// subtraction.
+#[cfg(test)]
 pub(crate) fn fitted_psf_sidelobe_fraction_with_beam(
     psf: &[f32],
     shape: [usize; 2],
     beam: RestoringBeam,
+) -> Result<f64, PsfBeamFitError> {
+    fitted_psf_sidelobe_fraction_with_cell(psf, shape, beam, [1.0, 1.0])
+}
+
+/// `beam` is in units of the first direction-axis pixel; `cell` gives each
+/// direction increment in the same unit, for non-square pixels.
+pub(crate) fn fitted_psf_sidelobe_fraction_with_cell(
+    psf: &[f32],
+    shape: [usize; 2],
+    beam: RestoringBeam,
+    cell: [f64; 2],
 ) -> Result<f64, PsfBeamFitError> {
     if psf.len() != shape[0].saturating_mul(shape[1]) {
         return Err(PsfBeamFitError::ShapeMismatch {
@@ -371,6 +383,7 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_beam(
         usize::MAX
     };
     let bounds = std::array::from_fn::<_, 2, _>(|axis| {
+        let radius = (radius as f64 / cell[axis]).ceil() as usize;
         peak_pixel[axis].saturating_sub(radius)
             ..peak_pixel[axis]
                 .saturating_add(radius)
@@ -396,8 +409,8 @@ pub(crate) fn fitted_psf_sidelobe_fraction_with_beam(
         for y in gaussian_columns {
             let sample = row[y];
             minimum = minimum.min(sample);
-            let dx = x as f64 - peak_pixel[0] as f64;
-            let dy = y as f64 - peak_pixel[1] as f64;
+            let dx = (x as f64 - peak_pixel[0] as f64) * cell[0];
+            let dy = (y as f64 - peak_pixel[1] as f64) * cell[1];
             let u = dx * cos_pa + dy * sin_pa;
             let v = -dx * sin_pa + dy * cos_pa;
             let gaussian = (-0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2))).exp()

@@ -3,7 +3,7 @@
 
 use crate::Error;
 use crate::beam::{
-    DEFAULT_PSF_FIT_CUTOFF, RestoringBeam, fit_main_lobe, fitted_psf_sidelobe_fraction_with_beam,
+    DEFAULT_PSF_FIT_CUTOFF, RestoringBeam, fit_main_lobe, fitted_psf_sidelobe_fraction_with_cell,
     peak_outside_inner_quarter,
 };
 use crate::plane::{PlaneShape, psf_peak};
@@ -55,7 +55,7 @@ impl PsfSummary {
     ///
     /// When the PSF has no positive finite peak or the main lobe cannot be fitted.
     pub fn with_cutoff(psf: &[f64], shape: PlaneShape, cutoff: f32) -> Result<Self, Error> {
-        Self::measure(psf, shape, cutoff, None)
+        Self::measure(psf, shape, cutoff, None, [1.0, 1.0])
     }
 
     /// Measure a PSF with a fitted beam recovered from its image metadata.
@@ -69,7 +69,33 @@ impl PsfSummary {
         shape: PlaneShape,
         beam: RestoringBeam,
     ) -> Result<Self, Error> {
-        Self::measure(psf, shape, DEFAULT_PSF_FIT_CUTOFF, Some(beam))
+        Self::measure(psf, shape, DEFAULT_PSF_FIT_CUTOFF, Some(beam), [1.0, 1.0])
+    }
+
+    /// Measure with direction increments expressed in first-axis pixels.
+    ///
+    /// # Errors
+    /// The PSF has no positive finite peak or its main lobe cannot be fitted.
+    pub fn with_cutoff_and_cell(
+        psf: &[f64],
+        shape: PlaneShape,
+        cutoff: f32,
+        cell: [f64; 2],
+    ) -> Result<Self, Error> {
+        Self::measure(psf, shape, cutoff, None, cell)
+    }
+
+    /// Measure a saved beam with direction increments in first-axis pixels.
+    ///
+    /// # Errors
+    /// The PSF has no positive finite peak.
+    pub fn with_saved_beam_and_cell(
+        psf: &[f64],
+        shape: PlaneShape,
+        beam: RestoringBeam,
+        cell: [f64; 2],
+    ) -> Result<Self, Error> {
+        Self::measure(psf, shape, DEFAULT_PSF_FIT_CUTOFF, Some(beam), cell)
     }
 
     /// A blank plane's saved beam for automatic-mask common-beam selection.
@@ -102,6 +128,7 @@ impl PsfSummary {
         shape: PlaneShape,
         cutoff: f32,
         saved_beam: Option<RestoringBeam>,
+        cell: [f64; 2],
     ) -> Result<Self, Error> {
         let peak = psf_peak(psf, shape).ok_or(Error::PsfPeak)?;
         if !(psf[peak].is_finite() && psf[peak] > 0.0) {
@@ -129,9 +156,9 @@ impl PsfSummary {
         } else {
             let beam = match saved_beam {
                 Some(beam) => beam,
-                None => fit_main_lobe(&single, axes, [1.0, 1.0], cutoff)?,
+                None => fit_main_lobe(&single, axes, cell, cutoff)?,
             };
-            let sidelobe = fitted_psf_sidelobe_fraction_with_beam(&single, axes, beam)?;
+            let sidelobe = fitted_psf_sidelobe_fraction_with_cell(&single, axes, beam, cell)?;
             (beam, sidelobe)
         };
         Ok(Self {
@@ -261,6 +288,27 @@ mod tests {
                 .expect("a summary")
                 .sidelobe(),
             1.0
+        );
+    }
+    /// The Gaussian uses both world-axis increments (CASA CAS-7171).
+    #[test]
+    fn a_saved_beam_sidelobe_uses_both_cell_sizes() {
+        let shape = PlaneShape::new(64, 64);
+        let mut psf = vec![0.0; 64 * 64];
+        for x in 0..64 {
+            for y in 0..64 {
+                let dx = x as f64 - 32.0;
+                let dy = y as f64 - 32.0;
+                psf[x * 64 + y] =
+                    (-4.0 * std::f64::consts::LN_2 * (dx * dx + dy * dy) / 16.0).exp();
+            }
+        }
+        let beam = RestoringBeam::new(4.0, 4.0, 0.0).unwrap();
+        let summary = PsfSummary::with_saved_beam_and_cell(&psf, shape, beam, [1.0, 2.0]).unwrap();
+        assert!(
+            (summary.sidelobe() - 0.4375).abs() < 1e-6,
+            "{}",
+            summary.sidelobe()
         );
     }
 }

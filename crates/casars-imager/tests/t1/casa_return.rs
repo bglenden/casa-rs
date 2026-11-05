@@ -808,6 +808,65 @@ fn tclean_restart_reuses_the_saved_psf_beam() {
     }
 }
 
+/// CASA 6.7.6.14 reports 0.4375 for this saved beam on 1:2 cells: the
+/// Gaussian is four pixels across x and two across y.
+#[test]
+fn tclean_saved_psf_sidelobe_uses_both_cell_sizes() {
+    use casa_images::{GaussianBeam, ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("rectangular-saved-psf");
+    std::fs::create_dir_all(&directory).unwrap();
+    let cell = 0.012_f64.to_radians() / 3600.0;
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": directory.join("image"),
+        "imsize": 64, "cell": ["0.012arcsec", "0.024arcsec"], "backend": "cpu",
+        "specmode": "cube", "nchan": 1, "start": 0, "width": 1,
+        "deconvolver": "hogbom", "niter": 0, "restoration": false,
+    });
+    let seed = json_run(&directory, values.clone());
+    assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
+    let mut psf = PagedImage::<f32>::open(directory.join("image.psf")).unwrap();
+    let mut info = psf.image_info().unwrap();
+    info.beam_set = ImageBeamSet::new(GaussianBeam {
+        major: 4.0 * cell,
+        minor: 4.0 * cell,
+        position_angle: 0.0,
+    });
+    psf.set_image_info(&info).unwrap();
+    let mut data = psf.get().unwrap();
+    for x in 0..64 {
+        for y in 0..64 {
+            let d2 = (x as f64 - 32.0).powi(2) + (y as f64 - 32.0).powi(2);
+            data[[x, y, 0, 0]] = (-4.0 * std::f64::consts::LN_2 * d2 / 16.0).exp() as f32;
+        }
+    }
+    psf.put_slice(&data, &[0; 4]).unwrap();
+    psf.save().unwrap();
+    drop(psf);
+    let mut residual = PagedImage::<f32>::open(directory.join("image.residual")).unwrap();
+    let mut data = residual.get().unwrap();
+    data.fill(0.0);
+    data[[32, 32, 0, 0]] = 1.0;
+    residual.put_slice(&data, &[0; 4]).unwrap();
+    residual.save().unwrap();
+    drop(residual);
+    let mut sumwt = PagedImage::<f32>::open(directory.join("image.sumwt")).unwrap();
+    let mut weights = sumwt.get().unwrap();
+    weights.fill(1.0);
+    sumwt.put_slice(&weights, &[0; 4]).unwrap();
+    sumwt.save().unwrap();
+    drop(sumwt);
+    values["niter"] = json!(1);
+    values["calcpsf"] = json!(false);
+    values["calcres"] = json!(false);
+    let result = match json_run(&directory, values) {
+        TaskReply::Succeeded { value, .. } => value,
+        other => panic!("{other:?}"),
+    };
+    let sidelobe = scalar(&result, "maxpsfsidelobe");
+    assert!((sidelobe - 0.4375).abs() < 1e-6, "{sidelobe}");
+}
+
 /// `makeImageBeamSet` keeps an existing complete beam even after calcpsf
 /// recomputes PSF pixels; CASA does so with and without minor iterations.
 #[test]
