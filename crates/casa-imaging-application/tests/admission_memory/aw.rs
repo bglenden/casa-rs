@@ -19,8 +19,8 @@ fn an_aw_cube_stays_within_its_admission() {
     check_aw_cube_admission("0:0", "linear");
 }
 
-/// #1121: nearest-channel AW cubes admit all retained rows and cells when
-/// a selected window contains more than one channel.
+/// #1121: a nearest-channel AW cube's live heap stays within its combined
+/// admission when a selected window contains more than one channel.
 #[test]
 fn a_multichannel_nearest_aw_cube_stays_within_its_admission() {
     if !alone("aw::a_multichannel_nearest_aw_cube_stays_within_its_admission") {
