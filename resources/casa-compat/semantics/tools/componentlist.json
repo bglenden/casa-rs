@@ -749,7 +749,7 @@
     "crates/casars-python/python/tests/test_componentlist_selection.py",
     "crates/casars-python/python/tests/test_componentlist_indices.py"
    ],
-   "source_revision": "8c67a264dc423e99e75bac58d665544035fca541"
+   "source_revision": "6fe424d3ee779cfda8c9c37e0c5037e340111a8f"
   },
   "fluxerror-casa": {
    "kind": "CASA-recorded values",

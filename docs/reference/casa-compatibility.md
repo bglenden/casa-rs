@@ -1827,10 +1827,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 **CASA-recorded values — measured.** 30 CASA 6.7.6-14 selection and conversion cases plus selection lifecycle checks; CASA scalar NaN/infinity crashes are tracked in #1176. componentlist.select, deselect and selected.
 
-- [tools/simulation/componentlist_selection_oracle.py](https://github.com/bglenden/casa-rs/blob/8c67a264dc423e99e75bac58d665544035fca541/tools/simulation/componentlist_selection_oracle.py)
-- [crates/casars-python/python/tests/data/casa_componentlist_selection.json](https://github.com/bglenden/casa-rs/blob/8c67a264dc423e99e75bac58d665544035fca541/crates/casars-python/python/tests/data/casa_componentlist_selection.json)
-- [crates/casars-python/python/tests/test_componentlist_selection.py](https://github.com/bglenden/casa-rs/blob/8c67a264dc423e99e75bac58d665544035fca541/crates/casars-python/python/tests/test_componentlist_selection.py)
-- [crates/casars-python/python/tests/test_componentlist_indices.py](https://github.com/bglenden/casa-rs/blob/8c67a264dc423e99e75bac58d665544035fca541/crates/casars-python/python/tests/test_componentlist_indices.py)
+- [tools/simulation/componentlist_selection_oracle.py](https://github.com/bglenden/casa-rs/blob/6fe424d3ee779cfda8c9c37e0c5037e340111a8f/tools/simulation/componentlist_selection_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_selection.json](https://github.com/bglenden/casa-rs/blob/6fe424d3ee779cfda8c9c37e0c5037e340111a8f/crates/casars-python/python/tests/data/casa_componentlist_selection.json)
+- [crates/casars-python/python/tests/test_componentlist_selection.py](https://github.com/bglenden/casa-rs/blob/6fe424d3ee779cfda8c9c37e0c5037e340111a8f/crates/casars-python/python/tests/test_componentlist_selection.py)
+- [crates/casars-python/python/tests/test_componentlist_indices.py](https://github.com/bglenden/casa-rs/blob/6fe424d3ee779cfda8c9c37e0c5037e340111a8f/crates/casars-python/python/tests/test_componentlist_indices.py)
 
 <a id="componentlist-evidence-fluxerror-casa"></a>
 ##### fluxerror-casa
