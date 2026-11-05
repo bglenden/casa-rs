@@ -46,11 +46,11 @@ const fn binary(name: &'static str, returns: Returns, status: Status) -> Method 
 /// Every public method of CASA's installed `quanta` binding.
 const METHODS: &[Method] = &[
     unary("abs", R::Record, Yes),
-    unary("acos", R::Record, No),
+    unary("acos", R::Record, Yes),
     binary("add", R::Record, Yes),
     method("angle", &FORMAT, R::Texts, Yes),
-    unary("asin", R::Record, No),
-    unary("atan", R::Record, No),
+    unary("asin", R::Record, Yes),
+    unary("atan", R::Record, Yes),
     binary("atan2", R::Record, No),
     unary("canon", R::Record, Yes),
     unary("canonical", R::Record, Yes),
@@ -96,7 +96,7 @@ const METHODS: &[Method] = &[
         R::Record,
         No,
     ),
-    unary("cos", R::Record, No),
+    unary("cos", R::Record, Yes),
     method(
         "define",
         &[
@@ -163,11 +163,11 @@ const METHODS: &[Method] = &[
         R::Bool,
         No,
     ),
-    unary("sin", R::Record, No),
+    unary("sin", R::Record, Yes),
     unary("splitdate", R::Record, Yes),
     unary("sqrt", R::Record, No),
     binary("sub", R::Record, Yes),
-    unary("tan", R::Record, No),
+    unary("tan", R::Record, Yes),
     method("time", &FORMAT, R::Texts, Yes),
     unary("toangle", R::Record, Yes),
     method(

@@ -1,0 +1,923 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "sin",
+      "input": "30deg",
+      "result": {
+        "unit": "",
+        "value": 0.49999999999999994
+      }
+    },
+    {
+      "method": "sin",
+      "input": "1rad",
+      "result": {
+        "unit": "",
+        "value": 0.8414709848078965
+      }
+    },
+    {
+      "method": "sin",
+      "input": "-0.5rad",
+      "result": {
+        "unit": "",
+        "value": -0.479425538604203
+      }
+    },
+    {
+      "method": "sin",
+      "input": "0deg",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "sin",
+      "input": "1arcsec",
+      "result": {
+        "unit": "",
+        "value": 4.848136811076368e-06
+      }
+    },
+    {
+      "method": "sin",
+      "input": "1s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::sin illegal unit type 's'"
+      }
+    },
+    {
+      "method": "sin",
+      "input": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::sin illegal unit type 'm'"
+      }
+    },
+    {
+      "method": "sin",
+      "input": "1_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::sin illegal unit type '_'"
+      }
+    },
+    {
+      "method": "sin",
+      "input": "50%",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::sin illegal unit type '%'"
+      }
+    },
+    {
+      "method": "sin",
+      "input": 0.5,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::sin illegal unit type ''"
+      }
+    },
+    {
+      "method": "sin",
+      "input": -1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::sin illegal unit type ''"
+      }
+    },
+    {
+      "method": "sin",
+      "input": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::sin illegal unit type ''"
+      }
+    },
+    {
+      "method": "sin",
+      "input": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::sin illegal unit type ''"
+      }
+    },
+    {
+      "method": "sin",
+      "input": 2.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::sin illegal unit type ''"
+      }
+    },
+    {
+      "method": "sin",
+      "input": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::sin illegal unit type ''"
+      }
+    },
+    {
+      "method": "sin",
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "sin",
+      "input": {
+        "value": 0.5,
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::sin illegal unit type ''"
+      }
+    },
+    {
+      "method": "sin",
+      "input": {
+        "value": [
+          0.5,
+          1.0
+        ],
+        "unit": "rad"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "cos",
+      "input": "30deg",
+      "result": {
+        "unit": "",
+        "value": 0.8660254037844387
+      }
+    },
+    {
+      "method": "cos",
+      "input": "1rad",
+      "result": {
+        "unit": "",
+        "value": 0.5403023058681398
+      }
+    },
+    {
+      "method": "cos",
+      "input": "-0.5rad",
+      "result": {
+        "unit": "",
+        "value": 0.8775825618903728
+      }
+    },
+    {
+      "method": "cos",
+      "input": "0deg",
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "cos",
+      "input": "1arcsec",
+      "result": {
+        "unit": "",
+        "value": 0.9999999999882477
+      }
+    },
+    {
+      "method": "cos",
+      "input": "1s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::cos illegal unit type 's'"
+      }
+    },
+    {
+      "method": "cos",
+      "input": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::cos illegal unit type 'm'"
+      }
+    },
+    {
+      "method": "cos",
+      "input": "1_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::cos illegal unit type '_'"
+      }
+    },
+    {
+      "method": "cos",
+      "input": "50%",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::cos illegal unit type '%'"
+      }
+    },
+    {
+      "method": "cos",
+      "input": 0.5,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::cos illegal unit type ''"
+      }
+    },
+    {
+      "method": "cos",
+      "input": -1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::cos illegal unit type ''"
+      }
+    },
+    {
+      "method": "cos",
+      "input": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::cos illegal unit type ''"
+      }
+    },
+    {
+      "method": "cos",
+      "input": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::cos illegal unit type ''"
+      }
+    },
+    {
+      "method": "cos",
+      "input": 2.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::cos illegal unit type ''"
+      }
+    },
+    {
+      "method": "cos",
+      "input": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::cos illegal unit type ''"
+      }
+    },
+    {
+      "method": "cos",
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "cos",
+      "input": {
+        "value": 0.5,
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::cos illegal unit type ''"
+      }
+    },
+    {
+      "method": "cos",
+      "input": {
+        "value": [
+          0.5,
+          1.0
+        ],
+        "unit": "rad"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "tan",
+      "input": "30deg",
+      "result": {
+        "unit": "",
+        "value": 0.5773502691896256
+      }
+    },
+    {
+      "method": "tan",
+      "input": "1rad",
+      "result": {
+        "unit": "",
+        "value": 1.557407724654902
+      }
+    },
+    {
+      "method": "tan",
+      "input": "-0.5rad",
+      "result": {
+        "unit": "",
+        "value": -0.5463024898437905
+      }
+    },
+    {
+      "method": "tan",
+      "input": "0deg",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "tan",
+      "input": "1arcsec",
+      "result": {
+        "unit": "",
+        "value": 4.848136811133344e-06
+      }
+    },
+    {
+      "method": "tan",
+      "input": "1s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::tan illegal unit type 's'"
+      }
+    },
+    {
+      "method": "tan",
+      "input": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::tan illegal unit type 'm'"
+      }
+    },
+    {
+      "method": "tan",
+      "input": "1_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::tan illegal unit type '_'"
+      }
+    },
+    {
+      "method": "tan",
+      "input": "50%",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::tan illegal unit type '%'"
+      }
+    },
+    {
+      "method": "tan",
+      "input": 0.5,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::tan illegal unit type ''"
+      }
+    },
+    {
+      "method": "tan",
+      "input": -1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::tan illegal unit type ''"
+      }
+    },
+    {
+      "method": "tan",
+      "input": 0.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::tan illegal unit type ''"
+      }
+    },
+    {
+      "method": "tan",
+      "input": 1.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::tan illegal unit type ''"
+      }
+    },
+    {
+      "method": "tan",
+      "input": 2.0,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::tan illegal unit type ''"
+      }
+    },
+    {
+      "method": "tan",
+      "input": null,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::tan illegal unit type ''"
+      }
+    },
+    {
+      "method": "tan",
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "tan",
+      "input": {
+        "value": 0.5,
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::tan illegal unit type ''"
+      }
+    },
+    {
+      "method": "tan",
+      "input": {
+        "value": [
+          0.5,
+          1.0
+        ],
+        "unit": "rad"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "asin",
+      "input": "30deg",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::asin illegal unit type 'deg'"
+      }
+    },
+    {
+      "method": "asin",
+      "input": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::asin illegal unit type 'rad'"
+      }
+    },
+    {
+      "method": "asin",
+      "input": "-0.5rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::asin illegal unit type 'rad'"
+      }
+    },
+    {
+      "method": "asin",
+      "input": "0deg",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::asin illegal unit type 'deg'"
+      }
+    },
+    {
+      "method": "asin",
+      "input": "1arcsec",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::asin illegal unit type 'arcsec'"
+      }
+    },
+    {
+      "method": "asin",
+      "input": "1s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::asin illegal unit type 's'"
+      }
+    },
+    {
+      "method": "asin",
+      "input": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::asin illegal unit type 'm'"
+      }
+    },
+    {
+      "method": "asin",
+      "input": "1_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::asin illegal unit type '_'"
+      }
+    },
+    {
+      "method": "asin",
+      "input": "50%",
+      "result": {
+        "unit": "rad",
+        "value": 0.5235987755982988
+      }
+    },
+    {
+      "method": "asin",
+      "input": 0.5,
+      "result": {
+        "unit": "rad",
+        "value": 0.5235987755982988
+      }
+    },
+    {
+      "method": "asin",
+      "input": -1.0,
+      "result": {
+        "unit": "rad",
+        "value": -1.5707963267948966
+      }
+    },
+    {
+      "method": "asin",
+      "input": 0.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "asin",
+      "input": 1.0,
+      "result": {
+        "unit": "rad",
+        "value": 1.5707963267948966
+      }
+    },
+    {
+      "method": "asin",
+      "input": 2.0,
+      "result": {
+        "unit": "rad",
+        "value": "NaN"
+      }
+    },
+    {
+      "method": "asin",
+      "input": null,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "asin",
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "asin",
+      "input": {
+        "value": 0.5,
+        "unit": ""
+      },
+      "result": {
+        "unit": "rad",
+        "value": 0.5235987755982988
+      }
+    },
+    {
+      "method": "asin",
+      "input": {
+        "value": [
+          0.5,
+          1.0
+        ],
+        "unit": "rad"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "acos",
+      "input": "30deg",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::acos illegal unit type 'deg'"
+      }
+    },
+    {
+      "method": "acos",
+      "input": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::acos illegal unit type 'rad'"
+      }
+    },
+    {
+      "method": "acos",
+      "input": "-0.5rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::acos illegal unit type 'rad'"
+      }
+    },
+    {
+      "method": "acos",
+      "input": "0deg",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::acos illegal unit type 'deg'"
+      }
+    },
+    {
+      "method": "acos",
+      "input": "1arcsec",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::acos illegal unit type 'arcsec'"
+      }
+    },
+    {
+      "method": "acos",
+      "input": "1s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::acos illegal unit type 's'"
+      }
+    },
+    {
+      "method": "acos",
+      "input": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::acos illegal unit type 'm'"
+      }
+    },
+    {
+      "method": "acos",
+      "input": "1_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::acos illegal unit type '_'"
+      }
+    },
+    {
+      "method": "acos",
+      "input": "50%",
+      "result": {
+        "unit": "rad",
+        "value": 1.0471975511965976
+      }
+    },
+    {
+      "method": "acos",
+      "input": 0.5,
+      "result": {
+        "unit": "rad",
+        "value": 1.0471975511965976
+      }
+    },
+    {
+      "method": "acos",
+      "input": -1.0,
+      "result": {
+        "unit": "rad",
+        "value": 3.141592653589793
+      }
+    },
+    {
+      "method": "acos",
+      "input": 0.0,
+      "result": {
+        "unit": "rad",
+        "value": 1.5707963267948966
+      }
+    },
+    {
+      "method": "acos",
+      "input": 1.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "acos",
+      "input": 2.0,
+      "result": {
+        "unit": "rad",
+        "value": "NaN"
+      }
+    },
+    {
+      "method": "acos",
+      "input": null,
+      "result": {
+        "unit": "rad",
+        "value": 1.5707963267948966
+      }
+    },
+    {
+      "method": "acos",
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "acos",
+      "input": {
+        "value": 0.5,
+        "unit": ""
+      },
+      "result": {
+        "unit": "rad",
+        "value": 1.0471975511965976
+      }
+    },
+    {
+      "method": "acos",
+      "input": {
+        "value": [
+          0.5,
+          1.0
+        ],
+        "unit": "rad"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "atan",
+      "input": "30deg",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan illegal unit type 'deg'"
+      }
+    },
+    {
+      "method": "atan",
+      "input": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan illegal unit type 'rad'"
+      }
+    },
+    {
+      "method": "atan",
+      "input": "-0.5rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan illegal unit type 'rad'"
+      }
+    },
+    {
+      "method": "atan",
+      "input": "0deg",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan illegal unit type 'deg'"
+      }
+    },
+    {
+      "method": "atan",
+      "input": "1arcsec",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan illegal unit type 'arcsec'"
+      }
+    },
+    {
+      "method": "atan",
+      "input": "1s",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan illegal unit type 's'"
+      }
+    },
+    {
+      "method": "atan",
+      "input": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan illegal unit type 'm'"
+      }
+    },
+    {
+      "method": "atan",
+      "input": "1_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::atan illegal unit type '_'"
+      }
+    },
+    {
+      "method": "atan",
+      "input": "50%",
+      "result": {
+        "unit": "rad",
+        "value": 0.46364760900080615
+      }
+    },
+    {
+      "method": "atan",
+      "input": 0.5,
+      "result": {
+        "unit": "rad",
+        "value": 0.46364760900080615
+      }
+    },
+    {
+      "method": "atan",
+      "input": -1.0,
+      "result": {
+        "unit": "rad",
+        "value": -0.7853981633974483
+      }
+    },
+    {
+      "method": "atan",
+      "input": 0.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "atan",
+      "input": 1.0,
+      "result": {
+        "unit": "rad",
+        "value": 0.7853981633974483
+      }
+    },
+    {
+      "method": "atan",
+      "input": 2.0,
+      "result": {
+        "unit": "rad",
+        "value": 1.1071487177940906
+      }
+    },
+    {
+      "method": "atan",
+      "input": null,
+      "result": {
+        "unit": "rad",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "atan",
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "atan",
+      "input": {
+        "value": 0.5,
+        "unit": ""
+      },
+      "result": {
+        "unit": "rad",
+        "value": 0.46364760900080615
+      }
+    },
+    {
+      "method": "atan",
+      "input": {
+        "value": [
+          0.5,
+          1.0
+        ],
+        "unit": "rad"
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    }
+  ]
+}

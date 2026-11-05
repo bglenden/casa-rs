@@ -50,8 +50,8 @@ pub(crate) struct PyComponentList {
 }
 
 impl PyComponentList {
-    /// CASA's frequency getters currently log a warning and return placeholders.
-    fn frequency_placeholder(
+    /// CASA's unimplemented getters log a warning and return placeholders.
+    fn getter_placeholder(
         &self,
         py: Python<'_>,
         which: &Bound<'_, PyAny>,
@@ -334,10 +334,10 @@ impl PyComponentList {
         stub("getfluxerror")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns an empty string.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn getfluxpol(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getfluxpol")
+    fn getfluxpol(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        self.getter_placeholder(py, which, "getfluxpol", CasaValue::Text(String::new()))
     }
 
     /// The name of component `which`'s flux unit.
@@ -364,25 +364,25 @@ impl PyComponentList {
     /// CASA's placeholder: logs a warning and returns an empty record.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
     fn getfreq(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.frequency_placeholder(py, which, "getfreq", CasaValue::empty_record())
+        self.getter_placeholder(py, which, "getfreq", CasaValue::empty_record())
     }
 
     /// CASA's placeholder: logs a warning and returns an empty string.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
     fn getfreqframe(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.frequency_placeholder(py, which, "getfreqframe", CasaValue::Text(String::new()))
+        self.getter_placeholder(py, which, "getfreqframe", CasaValue::Text(String::new()))
     }
 
     /// CASA's placeholder: logs a warning and returns an empty string.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
     fn getfrequnit(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.frequency_placeholder(py, which, "getfrequnit", CasaValue::Text(String::new()))
+        self.getter_placeholder(py, which, "getfrequnit", CasaValue::Text(String::new()))
     }
 
     /// CASA's placeholder: logs a warning and returns zero.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
     fn getfreqvalue(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        self.frequency_placeholder(py, which, "getfreqvalue", CasaValue::Float(0.0))
+        self.getter_placeholder(py, which, "getfreqvalue", CasaValue::Float(0.0))
     }
 
     /// Not yet implemented in casa-rs.
