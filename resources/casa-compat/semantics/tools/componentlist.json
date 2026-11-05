@@ -97,7 +97,7 @@
   },
   "deselect": {
    "status": "Implemented",
-   "scope": "Component selection with CASA index coercion and sorted int64 results; scalar non-finite inputs are safely refused (#1176).",
+   "scope": "Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite inputs are safely refused (#1176).",
    "evidence": [
     "signature",
     "selection-casa"
@@ -398,7 +398,7 @@
   },
   "select": {
    "status": "Implemented",
-   "scope": "Component selection with CASA index coercion and sorted int64 results; scalar non-finite inputs are safely refused (#1176).",
+   "scope": "Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite inputs are safely refused (#1176).",
    "evidence": [
     "signature",
     "selection-casa"
@@ -406,7 +406,7 @@
   },
   "selected": {
    "status": "Implemented",
-   "scope": "Component selection with CASA index coercion and sorted int64 results; scalar non-finite inputs are safely refused (#1176).",
+   "scope": "Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite inputs are safely refused (#1176).",
    "evidence": [
     "signature",
     "selection-casa"
@@ -742,7 +742,7 @@
   "selection-casa": {
    "kind": "CASA-recorded values",
    "state": "measured",
-   "result": "27 CASA 6.7.6-14 selection and conversion cases plus selection lifecycle checks; CASA scalar NaN/infinity crashes are tracked in #1176.",
+   "result": "30 CASA 6.7.6-14 selection and conversion cases plus selection lifecycle checks; CASA scalar NaN/infinity crashes are tracked in #1176.",
    "scope": "componentlist.select, deselect and selected.",
    "links": [
     "tools/simulation/componentlist_selection_oracle.py",
@@ -750,7 +750,7 @@
     "crates/casars-python/python/tests/test_componentlist_selection.py",
     "crates/casars-python/python/tests/test_componentlist_indices.py"
    ],
-   "source_revision": "0cfaab434ffe9bf362f2dc8a1a9df7b6b88dd2b8"
+   "source_revision": "8c67a264dc423e99e75bac58d665544035fca541"
   }
  }
 }

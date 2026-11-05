@@ -1612,7 +1612,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `convertfrequnit` | `which, unit='GHz'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `convertrefdir` | `which, frame` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `convertshape` | `which, majoraxis='arcmin', minoraxis='arcmin', positionangle='deg'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `deselect` | `which` | Implemented | Component selection with CASA index coercion and sorted int64 results; scalar non-finite inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
+| `deselect` | `which` | Implemented | Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
 | `done` |  | Implemented | As close, and frees the tool. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `edit` | `which, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `fromrecord` | `record={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
@@ -1646,8 +1646,8 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `rename` | `filename, log=True` | Implemented | Names the table the list is written to, writing at once. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `replace` | `which, list, whichones=[-1]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `sample` | `direction=[], pixellatsize=[], pixellongsize=[], frequency=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `select` | `which` | Implemented | Component selection with CASA index coercion and sorted int64 results; scalar non-finite inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
-| `selected` |  | Implemented | Component selection with CASA index coercion and sorted int64 results; scalar non-finite inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
+| `select` | `which` | Implemented | Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
+| `selected` |  | Implemented | Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
 | `setflux` | `which, value=[], unit='Jy', polarization='Stokes', error=[], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `setfreq` | `which, value, unit='GHz', log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `setfreqframe` | `which, frame='LSRK', log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
@@ -1825,12 +1825,12 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="componentlist-evidence-selection-casa"></a>
 ##### selection-casa
 
-**CASA-recorded values — measured.** 27 CASA 6.7.6-14 selection and conversion cases plus selection lifecycle checks; CASA scalar NaN/infinity crashes are tracked in #1176. componentlist.select, deselect and selected.
+**CASA-recorded values — measured.** 30 CASA 6.7.6-14 selection and conversion cases plus selection lifecycle checks; CASA scalar NaN/infinity crashes are tracked in #1176. componentlist.select, deselect and selected.
 
-- [tools/simulation/componentlist_selection_oracle.py](https://github.com/bglenden/casa-rs/blob/0cfaab434ffe9bf362f2dc8a1a9df7b6b88dd2b8/tools/simulation/componentlist_selection_oracle.py)
-- [crates/casars-python/python/tests/data/casa_componentlist_selection.json](https://github.com/bglenden/casa-rs/blob/0cfaab434ffe9bf362f2dc8a1a9df7b6b88dd2b8/crates/casars-python/python/tests/data/casa_componentlist_selection.json)
-- [crates/casars-python/python/tests/test_componentlist_selection.py](https://github.com/bglenden/casa-rs/blob/0cfaab434ffe9bf362f2dc8a1a9df7b6b88dd2b8/crates/casars-python/python/tests/test_componentlist_selection.py)
-- [crates/casars-python/python/tests/test_componentlist_indices.py](https://github.com/bglenden/casa-rs/blob/0cfaab434ffe9bf362f2dc8a1a9df7b6b88dd2b8/crates/casars-python/python/tests/test_componentlist_indices.py)
+- [tools/simulation/componentlist_selection_oracle.py](https://github.com/bglenden/casa-rs/blob/8c67a264dc423e99e75bac58d665544035fca541/tools/simulation/componentlist_selection_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_selection.json](https://github.com/bglenden/casa-rs/blob/8c67a264dc423e99e75bac58d665544035fca541/crates/casars-python/python/tests/data/casa_componentlist_selection.json)
+- [crates/casars-python/python/tests/test_componentlist_selection.py](https://github.com/bglenden/casa-rs/blob/8c67a264dc423e99e75bac58d665544035fca541/crates/casars-python/python/tests/test_componentlist_selection.py)
+- [crates/casars-python/python/tests/test_componentlist_indices.py](https://github.com/bglenden/casa-rs/blob/8c67a264dc423e99e75bac58d665544035fca541/crates/casars-python/python/tests/test_componentlist_indices.py)
 
 ### measures
 
