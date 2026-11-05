@@ -321,6 +321,22 @@ pub(crate) fn run(
     let mask_beams = existing
         .as_ref()
         .and_then(crate::restart::ExistingProducts::mask_beams);
+    // An unlabelled saved PSF is fitted by getBeamSet's default cutoff at
+    // minor-cycle initialization. Publication must reuse that fit's cutoff.
+    let mut publication = publication;
+    if !forms.psf
+        && psf_beams.is_none()
+        && problem.reconstruction().controls().max_minor_iterations() > 0
+    {
+        let model = publication.controls.primary_beam_model();
+        let mut controls = casa_imaging_products::ContinuumProductControls::new(
+            casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF,
+        )?;
+        if let Some(model) = model {
+            controls = controls.with_primary_beam_model(model);
+        }
+        publication.controls = controls;
+    }
     let teams = OnceCell::new();
     let primary_beam = match publication.controls.primary_beam_model() {
         Some(model) => {

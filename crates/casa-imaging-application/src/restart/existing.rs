@@ -120,9 +120,6 @@ impl ExistingProducts {
         channels: usize,
         cell_rad: f64,
     ) -> Result<(), PrepareError> {
-        if !self.psf {
-            return Ok(());
-        }
         let name = self
             .family
             .names("psf")

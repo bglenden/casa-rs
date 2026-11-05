@@ -118,17 +118,19 @@ pub(super) fn prepare(
         .into_iter()
         .next()
         .expect("a residual name");
+    let psf_name = family.names("psf").into_iter().next().expect("a PSF name");
+    let psf_beam = restart::product_path(&request.imagename, &psf_name).exists();
     let mask_beam = request.usemask == UseMask::AutoMultithresh
         && request.niter > 0
         && restart::product_path(&request.imagename, &residual_name).exists();
-    if !request.calcpsf || residual || mask_beam {
+    if !request.calcpsf || residual || mask_beam || psf_beam {
         let mut existing = ExistingProducts::new(
             &request.imagename,
             family,
             ([nx, ny], polarizations, channels),
             (!request.calcpsf, residual),
         )?;
-        if !request.calcpsf {
+        if psf_beam {
             let mut charge = admit(
                 &context.host,
                 &context.policy,

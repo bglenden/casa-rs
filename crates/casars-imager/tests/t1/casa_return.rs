@@ -808,6 +808,137 @@ fn tclean_restart_reuses_the_saved_psf_beam() {
     }
 }
 
+/// `makeImageBeamSet` keeps an existing complete beam even after calcpsf
+/// recomputes PSF pixels; CASA does so with and without minor iterations.
+#[test]
+fn tclean_recomputed_psf_keeps_its_saved_beam() {
+    use casa_images::{GaussianBeam, ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("recompute-saved-psf");
+    std::fs::create_dir_all(&directory).unwrap();
+    let geometry = observation.geometry();
+    let cell = geometry.cell_rad()[0];
+    for (algorithm, niter) in [("clark", 0), ("clark", 10), ("mtmfs", 0), ("mtmfs", 10)] {
+        let prefix = format!("{algorithm}-{niter}");
+        let mut values = json!({
+            "vis": observation.measurement_set(), "imagename": directory.join(&prefix),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend": "cpu", "deconvolver": algorithm, "nterms": 2,
+            "niter": 0, "psfcutoff": 0.15, "restoration": false,
+        });
+        let seed = json_run(&directory, values.clone());
+        assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
+        let suffix = if algorithm == "mtmfs" {
+            "psf.tt0"
+        } else {
+            "psf"
+        };
+        let path = directory.join(format!("{prefix}.{suffix}"));
+        let mut psf = PagedImage::<f32>::open(&path).unwrap();
+        let mut info = psf.image_info().unwrap();
+        info.beam_set = ImageBeamSet::new(GaussianBeam {
+            major: 10.0 * cell,
+            minor: 8.0 * cell,
+            position_angle: 0.25,
+        });
+        psf.set_image_info(&info).unwrap();
+        psf.save().unwrap();
+        drop(psf);
+        values["psfcutoff"] = json!(0.65);
+        values["niter"] = json!(niter);
+        let result = json_run(&directory, values);
+        assert!(
+            matches!(result, TaskReply::Succeeded { .. }),
+            "{prefix}: {result:?}"
+        );
+        let saved = PagedImage::<f32>::open(path)
+            .unwrap()
+            .image_info()
+            .unwrap()
+            .beam_set
+            .single_beam()
+            .unwrap();
+        assert!(
+            (saved.major / cell - 10.0).abs() < 1e-5,
+            "{prefix}: {saved:?}"
+        );
+        assert!(
+            (saved.minor / cell - 8.0).abs() < 1e-5,
+            "{prefix}: {saved:?}"
+        );
+        assert!(
+            (saved.position_angle - 0.25).abs() < 1e-6,
+            "{prefix}: {saved:?}"
+        );
+    }
+}
+
+/// CASA fits a headerless saved PSF at its default cutoff before publishing
+/// its beam, even if the continuing request asks for a different cutoff.
+#[test]
+fn tclean_restart_without_a_saved_beam_publishes_the_default_fit() {
+    use casa_images::{ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("restart-headerless-psf");
+    std::fs::create_dir_all(&directory).unwrap();
+    let geometry = observation.geometry();
+    for (name, algorithm) in [("clark", "clark"), ("mtmfs", "mtmfs")] {
+        let run = |prefix: &str, cutoff: f64, niter: usize, restart: bool| {
+            let values = json!({
+                "vis": observation.measurement_set(), "imagename": directory.join(prefix),
+                "imsize": geometry.image_size,
+                "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+                "backend": "cpu", "deconvolver": algorithm, "nterms": 2,
+                "niter": niter, "psfcutoff": cutoff,
+                "calcpsf": !restart, "calcres": !restart, "restoration": false,
+            });
+            let reply = json_run(&directory, values);
+            assert!(
+                matches!(reply, TaskReply::Succeeded { .. }),
+                "{prefix}: {reply:?}"
+            );
+        };
+        let suffix = if algorithm == "mtmfs" {
+            "psf.tt0"
+        } else {
+            "psf"
+        };
+        let beam = |prefix: &str| {
+            PagedImage::<f32>::open(directory.join(format!("{prefix}.{suffix}")))
+                .unwrap()
+                .image_info()
+                .unwrap()
+                .beam_set
+                .single_beam()
+                .unwrap()
+        };
+        run(&format!("{name}-reference"), 0.35, 20, false);
+        run(name, 0.15, 0, false);
+        let path = directory.join(format!("{name}.{suffix}"));
+        let mut psf = PagedImage::<f32>::open(&path).unwrap();
+        let mut info = psf.image_info().unwrap();
+        info.beam_set = ImageBeamSet::empty();
+        psf.set_image_info(&info).unwrap();
+        psf.save().unwrap();
+        drop(psf);
+        run(name, 0.65, 20, true);
+        let (expected, actual) = (beam(&format!("{name}-reference")), beam(name));
+        assert!(
+            (actual.major / expected.major - 1.0).abs() < 1e-6,
+            "{name}: {expected:?} {actual:?}"
+        );
+        assert!(
+            (actual.minor / expected.minor - 1.0).abs() < 1e-6,
+            "{name}: {expected:?} {actual:?}"
+        );
+        assert!(
+            (actual.position_angle - expected.position_angle).abs() < 1e-6,
+            "{name}: {expected:?} {actual:?}"
+        );
+    }
+}
+
 /// On restart CASA automask uses the residual's beam, or the PSF beam when
 /// the residual has none, including when image pixels are recomputed.
 /// The two headers deliberately disagree.
