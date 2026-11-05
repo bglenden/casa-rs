@@ -300,7 +300,7 @@ fn is_numpy_complex64_scalar(value: &Bound<'_, PyAny>) -> PyResult<bool> {
     {
         return Ok(false);
     }
-    Ok(value.is_instance(&value.py().import("numpy")?.getattr("generic")?)?)
+    value.is_instance(&value.py().import("numpy")?.getattr("generic")?)
 }
 
 /// Keep the integer kind and low 32 bits of one-dimensional record arrays.
