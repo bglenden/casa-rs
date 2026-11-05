@@ -2197,6 +2197,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#setlabel-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        setlabel-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5997,6 +6008,17 @@
     <span class="md-ellipsis">
       
         iscomponentlist-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setlabel-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        setlabel-casa
       
     </span>
   </a>
@@ -10420,9 +10442,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">31</td>
+<td style="text-align: right;">32</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">30</td>
+<td style="text-align: right;">29</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10540,7 +10562,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 31, Partial: 0, Not implemented: 30, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 32, Partial: 0, Not implemented: 29, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -10898,9 +10920,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>setlabel</code></td>
 <td><code>which, value, log=True</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Replaces one component label and preserves the change on writable table release; read-only changes remain in memory. Rejects invalid UTF-8 byte strings to avoid an unreadable label.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-setlabel-casa">setlabel-casa</a></td>
 </tr>
 <tr>
 <td><code>setrefdir</code></td>
@@ -11191,6 +11213,15 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/crates/casars-python/python/tests/data/casa_componentlist_iscomponentlist.json">crates/casars-python/python/tests/data/casa_componentlist_iscomponentlist.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/crates/casars-python/python/tests/test_componentlist_iscomponentlist.py">crates/casars-python/python/tests/test_componentlist_iscomponentlist.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
+</ul>
+<p><a id="componentlist-evidence-setlabel-casa"></a></p>
+<h5 id="setlabel-casa">setlabel-casa<a class="headerlink" href="#setlabel-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 20 CASA 6.7.6-14 calls cover successful updates, index and argument errors, Unicode, byte strings and preservation of other components; table lifecycle and invalid UTF-8 behavior are also recorded. componentlist.setlabel and label persistence.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/465f7a87fc7acd6fc61d462d7d4056eb321b39d6/tools/casa-compat/componentlist_setlabel_oracle.py">tools/casa-compat/componentlist_setlabel_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/465f7a87fc7acd6fc61d462d7d4056eb321b39d6/crates/casars-python/python/tests/data/casa_componentlist_setlabel.json">crates/casars-python/python/tests/data/casa_componentlist_setlabel.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/465f7a87fc7acd6fc61d462d7d4056eb321b39d6/crates/casars-python/python/tests/test_componentlist_setlabel.py">crates/casars-python/python/tests/test_componentlist_setlabel.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/465f7a87fc7acd6fc61d462d7d4056eb321b39d6/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>

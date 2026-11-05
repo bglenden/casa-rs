@@ -1017,6 +1017,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
+<a href="#casa-accepts-component-labels-it-cannot-return">component labels containing invalid UTF-8</a>,
 <a href="#cyclic-component-list-type-checks-crash-casa">cyclic component-list type checks</a>,
 <a href="#casa-discards-the-values-of-bare-complex-quantity-arrays">complex quantity-array values</a>,
 <a href="#casa-discards-bare-numpy-complex64-quantity-values">bare complex64 quantity values</a>,
@@ -4686,6 +4687,18 @@ while an equivalent Python complex or NumPy complex128 value raises an error.
 CASA also treats the complex64 value as zero in other quantity operations.
 casa-rs preserves both parts and raises <code>Wrong QuantumHolder to convert
 asQuantumDouble</code> rather than silently discarding them.</p>
+<h2 id="casa-accepts-component-labels-it-cannot-return">CASA accepts component labels it cannot return<a class="headerlink" href="#casa-accepts-component-labels-it-cannot-return" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-05</li>
+<li>Status: CASA accepts an unreadable label; casa-rs rejects the input and preserves the previous label (#1053).</li>
+<li>Owner decision: Correct CASA data corruption as a class; see <code>docs/simulation/owner-decisions-20261105.md</code>.</li>
+<li>Evidence: <code>tools/casa-compat/componentlist_setlabel_oracle.py</code>, CASA 6.7.6-14 on the Mac mini.</li>
+</ul>
+<p>After adding a component, <code>cl.setlabel(0, b'\xff')</code> returns <code>True</code> in CASA,
+but <code>cl.getlabel(0)</code> then raises <code>UnicodeDecodeError</code>: the previous readable
+label has been replaced by bytes the Python binding cannot return. casa-rs
+raises <code>UnicodeDecodeError</code> before changing the label. Valid UTF-8 byte strings
+and text are accepted, and both implementations stop at the first NUL byte.</p>
 <h2 id="cyclic-component-list-type-checks-crash-casa">Cyclic component-list type checks crash CASA<a class="headerlink" href="#cyclic-component-list-type-checks-crash-casa" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-05</li>
