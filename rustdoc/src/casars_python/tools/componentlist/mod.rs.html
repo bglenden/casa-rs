@@ -50,8 +50,8 @@
 <a href=#50 id=50 data-nosnippet>50</a>}
 <a href=#51 id=51 data-nosnippet>51</a>
 <a href=#52 id=52 data-nosnippet>52</a><span class="kw">impl </span>PyComponentList {
-<a href=#53 id=53 data-nosnippet>53</a>    <span class="doccomment">/// CASA's frequency getters currently log a warning and return placeholders.
-<a href=#54 id=54 data-nosnippet>54</a>    </span><span class="kw">fn </span>frequency_placeholder(
+<a href=#53 id=53 data-nosnippet>53</a>    <span class="doccomment">/// CASA's unimplemented getters log a warning and return placeholders.
+<a href=#54 id=54 data-nosnippet>54</a>    </span><span class="kw">fn </span>getter_placeholder(
 <a href=#55 id=55 data-nosnippet>55</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#56 id=56 data-nosnippet>56</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
 <a href=#57 id=57 data-nosnippet>57</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
@@ -334,10 +334,10 @@
 <a href=#334 id=334 data-nosnippet>334</a>        stub(<span class="string">"getfluxerror"</span>)
 <a href=#335 id=335 data-nosnippet>335</a>    }
 <a href=#336 id=336 data-nosnippet>336</a>
-<a href=#337 id=337 data-nosnippet>337</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#337 id=337 data-nosnippet>337</a>    <span class="doccomment">/// CASA's placeholder: logs a warning and returns an empty string.
 <a href=#338 id=338 data-nosnippet>338</a>    </span><span class="attr">#[pyo3(signature = (which), text_signature = <span class="string">"($self, which)"</span>)]
-<a href=#339 id=339 data-nosnippet>339</a>    </span><span class="kw">fn </span>getfluxpol(<span class="kw-2">&amp;</span><span class="self">self</span>, which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#340 id=340 data-nosnippet>340</a>        stub(<span class="string">"getfluxpol"</span>)
+<a href=#339 id=339 data-nosnippet>339</a>    </span><span class="kw">fn </span>getfluxpol(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#340 id=340 data-nosnippet>340</a>        <span class="self">self</span>.getter_placeholder(py, which, <span class="string">"getfluxpol"</span>, CasaValue::Text(String::new()))
 <a href=#341 id=341 data-nosnippet>341</a>    }
 <a href=#342 id=342 data-nosnippet>342</a>
 <a href=#343 id=343 data-nosnippet>343</a>    <span class="doccomment">/// The name of component `which`'s flux unit.
@@ -364,25 +364,25 @@
 <a href=#364 id=364 data-nosnippet>364</a>    <span class="doccomment">/// CASA's placeholder: logs a warning and returns an empty record.
 <a href=#365 id=365 data-nosnippet>365</a>    </span><span class="attr">#[pyo3(signature = (which), text_signature = <span class="string">"($self, which)"</span>)]
 <a href=#366 id=366 data-nosnippet>366</a>    </span><span class="kw">fn </span>getfreq(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#367 id=367 data-nosnippet>367</a>        <span class="self">self</span>.frequency_placeholder(py, which, <span class="string">"getfreq"</span>, CasaValue::empty_record())
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="self">self</span>.getter_placeholder(py, which, <span class="string">"getfreq"</span>, CasaValue::empty_record())
 <a href=#368 id=368 data-nosnippet>368</a>    }
 <a href=#369 id=369 data-nosnippet>369</a>
 <a href=#370 id=370 data-nosnippet>370</a>    <span class="doccomment">/// CASA's placeholder: logs a warning and returns an empty string.
 <a href=#371 id=371 data-nosnippet>371</a>    </span><span class="attr">#[pyo3(signature = (which), text_signature = <span class="string">"($self, which)"</span>)]
 <a href=#372 id=372 data-nosnippet>372</a>    </span><span class="kw">fn </span>getfreqframe(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#373 id=373 data-nosnippet>373</a>        <span class="self">self</span>.frequency_placeholder(py, which, <span class="string">"getfreqframe"</span>, CasaValue::Text(String::new()))
+<a href=#373 id=373 data-nosnippet>373</a>        <span class="self">self</span>.getter_placeholder(py, which, <span class="string">"getfreqframe"</span>, CasaValue::Text(String::new()))
 <a href=#374 id=374 data-nosnippet>374</a>    }
 <a href=#375 id=375 data-nosnippet>375</a>
 <a href=#376 id=376 data-nosnippet>376</a>    <span class="doccomment">/// CASA's placeholder: logs a warning and returns an empty string.
 <a href=#377 id=377 data-nosnippet>377</a>    </span><span class="attr">#[pyo3(signature = (which), text_signature = <span class="string">"($self, which)"</span>)]
 <a href=#378 id=378 data-nosnippet>378</a>    </span><span class="kw">fn </span>getfrequnit(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#379 id=379 data-nosnippet>379</a>        <span class="self">self</span>.frequency_placeholder(py, which, <span class="string">"getfrequnit"</span>, CasaValue::Text(String::new()))
+<a href=#379 id=379 data-nosnippet>379</a>        <span class="self">self</span>.getter_placeholder(py, which, <span class="string">"getfrequnit"</span>, CasaValue::Text(String::new()))
 <a href=#380 id=380 data-nosnippet>380</a>    }
 <a href=#381 id=381 data-nosnippet>381</a>
 <a href=#382 id=382 data-nosnippet>382</a>    <span class="doccomment">/// CASA's placeholder: logs a warning and returns zero.
 <a href=#383 id=383 data-nosnippet>383</a>    </span><span class="attr">#[pyo3(signature = (which), text_signature = <span class="string">"($self, which)"</span>)]
 <a href=#384 id=384 data-nosnippet>384</a>    </span><span class="kw">fn </span>getfreqvalue(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#385 id=385 data-nosnippet>385</a>        <span class="self">self</span>.frequency_placeholder(py, which, <span class="string">"getfreqvalue"</span>, CasaValue::Float(<span class="number">0.0</span>))
+<a href=#385 id=385 data-nosnippet>385</a>        <span class="self">self</span>.getter_placeholder(py, which, <span class="string">"getfreqvalue"</span>, CasaValue::Float(<span class="number">0.0</span>))
 <a href=#386 id=386 data-nosnippet>386</a>    }
 <a href=#387 id=387 data-nosnippet>387</a>
 <a href=#388 id=388 data-nosnippet>388</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
