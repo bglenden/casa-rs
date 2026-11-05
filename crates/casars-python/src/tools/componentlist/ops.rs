@@ -19,17 +19,19 @@
 //! - a list opened read-only (`nomodify=True`) is never written, though it
 //!   can be changed in memory.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use casa_components::{ComponentList, ComponentListError, SkyComponent};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
+use casa_types::quanta::Unit;
 use casa_types::{RecordValue, Value};
 
 use super::add::AddComponent;
 use crate::convert::value::CasaValue;
-use crate::convert::{ConvertError, ConvertResult};
+use crate::convert::{ConvertError, ConvertResult, quantity};
 use crate::tools::LogLine;
 
 /// The table a list is attached to.
@@ -47,6 +49,7 @@ struct Attached {
 pub(crate) struct State {
     list: ComponentList,
     selection: std::collections::BTreeSet<i64>,
+    shape_units: BTreeMap<usize, [Unit; 3]>,
     table: Option<Attached>,
     measures: Option<Arc<dyn MeasuresProvider>>,
 }
@@ -73,6 +76,7 @@ impl State {
     pub(crate) fn release(&mut self) -> Result<(), String> {
         let list = std::mem::take(&mut self.list);
         self.selection.clear();
+        self.shape_units.clear();
         match self.table.take() {
             Some(Attached {
                 path,
@@ -253,6 +257,14 @@ impl State {
     ) -> ConvertResult<bool> {
         let measures = self.measures()?;
         let component = request.component(&measures, lines)?;
+        if component.shape().kind().axes().is_some() {
+            let units = [
+                quantity(&request.majoraxis)?.unit().clone(),
+                quantity(&request.minoraxis)?.unit().clone(),
+                quantity(&request.positionangle)?.unit().clone(),
+            ];
+            self.shape_units.insert(self.list.len(), units);
+        }
         self.list.push(component);
         Ok(true)
     }
@@ -287,6 +299,35 @@ impl State {
             .ok()
             .and_then(|index| self.list.get(index))
             .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))
+    }
+
+    /// `getshape(which)`: axes retain their in-memory units until reopened.
+    pub(crate) fn getshape(&self, which: i64) -> ConvertResult<CasaValue> {
+        let component = self.unchecked(which)?;
+        let Some((axes, errors)) = component.shape().kind().axes() else {
+            return Ok(CasaValue::empty_record());
+        };
+        let defaults = [
+            Unit::new("arcmin").expect("known unit"),
+            Unit::new("arcmin").expect("known unit"),
+            Unit::new("deg").expect("known unit"),
+        ];
+        let units = self.shape_units.get(&(which as usize)).unwrap_or(&defaults);
+        let axis = |value: f64, unit: &Unit| {
+            CasaValue::record([
+                ("unit", CasaValue::Text(unit.name().to_string())),
+                ("value", CasaValue::Float(value / unit.val().factor)),
+            ])
+        };
+        let rad = Unit::new("rad").expect("known unit");
+        Ok(CasaValue::record([
+            ("majoraxis", axis(axes.major_axis(), &units[0])),
+            ("minoraxis", axis(axes.minor_axis(), &units[1])),
+            ("positionangle", axis(axes.position_angle(), &units[2])),
+            ("majoraxiserror", axis(errors.major_axis, &rad)),
+            ("minoraxiserror", axis(errors.minor_axis, &rad)),
+            ("positionangleerror", axis(errors.position_angle, &rad)),
+        ]))
     }
 
     /// `getrefdir(which)`: the reference direction's `MeasureHolder` record.
