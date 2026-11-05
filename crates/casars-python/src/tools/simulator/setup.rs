@@ -328,7 +328,7 @@ pub(super) fn setconfig(
         let reference = match measures::position(&request.reference_location, &session.measures)? {
             Some(position) => position,
             None => {
-                if request.reference_location != Variant::Empty {
+                if !request.reference_location.is_empty_sequence() {
                     lines.push(LogLine::error(format!(
                         "Could not convert referencelocation {} to a Position Measures",
                         request.reference_location.describe()

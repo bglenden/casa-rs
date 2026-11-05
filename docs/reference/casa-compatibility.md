@@ -2078,7 +2078,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 |---|---|---|---|---|
 | `abs` | `v=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `acos` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
-| `add` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa) |
+| `add` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa), [record-complex-array-casa](#quanta-evidence-record-complex-array-casa) |
 | `angle` | `v=[], prec=0, form=[], showform=False` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `asin` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
 | `atan` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
@@ -2104,7 +2104,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `formxxx` | `v=[], format='dms', prec=2` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `ge` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
 | `getformat` | `t=''` | Implemented | CASA's placeholder warns and returns 'F'; it does not change formatting. | [signature](#quanta-evidence-signature), [format-placeholders-casa](#quanta-evidence-format-placeholders-casa) |
-| `getunit` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa) |
+| `getunit` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa), [record-complex-array-casa](#quanta-evidence-record-complex-array-casa) |
 | `getvalue` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `gt` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
 | `isangle` | `v=[]` | Implemented | Tests whether a scalar quantity has angle or time dimensions, with CASA conversion errors. | [signature](#quanta-evidence-signature), [isangle-casa](#quanta-evidence-isangle-casa) |
@@ -2120,7 +2120,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `neg` | `v=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `norm` | `v=[], a=-0.5` | Implemented | CASA scalar angle normalization in a one-turn range, returned in degrees. | [signature](#quanta-evidence-signature), [normalize-casa](#quanta-evidence-normalize-casa) |
 | `pow` | `v=[], a=1` | Implemented | CASA scalar integer powers, with original unit spelling, C-int narrowing, non-finite values and exponent limits. | [signature](#quanta-evidence-signature), [power-casa](#quanta-evidence-power-casa) |
-| `quantity` | `v=[], unitname='', keepshape=False` | Implemented | Builds quantities and quantity arrays from strings, numbers and records, as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa) |
+| `quantity` | `v=[], unitname='', keepshape=False` | Implemented | Builds quantities and quantity arrays from strings, numbers and records, as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa), [record-complex-array-casa](#quanta-evidence-record-complex-array-casa) |
 | `setformat` | `t='', v='F'` | Implemented | CASA's placeholder warns and returns False; it does not change formatting. | [signature](#quanta-evidence-signature), [format-placeholders-casa](#quanta-evidence-format-placeholders-casa) |
 | `sin` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
 | `splitdate` | `v=[]` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
@@ -2312,6 +2312,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/casa-compat/quantity_record_complex_scalar_oracle.py](https://github.com/bglenden/casa-rs/blob/5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e/tools/casa-compat/quantity_record_complex_scalar_oracle.py)
 - [crates/casars-python/python/tests/data/casa_quanta_record_complex_scalar.json](https://github.com/bglenden/casa-rs/blob/5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e/crates/casars-python/python/tests/data/casa_quanta_record_complex_scalar.json)
 - [crates/casars-python/python/tests/test_quanta_record_complex_scalar.py](https://github.com/bglenden/casa-rs/blob/5fbd4a6cd0885cc53f2d901a05e1e117ba109a4e/crates/casars-python/python/tests/test_quanta_record_complex_scalar.py)
+
+<a id="quanta-evidence-record-complex-array-casa"></a>
+##### record-complex-array-casa
+
+**CASA-recorded values — measured.** 60 CASA 6.7.6-14 quantity-record comparisons cover complex64 and complex128 arrays of different shapes and units. Ten bare-array comparisons expose CASA discarding values; casa-rs rejects those inputs instead. Complex NumPy arrays in quanta.quantity, getunit and add.
+
+- [tools/casa-compat/quantity_record_complex_array_oracle.py](https://github.com/bglenden/casa-rs/blob/20e34293b366be9608b59fd036011a1ac2d1c001/tools/casa-compat/quantity_record_complex_array_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_record_complex_array.json](https://github.com/bglenden/casa-rs/blob/20e34293b366be9608b59fd036011a1ac2d1c001/crates/casars-python/python/tests/data/casa_quanta_record_complex_array.json)
+- [crates/casars-python/python/tests/test_quanta_record_complex_array.py](https://github.com/bglenden/casa-rs/blob/20e34293b366be9608b59fd036011a1ac2d1c001/crates/casars-python/python/tests/test_quanta_record_complex_array.py)
 
 ### simulator
 

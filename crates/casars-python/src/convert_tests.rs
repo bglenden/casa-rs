@@ -36,6 +36,19 @@ fn empty_and_unhandled_values_are_zero() {
 }
 
 #[test]
+fn empty_complex_vector_retains_measure_defaults() {
+    let value = Variant::ComplexArray {
+        shape: vec![0],
+        values: vec![],
+    };
+    assert_eq!(
+        measures::epoch(&value).unwrap().unwrap().value().as_mjd(),
+        0.0
+    );
+    assert_eq!(measures::frequency(&value).unwrap().0.unwrap().hz(), 0.0);
+}
+
+#[test]
 fn bare_numbers_are_in_the_si_base_unit() {
     // CASA: integrationtime=10 is 10 s, freq=1.4e9 is Hz, elevationlimit=10
     // is 10 rad, simplenoise=0.1 is 1e25 Jy.
@@ -168,4 +181,36 @@ fn record_scalar_metadata_changes_only_quantity_interpretation() {
         value::CasaValue::from_variant(&typed)
     );
     assert_eq!(quantity(&typed).unwrap().value(), -1.0);
+}
+
+#[test]
+fn complex_numpy_arrays_keep_values_and_shapes_in_ordinary_records() {
+    Python::initialize();
+    Python::attach(|py| {
+        let array = py
+            .eval(
+                c"__import__('numpy').array([[1+2j, 3+4j], [5+6j, 7+8j]], dtype='complex64')",
+                None,
+                None,
+            )
+            .unwrap();
+        let input = pyo3::types::PyDict::new(py);
+        input.set_item("payload", array).unwrap();
+        let record = variant_from_python(input.as_any()).unwrap();
+        let value::CasaValue::Record(fields) = value::CasaValue::from_variant(&record) else {
+            panic!("expected an ordinary record");
+        };
+        assert_eq!(
+            fields[0].1,
+            value::CasaValue::Complexes {
+                shape: vec![2, 2],
+                values: vec![
+                    Complex64::new(1.0, 2.0),
+                    Complex64::new(5.0, 6.0),
+                    Complex64::new(3.0, 4.0),
+                    Complex64::new(7.0, 8.0),
+                ],
+            }
+        );
+    });
 }
