@@ -88,10 +88,11 @@ fn parse_term(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
         return Ok(UnitVal::NODIM);
     }
 
-    // casacore treats an unsigned digit following the special `_` field as
-    // part of its name, which is not a registered unit. Signed exponents and
-    // exponents on a parenthesized expression remain valid.
-    let bare_underscore = bytes[*pos] == b'_' && scan_field(bytes, *pos) == *pos + 1;
+    // casacore treats an unsigned digit following the special `_` field
+    // (including a prefixed form like `m_`) as part of its name. Signed
+    // exponents and exponents on a parenthesized expression remain valid.
+    let start = *pos;
+    let parenthesized = bytes[start] == b'(';
     let val = if bytes[*pos] == b'(' {
         *pos += 1;
         let inner = parse_expr(bytes, pos)?;
@@ -106,7 +107,8 @@ fn parse_term(bytes: &[u8], pos: &mut usize) -> Result<UnitVal, UnitError> {
         parse_field(bytes, pos)?
     };
 
-    if bare_underscore && bytes.get(*pos).is_some_and(u8::is_ascii_digit) {
+    let underscore_field = !parenthesized && *pos > start && bytes[*pos - 1] == b'_';
+    if underscore_field && bytes.get(*pos).is_some_and(u8::is_ascii_digit) {
         return Err(UnitError::InvalidUnit {
             input: String::from_utf8_lossy(bytes).into_owned(),
         });
@@ -315,11 +317,11 @@ mod tests {
 
     #[test]
     fn underscore_field_requires_a_sign_on_direct_exponents() {
-        for invalid in ["_0", "_1", "_2", "_4", "m._2", "m/_2"] {
+        for invalid in ["_0", "_1", "_2", "_4", "m_2", "k_2", "da_2", "m._2", "m/_2"] {
             assert!(parse_unit(invalid).is_err(), "{invalid}");
         }
         for valid in [
-            "_", "_+2", "_-0", "_-1", "_-2", "(_)2", "(_)-2", "_._", "_/s2",
+            "_", "_+2", "_-0", "_-1", "_-2", "m_", "m_-2", "m_+2", "(_)2", "(_)-2", "_._", "_/s2",
         ] {
             assert!(parse_unit(valid).is_ok(), "{valid}");
         }
