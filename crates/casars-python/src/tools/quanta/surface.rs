@@ -110,7 +110,7 @@ const METHODS: &[Method] = &[
     method("done", &[param("kill", K::Bool, Bool(false))], R::Bool, Yes),
     binary("eq", R::Bool, Yes),
     unary("exp", R::Record, Yes),
-    method("fits", &[], R::Bool, No),
+    method("fits", &[], R::Bool, Yes),
     unary("floor", R::Record, Yes),
     method(
         "formxxx",

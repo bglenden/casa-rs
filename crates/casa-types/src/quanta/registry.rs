@@ -10,7 +10,8 @@
 //! [`UnitRegistry::put_user`] and [`UnitRegistry::remove_user`].
 
 use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Once, OnceLock, RwLock};
 
 use crate::quanta::dim::UnitDim;
 use crate::quanta::registry_data;
@@ -51,6 +52,13 @@ pub struct PrefixEntry {
     pub description: String,
 }
 
+/// A parsed unit and the FITS state under which it was resolved.
+#[derive(Clone, Copy)]
+struct CachedUnit {
+    value: UnitVal,
+    fits_enabled: bool,
+}
+
 /// The global unit registry.
 ///
 /// Contains immutable built-in maps (defining, SI, customary, prefixes) and
@@ -67,7 +75,10 @@ pub struct UnitRegistry {
     /// User-defined units (mutable at runtime).
     user: RwLock<HashMap<String, UnitName>>,
     /// Parse cache (mutable at runtime).
-    cache: RwLock<HashMap<String, UnitVal>>,
+    cache: RwLock<HashMap<String, CachedUnit>>,
+    /// CASA installs the FITS aliases once per process.
+    fits_once: Once,
+    fits_enabled: AtomicBool,
 }
 
 impl UnitRegistry {
@@ -122,15 +133,25 @@ impl UnitRegistry {
             customary,
             user: RwLock::new(HashMap::new()),
             cache: RwLock::new(HashMap::new()),
+            fits_once: Once::new(),
+            fits_enabled: AtomicBool::new(false),
         }
     }
 
     /// Looks up a unit by name.
     ///
-    /// Search order: defining → SI → customary → user → cache.
-    /// The immutable built-in maps are checked first (lock-free) before
-    /// falling back to the `RwLock`-protected user and cache maps.
+    /// Search order: defining → SI → customary → cache → user, except that
+    /// after FITS registration a user-defined `S` takes precedence.
+    /// The immutable built-in maps are otherwise checked first (lock-free).
     pub fn lookup_unit(&self, name: &str) -> Option<UnitVal> {
+        // FITS redefines `S` from siemens to seconds. CASA's user map takes
+        // precedence for that name, even if a caller already defined it.
+        if name == "S"
+            && self.fits_enabled.load(Ordering::Acquire)
+            && let Some(entry) = self.user.read().unwrap().get(name)
+        {
+            return Some(entry.val);
+        }
         // Check immutable built-in maps first (no locking needed).
         if let Some(entry) = self.defining.get(name) {
             return Some(entry.val);
@@ -141,9 +162,13 @@ impl UnitRegistry {
         if let Some(entry) = self.customary.get(name) {
             return Some(entry.val);
         }
-        // Check cache (compound/prefixed expressions that were previously parsed).
-        if let Some(val) = self.cache.read().unwrap().get(name) {
-            return Some(*val);
+        // A parse begun before FITS registration can finish after the cache
+        // is cleared. Its state tag prevents reusing stale `S` expressions.
+        if let Some(cached) = self.cache.read().unwrap().get(name)
+            && (!name.contains('S')
+                || cached.fits_enabled == self.fits_enabled.load(Ordering::Acquire))
+        {
+            return Some(cached.value);
         }
         // User-defined units (rarely used).
         if let Some(entry) = self.user.read().unwrap().get(name) {
@@ -159,7 +184,68 @@ impl UnitRegistry {
 
     /// Adds a parsed unit expression to the cache.
     pub fn cache_put(&self, name: &str, val: UnitVal) {
-        self.cache.write().unwrap().insert(name.to_owned(), val);
+        self.cache_put_at_fits_state(name, val, self.cache_fits_state(name));
+    }
+
+    /// Capture the relevant registry state before parsing a cache entry.
+    pub(crate) fn cache_fits_state(&self, name: &str) -> bool {
+        name.contains('S') && self.fits_enabled.load(Ordering::Acquire)
+    }
+
+    /// Cache the value with the state captured before its parse began.
+    pub(crate) fn cache_put_at_fits_state(&self, name: &str, val: UnitVal, fits_enabled: bool) {
+        self.cache.write().unwrap().insert(
+            name.to_owned(),
+            CachedUnit {
+                value: val,
+                fits_enabled,
+            },
+        );
+    }
+
+    /// Installs casacore's process-wide FITS unit aliases once.
+    ///
+    /// Existing user definitions are retained, as in `UnitMap::addFITS`.
+    /// Unless already user-defined, `S` changes from SI siemens to seconds.
+    pub fn add_fits_units(&self) {
+        self.fits_once.call_once(|| {
+            const ALIASES: &[(&str, &str, &str)] = &[
+                ("BEAM", "beam", "dimensionless beam"),
+                ("DAYS", "d", "day"),
+                ("DEGREES", "deg", "degree"),
+                ("DEG", "deg", "degree"),
+                ("HZ", "Hz", "hertz"),
+                ("JY", "Jy", "jansky"),
+                ("KELVINS", "K", "kelvin"),
+                ("KELVIN", "K", "kelvin"),
+                ("KM", "km", "km"),
+                ("METERS", "m", "meter"),
+                ("M", "m", "meter"),
+                ("PASCAL", "Pa", "pascal"),
+                ("PIXEL", "pixel", "dimensionless pixel"),
+                ("SECONDS", "s", "second"),
+                ("SEC", "s", "second"),
+                ("S", "s", "second"),
+                ("VOLTS", "V", "volt"),
+                ("YEARS", "a", "year"),
+                ("YEAR", "a", "year"),
+            ];
+            let entries: Vec<_> = ALIASES
+                .iter()
+                .map(|&(alias, unit, description)| {
+                    let val = crate::quanta::parser::parse_unit(unit)
+                        .expect("built-in FITS base unit must be valid");
+                    UnitName::new(alias, val, description)
+                })
+                .collect();
+            let mut user = self.user.write().unwrap();
+            for entry in entries {
+                user.entry(entry.name.clone()).or_insert(entry);
+            }
+            self.fits_enabled.store(true, Ordering::Release);
+            drop(user);
+            self.clear_cache();
+        });
     }
 
     /// Registers a user-defined unit.
@@ -207,6 +293,36 @@ pub fn global_registry() -> &'static UnitRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fits_registration_preserves_user_values_and_invalidates_siemens_cache() {
+        let reg = UnitRegistry::from_builtin();
+        let siemens = reg.lookup_unit("S").unwrap();
+        let seconds = reg.lookup_unit("s").unwrap();
+        assert_ne!(siemens.dim, seconds.dim);
+        reg.cache_put("S.m", siemens);
+        reg.put_user("DEGREES", UnitVal::NODIM, "existing user unit");
+        // Restore a stale compound after the user-unit cache was cleared.
+        reg.cache_put("S.m", siemens);
+
+        reg.add_fits_units();
+        assert_eq!(reg.lookup_unit("S").unwrap().dim, seconds.dim);
+        assert!(reg.lookup_unit("S.m").is_none());
+        // A parse begun before registration can finish after cache clearing.
+        reg.cache_put_at_fits_state("S.m", siemens, false);
+        assert!(reg.lookup_unit("S.m").is_none());
+        reg.cache_put("S.m", seconds);
+        assert_eq!(reg.lookup_unit("S.m").unwrap().dim, seconds.dim);
+        assert_eq!(reg.lookup_unit("DEGREES").unwrap().dim, UnitVal::NODIM.dim);
+        reg.put_user("S", siemens, "user override");
+        reg.add_fits_units();
+        assert_eq!(reg.lookup_unit("S").unwrap().dim, siemens.dim);
+
+        let existing = UnitRegistry::from_builtin();
+        existing.put_user("S", UnitVal::NODIM, "existing user override");
+        existing.add_fits_units();
+        assert_eq!(existing.lookup_unit("S").unwrap().dim, UnitVal::NODIM.dim);
+    }
 
     #[test]
     fn lookup_base_units() {
