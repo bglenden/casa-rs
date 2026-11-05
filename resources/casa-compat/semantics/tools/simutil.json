@@ -625,7 +625,8 @@
    "evidence": [
     "bugs-record"
    ],
-   "state": "Proposed"
+   "state": "Previously agreed",
+   "owner_decision": "Owner approved on 2026-11-05; see docs/simulation/owner-decisions-20261105.md."
   },
   {
    "id": "ismstp-any-zero-uvw",
@@ -669,7 +670,7 @@
   },
   {
    "id": "msg-verbose-single-post",
-   "state": "Proposed",
+   "state": "Previously agreed",
    "inputs": "simutil(verbose=True).msg(s, origin=..., priority=...)",
    "casa": "Posts the message twice to its log: once with ANSI colour codes around [origin], WARNING and ERROR, once with WARNING and ERROR coloured; both at INFO.",
    "ours": "Logs it once at INFO on casars.<origin>, without colour codes; the report file is written as CASA writes it.",
@@ -677,11 +678,12 @@
    "impact": "A script that counts or parses CASA's duplicated, coloured lines sees one plain line.",
    "evidence": [
     "helpers-casa"
-   ]
+   ],
+   "owner_decision": "Owner approved on 2026-11-05; see docs/simulation/owner-decisions-20261105.md."
   },
   {
    "id": "is4d-leaves-image-open",
-   "state": "Proposed",
+   "state": "Previously agreed",
    "inputs": "simutil.is4d on an image that is not CASA's 4-D order.",
    "casa": "Returns False before ia.done(), leaving the shared image tool open; the next ia.open warns 'Another image is already open, closing first'.",
    "ours": "Opens nothing that outlives the call; no warning follows.",
@@ -689,7 +691,8 @@
    "impact": "None on results.",
    "evidence": [
     "helpers-casa"
-   ]
+   ],
+   "owner_decision": "Owner approved on 2026-11-05; see docs/simulation/owner-decisions-20261105.md."
   }
  ],
  "evidence": {
