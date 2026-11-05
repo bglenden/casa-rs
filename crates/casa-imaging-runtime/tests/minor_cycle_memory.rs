@@ -32,7 +32,7 @@ use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{
     Demand, HostResources, MinorCycleSetup, MinorLayout, PsfCache, ResourcePolicy, admit,
     free_memory, prepare_bytes, prepare_minor_cycle, psf_cache_bytes, result_bytes, run_bytes,
-    run_minor_cycle,
+    run_bytes_for, run_minor_cycle,
 };
 use problems::{empty_final_model, model_lifecycle, reconstruction_problem};
 use synthetic_pass::{BLOCKS, SAMPLES, Scene};
@@ -810,6 +810,13 @@ fn measure_clark(
         residual_pixel_mask: false,
         pbmask: 0.0,
     };
+    let layout = MinorLayout::of(completion.normal_state());
+    let empty_budget = run_bytes_for(&layout, &setup, 0, 0, workers);
+    let component_budget = run_bytes_for(&layout, &setup, 300, 0, workers);
+    assert!(
+        component_budget > empty_budget,
+        "more possible components need a larger solve admission: {empty_budget} vs {component_budget}"
+    );
     let masks = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::FullPlane {
         coordinate: problem.geometry().domains()[0].direction(),
     }])
