@@ -189,15 +189,15 @@ const METHODS: &[Method] = &[
         R::Bool,
         Yes,
     ),
-    method("purge", &[], R::Bool, No),
+    method("purge", &[], R::Bool, Yes),
     method(
         "putkeyword",
         &[KEYWORD, param("value", K::Any, Empty)],
         R::Bool,
         No,
     ),
-    method("recover", &[LOG], R::Bool, No),
-    method("remove", &[WHICH_ALL, LOG], R::Bool, No),
+    method("recover", &[LOG], R::Bool, Yes),
+    method("remove", &[WHICH_ALL, LOG], R::Bool, Yes),
     method(
         "rename",
         &[param("filename", K::Text, Required), LOG],

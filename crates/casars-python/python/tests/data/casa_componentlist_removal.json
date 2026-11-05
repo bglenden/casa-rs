@@ -1,0 +1,2136 @@
+{
+  "casatools": "6.7.6-14",
+  "scenarios": [
+    {
+      "name": "single",
+      "select": [
+        0,
+        1,
+        3
+      ],
+      "actions": [
+        [
+          "remove",
+          [
+            [
+              1
+            ]
+          ]
+        ],
+        [
+          "recover",
+          []
+        ],
+        [
+          "recover",
+          []
+        ]
+      ],
+      "before": {
+        "labels": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ],
+        "selected": [
+          0,
+          1,
+          3
+        ],
+        "shape_units": [
+          null,
+          [
+            "arcmin",
+            "arcsec",
+            "deg"
+          ],
+          null,
+          [
+            "deg",
+            "arcmin",
+            "rad"
+          ]
+        ],
+        "shape_values": [
+          null,
+          [
+            2.0,
+            45.0,
+            14.999999999999998
+          ],
+          null,
+          [
+            0.05,
+            1.0,
+            0.5
+          ]
+        ],
+        "fluxes": [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "steps": [
+        {
+          "result": true,
+          "after": {
+            "labels": [
+              "0",
+              "2",
+              "3"
+            ],
+            "selected": [
+              0,
+              2
+            ],
+            "shape_units": [
+              null,
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "2",
+              "3",
+              "1"
+            ],
+            "selected": [
+              0,
+              2
+            ],
+            "shape_units": [
+              null,
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ],
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ]
+            ],
+            "shape_values": [
+              null,
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ],
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              3.0,
+              4.0,
+              2.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "2",
+              "3",
+              "1"
+            ],
+            "selected": [
+              0,
+              2
+            ],
+            "shape_units": [
+              null,
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ],
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ]
+            ],
+            "shape_values": [
+              null,
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ],
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              3.0,
+              4.0,
+              2.0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "reverse_order",
+      "select": [
+        0,
+        1,
+        3
+      ],
+      "actions": [
+        [
+          "remove",
+          [
+            [
+              3,
+              1
+            ]
+          ]
+        ],
+        [
+          "recover",
+          []
+        ]
+      ],
+      "before": {
+        "labels": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ],
+        "selected": [
+          0,
+          1,
+          3
+        ],
+        "shape_units": [
+          null,
+          [
+            "arcmin",
+            "arcsec",
+            "deg"
+          ],
+          null,
+          [
+            "deg",
+            "arcmin",
+            "rad"
+          ]
+        ],
+        "shape_values": [
+          null,
+          [
+            2.0,
+            45.0,
+            14.999999999999998
+          ],
+          null,
+          [
+            0.05,
+            1.0,
+            0.5
+          ]
+        ],
+        "fluxes": [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "steps": [
+        {
+          "result": true,
+          "after": {
+            "labels": [
+              "0",
+              "2"
+            ],
+            "selected": [
+              0
+            ],
+            "shape_units": [
+              null,
+              null
+            ],
+            "shape_values": [
+              null,
+              null
+            ],
+            "fluxes": [
+              1.0,
+              3.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "2",
+              "1",
+              "3"
+            ],
+            "selected": [
+              0
+            ],
+            "shape_units": [
+              null,
+              null,
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ],
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              null,
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ],
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              3.0,
+              2.0,
+              4.0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "forward_order",
+      "actions": [
+        [
+          "remove",
+          [
+            [
+              1,
+              3
+            ]
+          ]
+        ],
+        [
+          "recover",
+          []
+        ]
+      ],
+      "before": {
+        "labels": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ],
+        "selected": [],
+        "shape_units": [
+          null,
+          [
+            "arcmin",
+            "arcsec",
+            "deg"
+          ],
+          null,
+          [
+            "deg",
+            "arcmin",
+            "rad"
+          ]
+        ],
+        "shape_values": [
+          null,
+          [
+            2.0,
+            45.0,
+            14.999999999999998
+          ],
+          null,
+          [
+            0.05,
+            1.0,
+            0.5
+          ]
+        ],
+        "fluxes": [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "steps": [
+        {
+          "result": true,
+          "after": {
+            "labels": [
+              "0",
+              "2"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              null
+            ],
+            "shape_values": [
+              null,
+              null
+            ],
+            "fluxes": [
+              1.0,
+              3.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "2",
+              "3",
+              "1"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ],
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ]
+            ],
+            "shape_values": [
+              null,
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ],
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              3.0,
+              4.0,
+              2.0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "remove_all",
+      "actions": [
+        [
+          "remove",
+          []
+        ],
+        [
+          "recover",
+          []
+        ]
+      ],
+      "before": {
+        "labels": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ],
+        "selected": [],
+        "shape_units": [
+          null,
+          [
+            "arcmin",
+            "arcsec",
+            "deg"
+          ],
+          null,
+          [
+            "deg",
+            "arcmin",
+            "rad"
+          ]
+        ],
+        "shape_values": [
+          null,
+          [
+            2.0,
+            45.0,
+            14.999999999999998
+          ],
+          null,
+          [
+            0.05,
+            1.0,
+            0.5
+          ]
+        ],
+        "fluxes": [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "steps": [
+        {
+          "result": true,
+          "after": {
+            "labels": [],
+            "selected": [],
+            "shape_units": [],
+            "shape_values": [],
+            "fluxes": []
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "3",
+              "2",
+              "1",
+              "0"
+            ],
+            "selected": [],
+            "shape_units": [
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ],
+              null,
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ],
+              null
+            ],
+            "shape_values": [
+              [
+                0.05,
+                1.0,
+                0.5
+              ],
+              null,
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ],
+              null
+            ],
+            "fluxes": [
+              4.0,
+              3.0,
+              2.0,
+              1.0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "nothing",
+      "actions": [
+        [
+          "remove",
+          [
+            []
+          ]
+        ],
+        [
+          "recover",
+          []
+        ],
+        [
+          "purge",
+          []
+        ]
+      ],
+      "before": {
+        "labels": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ],
+        "selected": [],
+        "shape_units": [
+          null,
+          [
+            "arcmin",
+            "arcsec",
+            "deg"
+          ],
+          null,
+          [
+            "deg",
+            "arcmin",
+            "rad"
+          ]
+        ],
+        "shape_values": [
+          null,
+          [
+            2.0,
+            45.0,
+            14.999999999999998
+          ],
+          null,
+          [
+            0.05,
+            1.0,
+            0.5
+          ]
+        ],
+        "fluxes": [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "steps": [
+        {
+          "result": true,
+          "after": {
+            "labels": [
+              "0",
+              "1",
+              "2",
+              "3"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ],
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ],
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              2.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "1",
+              "2",
+              "3"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ],
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ],
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              2.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "1",
+              "2",
+              "3"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ],
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ],
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              2.0,
+              3.0,
+              4.0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "separate",
+      "actions": [
+        [
+          "remove",
+          [
+            [
+              1
+            ]
+          ]
+        ],
+        [
+          "remove",
+          [
+            [
+              1
+            ]
+          ]
+        ],
+        [
+          "recover",
+          []
+        ]
+      ],
+      "before": {
+        "labels": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ],
+        "selected": [],
+        "shape_units": [
+          null,
+          [
+            "arcmin",
+            "arcsec",
+            "deg"
+          ],
+          null,
+          [
+            "deg",
+            "arcmin",
+            "rad"
+          ]
+        ],
+        "shape_values": [
+          null,
+          [
+            2.0,
+            45.0,
+            14.999999999999998
+          ],
+          null,
+          [
+            0.05,
+            1.0,
+            0.5
+          ]
+        ],
+        "fluxes": [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "steps": [
+        {
+          "result": true,
+          "after": {
+            "labels": [
+              "0",
+              "2",
+              "3"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "result": true,
+          "after": {
+            "labels": [
+              "0",
+              "3"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "3",
+              "2",
+              "1"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ],
+              null,
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ],
+              null,
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              4.0,
+              3.0,
+              2.0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "purged",
+      "actions": [
+        [
+          "remove",
+          [
+            [
+              1,
+              3
+            ]
+          ]
+        ],
+        [
+          "purge",
+          []
+        ],
+        [
+          "recover",
+          []
+        ]
+      ],
+      "before": {
+        "labels": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ],
+        "selected": [],
+        "shape_units": [
+          null,
+          [
+            "arcmin",
+            "arcsec",
+            "deg"
+          ],
+          null,
+          [
+            "deg",
+            "arcmin",
+            "rad"
+          ]
+        ],
+        "shape_values": [
+          null,
+          [
+            2.0,
+            45.0,
+            14.999999999999998
+          ],
+          null,
+          [
+            0.05,
+            1.0,
+            0.5
+          ]
+        ],
+        "fluxes": [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "steps": [
+        {
+          "result": true,
+          "after": {
+            "labels": [
+              "0",
+              "2"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              null
+            ],
+            "shape_values": [
+              null,
+              null
+            ],
+            "fluxes": [
+              1.0,
+              3.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "2"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              null
+            ],
+            "shape_values": [
+              null,
+              null
+            ],
+            "fluxes": [
+              1.0,
+              3.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "2"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              null
+            ],
+            "shape_values": [
+              null,
+              null
+            ],
+            "fluxes": [
+              1.0,
+              3.0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "released",
+      "actions": [
+        [
+          "remove",
+          [
+            [
+              1
+            ]
+          ]
+        ],
+        [
+          "done",
+          []
+        ],
+        [
+          "recover",
+          []
+        ]
+      ],
+      "before": {
+        "labels": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ],
+        "selected": [],
+        "shape_units": [
+          null,
+          [
+            "arcmin",
+            "arcsec",
+            "deg"
+          ],
+          null,
+          [
+            "deg",
+            "arcmin",
+            "rad"
+          ]
+        ],
+        "shape_values": [
+          null,
+          [
+            2.0,
+            45.0,
+            14.999999999999998
+          ],
+          null,
+          [
+            0.05,
+            1.0,
+            0.5
+          ]
+        ],
+        "fluxes": [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "steps": [
+        {
+          "result": true,
+          "after": {
+            "labels": [
+              "0",
+              "2",
+              "3"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "result": true,
+          "after": {
+            "labels": [],
+            "selected": [],
+            "shape_units": [],
+            "shape_values": [],
+            "fluxes": []
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [],
+            "selected": [],
+            "shape_units": [],
+            "shape_values": [],
+            "fluxes": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "invalid",
+      "select": [
+        0,
+        1,
+        3
+      ],
+      "actions": [
+        [
+          "remove",
+          [
+            [
+              1,
+              -1
+            ]
+          ]
+        ],
+        [
+          "remove",
+          [
+            [
+              1,
+              7
+            ]
+          ]
+        ],
+        [
+          "recover",
+          []
+        ]
+      ],
+      "before": {
+        "labels": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ],
+        "selected": [
+          0,
+          1,
+          3
+        ],
+        "shape_units": [
+          null,
+          [
+            "arcmin",
+            "arcsec",
+            "deg"
+          ],
+          null,
+          [
+            "deg",
+            "arcmin",
+            "rad"
+          ]
+        ],
+        "shape_values": [
+          null,
+          [
+            2.0,
+            45.0,
+            14.999999999999998
+          ],
+          null,
+          [
+            0.05,
+            1.0,
+            0.5
+          ]
+        ],
+        "fluxes": [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "steps": [
+        {
+          "error": {
+            "type": "RuntimeError",
+            "message": "Index out of range.\nA component number is less than one or greater than the list length\nNo components removed"
+          },
+          "after": {
+            "labels": [
+              "0",
+              "1",
+              "2",
+              "3"
+            ],
+            "selected": [
+              0,
+              1,
+              3
+            ],
+            "shape_units": [
+              null,
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ],
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ],
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              2.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "error": {
+            "type": "RuntimeError",
+            "message": "Index out of range.\nA component number is less than one or greater than the list length\nNo components removed"
+          },
+          "after": {
+            "labels": [
+              "0",
+              "1",
+              "2",
+              "3"
+            ],
+            "selected": [
+              0,
+              1,
+              3
+            ],
+            "shape_units": [
+              null,
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ],
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ],
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              2.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "1",
+              "2",
+              "3"
+            ],
+            "selected": [
+              0,
+              1,
+              3
+            ],
+            "shape_units": [
+              null,
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ],
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ],
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              2.0,
+              3.0,
+              4.0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "error_preserves_bin",
+      "actions": [
+        [
+          "remove",
+          [
+            [
+              1
+            ]
+          ]
+        ],
+        [
+          "remove",
+          [
+            [
+              7
+            ]
+          ]
+        ],
+        [
+          "recover",
+          []
+        ]
+      ],
+      "before": {
+        "labels": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ],
+        "selected": [],
+        "shape_units": [
+          null,
+          [
+            "arcmin",
+            "arcsec",
+            "deg"
+          ],
+          null,
+          [
+            "deg",
+            "arcmin",
+            "rad"
+          ]
+        ],
+        "shape_values": [
+          null,
+          [
+            2.0,
+            45.0,
+            14.999999999999998
+          ],
+          null,
+          [
+            0.05,
+            1.0,
+            0.5
+          ]
+        ],
+        "fluxes": [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "steps": [
+        {
+          "result": true,
+          "after": {
+            "labels": [
+              "0",
+              "2",
+              "3"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "error": {
+            "type": "RuntimeError",
+            "message": "Index out of range.\nA component number is less than one or greater than the list length\nNo components removed"
+          },
+          "after": {
+            "labels": [
+              "0",
+              "2",
+              "3"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "2",
+              "3",
+              "1"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ],
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ]
+            ],
+            "shape_values": [
+              null,
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ],
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              3.0,
+              4.0,
+              2.0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "bindings",
+      "actions": [
+        [
+          "remove",
+          [
+            null
+          ]
+        ],
+        [
+          "remove",
+          [
+            "1"
+          ]
+        ],
+        [
+          "remove",
+          [
+            0,
+            null
+          ]
+        ],
+        [
+          "remove",
+          [
+            1,
+            false
+          ]
+        ],
+        [
+          "recover",
+          []
+        ]
+      ],
+      "before": {
+        "labels": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ],
+        "selected": [],
+        "shape_units": [
+          null,
+          [
+            "arcmin",
+            "arcsec",
+            "deg"
+          ],
+          null,
+          [
+            "deg",
+            "arcmin",
+            "rad"
+          ]
+        ],
+        "shape_values": [
+          null,
+          [
+            2.0,
+            45.0,
+            14.999999999999998
+          ],
+          null,
+          [
+            0.05,
+            1.0,
+            0.5
+          ]
+        ],
+        "fluxes": [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "steps": [
+        {
+          "error": {
+            "type": "SystemError",
+            "message": "<built-in function componentlist_remove> returned a result with an exception set"
+          },
+          "after": {
+            "labels": [
+              "0",
+              "1",
+              "2",
+              "3"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ],
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ],
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              2.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "error": {
+            "type": "TypeError",
+            "message": "argument _which must not be a string"
+          },
+          "after": {
+            "labels": [
+              "0",
+              "1",
+              "2",
+              "3"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ],
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ],
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              2.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "error": {
+            "type": "TypeError",
+            "message": "in method 'componentlist_remove', argument 3 of type 'bool'"
+          },
+          "after": {
+            "labels": [
+              "0",
+              "1",
+              "2",
+              "3"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ],
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ],
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              2.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "result": true,
+          "after": {
+            "labels": [
+              "0",
+              "2",
+              "3"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              3.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "2",
+              "3",
+              "1"
+            ],
+            "selected": [],
+            "shape_units": [
+              null,
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ],
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ]
+            ],
+            "shape_values": [
+              null,
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ],
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              3.0,
+              4.0,
+              2.0
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "duplicate_corrupts",
+      "select": [
+        0,
+        1,
+        3
+      ],
+      "actions": [
+        [
+          "remove",
+          [
+            [
+              1,
+              1
+            ]
+          ]
+        ],
+        [
+          "recover",
+          []
+        ]
+      ],
+      "before": {
+        "labels": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ],
+        "selected": [
+          0,
+          1,
+          3
+        ],
+        "shape_units": [
+          null,
+          [
+            "arcmin",
+            "arcsec",
+            "deg"
+          ],
+          null,
+          [
+            "deg",
+            "arcmin",
+            "rad"
+          ]
+        ],
+        "shape_values": [
+          null,
+          [
+            2.0,
+            45.0,
+            14.999999999999998
+          ],
+          null,
+          [
+            0.05,
+            1.0,
+            0.5
+          ]
+        ],
+        "fluxes": [
+          1.0,
+          2.0,
+          3.0,
+          4.0
+        ]
+      },
+      "steps": [
+        {
+          "result": true,
+          "after": {
+            "labels": [
+              "0",
+              "3"
+            ],
+            "selected": [
+              0,
+              1
+            ],
+            "shape_units": [
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              4.0
+            ]
+          }
+        },
+        {
+          "result": false,
+          "after": {
+            "labels": [
+              "0",
+              "3",
+              "1",
+              "1"
+            ],
+            "selected": [
+              0,
+              1
+            ],
+            "shape_units": [
+              null,
+              [
+                "deg",
+                "arcmin",
+                "rad"
+              ],
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ],
+              [
+                "arcmin",
+                "arcsec",
+                "deg"
+              ]
+            ],
+            "shape_values": [
+              null,
+              [
+                0.05,
+                1.0,
+                0.5
+              ],
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ],
+              [
+                2.0,
+                45.0,
+                14.999999999999998
+              ]
+            ],
+            "fluxes": [
+              1.0,
+              4.0,
+              2.0,
+              2.0
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "empty_crashes": {
+    "c.remove()": -11,
+    "c.remove([-1])": -11
+  }
+}

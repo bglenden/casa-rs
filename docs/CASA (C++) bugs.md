@@ -18,6 +18,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[duplicate and empty component removals](#component-removal-can-lose-data-or-crash),
 [component labels containing invalid UTF-8](#casa-accepts-component-labels-it-cannot-return),
 [cyclic component-list type checks](#cyclic-component-list-type-checks-crash-casa),
 [complex quantity-array values](#casa-discards-the-values-of-bare-complex-quantity-arrays),
@@ -3851,6 +3852,20 @@ while an equivalent Python complex or NumPy complex128 value raises an error.
 CASA also treats the complex64 value as zero in other quantity operations.
 casa-rs preserves both parts and raises `Wrong QuantumHolder to convert
 asQuantumDouble` rather than silently discarding them.
+
+## Component removal can lose data or crash
+
+- Date noted: 2026-11-05
+- Status: CASA loses a component on duplicate indices and crashes on an empty list; casa-rs preserves values and reports a catchable error (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/casa-compat/componentlist_removal_oracle.py`, CASA 6.7.6-14 on the Mac mini; empty-list calls run in isolated processes with core dumps disabled.
+
+With four components labeled `0`, `1`, `2`, `3`, CASA's
+`cl.remove([1, 1])` leaves `0`, `3`; `cl.recover()` appends two copies of
+`1`, so component `2` is lost. casa-rs treats repeated indices as one:
+it leaves `0`, `2`, `3` and recovers `1` once. On an empty list, CASA's
+`cl.remove()` and `cl.remove([-1])` both terminate the process with SIGSEGV;
+casa-rs raises a catchable `RuntimeError` without changing the list.
 
 ## CASA accepts component labels it cannot return
 
