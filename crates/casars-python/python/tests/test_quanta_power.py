@@ -38,3 +38,5 @@ def test_power_matches_casa() -> None:
                     assert math.copysign(1, result["value"]) == math.copysign(1, number), case
     assert qa.pow() == {"unit": "", "value": 0.0}
     assert qa.pow("2m", np.int64(2)) == {"unit": "(m)2", "value": 4.0}
+    with pytest.raises(RuntimeError, match="^Quantum::pow exponent too large$"):
+        qa.pow("1m", -(2**31))
