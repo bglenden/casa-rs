@@ -474,6 +474,7 @@ impl Packer<'_> {
             }
         }
         let mut packed_time = None;
+        let mut native_frequency_ratio = 1.0;
         for sample in (0..batch.samples()).filter(|sample| keep[*sample]) {
             let time = sample / per_time;
             if packed_time != Some(time) {
@@ -484,6 +485,17 @@ impl Packer<'_> {
                     (bands, prediction, keep_in_band),
                     scratch,
                 )?;
+                // Every frame-conversion hop scales frequency linearly.
+                // Recover the stored frequency for AW cell lookup with one
+                // factor per time; only rounding-near ties can differ from
+                // the exact stored channel at a cell boundary.
+                native_frequency_ratio = layout
+                    .channels
+                    .first()
+                    .zip(scratch.frequencies_hz.first())
+                    .map_or(1.0, |(channel, converted)| {
+                        batch.frequency.hz()[*channel] / converted
+                    });
                 packed_time = Some(time);
             }
             let row = Row {
@@ -521,6 +533,7 @@ impl Packer<'_> {
             let header = NativeRowHeader {
                 row_flag: flagged || nonfinite_uvw,
                 context: RowContext {
+                    native_frequency_ratio,
                     original_uvw_m: Some(uvw.metres_at(sample)),
                     time_s: row.time_s,
                     antennas: [baseline.antenna1.0, baseline.antenna2.0],

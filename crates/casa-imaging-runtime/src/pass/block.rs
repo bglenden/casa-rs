@@ -474,6 +474,7 @@ mod tests {
         NativeRowHeader {
             row_flag: false,
             context: RowContext {
+                native_frequency_ratio: 1.0,
                 original_uvw_m: None,
                 time_s: row as f64,
                 antennas,
@@ -572,6 +573,50 @@ mod tests {
                 shape.bytes()
             );
         }
+    }
+
+    /// The native-frequency factor is retained per row, including when a
+    /// model write carries separate flags, and its bytes are admitted (#1121).
+    #[test]
+    fn native_frequency_factors_are_retained_and_charged_per_row() {
+        let shape = BlockShape {
+            rows: 64,
+            spectrum: RowSpectrum::evenly_spaced(2),
+            correlations: 2,
+            domains: 1,
+        };
+        let mut block = NativeBlock::with_capacity(shape);
+        block.reset(1, &[0, 1], &[0, 1]);
+        let projection = DomainProjection {
+            uvw_m: [0.0; 3],
+            phase_shift_m: 0.0,
+            pointing_offset_rad: [0.0; 2],
+        };
+        for index in 0..shape.rows {
+            let mut row = header([0, 1], index as u64);
+            row.context.native_frequency_ratio = 1.0 + index as f64 * 1.0e-6;
+            block.push_row(
+                row,
+                &[projection],
+                &[1.0e9, 1.1e9],
+                &[Complex32::default(); 4],
+                &[1.0; 4],
+                &[false; 4],
+            );
+            block.separate_last_row_selection(&[true; 2], &[true; 2]);
+        }
+        for index in 0..shape.rows {
+            assert_eq!(
+                block.row(0, index).context.native_frequency_ratio,
+                1.0 + index as f64 * 1.0e-6
+            );
+        }
+        assert!(
+            block.capacity_bytes() <= shape.bytes(),
+            "{} > {}",
+            block.capacity_bytes(),
+            shape.bytes()
+        );
     }
 
     /// Rows that share the spectrum and samples read exactly as the same

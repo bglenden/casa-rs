@@ -7,7 +7,7 @@ use std::{error::Error, fmt};
 
 use casa_imaging_model::{
     CompiledProblem, FrequencyFrame, PolarizationCoordinate, ProductKind, ReconstructionBasis,
-    RequiredCapability, SpectralKernel,
+    RequiredCapability, SpectralFrameAnchor, SpectralKernel,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::HostResources;
@@ -43,8 +43,8 @@ pub enum Unsupported {
     /// Facets grid with the standard kernel set. CASA refuses AW and mosaic
     /// facets; W-projection facets wait for a per-facet W set.
     FacetedKernelSet,
-    /// Multi-channel AW cubes use nearest sampling outside the rest frame.
-    /// Linear and cubic sampling and rest-frame cubes wait for #1121.
+    /// Multi-channel AW cubes use nearest sampling in the data or LSRK
+    /// frame. Tracked TOPO/BARY, rest, linear and cubic modes wait for #1121.
     MultiChannelWindowAwCube,
     /// AW projection grids a square image of square cells: its native
     /// convolution functions and their cache are laid out on one axis.
@@ -84,8 +84,8 @@ impl fmt::Display for Unsupported {
                 formatter.write_str("facets grid with the standard gridder only (#1063)")
             }
             Self::MultiChannelWindowAwCube => formatter.write_str(
-                "AW projection of a multi-channel window needs nearest interpolation and a \
-                 non-rest output frame; other cube modes wait for #1121",
+                "AW projection of a multi-channel window needs nearest interpolation in \
+                 the data or LSRK frame; other cube modes wait for #1121",
             ),
             Self::NonSquareAwProjection => formatter.write_str(
                 "AW projection images a square imsize of square cells; the standard, W and \
@@ -236,6 +236,10 @@ pub fn check(
         && !aw_multichannel_sampling_supported(
             problem.science().spectral().sampling().kernel(),
             problem.geometry().spectral().output_frame(),
+            matches!(
+                problem.geometry().spectral().anchor(),
+                SpectralFrameAnchor::Conversion { .. }
+            ),
         )
     {
         unsupported.push(Unsupported::MultiChannelWindowAwCube);
@@ -329,10 +333,16 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
     )
 }
 
-/// Nearest uses native channel frequencies in both implementations; rest
-/// frames and interpolated AW samples need further CASA evidence (#1121).
-fn aw_multichannel_sampling_supported(kernel: SpectralKernel, frame: FrequencyFrame) -> bool {
-    kernel == SpectralKernel::Nearest && frame != FrequencyFrame::Rest
+/// Nearest avoids interpolated AW samples. A tracked TOPO/BARY cube needs
+/// the anchor scale in its prediction W cell before it can run (#1121).
+fn aw_multichannel_sampling_supported(
+    kernel: SpectralKernel,
+    frame: FrequencyFrame,
+    has_frame_anchor: bool,
+) -> bool {
+    kernel == SpectralKernel::Nearest
+        && frame != FrequencyFrame::Rest
+        && !(frame.gridded_through_lsrk() && has_frame_anchor)
 }
 
 #[cfg(test)]
@@ -340,7 +350,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn multi_channel_aw_accepts_only_nearest_outside_the_rest_frame() {
+    fn multi_channel_aw_accepts_nearest_in_data_or_lsrk_frame() {
         for frame in [
             FrequencyFrame::Lsrk,
             FrequencyFrame::Topocentric,
@@ -348,20 +358,29 @@ mod tests {
         ] {
             assert!(aw_multichannel_sampling_supported(
                 SpectralKernel::Nearest,
-                frame
+                frame,
+                false
             ));
+            assert_eq!(
+                aw_multichannel_sampling_supported(SpectralKernel::Nearest, frame, true),
+                frame == FrequencyFrame::Lsrk,
+            );
             for kernel in [
                 SpectralKernel::Linear,
                 SpectralKernel::Cubic,
                 SpectralKernel::Identity,
             ] {
-                assert!(!aw_multichannel_sampling_supported(kernel, frame));
+                assert!(!aw_multichannel_sampling_supported(kernel, frame, false));
+                assert!(!aw_multichannel_sampling_supported(kernel, frame, true));
             }
         }
-        assert!(!aw_multichannel_sampling_supported(
-            SpectralKernel::Nearest,
-            FrequencyFrame::Rest,
-        ));
+        for anchored in [false, true] {
+            assert!(!aw_multichannel_sampling_supported(
+                SpectralKernel::Nearest,
+                FrequencyFrame::Rest,
+                anchored
+            ));
+        }
     }
 
     #[test]

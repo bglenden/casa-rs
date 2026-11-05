@@ -208,6 +208,7 @@ impl<'o> BatchSource<'o> {
                 // folded into the flags, which the validity rule reads.
                 row_flag: false,
                 context: RowContext {
+                    native_frequency_ratio: 1.0,
                     original_uvw_m: None,
                     time_s: batch.time.seconds_since(sample / per_time, mjd_zero),
                     antennas: [

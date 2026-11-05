@@ -493,10 +493,8 @@ fn each_plane_of_an_aw_cube_is_normalized_by_its_own_weights() {
     );
 }
 
-/// A window of several channels interpolates onto a cube's axis, where
-/// CASA's `AWVisResampler` reads a native channel's frequency: that has no
-/// CASA comparison, so it is refused naming its issue, and its one-channel
-/// selection runs.
+/// Linear multi-channel AW cubes and tracked TOPO nearest cubes remain
+/// refused naming their issue; a one-channel selection runs (#1121).
 #[test]
 fn an_aw_cube_of_a_window_of_several_channels_is_refused() {
     let setup = Setup {
@@ -520,6 +518,15 @@ fn an_aw_cube_of_a_window_of_several_channels_is_refused() {
         .try_image("aw-two-channels", controls("0"))
         .err()
         .expect("a window of two channels");
+    assert!(refused.contains("#1121"), "{refused}");
+    let mut tracked = controls("0");
+    let fields = tracked.as_object_mut().expect("controls");
+    fields.insert("interpolation".into(), json!("nearest"));
+    fields.insert("outframe".into(), json!("TOPO"));
+    let refused = observation
+        .try_image("aw-tracked-two-channels", tracked)
+        .err()
+        .expect("tracked TOPO AW cubes remain unsupported");
     assert!(refused.contains("#1121"), "{refused}");
     observation.image("aw-one-channel", controls("0:0"));
 }

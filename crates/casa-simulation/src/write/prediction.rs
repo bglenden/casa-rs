@@ -709,6 +709,7 @@ impl<'s> PredictionStage<'s> {
             let header = NativeRowHeader {
                 row_flag: row.flagged,
                 context: RowContext {
+                    native_frequency_ratio: 1.0,
                     original_uvw_m: Some(row.uvw_m),
                     time_s: 0.0,
                     antennas: [row.antenna1 as u32, row.antenna2 as u32],
