@@ -167,7 +167,7 @@ const METHODS: &[Method] = &[
         R::Text,
         Yes,
     ),
-    of_one("getshape", R::Record, No),
+    of_one("getshape", R::Record, Yes),
     of_one("getspectrum", R::Record, Yes),
     method("haskeyword", &[KEYWORD], R::Bool, No),
     method("indices", &[], R::Ints, Yes),

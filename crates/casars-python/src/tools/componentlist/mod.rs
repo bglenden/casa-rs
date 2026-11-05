@@ -545,10 +545,15 @@ impl PyComponentList {
         self.refdir_placeholder(py, which, unit.as_ref(), precision.as_ref(), "getrefdirra")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// The component's shape parameters and their current units.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn getshape(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getshape")
+    fn getshape(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let which = match which.extract::<i64>() {
+            Ok(index) => i64::from(index as i32),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => -1,
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        self.call(py, move |state, _| state.getshape(which))
     }
 
     /// Component `which`'s spectral model, as its `toRecord` writes it.
