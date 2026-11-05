@@ -44,6 +44,18 @@ fn modes() -> Vec<Value> {
     ]
 }
 
+/// CASA's per-polarization Clark variant is a supported solver (#1126).
+#[test]
+fn clarkstokes_is_accepted_as_a_deconvolver() {
+    let values =
+        resolved(json!({ "deconvolver": "clarkstokes", "niter": 1 })).expect("catalog values");
+    read(&values).expect("clarkstokes is supported");
+    assert_eq!(
+        request(json!({ "deconvolver": "clarkstokes", "niter": 1 })).deconvolver,
+        Deconvolver::ClarkStokes
+    );
+}
+
 /// Every tclean parameter is read, whatever the modes: one the request
 /// ignored without reading would be dropped silently.
 #[test]

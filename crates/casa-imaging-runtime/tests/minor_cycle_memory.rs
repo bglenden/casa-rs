@@ -721,11 +721,38 @@ fn automask_setup<'a>(
 fn joint_clark_holds_at_most_its_admission() {
     let _measurement = MEASUREMENT.lock().expect("measurement lock");
     for (channels, workers) in [(1, 1), (4, 4)] {
-        measure_joint_clark(channels, workers);
+        measure_clark(channels, workers, ReconstructionAlgorithm::Clark, false);
     }
 }
 
-fn measure_joint_clark(channels: usize, workers: usize) {
+/// Separate Clark polarization planes also stay within their admission.
+#[test]
+fn clarkstokes_holds_at_most_its_admission() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    for (channels, workers) in [(1, 1), (4, 4)] {
+        measure_clark(
+            channels,
+            workers,
+            ReconstructionAlgorithm::ClarkStokes,
+            false,
+        );
+    }
+}
+
+/// A multi-plane clarkstokes run with only one nonblank polarization must
+/// not retain an unadmitted single-plane refresh (#1126).
+#[test]
+fn clarkstokes_does_not_retain_a_refresh_for_one_surviving_plane() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    measure_clark(1, 1, ReconstructionAlgorithm::ClarkStokes, true);
+}
+
+fn measure_clark(
+    channels: usize,
+    workers: usize,
+    algorithm: ReconstructionAlgorithm,
+    one_nonblank: bool,
+) {
     use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
     let width = 128;
     let problem = problems::reconstruction_problem_of_shape_and_polarizations(
@@ -734,7 +761,7 @@ fn measure_joint_clark(channels: usize, workers: usize) {
         channels,
         1,
         ReconstructionBasis::ChannelLocal { channels },
-        ReconstructionAlgorithm::Clark,
+        algorithm.clone(),
         ReconstructionControls::new(300, 0.1, 0.0),
         vec![StokesI, StokesQ, StokesU, StokesV],
     );
@@ -763,13 +790,17 @@ fn measure_joint_clark(channels: usize, workers: usize) {
         .collect();
     images.sum_weights = vec![1.0; 4 * channels];
     images.published_sum_weights = vec![1.0; 4 * channels];
+    if one_nonblank {
+        images.sum_weights[1..].fill(0.0);
+        images.published_sum_weights[1..].fill(0.0);
+    }
     pass.append(images).expect("images");
     let completion = cycle.finish(SAMPLES, BLOCKS).expect("completion");
     let setup = MinorCycleSetup {
         psf_cutoff: 0.35,
         psf_beams: None,
         mask_beams: None,
-        algorithm: ReconstructionAlgorithm::Clark,
+        algorithm,
         accounting: HogbomIterationAccounting::Strict,
         response: None,
         nsigma: 0.0,
@@ -820,6 +851,22 @@ fn measure_joint_clark(channels: usize, workers: usize) {
     drop(solving);
     let outcome = outcome.expect("minor cycle");
     assert!(outcome.summary.components > 0);
+    if one_nonblank {
+        assert_eq!(outcome.summary.planes.len(), 4, "one row per polarization");
+        assert!(
+            outcome
+                .summary
+                .trace
+                .iter()
+                .all(|entry| entry.cell.polarization() == 0),
+            "blank polarizations must not acquire components"
+        );
+        assert_eq!(
+            cache.refresh_bytes(&completion),
+            0,
+            "unadmitted retained refresh"
+        );
+    }
     let excess = EXCESS.load(Ordering::Relaxed);
     assert!(
         excess <= 0,
