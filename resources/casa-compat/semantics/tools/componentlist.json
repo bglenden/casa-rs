@@ -235,12 +235,12 @@
    ]
   },
   "getrefdirdec": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA's own placeholder logs a warning and returns an empty string, including for out-of-range indices.",
    "evidence": [
     "signature",
-    "refusals"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "getrefdirframe": {
@@ -253,12 +253,12 @@
    ]
   },
   "getrefdirra": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA's own placeholder logs a warning and returns an empty string, including for out-of-range indices.",
    "evidence": [
     "signature",
-    "refusals"
+    "casa-values",
+    "casa-on-casa"
    ]
   },
   "getshape": {

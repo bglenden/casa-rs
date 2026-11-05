@@ -33,6 +33,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pyo3::exceptions::{PyOverflowError, PyRuntimeWarning, PySystemError, PyTypeError};
 use pyo3::prelude::*;
+use pyo3::types::PyString;
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, DoubleList, Variant};
@@ -43,6 +44,14 @@ use ops::State;
 /// The Python logger CASA's `cl` messages go to.
 const LOGGER: &str = "casars.tools.componentlist";
 
+/// Keep a supplied Python `None` distinct from an omitted argument.
+fn supplied<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyAny>>> {
+    value
+        .extract::<Bound<'py, PyAny>>()
+        .map(Some)
+        .map_err(Into::into)
+}
+
 /// CASA's `componentlist` tool.
 #[pyclass(name = "componentlist", module = "casars.tools", frozen)]
 pub(crate) struct PyComponentList {
@@ -50,6 +59,52 @@ pub(crate) struct PyComponentList {
 }
 
 impl PyComponentList {
+    fn refdir_placeholder(
+        &self,
+        py: Python<'_>,
+        which: &Bound<'_, PyAny>,
+        unit: Option<&Bound<'_, PyAny>>,
+        precision: Option<&Bound<'_, PyAny>>,
+        method: &'static str,
+    ) -> PyResult<Py<PyAny>> {
+        let index = which.extract::<i64>();
+        let mut system_error = which.is_none()
+            || index
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.is_instance_of::<PyOverflowError>(py));
+        if index.is_err() && !system_error {
+            return Err(PyTypeError::new_err("argument _which must be an integer"));
+        }
+        if unit.is_some_and(|value| !value.is_instance_of::<PyString>()) {
+            return Err(PyTypeError::new_err("argument _unit must be a string"));
+        }
+        if let Some(precision) = precision {
+            let extracted = precision.extract::<i64>();
+            let precision_system_error = precision.is_none()
+                || extracted
+                    .as_ref()
+                    .err()
+                    .is_some_and(|e| e.is_instance_of::<PyOverflowError>(py));
+            if extracted.is_err() && !precision_system_error {
+                return Err(PyTypeError::new_err(
+                    "argument _precision must be an integer",
+                ));
+            }
+            system_error |= precision_system_error;
+        }
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning(format!("{method} not implemented yet")));
+            Ok(CasaValue::Text(String::new()))
+        })?;
+        if system_error {
+            return Err(PySystemError::new_err(format!(
+                "<built-in function componentlist_{method}> returned a result with an exception set"
+            )));
+        }
+        Ok(result)
+    }
+
     /// CASA's unimplemented getters log a warning and return placeholders.
     fn getter_placeholder(
         &self,
@@ -405,15 +460,16 @@ impl PyComponentList {
         self.call(py, move |state, _| state.getrefdir(which))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns an empty string.
     #[pyo3(signature = (which, unit = None, precision = None), text_signature = "($self, which, unit='deg', precision=6)")]
     fn getrefdirdec(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
-        precision: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] unit: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] precision: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("getrefdirdec")
+        self.refdir_placeholder(py, which, unit.as_ref(), precision.as_ref(), "getrefdirdec")
     }
 
     /// Not yet implemented in casa-rs.
@@ -422,15 +478,16 @@ impl PyComponentList {
         stub("getrefdirframe")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns an empty string.
     #[pyo3(signature = (which, unit = None, precision = None), text_signature = "($self, which, unit='deg', precision=6)")]
     fn getrefdirra(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
-        precision: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] unit: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] precision: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("getrefdirra")
+        self.refdir_placeholder(py, which, unit.as_ref(), precision.as_ref(), "getrefdirra")
     }
 
     /// Not yet implemented in casa-rs.
