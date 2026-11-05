@@ -247,15 +247,10 @@ impl PyQuanta {
         call(py, || ops::trigonometry(&v, "atan"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None, a = None), text_signature = "($self, v=[], a=[])")]
-    fn atan2(
-        &self,
-        v: Option<&Bound<'_, PyAny>>,
-        a: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("atan2")
+    /// CASA's scalar two-argument arctangent, in radians.
+    #[pyo3(signature = (v = Variant::Empty, a = Variant::Empty), text_signature = "($self, v=[], a=[])")]
+    fn atan2(&self, py: Python<'_>, v: Variant, a: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::atan2(&v, &a))
     }
 
     /// Round a scalar quantity upward in its own unit.

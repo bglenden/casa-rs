@@ -51,6 +51,8 @@ def test_atan2_matches_casa() -> None:
             assert result["value"] == pytest.approx(case["result"]["value"], abs=1e-14)
             if result["value"] == 0:
                 assert math.copysign(1, result["value"]) == math.copysign(1, case["result"]["value"])
+    assert qa.atan2() == {"unit": "rad", "value": 0.0}
+    assert qa.atan2(1.0)["value"] == pytest.approx(math.pi / 2)
 
 def test_trigonometry_matches_casa() -> None:
     fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_trigonometry.json").read_text())
