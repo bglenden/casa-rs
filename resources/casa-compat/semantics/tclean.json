@@ -533,7 +533,8 @@
         "reader",
         "mtmfs-nterms1-polarized-20261103",
         "mtmfs-polarized-review-20261103",
-        "blank-mask-beam-20261105"
+        "blank-mask-beam-20261105",
+        "common-beam-platform-20261105"
       ],
       "behaviors": [
         "deconvolution"
@@ -739,7 +740,8 @@
         "reader",
         "pb-statistics-20261103",
         "pb-masks-20261103",
-        "blank-mask-beam-20261105"
+        "blank-mask-beam-20261105",
+        "common-beam-platform-20261105"
       ],
       "behaviors": [
         "deconvolution"
@@ -1980,6 +1982,20 @@
         "crates/casars-imager/tests/t1/mtmfs.rs",
         "crates/casa-imaging-products/src/generation.rs",
         "crates/casa-imaging-application/src/availability.rs"
+      ]
+    },
+    "common-beam-platform-20261105": {
+      "kind": "Common-beam quantity conversion against CASA on macOS and Linux",
+      "state": "measured: source-confirmed conversion matches CASA references on both platforms",
+      "source_revision": "585223403b91d078a938c33450bc057f12a19110",
+      "revision": "a6ca516704cac66508d43ac56494c75268ed8c37",
+      "casa_version": "casatools 6.7.6.14",
+      "command": "Run image.commonbeam on the recorded synthetic beam sets on macOS arm64 and Linux x86_64; mutate the unit-conversion laws on each platform",
+      "receipt": "resources/casa-compat/evidence/tclean-common-beam-cross-platform-1140-20261105.json",
+      "scope": "The enclosing ellipse uses casacore Quantum::getValue's division by the unit ratio. Separate CASA cases on both platforms verify that division order and arcsecond construction, and each law fails its targeted mutation on both. One other CASA result differs between platforms because of its iterative floating-point enclosure; the native result is compared with the local platform's CASA.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-common-beam-cross-platform-1140-20261105.json",
+        "crates/casa-numerics/src/elliptical_gaussian.rs"
       ]
     },
     "blank-mask-beam-20261105": {
