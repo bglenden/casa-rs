@@ -1,0 +1,77 @@
+{
+  "casatasks": "6.7.6.14",
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "task": "applycal",
+      "args": {
+        "vis": "$EXISTING",
+        "gainfield": 42
+      },
+      "type": "AssertionError",
+      "message": "{'gainfield': ['must be of cStrVec type']}"
+    },
+    {
+      "task": "applycal",
+      "args": {
+        "vis": "$EXISTING",
+        "gaintable": 42
+      },
+      "type": "AssertionError",
+      "message": "{'gaintable': ['must be of cPathVec type']}"
+    },
+    {
+      "task": "applycal",
+      "args": {
+        "vis": "$EXISTING",
+        "calwt": 42
+      },
+      "type": "AssertionError",
+      "message": "{'calwt': ['must be of cBoolVec type']}"
+    },
+    {
+      "task": "flagdata",
+      "args": {
+        "vis": "$EXISTING",
+        "clipminmax": [
+          "bad"
+        ]
+      },
+      "type": "AssertionError",
+      "message": "{'clipminmax': ['must be of cFloatVec type']}"
+    },
+    {
+      "task": "immoments",
+      "args": {
+        "imagename": "$EXISTING",
+        "moments": [
+          "bad"
+        ]
+      },
+      "type": "AssertionError",
+      "message": "{'moments': ['must be of cIntVec type']}"
+    },
+    {
+      "task": "imregrid",
+      "args": {
+        "imagename": "$EXISTING",
+        "axes": [
+          "bad"
+        ]
+      },
+      "type": "AssertionError",
+      "message": "{'axes': ['must be of cIntVec type']}"
+    },
+    {
+      "task": "fluxscale",
+      "args": {
+        "vis": "$EXISTING",
+        "refspwmap": [
+          "bad"
+        ]
+      },
+      "type": "AssertionError",
+      "message": "{'refspwmap': ['must be of cIntVec type']}"
+    }
+  ]
+}

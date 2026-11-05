@@ -13,8 +13,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_imaging_deconvolution::{
-    Clark, CycleControls, Hogbom, MinorCycleView, Multiscale, PlaneShape, PlaneStatistics,
-    PsfSummary, Solver, Support, Taylor, run_plane, solve_bytes,
+    Clark, ClarkPolarized, CycleControls, Hogbom, MinorCycleView, Multiscale, PlaneShape,
+    PlaneStatistics, PsfSummary, Solver, Support, Taylor, run_plane, solve_bytes,
 };
 
 #[global_allocator]
@@ -136,6 +136,7 @@ fn measure<S: Solver>(
     solver: &S,
     shape: PlaneShape,
     terms: usize,
+    psf_terms: usize,
     iterations: usize,
 ) -> (u64, u64) {
     const TRACE: usize = 64;
@@ -149,7 +150,7 @@ fn measure<S: Solver>(
                 .collect()
         })
         .collect::<Vec<Vec<f64>>>();
-    let psf = (0..2 * terms - 1)
+    let psf = (0..psf_terms)
         .map(|term| psf(shape, term))
         .collect::<Vec<_>>();
     let summary = PsfSummary::new(&psf[0], shape).expect("a PSF summary");
@@ -191,19 +192,33 @@ fn a_plane_solve_holds_at_most_what_it_is_admitted() {
         PlaneShape { nx: 256, ny: 256 },
     ] {
         let measured = [
-            ("hogbom", measure(&Hogbom::new(false), shape, 1, 300)),
-            ("clark", measure(&Clark::new(None), shape, 1, 300)),
+            ("hogbom", measure(&Hogbom::new(false), shape, 1, 1, 300)),
+            ("clark", measure(&Clark::new(None), shape, 1, 1, 300)),
+            (
+                "clark IV",
+                measure(&ClarkPolarized::<2>::new(None), shape, 2, 1, 300),
+            ),
+            (
+                "clark IQUV",
+                measure(&ClarkPolarized::<4>::new(None), shape, 4, 1, 300),
+            ),
             (
                 "multiscale",
-                measure(&Multiscale::new(vec![0.0, 6.0, 24.0], 0.6), shape, 1, 300),
+                measure(
+                    &Multiscale::new(vec![0.0, 6.0, 24.0], 0.6),
+                    shape,
+                    1,
+                    1,
+                    300,
+                ),
             ),
             (
                 "taylor",
-                measure(&Taylor::new(2, vec![0.0], 0.6), shape, 2, 300),
+                measure(&Taylor::new(2, vec![0.0], 0.6), shape, 2, 3, 300),
             ),
             (
                 "multiscale taylor",
-                measure(&Taylor::new(2, vec![0.0, 6.0, 24.0], 0.6), shape, 2, 300),
+                measure(&Taylor::new(2, vec![0.0, 6.0, 24.0], 0.6), shape, 2, 3, 300),
             ),
         ];
         for (label, (held, admitted)) in measured {

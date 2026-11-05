@@ -36,7 +36,7 @@ CASA_VERSION = "6.7.6.14"
 INVENTORY = REPO_ROOT / "resources" / "casa-compat" / f"casa-{CASA_VERSION}"
 SURFACES = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources" / "parameter-surfaces.json"
 REPORT = REPO_ROOT / "docs" / "reference" / "casa-compatibility.md"
-SCALAR_TYPES = REPO_ROOT / "crates" / "casa-task-runtime" / "resources" / "casa-scalar-types.json"
+DIRECT_TYPES = REPO_ROOT / "crates" / "casa-task-runtime" / "resources" / "casa-direct-types.json"
 SEMANTICS = REPO_ROOT / "resources" / "casa-compat" / "semantics"
 TOOL_SIGNATURES = REPO_ROOT / "crates" / "casars-python" / "python" / "tests" / "data"
 # The CASA classes casa-rs presents outside `casars.tools`: `simutil` is a
@@ -323,7 +323,11 @@ def render(tasks: dict[str, dict[str, Any]], surfaces: dict[str, dict[str, Any]]
         "For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the recorded "
         "coercions, a value both implementations reject for type reports CASA's wording, "
         "unless a narrower unimplemented-form diagnostic applies. "
-        "Required paths, unions, vectors and variants retain casa-rs's diagnostics (#1099). "
+        "Direct `cBoolVec`, `cFloatVec`, `cIntVec`, `cPathVec` and `cStrVec` schemas are "
+        "also covered where the recorded vector coercions apply. "
+        "Float-shaped `cIntVec` inputs keep the native diagnostic because a JSON integer "
+        "outside the native range may lose its original spelling. "
+        "Required paths, unions and variants retain casa-rs's diagnostics (#1099). "
         "CASA accepts booleans as integers and coerces them to floats; where casa-rs refuses "
         "one, it keeps its own message. Exception classes follow the casa-rs Python contract.",
         "",
@@ -346,23 +350,28 @@ def main() -> int:
     args = parser.parse_args()
     try:
         tasks = load_inventory()
-        # Only the direct scalar validators and coercions the runtime knows.
-        # Union, vector, required-path and variant rules need their own work.
+        # Only the direct validators and coercions the runtime knows.
+        # Union, required-path and variant rules need their own work.
         supported = {"cInt": None, "cBool": None, "cFloat": "to_float",
-                     "cStr": "to_str", "cPath": "expand_path"}
-        scalar_types = {
+                     "cStr": "to_str", "cPath": "expand_path",
+                     "cStrVec": ["to_list", "to_strvec"],
+                     "cFloatVec": ["to_list", "to_floatvec"],
+                     "cIntVec": ["to_list", "to_intvec"],
+                     "cBoolVec": ["to_list", "to_boolvec"],
+                     "cPathVec": ["to_list", "expand_pathvec"]}
+        direct_types = {
             name: {parameter["name"]: parameter["schema"]["type"]
                    for parameter in task["parameters"]
                    if parameter["schema"].get("type") in supported
                    and parameter["schema"].get("coerce") == supported[parameter["schema"]["type"]]}
             for name, task in sorted(tasks.items())
         }
-        scalar_types = {name: values for name, values in scalar_types.items() if values}
-        scalar_text = json.dumps(scalar_types, indent=2, ensure_ascii=False) + "\n"
+        direct_types = {name: values for name, values in direct_types.items() if values}
+        direct_text = json.dumps(direct_types, indent=2, ensure_ascii=False) + "\n"
         if args.write:
-            SCALAR_TYPES.write_text(scalar_text, encoding="utf-8")
-        elif not SCALAR_TYPES.is_file() or SCALAR_TYPES.read_text(encoding="utf-8") != scalar_text:
-            raise InventoryError(f"{SCALAR_TYPES.relative_to(REPO_ROOT)} is stale; run scripts/check-casa-inventory.py --write")
+            DIRECT_TYPES.write_text(direct_text, encoding="utf-8")
+        elif not DIRECT_TYPES.is_file() or DIRECT_TYPES.read_text(encoding="utf-8") != direct_text:
+            raise InventoryError(f"{DIRECT_TYPES.relative_to(REPO_ROOT)} is stale; run scripts/check-casa-inventory.py --write")
         text = render(tasks, load_surfaces(), load_tool_signatures())
     except (InventoryError, ValueError, KeyError) as error:
         print(f"casa-inventory: {error}", file=sys.stderr)

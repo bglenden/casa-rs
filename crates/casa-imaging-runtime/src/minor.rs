@@ -42,6 +42,7 @@ use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit
 mod beams;
 mod layout;
 mod pixels;
+mod polarized;
 mod rows;
 pub use layout::{
     MinorLayout, mask_bytes, prepare_bytes, prepare_bytes_for, psf_cache_bytes, run_bytes,
@@ -264,8 +265,7 @@ pub struct MinorCycleSummary {
     pub components: usize,
     /// Sum of the absolute component fluxes over every term.
     pub absolute_flux: f64,
-    /// Sum of the components' signed first-term fluxes over every plane:
-    /// what the cycle adds to the model's flux.
+    /// Sum of the components' signed model fluxes over every solve.
     pub model_flux: f64,
     /// Largest peak residual on entry.
     pub start_peak: f64,
@@ -510,6 +510,13 @@ struct Slot {
     solved: Option<Solved>,
 }
 
+/// A CASA Clark solve groups a channel's polarization planes.
+struct PolarizedSlot {
+    keys: [PlaneKey; 4],
+    stats: [PlaneStatistics; 4],
+    solved: Option<Solved>,
+}
+
 /// Clean every plane of `completion` under `controls`.
 ///
 /// Planes are independent: several run concurrently on `team`, each on one
@@ -536,7 +543,7 @@ pub fn run_minor_cycle(
         masks,
         auto_masks,
         planes,
-        blank,
+        mut blank,
         retained,
         ..
     } = prepared;
@@ -551,12 +558,28 @@ pub fn run_minor_cycle(
     let admission = (host, policy);
     let fft_threads = scale_fft_threads(planes.len(), team.workers());
     let mut results = Vec::with_capacity(planes.len());
-    if let [(key, statistics)] = planes.as_slice() {
+    let n_pol = normal.polarization_count();
+    // Temporary experiment: groups with blank planes need an explicit CASA
+    // comparison before this path can be considered complete.
+    let joint = matches!(setup.algorithm, ReconstructionAlgorithm::Clark)
+        && !inputs.taylor
+        && matches!(n_pol, 2 | 4);
+    if joint {
+        polarized::solve_groups(
+            &inputs,
+            admission,
+            (&planes, &mut blank),
+            cache,
+            controls,
+            team,
+            &mut results,
+        )?;
+    } else if let [(key, statistics)] = planes.as_slice() {
         let summary = cache.summaries[key];
         let clark = &mut cache.clark;
         // A lone plane has the team to itself: Clark spreads its refresh
         // across it, and the scale solvers transform on its threads.
-        results.push(team.install(|| {
+        let solved = team.install(|| {
             solve(
                 &inputs,
                 admission,
@@ -566,7 +589,8 @@ pub fn run_minor_cycle(
                 controls,
                 (clark, fft_threads),
             )
-        })?);
+        })?;
+        results.push((*key, *statistics, solved));
     } else {
         let mut slots = planes
             .iter()
@@ -590,11 +614,13 @@ pub fn run_minor_cycle(
             )?);
             Ok::<_, MinorCycleRunError>(())
         })?;
-        results.extend(
-            slots
-                .into_iter()
-                .map(|slot| slot.solved.expect("every plane slot ran")),
-        );
+        results.extend(slots.into_iter().map(|slot| {
+            (
+                slot.key,
+                slot.statistics,
+                slot.solved.expect("every plane slot ran"),
+            )
+        }));
     }
     let mut summary = MinorCycleSummary {
         iterations: 0,
@@ -610,9 +636,14 @@ pub fn run_minor_cycle(
         planes: Vec::with_capacity(results.len() + blank.len()),
     };
     // Each plane's charge covers its terms' copy here.
-    let mut terms = Vec::with_capacity(results.iter().map(|solved| solved.terms.len()).sum());
+    let mut terms = Vec::with_capacity(
+        results
+            .iter()
+            .map(|(_, _, solved)| solved.terms.len())
+            .sum(),
+    );
     let mut charge = Reservation::none();
-    for ((key, statistics), solved) in planes.iter().zip(results) {
+    for (key, statistics, solved) in results {
         charge.join(solved.charge);
         let outcome = &solved.outcome;
         summary.iterations += outcome.iterations;
@@ -632,22 +663,18 @@ pub fn run_minor_cycle(
         }
         summary.stops.push(outcome.stop);
         summary.refreshes += outcome.refreshes;
-        summary.planes.push(rows::cycle_row(
-            *key,
-            statistics,
-            outcome,
-            solved.peak_no_mask,
-            controls,
-        ));
+        let mut row = rows::cycle_row(key, &statistics, outcome, solved.peak_no_mask, controls);
+        row.polarizations = if joint { n_pol } else { 1 };
+        summary.planes.push(row);
         let room = TRACE - summary.trace.len();
         summary.trace.extend(solved.trace.into_iter().take(room));
         terms.extend(solved.terms);
     }
-    summary.planes.extend(
-        blank
-            .iter()
-            .map(|(key, statistics)| rows::blank_row(*key, statistics, controls)),
-    );
+    summary.planes.extend(blank.iter().map(|(key, statistics)| {
+        let mut row = rows::blank_row(*key, statistics, controls);
+        row.polarizations = if joint { n_pol } else { 1 };
+        row
+    }));
     summary
         .planes
         .sort_unstable_by_key(|row| (row.domain, row.channel, row.polarization));
