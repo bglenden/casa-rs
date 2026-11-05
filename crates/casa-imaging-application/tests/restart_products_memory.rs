@@ -156,3 +156,47 @@ fn reading_an_earlier_runs_normal_state_fits_its_charge_and_inverts_normalizatio
         }
     }
 }
+
+/// A saved per-channel beam grid is loaded once and held through the minor
+/// cycle and publication, inside the restart metadata admission.
+#[test]
+fn a_saved_psf_beam_grid_fits_its_reading_and_resident_charges() {
+    use casa_images::{GaussianBeam, ImageBeamSet};
+    const PLANES: usize = 2000;
+    let root = tempfile::tempdir().unwrap();
+    let prefix = root.path().join("beams");
+    let shape = [2, 2, 1, PLANES];
+    write(&prefix.with_extension("psf"), &shape, |_| 1.0);
+    write(&prefix.with_extension("sumwt"), &[1, 1, 1, PLANES], |_| 1.0);
+    let mut psf = PagedImage::<f32>::open(&prefix.with_extension("psf")).unwrap();
+    let mut info = psf.image_info().unwrap();
+    info.beam_set = ImageBeamSet::from_grid(
+        (0..PLANES)
+            .map(|i| {
+                vec![GaussianBeam {
+                    major: 1e-5 + i as f64 * 1e-10,
+                    minor: 5e-6,
+                    position_angle: 0.1,
+                }]
+            })
+            .collect(),
+    );
+    psf.set_image_info(&info).unwrap();
+    psf.save().unwrap();
+    drop((psf, info));
+    let mut input = Input::open(&prefix, None, ([2, 2], 1, PLANES), false).unwrap();
+    PEAK.store(0, Ordering::Relaxed);
+    let baseline = LIVE.load(Ordering::Relaxed);
+    BASELINE.store(baseline, Ordering::Relaxed);
+    MEASURING.store(true, Ordering::Relaxed);
+    input.read_psf_beams(PLANES).unwrap();
+    MEASURING.store(false, Ordering::Relaxed);
+    let peak = PEAK.load(Ordering::Relaxed);
+    let held = LIVE.load(Ordering::Relaxed).saturating_sub(baseline);
+    let admitted = Input::beam_reading_bytes(PLANES, 1);
+    let retained = input.beam_resident_bytes();
+    eprintln!("beam metadata: peak {peak}/{admitted}, retained {held}/{retained}");
+    assert!(peak <= admitted, "peak {peak}, admission {admitted}");
+    assert!(held <= retained, "held {held}, retained {retained}");
+    assert!(retained > 0, "the saved beams were retained");
+}

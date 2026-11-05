@@ -21,9 +21,10 @@
 
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use casa_images::{ImageError, PagedImage};
-use casa_imaging_deconvolution::PassImages;
+use casa_images::{ImageBeamSet, ImageError, PagedImage};
+use casa_imaging_deconvolution::{PassImages, RestoringBeam};
 
 use super::{Family, product_path};
 use crate::PrepareError;
@@ -45,6 +46,8 @@ pub(crate) struct ExistingProducts {
     psf: bool,
     /// The residual (`calcres=False` with one at the prefix).
     residual: bool,
+    /// A complete PSF beam set read from the earlier image, channel-major.
+    psf_beams: Option<Arc<[RestoringBeam]>>,
 }
 
 impl ExistingProducts {
@@ -100,7 +103,67 @@ impl ExistingProducts {
             tile_bytes,
             psf,
             residual,
+            psf_beams: None,
         })
+    }
+
+    /// Read the earlier PSF's complete beam grid, as `makeImageBeamSet`
+    /// reuses it before looking at the new run's cutoff.
+    pub(crate) fn read_psf_beams(&mut self, channels: usize) -> Result<(), PrepareError> {
+        if !self.psf {
+            return Ok(());
+        }
+        let name = self
+            .family
+            .names("psf")
+            .into_iter()
+            .next()
+            .expect("a PSF name");
+        let path = product_path(&self.prefix, &name);
+        let image = open(&path)?;
+        let info = image.image_info().map_err(|error| PrepareError::Restart {
+            path: path.clone(),
+            reason: error.to_string(),
+        })?;
+        let planes = match self.family {
+            Family::Single => channels,
+            Family::Taylor { .. } => 1,
+        };
+        self.psf_beams =
+            complete_psf_beams(&info.beam_set, planes, self.polarizations).map_err(|error| {
+                PrepareError::Restart {
+                    path,
+                    reason: error.to_string(),
+                }
+            })?;
+        Ok(())
+    }
+
+    /// Shared beam grid retained through imaging and publication.
+    pub(crate) fn psf_beams(&self) -> Option<Arc<[RestoringBeam]>> {
+        self.psf_beams.clone()
+    }
+
+    /// Retained heap of the shared beam grid, including the `Arc` counters.
+    pub(crate) fn beam_resident_bytes(&self) -> u64 {
+        self.psf_beams.as_ref().map_or(0, |beams| {
+            (std::mem::size_of_val(beams.as_ref()) + 2 * size_of::<usize>()) as u64
+        })
+    }
+
+    /// Bound the PSF image header and beam conversion read together.
+    /// Each beam is three quantity records (one field and two nested fields
+    /// each), plus the channel and Stokes records. The table keyword tree,
+    /// the decoded beam grid, and the converted grid may coexist.
+    pub(crate) fn beam_reading_bytes(channels: usize, polarizations: usize) -> u64 {
+        let planes = channels.saturating_mul(polarizations);
+        let fields = 3 * 3 + 2;
+        let record = fields * (size_of::<casa_types::RecordField>() + 3 * size_of::<String>());
+        let per_plane = 3 * record
+            + size_of::<casa_images::GaussianBeam>()
+            + 2 * size_of::<RestoringBeam>()
+            + size_of::<Vec<casa_images::GaussianBeam>>();
+        (planes.saturating_mul(per_plane) + 4 * CACHE_BYTES + 2 * size_of::<usize>()) as u64
     }
 
     /// Whether the residual is read.
@@ -305,9 +368,69 @@ impl ExistingProducts {
     }
 }
 
+/// CASA reuses the PSF header only when its complete beam matrix has the
+/// image's channel and polarization shape (`makeImageBeamSet`).
+fn complete_psf_beams(
+    set: &ImageBeamSet,
+    channels: usize,
+    polarizations: usize,
+) -> Result<Option<Arc<[RestoringBeam]>>, casa_imaging_deconvolution::PsfBeamFitError> {
+    if set.shape() != (channels, polarizations) {
+        return Ok(None);
+    }
+    let mut beams = Vec::with_capacity(channels * polarizations);
+    for channel in 0..channels {
+        for polarization in 0..polarizations {
+            let beam = set.beam(channel, polarization);
+            beams.push(RestoringBeam::new(
+                beam.major,
+                beam.minor,
+                beam.position_angle,
+            )?);
+        }
+    }
+    Ok(Some(beams.into()))
+}
+
 fn open(path: &Path) -> Result<PagedImage<f32>, PrepareError> {
     PagedImage::<f32>::open_with_cache(path, CACHE_BYTES).map_err(|error| PrepareError::Restart {
         path: path.to_path_buf(),
         reason: error.to_string(),
     })
+}
+
+#[cfg(test)]
+mod beam_tests {
+    use super::*;
+    use casa_images::GaussianBeam;
+
+    fn beam(major: f64) -> GaussianBeam {
+        GaussianBeam {
+            major,
+            minor: major / 2.0,
+            position_angle: 0.25,
+        }
+    }
+
+    /// CASA accepts only a complete PSF beam grid, in channel/polarization
+    /// order; a missing or differently shaped header is refitted.
+    #[test]
+    fn a_restart_reuses_only_a_complete_psf_beam_grid() {
+        let set =
+            ImageBeamSet::from_grid(vec![vec![beam(1.0), beam(2.0)], vec![beam(3.0), beam(4.0)]]);
+        let result = complete_psf_beams(&set, 2, 2).unwrap().unwrap();
+        assert_eq!(
+            result
+                .iter()
+                .map(|b| b.major_fwhm_rad())
+                .collect::<Vec<_>>(),
+            [1.0, 2.0, 3.0, 4.0]
+        );
+        assert!(complete_psf_beams(&set, 4, 1).unwrap().is_none());
+        assert!(
+            complete_psf_beams(&ImageBeamSet::empty(), 2, 2)
+                .unwrap()
+                .is_none()
+        );
+    }
 }

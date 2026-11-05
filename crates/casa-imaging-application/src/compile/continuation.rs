@@ -113,12 +113,26 @@ pub(super) fn prepare(
     }
     let residual = restart::reads_residual(request);
     if !request.calcpsf || residual {
-        continuation.existing = Some(ExistingProducts::new(
+        let mut existing = ExistingProducts::new(
             &request.imagename,
             family,
             ([nx, ny], polarizations, channels),
             (!request.calcpsf, residual),
-        )?);
+        )?;
+        if !request.calcpsf {
+            let mut charge = admit(
+                &context.host,
+                &context.policy,
+                &Demand {
+                    phase: "restart PSF beam metadata",
+                    memory: ExistingProducts::beam_reading_bytes(planes, polarizations),
+                },
+            )?;
+            existing.read_psf_beams(channels)?;
+            charge.retain(existing.beam_resident_bytes());
+            continuation.mask_resident.join(charge);
+        }
+        continuation.existing = Some(existing);
     }
     Ok(continuation)
 }

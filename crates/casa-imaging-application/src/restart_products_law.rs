@@ -36,6 +36,26 @@ impl Input {
         .map(Self)
     }
 
+    /// Admission for reading a PSF's complete beam metadata.
+    #[must_use]
+    pub fn beam_reading_bytes(channels: usize, polarizations: usize) -> u64 {
+        ExistingProducts::beam_reading_bytes(channels, polarizations)
+    }
+
+    /// Read and retain the PSF beam metadata as the production restart does.
+    ///
+    /// # Errors
+    /// The metadata is unreadable or contains an invalid beam.
+    pub fn read_psf_beams(&mut self, channels: usize) -> Result<(), crate::PrepareError> {
+        self.0.read_psf_beams(channels)
+    }
+
+    /// Retained beam-grid allocation.
+    #[must_use]
+    pub fn beam_resident_bytes(&self) -> u64 {
+        self.0.beam_resident_bytes()
+    }
+
     /// Bytes admitted for reading `channels` channels, besides the images.
     #[must_use]
     pub fn reading_bytes(&self, channels: usize) -> u64 {
