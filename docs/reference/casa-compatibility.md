@@ -1596,7 +1596,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 30 | 0 | 31 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 31 | 0 | 30 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1613,7 +1613,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 30, Partial: 0, Not implemented: 31, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 31, Partial: 0, Not implemented: 30, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1650,7 +1650,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `getspectrum` | `which` | Implemented | A component's spectrum record. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `haskeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `indices` |  | Implemented | Matches CASA's placeholder: warns and returns an empty int64 array. | [signature](#componentlist-evidence-signature), [indices-casa](#componentlist-evidence-indices-casa) |
-| `iscomponentlist` | `tool=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `iscomponentlist` | `tool=[]` | Implemented | CASA placeholder logs a warning and returns False; cyclic arguments are handled safely. | [signature](#componentlist-evidence-signature), [iscomponentlist-casa](#componentlist-evidence-iscomponentlist-casa) |
 | `isphysical` | `which=[-1]` | Implemented | Checks selected components using CASA Stokes physicality; an explicit empty index list returns true, and selecting all on an empty list raises an owner-approved error rather than exiting. | [signature](#componentlist-evidence-signature), [isphysical-casa](#componentlist-evidence-isphysical-casa) |
 | `length` |  | Implemented | The number of components. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `open` | `filename='', nomodify=False, log=True` | Implemented | Opens a component-list table, writing a list it replaces first; refuses what is not a component list. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
@@ -1747,6 +1747,16 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 - User impact: Callers can recover rather than lose the Python session.
 - Owner decision: Owner approved a catchable error on 2026-11-05 (#1158).
 - Evidence: [isphysical-casa](#componentlist-evidence-isphysical-casa).
+
+##### iscomponentlist-cyclic-input: Previously agreed
+
+- Inputs: A self-referential Python list passed to componentlist.iscomponentlist.
+- CASA: CASA 6.7.6-14 terminates the Python process with SIGSEGV.
+- casa-rs: Logs the placeholder warning and returns False without recursing forever.
+- Rationale: A type-check placeholder should not terminate its caller.
+- User impact: Callers retain the Python session.
+- Owner decision: Owner approved correcting CASA crashes as a class on 2026-11-05; see docs/simulation/owner-decisions-20261105.md.
+- Evidence: [iscomponentlist-casa](#componentlist-evidence-iscomponentlist-casa).
 
 #### componentlist evidence
 
@@ -1888,6 +1898,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/componentlist_record_shape_units_oracle.py](https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/tools/simulation/componentlist_record_shape_units_oracle.py)
 - [crates/casars-python/python/tests/data/casa_componentlist_record_shape_units.json](https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/crates/casars-python/python/tests/data/casa_componentlist_record_shape_units.json)
 - [crates/casars-python/python/tests/test_componentlist_record_shape_units.py](https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/crates/casars-python/python/tests/test_componentlist_record_shape_units.py)
+
+<a id="componentlist-evidence-iscomponentlist-casa"></a>
+##### iscomponentlist-casa
+
+**CASA-recorded values — measured.** 87 CASA 6.7.6-14 calls cover argument forms, oversized integers and empty, populated and released lists; a separate cyclic-input process exits with SIGSEGV. componentlist.iscomponentlist.
+
+- [tools/simulation/componentlist_iscomponentlist_oracle.py](https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/tools/simulation/componentlist_iscomponentlist_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_iscomponentlist.json](https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/crates/casars-python/python/tests/data/casa_componentlist_iscomponentlist.json)
+- [crates/casars-python/python/tests/test_componentlist_iscomponentlist.py](https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/crates/casars-python/python/tests/test_componentlist_iscomponentlist.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 ### measures
 
