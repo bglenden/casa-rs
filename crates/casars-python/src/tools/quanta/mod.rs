@@ -46,6 +46,19 @@ fn output_unit(value: Option<Bound<'_, PyAny>>, default: &str) -> PyResult<Strin
     }
 }
 
+/// The format placeholders accept text or bytes and ignore their contents.
+fn format_argument(value: Option<Bound<'_, PyAny>>, name: &str) -> PyResult<()> {
+    if let Some(value) = value
+        && !value.is_instance_of::<PyString>()
+        && !value.is_instance_of::<PyBytes>()
+    {
+        return Err(PyTypeError::new_err(format!(
+            "argument _{name} must be a string"
+        )));
+    }
+    Ok(())
+}
+
 /// CASA's `quanta` tool.
 #[pyclass(name = "quanta", module = "casars.tools", frozen)]
 pub(crate) struct PyQuanta;
@@ -390,11 +403,20 @@ impl PyQuanta {
         call(py, || ops::relational(&v, &a, "ge"))
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
+    /// CASA's placeholder: warn and return `"F"`.
     #[pyo3(signature = (t = None), text_signature = "($self, t='')")]
-    fn getformat(&self, t: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("getformat")
+    fn getformat(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] t: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        format_argument(t, "t")?;
+        emit(
+            py,
+            LOGGER,
+            &[LogLine::warning("getformat NOT IMPLEMENTED YET!")],
+        )?;
+        CasaValue::Text("F".to_string()).into_python(py)
     }
 
     /// CASA's scalar quantity comparison.
@@ -504,15 +526,22 @@ impl PyQuanta {
         Ok(result)
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
+    /// CASA's placeholder: warn and return `False`.
     #[pyo3(signature = (t = None, v = None), text_signature = "($self, t='', v='F')")]
     fn setformat(
         &self,
-        t: Option<&Bound<'_, PyAny>>,
-        v: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] t: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] v: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("setformat")
+        format_argument(t, "t")?;
+        format_argument(v, "v")?;
+        emit(
+            py,
+            LOGGER,
+            &[LogLine::warning("setformat NOT IMPLEMENTED YET!")],
+        )?;
+        CasaValue::Bool(false).into_python(py)
     }
 
     /// CASA's scalar sin of a quantity.
