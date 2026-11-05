@@ -44,7 +44,7 @@ pub fn row_layout(problem: &CompiledProblem) -> BlockShape {
 }
 
 /// What bounds the samples a row of `windows` places: its most selected
-/// channels, and from the storage owner's `CHAN_FREQ` the smallest first
+/// channels, and from the storage owner's `CHAN_FREQ` the smallest adjacent
 /// separation and the widest span of any window's selected channels,
 /// widened by [`FRAME_MARGIN`]. A window without a catalog leaves its rows
 /// evenly spaced ([`RowSpectrum::evenly_spaced`]); the storage owner binds
@@ -64,17 +64,25 @@ fn row_spectrum<'a>(windows: impl Iterator<Item = &'a SpectralWindowSelection>) 
             if channels.len() < 2 {
                 continue;
             }
-            let (Some(first), Some(second), Some(last)) =
-                (frequency(0), frequency(1), frequency(channels.len() - 1))
-            else {
+            let (Some(first), Some(last)) = (frequency(0), frequency(channels.len() - 1)) else {
                 known = false;
                 continue;
             };
-            let spacing = (second - first).abs() * (1.0 - FRAME_MARGIN);
-            if spacing > 0.0
-                && (spectrum.first_spacing_hz == 0.0 || spacing < spectrum.first_spacing_hz)
-            {
-                spectrum.first_spacing_hz = spacing;
+            // A per-time selection may omit leading channels, so any
+            // adjacent gap can become the row's first gap. Native row
+            // frequencies are strictly monotonic: removing intervening
+            // channels cannot make a smaller gap.
+            for index in 1..channels.len() {
+                let (Some(left), Some(right)) = (frequency(index - 1), frequency(index)) else {
+                    known = false;
+                    break;
+                };
+                let spacing = (right - left).abs() * (1.0 - FRAME_MARGIN);
+                if spacing > 0.0
+                    && (spectrum.first_spacing_hz == 0.0 || spacing < spectrum.first_spacing_hz)
+                {
+                    spectrum.first_spacing_hz = spacing;
+                }
             }
             spectrum.span_hz = spectrum
                 .span_hz
@@ -97,6 +105,21 @@ pub const BOOTSTRAP_SOURCE_BYTES: usize = 64 << 20;
 mod tests {
     use super::*;
     use casa_imaging_model::SpectralWindowCoordinateCatalog;
+
+    /// A time can omit leading channels. Its first gap can be smaller than
+    /// the full selection's, so it must not exceed the admitted row work.
+    #[test]
+    fn row_spectrum_bounds_the_first_gap_of_a_compacted_time() {
+        let catalogue =
+            SpectralWindowCoordinateCatalog::new(vec![1.0e9, 1.1e9, 1.101e9, 1.2e9], 1.0e6)
+                .expect("coordinates");
+        let window =
+            SpectralWindowSelection::new(0, vec![0, 1, 2, 3]).with_coordinate_catalog(catalogue);
+        let spectrum = row_spectrum(std::iter::once(&window));
+        assert_eq!(spectrum.channels, 4);
+        assert!((spectrum.first_spacing_hz - 0.99e6).abs() < 1e-6);
+        assert!((spectrum.span_hz - 2.02e8).abs() < 1e-6);
+    }
 
     /// The source and pass reserve for the wider final prediction as well
     /// as the channels selected for gridding.
