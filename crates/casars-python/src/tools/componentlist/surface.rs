@@ -136,7 +136,7 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     of_one("getfluxerror", R::Floats, No),
-    of_one("getfluxpol", R::Text, No),
+    of_one("getfluxpol", R::Text, Yes),
     of_one("getfluxunit", R::Text, Yes),
     of_one("getfluxvalue", R::Floats, Yes),
     of_one("getfreq", R::Record, Yes),
