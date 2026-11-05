@@ -163,10 +163,9 @@ impl UnitRegistry {
             return Some(entry.val);
         }
         // A parse begun before FITS registration can finish after the cache
-        // is cleared. Its state tag prevents reusing stale `S` expressions.
+        // is cleared. Any FITS alias can change an expression's meaning.
         if let Some(cached) = self.cache.read().unwrap().get(name)
-            && (!name.contains('S')
-                || cached.fits_enabled == self.fits_enabled.load(Ordering::Acquire))
+            && cached.fits_enabled == self.fits_enabled.load(Ordering::Acquire)
         {
             return Some(cached.value);
         }
@@ -182,14 +181,16 @@ impl UnitRegistry {
         self.prefixes.get(name).map(|p| p.factor)
     }
 
-    /// Adds a parsed unit expression to the cache.
+    /// Adds a parsed unit expression to the cache, tagged with the current
+    /// FITS state. The caller must ensure `val` was computed in that state;
+    /// the parser captures the state before it begins instead.
     pub fn cache_put(&self, name: &str, val: UnitVal) {
-        self.cache_put_at_fits_state(name, val, self.cache_fits_state(name));
+        self.cache_put_at_fits_state(name, val, self.cache_fits_state());
     }
 
     /// Capture the relevant registry state before parsing a cache entry.
-    pub(crate) fn cache_fits_state(&self, name: &str) -> bool {
-        name.contains('S') && self.fits_enabled.load(Ordering::Acquire)
+    pub(crate) fn cache_fits_state(&self) -> bool {
+        self.fits_enabled.load(Ordering::Acquire)
     }
 
     /// Cache the value with the state captured before its parse began.
@@ -322,6 +323,18 @@ mod tests {
         existing.put_user("S", UnitVal::NODIM, "existing user override");
         existing.add_fits_units();
         assert_eq!(existing.lookup_unit("S").unwrap().dim, UnitVal::NODIM.dim);
+    }
+
+    #[test]
+    fn fits_registration_rejects_a_late_cache_write_for_other_aliases() {
+        let reg = UnitRegistry::from_builtin();
+        reg.put_user("IXEL", UnitVal::new(2.0, UnitVal::TIME.dim), "test");
+        // Before FITS, PIXEL can parse as peta-IXEL. A parse that began then
+        // may finish and write its result after the PIXEL alias is installed.
+        let stale = UnitVal::new(2.0e15, (UnitVal::TIME * UnitVal::LENGTH).dim);
+        reg.add_fits_units();
+        reg.cache_put_at_fits_state("PIXEL.m", stale, false);
+        assert!(reg.lookup_unit("PIXEL.m").is_none());
     }
 
     #[test]
