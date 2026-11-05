@@ -308,3 +308,69 @@ fn materializing_every_channel_holds_at_most_its_charge() {
     }
     assert!(breaches.is_empty(), "{breaches:#?}");
 }
+
+/// The common-beam workspace includes a beam for every blank plane as well
+/// as the nonidentical fitted beams: it must stay within materialization's
+/// charge even for a long block of tiny planes.
+#[test]
+fn a_block_with_many_blank_planes_holds_its_beam_workspace_charge() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let channels = 12_000;
+    let problem = reconstruction_problem_of_shape(
+        3,
+        [1, 1],
+        channels,
+        1,
+        ReconstructionBasis::ChannelLocal { channels },
+        ReconstructionAlgorithm::Hogbom,
+        ReconstructionControls::new(0, 1.0, 0.0),
+    );
+    let lifecycle = model_lifecycle(&problem);
+    let completion = Scene::new(&problem).initial(&problem, empty_final_model(&lifecycle));
+    let normal = completion.normal_state();
+    let shape = PlaneShape::new(16, 16);
+    let psf_pixels = gaussian_psf([16, 16], 3.0);
+    let narrow = PsfSummary::new(&psf_pixels, shape).expect("a fitted PSF");
+    let broad = narrow.with_domain_beam(
+        &psf_pixels,
+        shape,
+        casa_imaging_deconvolution::RestoringBeam::new(5.0, 4.0, 0.0).expect("a broad beam"),
+    );
+    let read = |_: MaskPlaneKey| Ok::<_, MaskError>(None);
+    let psf = |key: MaskPlaneKey| match key.channel {
+        0 => Some(narrow),
+        1 => Some(broad),
+        _ => None,
+    };
+    let source = AutoMaskSource {
+        read: &read,
+        psf: &psf,
+        workers: 1,
+    };
+    let plans =
+        ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::AutoMultithresh {
+            coordinate: problem.geometry().domains()[0].direction(),
+            controls: controls(),
+            completed_major_cycles: 0,
+            cycle_threshold_reached: false,
+            previous: None,
+            stopped_channels: Box::new([]),
+        }])
+        .expect("an automatic mask");
+    let admitted = plans.materialize_bytes(normal, 1);
+    PEAK.store(0, Ordering::Relaxed);
+    BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+    MEASURING.store(true, Ordering::Relaxed);
+    let made = plans.materialize(
+        completion.final_model(),
+        normal,
+        &MaskSources {
+            auto: Some(&source),
+            beam: None,
+        },
+    );
+    MEASURING.store(false, Ordering::Relaxed);
+    let held = PEAK.load(Ordering::Relaxed);
+    assert!(made.is_ok(), "materialization failed");
+    assert!(held <= admitted, "held {held} bytes, admitted {admitted}");
+}
