@@ -30,12 +30,27 @@ from _casa_tools import (
 CASA = casa_signatures("quanta")
 
 IMPLEMENTED = {
-    "abs", "acos", "add", "angle", "asin", "atan", "canon", "canonical", "ceil", "check", "compare", "convert", "cos", "div", "done",
+    "abs", "acos", "add", "angle", "asin", "atan", "atan2", "canon", "canonical", "ceil", "check", "compare", "convert", "cos", "div", "done",
     "floor", "formxxx", "getunit", "getvalue", "isangle", "isquantity", "mul", "neg", "quantity", "sin", "splitdate", "sub", "tan", "time",
     "toangle", "tos", "totime", "type", "unit",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 
+
+def test_atan2_matches_casa() -> None:
+    fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_atan2.json").read_text())
+    qa = quanta()
+    for case in fixture["cases"]:
+        if "error" in case:
+            with pytest.raises(RuntimeError) as error:
+                qa.atan2(case["x"], case["y"])
+            assert str(error.value) == case["error"]["message"]
+        else:
+            result = qa.atan2(case["x"], case["y"])
+            assert result["unit"] == case["result"]["unit"]
+            assert result["value"] == pytest.approx(case["result"]["value"], abs=1e-14)
+            if result["value"] == 0:
+                assert math.copysign(1, result["value"]) == math.copysign(1, case["result"]["value"])
 
 def test_trigonometry_matches_casa() -> None:
     fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_trigonometry.json").read_text())
