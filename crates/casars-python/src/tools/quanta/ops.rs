@@ -243,6 +243,25 @@ pub(super) fn compare(left: &Variant, right: &Variant) -> ConvertResult<CasaValu
     ))
 }
 
+/// `qa.checkfreq(cm)`: the dimensions accepted by casacore's MVFrequency.
+pub(super) fn checkfreq(value: &Variant) -> ConvertResult<CasaValue> {
+    let dimension = quantity(value)?.unit().val().dim;
+    let time = UnitDim::basis(Dimension::Time);
+    let angle = UnitDim::basis(Dimension::Angle);
+    let length = UnitDim::basis(Dimension::Length);
+    let mass = UnitDim::basis(Dimension::Mass);
+    let accepted = [
+        time,
+        UnitDim::NODIM / time,
+        angle / time,
+        length,
+        UnitDim::NODIM / length,
+        mass * length * length / time / time,
+        mass * length,
+    ];
+    Ok(CasaValue::Bool(accepted.contains(&dimension)))
+}
+
 /// `qa.isangle(v)`: angles and times are accepted by casacore's angle form.
 pub(super) fn isangle(value: &Variant) -> ConvertResult<CasaValue> {
     let value = quantity(value)?;

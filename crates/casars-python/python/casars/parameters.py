@@ -415,9 +415,10 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
         so the task tells a value the caller chose from one it fills in.
         """
 
-        projected = _native().parameter_provider_invocation(
-            self.surface, self._explicit_values()
-        )
+        explicit = self._explicit_values()
+        originals = {name: value for name, value in self._overrides.items()
+                     if name in explicit and isinstance(value, str)}
+        projected = _native().parameter_provider_invocation(self.surface, explicit, originals)
         return ProviderInvocation(
             protocol_name=projected["protocol_name"],
             protocol_version=projected["protocol_version"],

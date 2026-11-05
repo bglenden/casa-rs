@@ -154,7 +154,7 @@ const METHODS: &[Method] = &[
             param("precision", K::Int, Int(6)),
         ],
         R::Text,
-        No,
+        Yes,
     ),
     of_one("getrefdirframe", R::Text, No),
     method(
@@ -165,7 +165,7 @@ const METHODS: &[Method] = &[
             param("precision", K::Int, Int(6)),
         ],
         R::Text,
-        No,
+        Yes,
     ),
     of_one("getshape", R::Record, No),
     of_one("getspectrum", R::Record, Yes),

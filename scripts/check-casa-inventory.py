@@ -37,6 +37,7 @@ INVENTORY = REPO_ROOT / "resources" / "casa-compat" / f"casa-{CASA_VERSION}"
 SURFACES = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources" / "parameter-surfaces.json"
 REPORT = REPO_ROOT / "docs" / "reference" / "casa-compatibility.md"
 DIRECT_TYPES = REPO_ROOT / "crates" / "casa-task-runtime" / "resources" / "casa-direct-types.json"
+SINGLE_REQUIRED_PATHS = REPO_ROOT / "crates" / "casa-task-runtime" / "resources" / "casa-single-required-paths.json"
 SEMANTICS = REPO_ROOT / "resources" / "casa-compat" / "semantics"
 TOOL_SIGNATURES = REPO_ROOT / "crates" / "casars-python" / "python" / "tests" / "data"
 # The CASA classes casa-rs presents outside `casars.tools`: `simutil` is a
@@ -327,7 +328,9 @@ def render(tasks: dict[str, dict[str, Any]], surfaces: dict[str, dict[str, Any]]
         "also covered where the recorded vector coercions apply. "
         "Float-shaped `cIntVec` inputs keep the native diagnostic because a JSON integer "
         "outside the native range may lose its original spelling. "
-        "Required paths, unions and variants retain casa-rs's diagnostics (#1099). "
+        "For explicit scalar inputs checked by the task, a missing absolute or explicitly "
+        "relative path gets CASA's wording when the schema has one direct required path. "
+        "Other required-path cases, unions and variants retain casa-rs's diagnostics (#1099). "
         "CASA accepts booleans as integers and coerces them to floats; where casa-rs refuses "
         "one, it keeps its own message. Exception classes follow the casa-rs Python contract.",
         "",
@@ -372,6 +375,27 @@ def main() -> int:
             DIRECT_TYPES.write_text(direct_text, encoding="utf-8")
         elif not DIRECT_TYPES.is_file() or DIRECT_TYPES.read_text(encoding="utf-8") != direct_text:
             raise InventoryError(f"{DIRECT_TYPES.relative_to(REPO_ROOT)} is stale; run scripts/check-casa-inventory.py --write")
+        def requires_path(schema: Any) -> bool:
+            if isinstance(schema, dict):
+                return schema.get("type") in ("cReqPath", "cReqPathVec") or any(
+                    requires_path(value) for value in schema.values()
+                )
+            return isinstance(schema, list) and any(requires_path(value) for value in schema)
+
+        # CASA's combined path errors can pair a different parameter and value
+        # when several required paths fail, so exclude those task schemas.
+        required_paths = {}
+        for name, task in sorted(tasks.items()):
+            candidates = [parameter for parameter in task["parameters"] if requires_path(parameter["schema"])]
+            if len(candidates) == 1:
+                candidate = candidates[0]
+                if candidate["schema"].get("type") == "cReqPath" and candidate["schema"].get("coerce") == "expand_path":
+                    required_paths[name] = candidate["name"]
+        required_text = json.dumps(required_paths, indent=2, ensure_ascii=False) + "\n"
+        if args.write:
+            SINGLE_REQUIRED_PATHS.write_text(required_text, encoding="utf-8")
+        elif not SINGLE_REQUIRED_PATHS.is_file() or SINGLE_REQUIRED_PATHS.read_text(encoding="utf-8") != required_text:
+            raise InventoryError(f"{SINGLE_REQUIRED_PATHS.relative_to(REPO_ROOT)} is stale; run scripts/check-casa-inventory.py --write")
         text = render(tasks, load_surfaces(), load_tool_signatures())
     except (InventoryError, ValueError, KeyError) as error:
         print(f"casa-inventory: {error}", file=sys.stderr)
