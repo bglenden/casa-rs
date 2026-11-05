@@ -20,9 +20,7 @@
 //! Stokes whatever `polarization` says.
 //!
 //! Divergences, recorded in `docs/CASA (C++) bugs.md`: `addcomponent` keeps
-//! the flux's double precision (`add`), and records give a shape's axes in
-//! arcmin and degrees, as CASA gives a component read from a table, where
-//! CASA gives one it built in the units it was given.
+//! the flux's double precision (`add`).
 
 mod add;
 mod ops;

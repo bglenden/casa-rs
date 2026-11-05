@@ -1662,7 +1662,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `sort` | `criteria='Flux', log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `spectrumtype` | `which` | Implemented | A component's spectrum name. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `summarize` | `which=-1` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `torecord` |  | Implemented | CASA's record of the list. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
+| `torecord` |  | Implemented | CASA's list record, including shape units supplied in memory and table units after reopening. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa), [record-shape-units-casa](#componentlist-evidence-record-shape-units-casa) |
 
 #### componentlist interacting modes and tool behavior
 
@@ -1710,17 +1710,6 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 - Rationale: Avoids a needless single-precision rounding.
 - User impact: Fluxes differ from CASA's by at most 6e-8 relative.
 - Owner decision: Owner approved on 2026-11-05; see docs/simulation/owner-decisions-20261105.md.
-- Evidence: [bugs-record](#componentlist-evidence-bugs-record).
-
-##### shape-axes-recorded-units: Unfinished
-
-- Record: [The `cl` tool records a shape's axes in the units it was given](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md#the-cl-tool-records-a-shapes-axes-in-the-units-it-was-given)
-- Inputs: cl.addcomponent(majoraxis='1arcsec', ...) then reading the shape record.
-- CASA: TwoSidedShape remembers the units its axes were set in and records them so ({'unit':'arcsec','value':1.0}); a shape read from a table records arcmin axes and degree position angle.
-- casa-rs: Holds radians and records every shape as CASA records one read from a table (arcmin, 0.016666666666666666).
-- Rationale: Match CASA units in memory; the physical quantities and persisted table already agree.
-- User impact: The record's unit and value differ from the input's but denote the same quantity.
-- Owner decision: Owner approved matching CASA input units on 2026-11-05; see #1187 and docs/simulation/owner-decisions-20261105.md.
 - Evidence: [bugs-record](#componentlist-evidence-bugs-record).
 
 ##### addcomponent-point-for-bad-shape: Previously agreed
@@ -1852,6 +1841,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/componentlist_getshape_oracle.py](https://github.com/bglenden/casa-rs/blob/cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244/tools/simulation/componentlist_getshape_oracle.py)
 - [crates/casars-python/python/tests/data/casa_componentlist_getshape.json](https://github.com/bglenden/casa-rs/blob/cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244/crates/casars-python/python/tests/data/casa_componentlist_getshape.json)
 - [crates/casars-python/python/tests/test_componentlist_getshape.py](https://github.com/bglenden/casa-rs/blob/cd27339ae7fa78b6cce0beb4ace9c0eb4e82d244/crates/casars-python/python/tests/test_componentlist_getshape.py)
+
+<a id="componentlist-evidence-record-shape-units-casa"></a>
+##### record-shape-units-casa
+
+**CASA-recorded values — measured.** Four point, Gaussian and disk shapes at each of three stages: added, renamed and reopened, including axis and angle units. componentlist.torecord shape records.
+
+- [tools/simulation/componentlist_record_shape_units_oracle.py](https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/tools/simulation/componentlist_record_shape_units_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_record_shape_units.json](https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/crates/casars-python/python/tests/data/casa_componentlist_record_shape_units.json)
+- [crates/casars-python/python/tests/test_componentlist_record_shape_units.py](https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/crates/casars-python/python/tests/test_componentlist_record_shape_units.py)
 
 ### measures
 
