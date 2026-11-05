@@ -18,6 +18,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[automatic-mask convolution on rectangular pixels](#automatic-mask-convolution-requires-square-pixels-in-casa),
 [byte order of integer quantity arrays](#casa-misreads-big-endian-integer-quantity-arrays),
 [a Taylor run with no weight on its first correlation](#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero),
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
@@ -3779,6 +3780,25 @@ with. CASA's cube doesn't: the gap, 0.0057, is about the 1.1 Jy component times
 CASA's MFS does. `tools/casa-compat/tclean_summary_matrix.py --case
 mosaic-seed-cube --case mosaic-seed-cube-no-cut` shows it, and those two cases
 differ for this reason.
+
+## Automatic-mask convolution requires square pixels in CASA
+
+- Date noted: 2026-11-05
+- Status: CASA 6.7.6.14 limitation; casa-rs keeps supporting rectangular pixels (#1140)
+- Affected code: `SDMaskHandler::autoMaskByMultiThreshold` and
+  `Image2DConvolver::convolve`
+
+With `usemask='auto-multithresh'`, `imsize=64`, `cell=['8arcsec',
+'16arcsec']`, a residual with a 5-by-5-pixel island and a stored 72-arcsec
+circular beam, CASA fails when it reaches convolution: “Pixels must be square,
+please regrid your image so that they are.” `Image2DConvolver::convolve` checks
+the two direction increments and throws before it convolves. casa-rs keeps its
+existing rectangular-cell support: pruning divides the beam solid angle by the
+product of the two pixel increments, and smoothing evaluates the Gaussian at
+both angular pixel offsets. The T1 restart law
+`tclean_automatic_restart_prefers_the_residual_beam` checks the resulting mask;
+`rectangular_pixel_smoothing_uses_both_cell_sizes` checks a rotated Gaussian.
+The CASA failure was observed directly; there is no CASA mask to compare.
 
 ## CASA misreads big-endian integer quantity arrays
 

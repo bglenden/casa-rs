@@ -432,8 +432,8 @@ fn largest_beam(psfs: &[Option<PsfSummary>]) -> Option<RestoringBeam> {
 
 /// The beam a block's masks are smoothed and pruned by: the common beam of
 /// its PSF beams, with blank planes holding the domain's largest. `None`
-/// means the whole domain has no fitted beam. CASA converts by the first
-/// direction axis's increment; the common beam is found in radians.
+/// means the whole domain has no fitted beam. The common beam is found in
+/// world coordinates, then its area and smoothing use both pixel increments.
 fn block_beam(
     psfs: &[Option<PsfSummary>],
     polarizations: usize,
@@ -469,7 +469,8 @@ fn block_beam(
         common.minor_fwhm_rad() / cell,
         common.position_angle_rad(),
         sidelobe,
-    );
+    )
+    .with_cell_scale([1.0, (coordinate.increment_rad()[1] / cell).abs()]);
     validate_beam(&beam)?;
     Ok(Some(beam))
 }
@@ -586,6 +587,38 @@ fn log_summary(first_channel: usize, rows: &[AutoMultithreshEvidence], polarizat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn block_beam_uses_both_direction_increments() {
+        use crate::plane::PlaneShape;
+        use casa_imaging_model::{DirectionFrame, Projection, SkyDirection};
+        let shape = PlaneShape::new(64, 64);
+        let psf = (0..shape.len())
+            .map(|i| {
+                let [x, y] = shape.pixel(i);
+                (-((x as f64 - 32.0).powi(2) + (y as f64 - 32.0).powi(2)) / 8.0).exp()
+            })
+            .collect::<Vec<_>>();
+        let summary = PsfSummary::new(&psf, shape).unwrap();
+        let coordinate = |y| {
+            DirectionCoordinateSpec::new(
+                Projection::Sin,
+                SkyDirection::new(DirectionFrame::J2000, 1.0, 0.5),
+                [32.0, 32.0],
+                [-1e-4, y],
+                [[1.0, 0.0], [0.0, 1.0]],
+                [180.0, 90.0],
+            )
+        };
+        let square = block_beam(&[Some(summary)], 1, None, 0.1, coordinate(1e-4))
+            .unwrap()
+            .unwrap();
+        let rectangular = block_beam(&[Some(summary)], 1, None, 0.1, coordinate(2e-4))
+            .unwrap()
+            .unwrap();
+        assert_eq!(rectangular, square.with_cell_scale([1.0, 2.0]));
+        assert_ne!(square, rectangular);
+    }
 
     /// A blank plane inherits the largest beam in the image, even when that
     /// beam is in another channel block (`SIImageStore::makeImageBeamSet`).

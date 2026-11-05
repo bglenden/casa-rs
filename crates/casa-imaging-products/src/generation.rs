@@ -118,6 +118,13 @@ fn fit_beams(
             let ordinal = start + index;
             let domain =
                 &inputs.problem().geometry().domains()[ordinal / (channels * polarizations)];
+            if matches!(domain.role(), casa_imaging_model::ImageDomainRole::Main)
+                && let Some(saved) = inputs.saved_psf_beams()
+            {
+                return Ok(PlaneBeam::Fitted(
+                    saved[ordinal % (channels * polarizations)],
+                ));
+            }
             let plane = normal_state.read_plane(
                 inputs.model_domain_ordinal(domain.role()),
                 (ordinal / polarizations) % channels,

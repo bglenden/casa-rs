@@ -7,6 +7,8 @@
 
 use std::mem::size_of;
 
+#[path = "continuum_products/beam_grid.rs"]
+mod beam_grid;
 mod common;
 use common::continuum::{
     SHAPE, TWO_DOMAIN_PRODUCTS, axes, continuum_problem,

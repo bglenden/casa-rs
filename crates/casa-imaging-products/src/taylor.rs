@@ -519,23 +519,21 @@ impl<'a> SolvedFamily<'a> {
             .collect::<Vec<_>>();
         let (inverse, principal_residual) = principal_residuals(&family.psf, &family.residual)?;
         let list = inputs.problem().product_list();
-        let fit = list
-            .publication()
-            .members()
-            .iter()
-            .any(|id| {
-                list.entries()[id.ordinal()].beam() != casa_imaging_model::ProductBeamRule::None
-            })
-            .then(|| {
-                fit_plane_beam(
-                    &family.psf[0],
-                    state.shape(),
-                    inputs.cell_size_rad_for_domain(domain_role(state)),
-                    psf_cutoff,
-                )
-            })
-            .transpose()?
-            .unwrap_or(PlaneBeam::Blank);
+        let needs_beam = list.publication().members().iter().any(|id| {
+            list.entries()[id.ordinal()].beam() != casa_imaging_model::ProductBeamRule::None
+        });
+        let fit = if !needs_beam {
+            PlaneBeam::Blank
+        } else if let Some(saved) = inputs.saved_psf_beams() {
+            PlaneBeam::Fitted(saved[polarization])
+        } else {
+            fit_plane_beam(
+                &family.psf[0],
+                state.shape(),
+                inputs.cell_size_rad_for_domain(domain_role(state)),
+                psf_cutoff,
+            )?
+        };
         Ok(Self {
             polarization,
             family,

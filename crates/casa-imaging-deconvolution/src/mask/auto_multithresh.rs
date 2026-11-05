@@ -41,6 +41,7 @@ pub struct AutoMaskBeam {
     minor_fwhm_pixels: f64,
     position_angle_rad: f64,
     area_pixels: f64,
+    cell_scale: [f64; 2],
     sidelobe_fraction: f64,
 }
 
@@ -60,8 +61,17 @@ impl AutoMaskBeam {
             position_angle_rad,
             area_pixels: std::f64::consts::PI * major_fwhm_pixels * minor_fwhm_pixels
                 / (4.0 * std::f64::consts::LN_2),
+            cell_scale: [1.0, 1.0],
             sidelobe_fraction,
         }
+    }
+
+    /// The cell increments in units of the first axis, used for smoothing
+    /// and to convert the world beam area to image pixels.
+    pub(super) fn with_cell_scale(mut self, cell_scale: [f64; 2]) -> Self {
+        self.cell_scale = cell_scale;
+        self.area_pixels /= cell_scale[0] * cell_scale[1];
+        self
     }
 }
 
@@ -712,9 +722,11 @@ fn smooth(mask: &[bool], shape: [usize; 2], smooth_factor: f64, beam: AutoMaskBe
     // pixels, so each axis's offsets stop there: a beam wider than the
     // image (a PSF fitted to few short baselines) would otherwise ask for
     // a kernel of its own size to the same sums.
-    let reach = (5.0 * sigma_major + 0.5) as isize + 1;
     let extent = |axis: usize| isize::try_from(shape[axis]).unwrap_or(isize::MAX) - 1;
-    let [reach_x, reach_y] = [reach.min(extent(0)), reach.min(extent(1))];
+    let reach = |axis: usize| {
+        ((5.0 * sigma_major / beam.cell_scale[axis] + 0.5) as isize + 1).min(extent(axis))
+    };
+    let [reach_x, reach_y] = [reach(0), reach(1)];
     let cos_pa = beam.position_angle_rad.cos();
     let sin_pa = beam.position_angle_rad.sin();
     // Each output pixel sums the kernel at its offsets to the mask's set
@@ -726,7 +738,10 @@ fn smooth(mask: &[bool], shape: [usize; 2], smooth_factor: f64, beam: AutoMaskBe
     let mut row = vec![0.0; 2 * reach_y.unsigned_abs() + 1];
     for dx in -reach_x..=reach_x {
         for (value, dy) in row.iter_mut().zip(-reach_y..=reach_y) {
-            let (dx, dy) = (dx as f64, dy as f64);
+            let (dx, dy) = (
+                dx as f64 * beam.cell_scale[0],
+                dy as f64 * beam.cell_scale[1],
+            );
             let u = dx * cos_pa + dy * sin_pa;
             let v = -dx * sin_pa + dy * cos_pa;
             *value = (-0.5 * ((u / sigma_minor).powi(2) + (v / sigma_major).powi(2))).exp();
@@ -830,6 +845,74 @@ mod tests {
         assert_eq!(evidence.negative_pixels, 1);
     }
 
+    /// A 9-pixel circular beam has half its square-cell area on 1:2 cells;
+    /// this determines whether a 25-pixel island passes half-beam pruning.
+    #[test]
+    fn rectangular_pixels_use_the_world_beam_area_for_pruning() {
+        let shape = [64, 64];
+        let mut residual = vec![0.0; 64 * 64];
+        for x in 30..35 {
+            for y in 30..35 {
+                residual[x * 64 + y] = 10.0;
+            }
+        }
+        let plane = AutoMaskPlane {
+            residual,
+            valid: vec![true; 64 * 64],
+            statistics: None,
+        };
+        let controls = AutoMultithreshControls {
+            sidelobe_factor: 2.0,
+            noise_factor: 4.25,
+            low_noise_factor: 1.5,
+            negative_factor: 0.0,
+            minimum_beam_fraction: 0.5,
+            smooth_factor: 1.0,
+            cut_threshold: 0.01,
+            grow_iterations: 0,
+            grow_prune: true,
+            minimum_percent_change: -1.0,
+            noise: NoiseEstimate::Fast,
+            verbose: false,
+        };
+        let cycle = AutoMaskCycle {
+            completed_major_cycles: 0,
+            threshold_reached: false,
+            stopped: false,
+        };
+        let beam = AutoMaskBeam::new(9.0, 9.0, 0.0, 0.1);
+        let (_, square) =
+            auto_multithresh(&plane, &vec![false; 64 * 64], shape, cycle, &controls, beam).unwrap();
+        let (mask, rectangular) = auto_multithresh(
+            &plane,
+            &vec![false; 64 * 64],
+            shape,
+            cycle,
+            &controls,
+            beam.with_cell_scale([1.0, 2.0]),
+        )
+        .unwrap();
+        assert_eq!((square.regions, square.pruned_regions), (1, 1));
+        assert_eq!((rectangular.regions, rectangular.pruned_regions), (1, 0));
+        assert!(mask.iter().any(|set| *set));
+    }
+
+    /// Smoothing uses angular distance along both axes, including rotation.
+    #[test]
+    fn rectangular_pixel_smoothing_uses_both_cell_sizes() {
+        let shape = [21, 21];
+        let mut mask = vec![false; shape[0] * shape[1]];
+        mask[10 * shape[1] + 10] = true;
+        let beam = AutoMaskBeam::new(10.0, 6.0, 0.3, 0.1).with_cell_scale([1.0, 2.0]);
+        let smoothed = smooth(&mask, shape, 1.0, beam);
+        let (dx, dy) = (1.0_f64, 2.0_f64);
+        let (cos, sin) = (0.3_f64.cos(), 0.3_f64.sin());
+        let (u, v) = (dx * cos + dy * sin, -dx * sin + dy * cos);
+        let expected =
+            (-4.0 * std::f64::consts::LN_2 * ((u / 6.0).powi(2) + (v / 10.0).powi(2))).exp();
+        assert!((smoothed[11 * shape[1] + 11] - expected).abs() < 1e-12);
+    }
+
     #[test]
     fn smoothing_scatters_the_gaussian_each_pixel_gathers() {
         let shape = [13, 9];
@@ -851,7 +934,10 @@ mod tests {
                         if let Some(pixel) = offset_mask_pixel([x, y], [dx, dy], shape)
                             && mask[pixel[0] * shape[1] + pixel[1]]
                         {
-                            let (dx, dy) = (dx as f64, dy as f64);
+                            let (dx, dy) = (
+                                dx as f64 * beam.cell_scale[0],
+                                dy as f64 * beam.cell_scale[1],
+                            );
                             let u = dx * 0.6_f64.cos() + dy * 0.6_f64.sin();
                             let v = -dx * 0.6_f64.sin() + dy * 0.6_f64.cos();
                             gathered += (-0.5
@@ -875,6 +961,7 @@ mod tests {
             minor_fwhm_pixels: 1.0,
             position_angle_rad: 0.0,
             area_pixels: 1.0,
+            cell_scale: [1.0, 1.0],
             sidelobe_fraction: 0.0,
         }
     }
