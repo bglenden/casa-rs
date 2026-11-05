@@ -1,0 +1,1086 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "quantity",
+      "value": [
+        0
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        -1
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -1.0
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        2147483648
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -2147483648.0
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        -2147483649
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 2147483647.0
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        9007199254740993
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        9223372036854775807
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -1.0
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        1,
+        2
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        1.0
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0
+        ]
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        1.0,
+        2.0
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0,
+          2.0
+        ]
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        1,
+        2.0
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0,
+          2.0
+        ]
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        true
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "array": [
+          2147483648
+        ],
+        "dtype": "int64"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -2147483648.0
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "array": [
+          9223372036854775808
+        ],
+        "dtype": "uint64"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "array": [
+          1,
+          2
+        ],
+        "dtype": "int32"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "array": [
+          1
+        ],
+        "dtype": "float64"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0
+        ]
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "array": [
+          1,
+          2
+        ],
+        "dtype": "float64"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": [
+          1.0,
+          2.0
+        ]
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "array": [
+          true
+        ],
+        "dtype": "bool"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "array": [],
+        "dtype": "int64"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "array": [],
+        "dtype": "bool"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "tuple": [
+          2147483648
+        ]
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -2147483648.0
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "tuple": [
+          1,
+          2
+        ]
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        1,
+        2
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        1.0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        1.0,
+        2.0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": [
+        true
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "array": [
+          2147483648
+        ],
+        "dtype": "int64"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "array": [
+          1,
+          2
+        ],
+        "dtype": "int32"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "value": {
+        "array": [
+          1
+        ],
+        "dtype": "float64"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": [
+        0
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": [
+        -1
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": [
+        2147483648
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": [
+        -2147483649
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": [
+        9007199254740993
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": [
+        9223372036854775807
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": [
+        1,
+        2
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": [
+        1.0
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": [
+        1.0,
+        2.0
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": [
+        1,
+        2.0
+      ],
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": [
+        true
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": [],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "array": [
+          2147483648
+        ],
+        "dtype": "int64"
+      },
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "array": [
+          9223372036854775808
+        ],
+        "dtype": "uint64"
+      },
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "array": [
+          1,
+          2
+        ],
+        "dtype": "int32"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "array": [
+          1
+        ],
+        "dtype": "float64"
+      },
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "array": [
+          1,
+          2
+        ],
+        "dtype": "float64"
+      },
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "array": [
+          true
+        ],
+        "dtype": "bool"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "array": [],
+        "dtype": "int64"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "array": [],
+        "dtype": "bool"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "tuple": [
+          2147483648
+        ]
+      },
+      "unit": "m",
+      "result": "m"
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "tuple": [
+          1,
+          2
+        ]
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": [
+        0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": [
+        1,
+        2
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": [
+        1.0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": [
+        1.0,
+        2.0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": [
+        true
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "array": [
+          2147483648
+        ],
+        "dtype": "int64"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "array": [
+          1,
+          2
+        ],
+        "dtype": "int32"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "value": {
+        "array": [
+          1
+        ],
+        "dtype": "float64"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        0
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        -1
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        2147483648
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -2147483647.0
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        -2147483649
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 2147483648.0
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        9007199254740993
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        9223372036854775807
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        1,
+        2
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        1.0
+      ],
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        1.0,
+        2.0
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        1,
+        2.0
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        true
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": [],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "array": [
+          2147483648
+        ],
+        "dtype": "int64"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -2147483647.0
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "array": [
+          9223372036854775808
+        ],
+        "dtype": "uint64"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "array": [
+          1,
+          2
+        ],
+        "dtype": "int32"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "array": [
+          1
+        ],
+        "dtype": "float64"
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": 2.0
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "array": [
+          1,
+          2
+        ],
+        "dtype": "float64"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "array": [
+          true
+        ],
+        "dtype": "bool"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "array": [],
+        "dtype": "int64"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "array": [],
+        "dtype": "bool"
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "tuple": [
+          2147483648
+        ]
+      },
+      "unit": "m",
+      "result": {
+        "unit": "m",
+        "value": -2147483647.0
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "tuple": [
+          1,
+          2
+        ]
+      },
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        1,
+        2
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        1.0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        1.0,
+        2.0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "value": [
+        true
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "array": [
+          2147483648
+        ],
+        "dtype": "int64"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "array": [
+          1,
+          2
+        ],
+        "dtype": "int32"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "value": {
+        "array": [
+          1
+        ],
+        "dtype": "float64"
+      },
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    }
+  ]
+}
