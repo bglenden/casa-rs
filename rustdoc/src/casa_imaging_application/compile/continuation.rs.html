@@ -20,9 +20,9 @@
 <a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Continuation {
 <a href=#21 id=21 data-nosnippet>21</a>    <span class="doccomment">/// The earlier model, on the image's own grid.
 <a href=#22 id=22 data-nosnippet>22</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) start_model: <span class="prelude-ty">Option</span>&lt;StartModel&gt;,
-<a href=#23 id=23 data-nosnippet>23</a>    <span class="doccomment">/// The charge of a reused CLEAN mask's support, held through publication.
+<a href=#23 id=23 data-nosnippet>23</a>    <span class="doccomment">/// Charges for a reused CLEAN mask and saved beams, held through publication.
 <a href=#24 id=24 data-nosnippet>24</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) mask_resident: Reservation,
-<a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// The PSF, sums of weights and residual read in place of a pass.
+<a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// Earlier products or their metadata, including images read in place of a pass.
 <a href=#26 id=26 data-nosnippet>26</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) existing: <span class="prelude-ty">Option</span>&lt;ExistingProducts&gt;,
 <a href=#27 id=27 data-nosnippet>27</a>}
 <a href=#28 id=28 data-nosnippet>28</a>
@@ -112,14 +112,56 @@
 <a href=#112 id=112 data-nosnippet>112</a>        ));
 <a href=#113 id=113 data-nosnippet>113</a>    }
 <a href=#114 id=114 data-nosnippet>114</a>    <span class="kw">let </span>residual = restart::reads_residual(request);
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">if </span>!request.calcpsf || residual {
-<a href=#116 id=116 data-nosnippet>116</a>        continuation.existing = <span class="prelude-val">Some</span>(ExistingProducts::new(
-<a href=#117 id=117 data-nosnippet>117</a>            <span class="kw-2">&amp;</span>request.imagename,
-<a href=#118 id=118 data-nosnippet>118</a>            family,
-<a href=#119 id=119 data-nosnippet>119</a>            ([nx, ny], polarizations, channels),
-<a href=#120 id=120 data-nosnippet>120</a>            (!request.calcpsf, residual),
-<a href=#121 id=121 data-nosnippet>121</a>        )<span class="question-mark">?</span>);
-<a href=#122 id=122 data-nosnippet>122</a>    }
-<a href=#123 id=123 data-nosnippet>123</a>    <span class="prelude-val">Ok</span>(continuation)
-<a href=#124 id=124 data-nosnippet>124</a>}
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="comment">// CASA retains an existing residual's beam even when it forms new pixels.
+<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">let </span>residual_name = family
+<a href=#117 id=117 data-nosnippet>117</a>        .names(<span class="string">"residual"</span>)
+<a href=#118 id=118 data-nosnippet>118</a>        .into_iter()
+<a href=#119 id=119 data-nosnippet>119</a>        .next()
+<a href=#120 id=120 data-nosnippet>120</a>        .expect(<span class="string">"a residual name"</span>);
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">let </span>psf_name = family.names(<span class="string">"psf"</span>).into_iter().next().expect(<span class="string">"a PSF name"</span>);
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="comment">// CubeMajorCycleAlgorithm forms a temporary PSF without the old image
+<a href=#123 id=123 data-nosnippet>123</a>    // metadata, whereas MFS makes its PSF in the existing image store.
+<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="kw">let </span>psf_beam = (!request.calcpsf || request.specmode == <span class="kw">crate</span>::SpecMode::Mfs)
+<a href=#125 id=125 data-nosnippet>125</a>        &amp;&amp; restart::product_path(<span class="kw-2">&amp;</span>request.imagename, <span class="kw-2">&amp;</span>psf_name).exists();
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">let </span>mask_beam = request.usemask == UseMask::AutoMultithresh
+<a href=#127 id=127 data-nosnippet>127</a>        &amp;&amp; request.niter &gt; <span class="number">0
+<a href=#128 id=128 data-nosnippet>128</a>        </span>&amp;&amp; restart::product_path(<span class="kw-2">&amp;</span>request.imagename, <span class="kw-2">&amp;</span>residual_name).exists();
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="kw">if </span>!request.calcpsf || residual || mask_beam || psf_beam {
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="kw">let </span><span class="kw-2">mut </span>existing = ExistingProducts::new(
+<a href=#131 id=131 data-nosnippet>131</a>            <span class="kw-2">&amp;</span>request.imagename,
+<a href=#132 id=132 data-nosnippet>132</a>            family,
+<a href=#133 id=133 data-nosnippet>133</a>            ([nx, ny], polarizations, channels),
+<a href=#134 id=134 data-nosnippet>134</a>            (!request.calcpsf, residual),
+<a href=#135 id=135 data-nosnippet>135</a>        )<span class="question-mark">?</span>;
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">if </span>psf_beam {
+<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">let </span><span class="kw-2">mut </span>charge = admit(
+<a href=#138 id=138 data-nosnippet>138</a>                <span class="kw-2">&amp;</span>context.host,
+<a href=#139 id=139 data-nosnippet>139</a>                <span class="kw-2">&amp;</span>context.policy,
+<a href=#140 id=140 data-nosnippet>140</a>                <span class="kw-2">&amp;</span>Demand {
+<a href=#141 id=141 data-nosnippet>141</a>                    phase: <span class="string">"restart PSF beam metadata"</span>,
+<a href=#142 id=142 data-nosnippet>142</a>                    memory: ExistingProducts::beam_reading_bytes(planes, polarizations),
+<a href=#143 id=143 data-nosnippet>143</a>                },
+<a href=#144 id=144 data-nosnippet>144</a>            )<span class="question-mark">?</span>;
+<a href=#145 id=145 data-nosnippet>145</a>            existing.read_psf_beams(channels, main.direction.increment_rad()[<span class="number">0</span>].abs())<span class="question-mark">?</span>;
+<a href=#146 id=146 data-nosnippet>146</a>            charge.retain(existing.beam_resident_bytes());
+<a href=#147 id=147 data-nosnippet>147</a>            continuation.mask_resident.join(charge);
+<a href=#148 id=148 data-nosnippet>148</a>        }
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">if </span>mask_beam {
+<a href=#150 id=150 data-nosnippet>150</a>            <span class="kw">let </span><span class="kw-2">mut </span>charge = admit(
+<a href=#151 id=151 data-nosnippet>151</a>                <span class="kw-2">&amp;</span>context.host,
+<a href=#152 id=152 data-nosnippet>152</a>                <span class="kw-2">&amp;</span>context.policy,
+<a href=#153 id=153 data-nosnippet>153</a>                <span class="kw-2">&amp;</span>Demand {
+<a href=#154 id=154 data-nosnippet>154</a>                    phase: <span class="string">"restart residual beam metadata"</span>,
+<a href=#155 id=155 data-nosnippet>155</a>                    memory: ExistingProducts::beam_reading_bytes(planes, polarizations),
+<a href=#156 id=156 data-nosnippet>156</a>                },
+<a href=#157 id=157 data-nosnippet>157</a>            )<span class="question-mark">?</span>;
+<a href=#158 id=158 data-nosnippet>158</a>            <span class="kw">let </span>before = existing.beam_resident_bytes();
+<a href=#159 id=159 data-nosnippet>159</a>            existing.read_mask_beams(channels, main.direction.increment_rad()[<span class="number">0</span>].abs())<span class="question-mark">?</span>;
+<a href=#160 id=160 data-nosnippet>160</a>            charge.retain(existing.beam_resident_bytes() - before);
+<a href=#161 id=161 data-nosnippet>161</a>            continuation.mask_resident.join(charge);
+<a href=#162 id=162 data-nosnippet>162</a>        }
+<a href=#163 id=163 data-nosnippet>163</a>        continuation.existing = <span class="prelude-val">Some</span>(existing);
+<a href=#164 id=164 data-nosnippet>164</a>    }
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="prelude-val">Ok</span>(continuation)
+<a href=#166 id=166 data-nosnippet>166</a>}
 </code></pre></div></section></main></body></html>

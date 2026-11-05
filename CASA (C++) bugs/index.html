@@ -1017,6 +1017,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
+<a href="#automatic-mask-convolution-requires-square-pixels-in-casa">automatic-mask convolution on rectangular pixels</a>,
 <a href="#casa-misreads-big-endian-integer-quantity-arrays">byte order of integer quantity arrays</a>,
 <a href="#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero">a Taylor run with no weight on its first correlation</a>,
 <a href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes">odd-size scale convolutions</a>,
@@ -1088,6 +1089,7 @@ Simulator behaviours casa-rs follows:
 <a href="#observemany-pads-one-name-with-empty-ones"><code>observemany</code>'s padded single name</a>,
 <a href="#setleakage-draws-one-leakage-per-window-for-the-whole-run">one leakage per window for the whole run</a>.
 Component-list behaviours casa-rs does not follow:
+<a href="#checking-all-components-of-an-empty-list-exits-casa">physicality of an empty component list</a>,
 <a href="#component-selection-aborts-for-non-finite-or-cyclic-inputs">non-finite or cyclic selection inputs</a>,
 <a href="#writing-a-limb-darkened-disk-without-an-exponent-aborts-casa">a limb-darkened disk without an exponent</a>,
 <a href="#a-negative-component-turns-positive-under-the-primary-beam">a negative component under the primary beam</a>,
@@ -1919,6 +1921,18 @@ error. <code>GMST1_UT1</code>'s iteration does not undo it: GMST1 58258.280 conv
 back to UT1 51544.999. casa-rs uses the IAU 1976 GMST1 under either model,
 as casacore's own GAST does, so its GMST1, LMST, GAST and LAST agree with
 each other and, under IAU 1976, with casacore.</p>
+<h2 id="checking-all-components-of-an-empty-list-exits-casa">Checking all components of an empty list exits CASA<a class="headerlink" href="#checking-all-components-of-an-empty-list-exits-casa" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-05</li>
+<li>Status: CASA exits; casa-rs raises a catchable error (owner approved, #1158)</li>
+<li>Affected code: <code>componentlist::_checkIndices</code> and <code>componentlist::isphysical</code></li>
+</ul>
+<p>CASA 6.7.6-14 exits its Python process when <code>componentlist().isphysical()</code>
+checks the default <code>[-1]</code> selection on an empty list. The index helper expands
+<code>[-1]</code> into an empty vector and still reads its first element. An isolated
+Mac mini run ended with status 255 and no Python exception. casa-rs raises a
+<code>RuntimeError</code> so a caller can recover. An explicitly empty selection, <code>[]</code>,
+returns <code>True</code>, as in CASA. The owner approved a catchable error on 2026-11-05.</p>
 <h2 id="component-selection-aborts-for-non-finite-or-cyclic-inputs">Component selection aborts for non-finite or cyclic inputs<a class="headerlink" href="#component-selection-aborts-for-non-finite-or-cyclic-inputs" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-05</li>
@@ -4620,6 +4634,24 @@ with. CASA's cube doesn't: the gap, 0.0057, is about the 1.1 Jy component times
 CASA's MFS does. <code>tools/casa-compat/tclean_summary_matrix.py --case
 mosaic-seed-cube --case mosaic-seed-cube-no-cut</code> shows it, and those two cases
 differ for this reason.</p>
+<h2 id="automatic-mask-convolution-requires-square-pixels-in-casa">Automatic-mask convolution requires square pixels in CASA<a class="headerlink" href="#automatic-mask-convolution-requires-square-pixels-in-casa" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-05</li>
+<li>Status: CASA 6.7.6.14 limitation; casa-rs keeps supporting rectangular pixels (#1140)</li>
+<li>Affected code: <code>SDMaskHandler::autoMaskByMultiThreshold</code> and
+  <code>Image2DConvolver::convolve</code></li>
+</ul>
+<p>With <code>usemask='auto-multithresh'</code>, <code>imsize=64</code>, <code>cell=['8arcsec',
+'16arcsec']</code>, a residual with a 5-by-5-pixel island and a stored 72-arcsec
+circular beam, CASA fails when it reaches convolution: “Pixels must be square,
+please regrid your image so that they are.” <code>Image2DConvolver::convolve</code> checks
+the two direction increments and throws before it convolves. casa-rs keeps its
+existing rectangular-cell support: pruning divides the beam solid angle by the
+product of the two pixel increments, and smoothing evaluates the Gaussian at
+both angular pixel offsets. The T1 restart law
+<code>tclean_automatic_restart_prefers_the_residual_beam</code> checks the resulting mask;
+<code>rectangular_pixel_smoothing_uses_both_cell_sizes</code> checks a rotated Gaussian.
+The CASA failure was observed directly; there is no CASA mask to compare.</p>
 <h2 id="casa-misreads-big-endian-integer-quantity-arrays">CASA misreads big-endian integer quantity arrays<a class="headerlink" href="#casa-misreads-big-endian-integer-quantity-arrays" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-05</li>

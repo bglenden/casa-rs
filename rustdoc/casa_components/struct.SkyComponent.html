@@ -51,7 +51,7 @@ write (see <a href="struct.SpectralModel.html#method.to_record" title="method ca
 <a href="struct.SpectralModel.html#method.sample_stokes" title="method casa_components::SpectralModel::sample_stokes"><code>SpectralModel::sample_stokes</code></a>.</p>
 <h5 id="panics"><a class="doc-anchor" href="#panics">§</a>Panics</h5>
 <p>When <code>samples</code> is not <code>[4, directions.len(), frequencies_hz.len()]</code>.</p>
-</div></details></div></details><details class="toggle implementors-toggle" open><summary><section id="impl-SkyComponent-3" class="impl"><a class="src rightside" href="../src/casa_components/visibility.rs.html#399-434">Source</a><a href="#impl-SkyComponent-3" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.SkyComponent.html" title="struct casa_components::SkyComponent">SkyComponent</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.visibility" class="method"><a class="src rightside" href="../src/casa_components/visibility.rs.html#408-417">Source</a><h4 class="code-header">pub fn <a href="#method.visibility" class="fn">visibility</a>(
+</div></details></div></details><details class="toggle implementors-toggle" open><summary><section id="impl-SkyComponent-3" class="impl"><a class="src rightside" href="../src/casa_components/visibility.rs.html#414-449">Source</a><a href="#impl-SkyComponent-3" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.SkyComponent.html" title="struct casa_components::SkyComponent">SkyComponent</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.visibility" class="method"><a class="src rightside" href="../src/casa_components/visibility.rs.html#423-432">Source</a><h4 class="code-header">pub fn <a href="#method.visibility" class="fn">visibility</a>(
     &amp;self,
     uvw_m: [<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>; <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.array.html">3</a>],
     frequency_hz: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
@@ -62,7 +62,7 @@ direction, CASA’s sign) and <code>frequency_hz</code>, in <code>basis</code>�
 spectral model, converted to <code>basis</code>, times the shape’s visibility.</p>
 <h5 id="errors-2"><a class="doc-anchor" href="#errors-2">§</a>Errors</h5>
 <p>The flux unit, spectral model or shape casa-rs does not evaluate.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.flux_in" class="method"><a class="src rightside" href="../src/casa_components/visibility.rs.html#425-433">Source</a><h4 class="code-header">pub fn <a href="#method.flux_in" class="fn">flux_in</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.flux_in" class="method"><a class="src rightside" href="../src/casa_components/visibility.rs.html#440-448">Source</a><h4 class="code-header">pub fn <a href="#method.flux_in" class="fn">flux_in</a>(
     &amp;self,
     frequency_hz: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
     basis: <a class="enum" href="enum.Polarisation.html" title="enum casa_components::Polarisation">Polarisation</a>,
