@@ -782,4 +782,11 @@ fn replacing_a_spectral_coordinate_discards_its_source_grid() {
             .source_lsrk_grid(),
         None
     );
+    assert_eq!(
+        spectral
+            .clone()
+            .with_doppler_convention(DopplerConvention::Optical)
+            .source_lsrk_grid(),
+        None
+    );
 }

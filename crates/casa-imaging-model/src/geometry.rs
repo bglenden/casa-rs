@@ -998,6 +998,7 @@ impl SpectralCoordinateSpec {
     #[must_use]
     pub const fn with_doppler_convention(mut self, doppler_convention: DopplerConvention) -> Self {
         self.doppler_convention = doppler_convention;
+        self.source_lsrk_grid = None;
         self
     }
 
