@@ -1745,6 +1745,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#joint-clark-20261104" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        joint-clark-20261104
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#summary-rows-20261103" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2037,6 +2048,17 @@
     <span class="md-ellipsis">
       
         casa-on-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frequency-placeholders-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        frequency-placeholders-casa
       
     </span>
   </a>
@@ -5188,6 +5210,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#joint-clark-20261104" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        joint-clark-20261104
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#summary-rows-20261103" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5480,6 +5513,17 @@
     <span class="md-ellipsis">
       
         casa-on-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#frequency-placeholders-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        frequency-placeholders-casa
       
     </span>
   </a>
@@ -8754,8 +8798,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>False</code></td>
 <td><code>False</code>; <code>fullsummary</code> → <code>fullsummary</code></td>
 <td>Implemented</td>
-<td>Every plane of every minor cycle has its own rows, in CASA's order of field, channel and Stokes: iterations through the planes in sequence (SDAlgorithmBase::deconvolve, addSummaryMinor), peaks inside the mask and over the plane's pixels, flux from the start model, mask sum and stop code. A dirty run reads its products as construct_summary_minor does. A plane with no data under nsigma can differ in its stop code, where CASA's checkStop reads a threshold left by an earlier plane or cycle. deconvolver='clark' on several Stokes planes has a row per plane, where CASA cleans them jointly (issue 1126). <a href="#tclean-behavior-returns">returns</a><br>Catalog domain: <code>bool</code></td>
-<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-returns">returns</a>, <a href="#tclean-evidence-scalars-empty-mask">scalars-empty-mask</a>, <a href="#tclean-evidence-summary-rows-20261103">summary-rows-20261103</a></td>
+<td>Minor-cycle rows follow CASA's order of field, channel and Stokes, with iteration counts, peaks, start-model flux, mask sum and stop code (SDAlgorithmBase::deconvolve, addSummaryMinor). Clark on two or four Stokes planes cleans them jointly per channel and reports one row for the group. A dirty run reads its products as construct_summary_minor does. A plane with no data under nsigma can differ in its stop code, where CASA's checkStop reads a threshold left by an earlier plane or cycle. <a href="#tclean-behavior-returns">returns</a><br>Catalog domain: <code>bool</code></td>
+<td><a href="#tclean-evidence-signature">signature</a>, <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-returns">returns</a>, <a href="#tclean-evidence-scalars-empty-mask">scalars-empty-mask</a>, <a href="#tclean-evidence-summary-rows-20261103">summary-rows-20261103</a>, <a href="#tclean-evidence-joint-clark-20261104">joint-clark-20261104</a></td>
 </tr>
 <tr>
 <td><code>usemask</code></td>
@@ -9545,6 +9589,18 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Command: <code>tools/casa-compat/tclean_case_matrix.py --backend cpu --precision f64 with tclean-casa-test-cases.json (#1065's 14 cases, --include-skipped) and tclean-mtmfs-polarized-cases.json</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/tclean-mtmfs-polarized-review-20261103.json</code>.</li>
 </ul>
+<p><a id="tclean-evidence-joint-clark-20261104"></a></p>
+<h5 id="joint-clark-20261104">joint-clark-20261104<a class="headerlink" href="#joint-clark-20261104" title="Permanent link">&para;</a></h5>
+<p><strong>Joint Clark polarization components, rows and image products against CASA — measured: five of five I, IV, IQUV and blank-channel cases pass.</strong> Clark selects and updates a joint polarization vector in each channel, including blank channels and blank polarizations. Five CASA-paired cases pass products, selected scalars and iteration counts; synthetic restarts check component selection, masks and start-model flux. A fresh T1.5 Clark case and representative T2 numerical comparison pass; the T2 raw beam metadata differs from CASA within measured tolerances and is unchanged from the parent. Issue 1140 records the review and mutation proofs.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/7a2715adc02474236e050945f3a01dce97129983/resources/casa-compat/evidence/tclean-joint-clark-1140-20261104.json">resources/casa-compat/evidence/tclean-joint-clark-1140-20261104.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/7a2715adc02474236e050945f3a01dce97129983/resources/casa-compat/tclean-joint-clark-cases.json">resources/casa-compat/tclean-joint-clark-cases.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/7a2715adc02474236e050945f3a01dce97129983/crates/casa-imaging-deconvolution/src/clark.rs">crates/casa-imaging-deconvolution/src/clark.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/7a2715adc02474236e050945f3a01dce97129983/crates/casa-imaging-runtime/src/minor/polarized.rs">crates/casa-imaging-runtime/src/minor/polarized.rs</a></li>
+<li>Revision: <code>fd5042ac44d6123b477f5887c341d039b10c76a7</code>; CASA: <code>casatasks 6.7.6.14; casatools 6.7.6-14</code>.</li>
+<li>Command: <code>tools/casa-compat/tclean_case_matrix.py --cases resources/casa-compat/tclean-joint-clark-cases.json --backend cpu --precision f64 with staged casatestdata</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/tclean-joint-clark-1140-20261104.json</code>.</li>
+</ul>
 <p><a id="tclean-evidence-summary-rows-20261103"></a></p>
 <h5 id="summary-rows-20261103">summary-rows-20261103<a class="headerlink" href="#summary-rows-20261103" title="Permanent link">&para;</a></h5>
 <p><strong>tclean's summaryminor against CASA's, row by row, on 35 small cases, with T0 and T1 laws — measured: 29 of 35 pass within 6.3e-6; the other six attributed.</strong> Every deconvolver, cubes, Stokes, outliers, masks, thresholds, n-sigma, restarts, start models and dirty runs, with CASA's own test_iterbot fullsummary calls. Differences: the recorded full-Stokes cube channel-0 near-tie (two cases), issue 1126 (clark on several Stokes planes), issue 1127 (a seeded mosaic cube, two cases) and one stop code on a plane with no data under nsigma. The products weren't compared here.</p>
@@ -9645,9 +9701,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">15</td>
+<td style="text-align: right;">19</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">46</td>
+<td style="text-align: right;">42</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -9765,7 +9821,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 15, Partial: 0, Not implemented: 46, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 19, Partial: 0, Not implemented: 42, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -9913,30 +9969,30 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>getfreq</code></td>
 <td><code>which</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-frequency-placeholders-casa">frequency-placeholders-casa</a></td>
 </tr>
 <tr>
 <td><code>getfreqframe</code></td>
 <td><code>which</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-frequency-placeholders-casa">frequency-placeholders-casa</a></td>
 </tr>
 <tr>
 <td><code>getfrequnit</code></td>
 <td><code>which</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-frequency-placeholders-casa">frequency-placeholders-casa</a></td>
 </tr>
 <tr>
 <td><code>getfreqvalue</code></td>
 <td><code>which</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-frequency-placeholders-casa">frequency-placeholders-casa</a></td>
 </tr>
 <tr>
 <td><code>getkeyword</code></td>
@@ -10326,6 +10382,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>; CASA: <code>casatools 6.7.6-14, casatasks 6.7.6.14</code>.</li>
 <li>Command: <code>CASAPY -I tools/casa-compat/tool_tests_on_casa.py --tool componentlist (bg-mac-mini)</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/cl-on-casa-20261103.json</code>.</li>
+</ul>
+<p><a id="componentlist-evidence-frequency-placeholders-casa"></a></p>
+<h5 id="frequency-placeholders-casa">frequency-placeholders-casa<a class="headerlink" href="#frequency-placeholders-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> Thirty-six calls on CASA 6.7.6-14 cover all four placeholders, index types and errors; CASA logs 24 not-implemented warnings. Additional populated-list probes returned the same sentinels. componentlist.getfreq, getfreqframe, getfrequnit and getfreqvalue.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/dc3b03557db594b85c1745440a648f3419d01c50/tools/simulation/componentlist_frequency_oracle.py">tools/simulation/componentlist_frequency_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/dc3b03557db594b85c1745440a648f3419d01c50/crates/casars-python/python/tests/data/casa_componentlist_frequency.json">crates/casars-python/python/tests/data/casa_componentlist_frequency.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/dc3b03557db594b85c1745440a648f3419d01c50/crates/casars-python/python/tests/test_tools_componentlist.py">crates/casars-python/python/tests/test_tools_componentlist.py</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>
