@@ -86,6 +86,7 @@ pub(crate) type ConvertResult<T> = Result<T, ConvertError>;
 pub(crate) enum RecordScalarKind {
     NativeInteger(i64),
     IntegerVector(Option<i32>),
+    EmptyFloatVector,
     NumpyUnsupported,
 }
 
@@ -320,6 +321,24 @@ fn record_vector_kind(value: &Bound<'_, PyAny>) -> PyResult<Option<RecordScalarK
         .getattr("dtype")
         .and_then(|d| d.getattr("kind"))
         .and_then(|k| k.extract::<String>());
+    if matches!(array_kind.as_deref(), Ok("f"))
+        && matches!(
+            value
+                .getattr("dtype")
+                .and_then(|d| d.getattr("itemsize"))
+                .and_then(|n| n.extract::<usize>()),
+            Ok(4 | 8)
+        )
+        && value
+            .getattr("ndim")
+            .and_then(|n| n.extract::<usize>())
+            .ok()
+            == Some(1)
+        && value.is_instance(&value.py().import("numpy")?.getattr("ndarray")?)?
+        && value.len()? == 0
+    {
+        return Ok(Some(RecordScalarKind::EmptyFloatVector));
+    }
     let is_array = matches!(array_kind.as_deref(), Ok("i" | "u" | "b"))
         && value
             .getattr("ndim")
@@ -743,7 +762,7 @@ pub(crate) fn quantity_variant_record(record: &VariantRecord) -> Result<Quantity
         Some(RecordScalarKind::IntegerVector(Some(value))) => {
             Ok(Quantity::with_unit(f64::from(value), casacore_unit(unit)?))
         }
-        Some(RecordScalarKind::IntegerVector(None)) => {
+        Some(RecordScalarKind::IntegerVector(None) | RecordScalarKind::EmptyFloatVector) => {
             casacore_unit(unit)?;
             Err("Wrong QuantumHolder to convert asQuantumDouble".to_string())
         }
