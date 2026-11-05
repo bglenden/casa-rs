@@ -214,9 +214,8 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
         return Ok(Variant::Text(text.to_str()?.to_string()));
     }
     if let Ok(dict) = object.cast::<PyDict>() {
-        // NumPy complex64 scalars are not CASA complex values. Preserve their
-        // old numeric representation for ordinary records without asking
-        // NumPy to discard the imaginary part (which emits a warning).
+        // CASA does not accept a NumPy complex64 scalar in a quantity
+        // record. Keep that diagnostic separate from the preserved value.
         let complex64_scalar = match dict.get_item("value")? {
             Some(value) => is_numpy_complex64_scalar(&value)?,
             None => false,
@@ -226,11 +225,7 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
             let key = key
                 .extract::<String>()
                 .map_err(|_| PyTypeError::new_err("a CASA record argument must have str keys"))?;
-            let converted = if key == "value" && complex64_scalar {
-                Variant::Number(value.getattr("real")?.extract::<f64>()?)
-            } else {
-                variant_from_python(&value)?
-            };
+            let converted = variant_from_python(&value)?;
             record.insert(key, converted);
         }
         let scalar_kind = if complex64_scalar {
@@ -284,6 +279,11 @@ fn variant_from_python(object: &Bound<'_, PyAny>) -> PyResult<Variant> {
     }
     if is_sequence(object)? {
         return sequence_variant(object);
+    }
+    if is_numpy_complex64_scalar(object)? {
+        let re = object.getattr("real")?.extract::<f64>()?;
+        let im = object.getattr("imag")?.extract::<f64>()?;
+        return Ok(Variant::Complex(Complex64::new(re, im)));
     }
     if let Ok(number) = object.extract::<f64>() {
         return Ok(Variant::Number(number));
