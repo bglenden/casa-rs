@@ -448,6 +448,37 @@ fn an_incomplete_saved_psf_beam_grid_is_refused() {
     ));
 }
 
+/// An incomplete residual beam grid is rejected before automatic masking.
+#[test]
+fn an_incomplete_saved_residual_beam_grid_is_refused() {
+    let problem = problem(
+        64,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem).with_point([32, 32], &[1.0]);
+    let completion = completion(&problem, &scene, |_| {});
+    let mut setup = setup(&problem, None);
+    setup.mask_beams = Some(Vec::new().into());
+    let team = WorkerTeam::new(1).unwrap();
+    let mut cache = PsfCache::default();
+    assert!(matches!(
+        prepare_minor_cycle(
+            &completion,
+            &full_plane(&problem),
+            &setup,
+            &mut cache,
+            &team
+        ),
+        Err(
+            casa_imaging_runtime::MinorCycleRunError::SavedBeamGridLength {
+                expected: 1,
+                actual: 0
+            }
+        )
+    ));
+}
+
 /// A blank channel's saved beam participates in its mask block's common
 /// beam, even if that beam is larger than the data channel's.
 #[test]
@@ -510,7 +541,8 @@ fn automatic_mask_prefers_the_residual_beam() {
     let narrow = casa_imaging_deconvolution::RestoringBeam::new(2.5, 2.5, 0.0).unwrap();
     let broad = casa_imaging_deconvolution::RestoringBeam::new(10.0, 8.0, 0.0).unwrap();
     let team = WorkerTeam::new(1).unwrap();
-    for (psf, residual, pruned) in [(narrow, broad, 1), (broad, narrow, 0)] {
+    let mut narrow_psf_sidelobe = None;
+    for (psf, residual, pruned) in [(narrow, broad, 1), (broad, narrow, 0), (narrow, narrow, 0)] {
         let mut setup = setup(&problem, None);
         setup.automask = true;
         setup.psf_beams = Some(vec![psf; 2].into());
@@ -529,6 +561,13 @@ fn automatic_mask_prefers_the_residual_beam() {
             .plane(0, 0)
             .unwrap();
         assert_eq!((row.regions, row.pruned_regions), (1, pruned));
+        if psf == narrow {
+            if let Some(expected) = narrow_psf_sidelobe {
+                assert_eq!(result.statistics.psf_sidelobe, expected);
+            } else {
+                narrow_psf_sidelobe = Some(result.statistics.psf_sidelobe);
+            }
+        }
     }
 }
 
