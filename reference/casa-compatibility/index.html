@@ -2410,6 +2410,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#trigonometry-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        trigonometry-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#isangle-casa" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5890,6 +5901,17 @@
     <span class="md-ellipsis">
       
         bugs-record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#trigonometry-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        trigonometry-casa
       
     </span>
   </a>
@@ -9817,9 +9839,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">57</td>
 <td>yes</td>
-<td style="text-align: right;">28</td>
+<td style="text-align: right;">34</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">29</td>
+<td style="text-align: right;">23</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10906,7 +10928,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="quanta">quanta<a class="headerlink" href="#quanta" title="Permanent link">&para;</a></h3>
 <h4 id="quanta-method-implementation">quanta method implementation<a class="headerlink" href="#quanta-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 28, Partial: 0, Not implemented: 29, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 34, Partial: 0, Not implemented: 23, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -10928,9 +10950,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>acos</code></td>
 <td><code>v=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-trigonometry-casa">trigonometry-casa</a></td>
 </tr>
 <tr>
 <td><code>add</code></td>
@@ -10949,16 +10971,16 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>asin</code></td>
 <td><code>v=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-trigonometry-casa">trigonometry-casa</a></td>
 </tr>
 <tr>
 <td><code>atan</code></td>
 <td><code>v=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-trigonometry-casa">trigonometry-casa</a></td>
 </tr>
 <tr>
 <td><code>atan2</code></td>
@@ -11040,9 +11062,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>cos</code></td>
 <td><code>v=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-trigonometry-casa">trigonometry-casa</a></td>
 </tr>
 <tr>
 <td><code>define</code></td>
@@ -11243,9 +11265,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>sin</code></td>
 <td><code>v=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-trigonometry-casa">trigonometry-casa</a></td>
 </tr>
 <tr>
 <td><code>splitdate</code></td>
@@ -11271,9 +11293,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>tan</code></td>
 <td><code>v=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-trigonometry-casa">trigonometry-casa</a></td>
 </tr>
 <tr>
 <td><code>time</code></td>
@@ -11363,6 +11385,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><strong>Deviation record — recorded.</strong> Each deviation's inputs, CASA's behaviour and casa-rs's, with the CASA source lines.</p>
 <ul>
 <li><a href="https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
+</ul>
+<p><a id="quanta-evidence-trigonometry-casa"></a></p>
+<h5 id="trigonometry-casa">trigonometry-casa<a class="headerlink" href="#trigonometry-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 108 CASA 6.7.6-14 cases cover angle and dimensionless inputs, scaled units, out-of-domain results and errors for all six functions. quanta.sin, cos, tan, asin, acos and atan.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad/tools/simulation/quanta_trigonometry_oracle.py">tools/simulation/quanta_trigonometry_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad/crates/casars-python/python/tests/data/casa_quanta_trigonometry.json">crates/casars-python/python/tests/data/casa_quanta_trigonometry.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad/crates/casars-python/python/tests/test_tools_quanta.py">crates/casars-python/python/tests/test_tools_quanta.py</a></li>
 </ul>
 <p><a id="quanta-evidence-isangle-casa"></a></p>
 <h5 id="isangle-casa">isangle-casa<a class="headerlink" href="#isangle-casa" title="Permanent link">&para;</a></h5>
