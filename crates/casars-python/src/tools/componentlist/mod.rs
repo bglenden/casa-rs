@@ -472,10 +472,33 @@ impl PyComponentList {
         self.refdir_placeholder(py, which, unit.as_ref(), precision.as_ref(), "getrefdirdec")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// The reference frame of component `which`'s direction.
     #[pyo3(signature = (which), text_signature = "($self, which)")]
-    fn getrefdirframe(&self, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getrefdirframe")
+    fn getrefdirframe(&self, py: Python<'_>, which: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let which = match which.extract::<i64>() {
+            // CASA's binding passes a C int to the underlying tool.
+            Ok(index) => i64::from(index as i32),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => -1,
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        self.call(py, move |state, lines| match state.checked(which) {
+            Ok(component) => Ok(CasaValue::Text(
+                component
+                    .shape()
+                    .reference_direction()
+                    .refer()
+                    .as_str()
+                    .into(),
+            )),
+            Err(_) => {
+                let message = format!(
+                    "Exception: Index out of range. The component number must be between 0 and {}.",
+                    state.length() - 1
+                );
+                lines.push(LogLine::error(format!("Exception Reported: {message}")));
+                Err(crate::convert::ConvertError::runtime(message))
+            }
+        })
     }
 
     /// CASA's placeholder: logs a warning and returns an empty string.
