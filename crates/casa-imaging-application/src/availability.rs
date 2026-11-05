@@ -6,7 +6,8 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, PolarizationCoordinate, ProductKind, ReconstructionBasis, RequiredCapability,
+    CompiledProblem, FrequencyFrame, PolarizationCoordinate, ProductKind, ReconstructionBasis,
+    RequiredCapability, SpectralKernel,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::HostResources;
@@ -42,10 +43,8 @@ pub enum Unsupported {
     /// Facets grid with the standard kernel set. CASA refuses AW and mosaic
     /// facets; W-projection facets wait for a per-facet W set.
     FacetedKernelSet,
-    /// AW projection images a cube whose windows hold one selected channel
-    /// each; a window of several interpolates onto the cube's axis, where
-    /// CASA's `AWVisResampler` reads a native channel's frequency and casa-rs
-    /// the fine grid's, and that has no CASA comparison yet (#1121).
+    /// Multi-channel AW cubes use nearest sampling outside the rest frame.
+    /// Linear and cubic sampling and rest-frame cubes wait for #1121.
     MultiChannelWindowAwCube,
     /// AW projection grids a square image of square cells: its native
     /// convolution functions and their cache are laid out on one axis.
@@ -85,8 +84,8 @@ impl fmt::Display for Unsupported {
                 formatter.write_str("facets grid with the standard gridder only (#1063)")
             }
             Self::MultiChannelWindowAwCube => formatter.write_str(
-                "AW projection images a cube whose selected windows hold one channel each; a \
-                 window of several waits for a CASA comparison (#1121)",
+                "AW projection of a multi-channel window needs nearest interpolation and a \
+                 non-rest output frame; other cube modes wait for #1121",
             ),
             Self::NonSquareAwProjection => formatter.write_str(
                 "AW projection images a square imsize of square cells; the standard, W and \
@@ -234,6 +233,10 @@ pub fn check(
             .iter()
             .flat_map(|source| source.selection().spectral_windows())
             .any(|window| window.channel_indices().len() > 1)
+        && !aw_multichannel_sampling_supported(
+            problem.science().spectral().sampling().kernel(),
+            problem.geometry().spectral().output_frame(),
+        )
     {
         unsupported.push(Unsupported::MultiChannelWindowAwCube);
     }
@@ -326,9 +329,40 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
     )
 }
 
+/// Nearest uses native channel frequencies in both implementations; rest
+/// frames and interpolated AW samples need further CASA evidence (#1121).
+fn aw_multichannel_sampling_supported(kernel: SpectralKernel, frame: FrequencyFrame) -> bool {
+    kernel == SpectralKernel::Nearest && frame != FrequencyFrame::Rest
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multi_channel_aw_accepts_only_nearest_outside_the_rest_frame() {
+        for frame in [
+            FrequencyFrame::Lsrk,
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Barycentric,
+        ] {
+            assert!(aw_multichannel_sampling_supported(
+                SpectralKernel::Nearest,
+                frame
+            ));
+            for kernel in [
+                SpectralKernel::Linear,
+                SpectralKernel::Cubic,
+                SpectralKernel::Identity,
+            ] {
+                assert!(!aw_multichannel_sampling_supported(kernel, frame));
+            }
+        }
+        assert!(!aw_multichannel_sampling_supported(
+            SpectralKernel::Nearest,
+            FrequencyFrame::Rest,
+        ));
+    }
 
     #[test]
     fn the_pass_runs_every_convolution_function_set_and_publication_beam() {

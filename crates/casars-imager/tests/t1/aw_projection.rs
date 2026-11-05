@@ -524,6 +524,41 @@ fn an_aw_cube_of_a_window_of_several_channels_is_refused() {
     observation.image("aw-one-channel", controls("0:0"));
 }
 
+/// A multi-channel AW window with nearest interpolation places both native
+/// channels on the cube, rather than refusing the run or losing a plane (#1121).
+#[test]
+fn an_aw_cube_nearest_samples_a_multichannel_window() {
+    let setup = Setup {
+        spectral_windows: vec![SyntheticSpectralSetup {
+            channel_count: 2,
+            ..lband_window("t1-lband-two-nearest", FREQUENCY_HZ)
+        }],
+        ..setup()
+    };
+    let observation = Observation::synthesise_setup(setup, &[("centre", CENTRE)]);
+    let surface = observation.scratch("evla.surface");
+    std::fs::write(&surface, surface_text()).expect("write the EVLA surface");
+    let mut controls = cached_clean("0", &observation.scratch("two-cf"), &surface);
+    let fields = controls.as_object_mut().expect("controls");
+    fields.insert("niter".into(), json!(0));
+    fields.insert("specmode".into(), json!("cube"));
+    fields.insert("nchan".into(), json!(2));
+    fields.insert("interpolation".into(), json!("nearest"));
+    let (_, products) = observation.image("aw-two-nearest", controls);
+    let weights = products.get(".sumwt").channel_values();
+    assert_eq!(weights.len(), 2);
+    assert!(weights.iter().all(|weight| *weight > 0.0), "{weights:?}");
+    for channel in 0..2 {
+        let peak = products
+            .get(".psf")
+            .plane(channel)
+            .iter()
+            .copied()
+            .fold(0.0_f32, f32::max);
+        assert!((peak - 1.0).abs() < 1.0e-6, "channel {channel}: {peak}");
+    }
+}
+
 /// A row off the grid still weighs in the sensitivity:
 /// `AWProjectWBFT::resampleCFToGrid` puts every weight cell at the uv origin,
 /// where `onGrid` holds, so the weight image's peak is the whole sample
