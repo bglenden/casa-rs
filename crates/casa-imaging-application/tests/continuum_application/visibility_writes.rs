@@ -462,7 +462,6 @@ fn final_model_prediction_preserves_continuum_fit_and_residual_writes() {
             panic!("reference CORRECTED_DATA is complex")
         };
         let reference_corrected = reference_corrected.to_owned();
-        drop(reference_column);
         drop(reference);
         let imaging = continuum_subtracted_line(
             &measurement_set,
