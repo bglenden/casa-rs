@@ -441,9 +441,12 @@ impl ImageBeamSet {
                 "cannot determine a common beam for an empty beam set".to_string(),
             ));
         }
-        let non_null: Vec<GaussianBeam> = self
-            .iter_beams()
-            .copied()
+        // CASA traverses the channel-by-Stokes matrix with channel varying
+        // fastest, while the stored grid groups Stokes by channel.
+        let non_null: Vec<GaussianBeam> = (0..self.n_stokes())
+            .flat_map(|stokes| {
+                (0..self.n_channels()).map(move |channel| self.beams[channel][stokes])
+            })
             .filter(|beam| !beam.is_null())
             .collect();
         if non_null.is_empty() {
@@ -454,9 +457,12 @@ impl ImageBeamSet {
         if non_null.iter().all(|beam| *beam == non_null[0]) {
             return Ok(non_null[0]);
         }
-        common_enclosing_gaussian(&non_null.into_iter().map(numeric_beam).collect::<Vec<_>>())
-            .map(gaussian_beam)
-            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
+        common_enclosing_gaussian(
+            &non_null.into_iter().map(numeric_beam).collect::<Vec<_>>(),
+            1.0,
+        )
+        .map(gaussian_beam)
+        .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
     }
 
     fn iter_beams(&self) -> impl Iterator<Item = &GaussianBeam> {
@@ -813,6 +819,51 @@ mod tests {
         let common = set.common_beam().unwrap();
         assert!((common.major_in("arcsec").unwrap() - 4.0).abs() < 1.0e-10);
         assert!((common.minor_in("arcsec").unwrap() - 4.0).abs() < 1.0e-10);
+    }
+
+    /// CASA 6.7.6.14 commonbeam for a two-Stokes image, whose underlying
+    /// channel-fast beam matrix matters when several ellipses need enclosing.
+    #[test]
+    fn common_beam_follows_casas_multistokes_matrix_order() {
+        let beams = [
+            GaussianBeam::new(
+                0.000_659_920_363_505_466_7,
+                0.000_277_714_375_479_345_24,
+                -1.006_629_886_598_266_8,
+            ),
+            GaussianBeam::new(
+                0.000_489_199_949_523_298_2,
+                0.000_332_711_701_991_262_23,
+                0.534_970_100_282_602_5,
+            ),
+            GaussianBeam::new(
+                0.000_575_668_982_898_358_4,
+                0.000_251_585_111_889_876_9,
+                0.498_537_038_391_696_7,
+            ),
+            GaussianBeam::new(
+                0.000_445_553_375_482_662,
+                0.000_232_902_929_545_132_06,
+                0.677_320_743_101_792_8,
+            ),
+        ];
+        let mut grid = vec![vec![beams[3]; 2]; 10];
+        grid[0] = vec![beams[0], beams[1]];
+        grid[1][0] = beams[2];
+        let actual = ImageBeamSet::from_grid(grid).common_beam().unwrap();
+        let arcsec = std::f64::consts::PI / (180.0 * 3_600.0);
+        assert!(
+            (actual.major / arcsec - 137.588_692_242_4).abs() < 1.0e-4,
+            "{actual:?}"
+        );
+        assert!(
+            (actual.minor / arcsec - 118.268_296_464_4).abs() < 1.0e-4,
+            "{actual:?}"
+        );
+        assert!(
+            (actual.position_angle.to_degrees() + 49.863_390_056_5).abs() < 1.0e-4,
+            "{actual:?}"
+        );
     }
 
     #[test]

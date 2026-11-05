@@ -532,7 +532,9 @@
         "signature",
         "reader",
         "mtmfs-nterms1-polarized-20261103",
-        "mtmfs-polarized-review-20261103"
+        "mtmfs-polarized-review-20261103",
+        "blank-mask-beam-20261105",
+        "common-beam-platform-20261105"
       ],
       "behaviors": [
         "deconvolution"
@@ -737,7 +739,9 @@
         "signature",
         "reader",
         "pb-statistics-20261103",
-        "pb-masks-20261103"
+        "pb-masks-20261103",
+        "blank-mask-beam-20261105",
+        "common-beam-platform-20261105"
       ],
       "behaviors": [
         "deconvolution"
@@ -829,7 +833,7 @@
     },
     "usemask": {
       "status": "Implemented",
-      "scope": "user, pb and auto-multithresh pass; controls whether user mask is read. usemask='pb' keeps, in every channel and polarization, the pixels whose .pb exceeds pbmask (SDMaskHandler::makePBMask), formed once at the first boundary from the weight image's beam under a response and the telescope's analytic beam otherwise; mask is not read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold plane by plane, every channel and Stokes plane of its own: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube is masked in tclean's serial channel blocks, each smoothed by the common beam of its planes' PSF beams, every plane thresholded by the image's PSF sidelobe level, and a channel's planes stop together (skipChannels); a plane with no data keeps its mask. Its statistics, peak, pruned regions and support read only the pixels the residual's pixel mask keeps, the .pb's above pblimit where pblimit is not negative (SDMaskHandler::autoMask, #1079), for every gridder: the weight image's beam under a response, the telescope's analytic beam otherwise. At the first boundary of a run with nsigma its median and noise are calcRobustRMS's, inside the .pb above pbmask. Under a pbmask above zero its pixel mask is pb > pbmask, whatever pblimit's sign, which also bounds the mask it makes (SDMaskHandler::autoMaskWithinPB).",
+      "scope": "user, pb and auto-multithresh pass; controls whether user mask is read. usemask='pb' keeps, in every channel and polarization, the pixels whose .pb exceeds pbmask (SDMaskHandler::makePBMask), formed once at the first boundary from the weight image's beam under a response and the telescope's analytic beam otherwise; mask is not read. auto-multithresh follows SDMaskHandler::autoMaskByMultiThreshold plane by plane, every channel and Stokes plane of its own: the threshold mask pruned, smoothed and cut, the inherited mask grown through the low-noise threshold, and the negative mask; a cube is masked in tclean's serial channel blocks, each smoothed by the common beam of its planes' PSF beams after blank PSFs inherit the largest fitted beam in the full image domain, even across blocks; every plane thresholded by the image's PSF sidelobe level, and a channel's planes stop together (skipChannels); a plane with no data keeps its mask. Its statistics, peak, pruned regions and support read only the pixels the residual's pixel mask keeps, the .pb's above pblimit where pblimit is not negative (SDMaskHandler::autoMask, #1079), for every gridder: the weight image's beam under a response, the telescope's analytic beam otherwise. At the first boundary of a run with nsigma its median and noise are calcRobustRMS's, inside the .pb above pbmask. Under a pbmask above zero its pixel mask is pb > pbmask, whatever pblimit's sign, which also bounds the mask it makes (SDMaskHandler::autoMaskWithinPB).",
       "evidence": [
         "signature",
         "reader",
@@ -1978,6 +1982,37 @@
         "crates/casars-imager/tests/t1/mtmfs.rs",
         "crates/casa-imaging-products/src/generation.rs",
         "crates/casa-imaging-application/src/availability.rs"
+      ]
+    },
+    "common-beam-platform-20261105": {
+      "kind": "Common-beam quantity conversion against CASA on macOS and Linux",
+      "state": "measured: source-confirmed conversion matches CASA references on both platforms",
+      "source_revision": "585223403b91d078a938c33450bc057f12a19110",
+      "revision": "a6ca516704cac66508d43ac56494c75268ed8c37",
+      "casa_version": "casatools 6.7.6.14",
+      "command": "Run image.commonbeam on the recorded synthetic beam sets on macOS arm64 and Linux x86_64; mutate the unit-conversion laws on each platform",
+      "receipt": "resources/casa-compat/evidence/tclean-common-beam-cross-platform-1140-20261105.json",
+      "scope": "The enclosing ellipse uses casacore Quantum::getValue's division by the unit ratio. Separate CASA cases on both platforms verify that division order and arcsecond construction, and each law fails its targeted mutation on both. One other CASA result differs between platforms because of its iterative floating-point enclosure; the native result is compared with the local platform's CASA.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-common-beam-cross-platform-1140-20261105.json",
+        "crates/casa-numerics/src/elliptical_gaussian.rs"
+      ]
+    },
+    "blank-mask-beam-20261105": {
+      "kind": "Blank PSF beams and common-beam automasking against CASA",
+      "state": "measured: full 11-channel CASA and native mask cubes match; the parent differs",
+      "source_revision": "6d7093f861c0371230d6b9727fd75604ad3ec372",
+      "revision": "cd462a3b4e61e809b59a9049b7dba43dbef79b66",
+      "casa_version": "casatasks 6.7.6.14; casatools 6.7.6-14",
+      "command": "Synthetic 900x900x11 automask restart and representative T1.5 and T2 comparisons, recorded on issue 1140 and in the receipt",
+      "receipt": "resources/casa-compat/evidence/tclean-blank-mask-beam-1140-20261105.json",
+      "scope": "Blank PSF planes inherit the largest fitted beam from the full image domain before a channel block finds its common beam. CASA and native match all 8,910,000 mask pixels in the cross-block restart; the parent differs at 177. CASA common-beam matrix order and ellipse construction are tested, including polarized and unit-sensitive cases. A fresh T1.5 case and representative T2 numerical comparison pass; T2 raw beam metadata differs from CASA within tolerance and is unchanged from the parent. Issue 1140 records the review and mutation proofs.",
+      "links": [
+        "resources/casa-compat/evidence/tclean-blank-mask-beam-1140-20261105.json",
+        "crates/casa-imaging-deconvolution/src/mask/auto_planes.rs",
+        "crates/casa-numerics/src/elliptical_gaussian.rs",
+        "crates/casa-images/src/beam.rs",
+        "crates/casa-imaging-deconvolution/tests/auto_mask_memory.rs"
       ]
     },
     "joint-clark-20261104": {

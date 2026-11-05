@@ -15,7 +15,8 @@ use super::auto_multithresh::{
     AutoMultithreshControls, AutoMultithreshEvidence, auto_multithresh_bytes,
 };
 use super::auto_planes::{
-    AutoMaskEvidence, AutoMaskSource, AutoMaskState, auto_mask_domain, channel_blocks,
+    AutoMaskEvidence, AutoMaskSource, AutoMaskState, auto_mask_domain, block_beam_bytes,
+    channel_blocks,
 };
 use super::primary_beam::{MaskBeamRead, cut_to_beam, valid_level};
 use super::{MaskBox, MaskError, MaskPlanes, ReconstructionMask};
@@ -494,22 +495,30 @@ impl ImageDomainReconstructionMaskPlans {
         domain_shape: impl Fn(usize) -> Option<[usize; 2]>,
         (channels, polarizations): (usize, usize),
     ) -> u64 {
-        self.plans
-            .iter()
-            .enumerate()
-            .map(|(ordinal, plan)| {
-                let cells =
-                    domain_shape(ordinal).map_or(0, |[width, height]| (width * height) as u64);
-                let planes = plan.mask_planes(channels, polarizations).count() as u64;
-                let rows = match plan {
-                    ReconstructionMaskPlan::AutoMultithresh { .. } => {
-                        planes * size_of::<AutoMultithreshEvidence>() as u64
-                    }
-                    _ => 0,
-                };
-                cells * planes * size_of::<bool>() as u64 + rows
-            })
-            .sum()
+        // The returned masks and evidence also hold their domain entries,
+        // and each Arc support owns its strong and weak counters.
+        let containers = self.plans.len() as u64
+            * (size_of::<ReconstructionMask>()
+                + size_of::<Option<AutoMaskEvidence>>()
+                + 2 * size_of::<usize>()) as u64;
+        containers
+            + self
+                .plans
+                .iter()
+                .enumerate()
+                .map(|(ordinal, plan)| {
+                    let cells =
+                        domain_shape(ordinal).map_or(0, |[width, height]| (width * height) as u64);
+                    let planes = plan.mask_planes(channels, polarizations).count() as u64;
+                    let rows = match plan {
+                        ReconstructionMaskPlan::AutoMultithresh { .. } => {
+                            planes * size_of::<AutoMultithreshEvidence>() as u64
+                        }
+                        _ => 0,
+                    };
+                    cells * planes * size_of::<bool>() as u64 + rows
+                })
+                .sum::<u64>()
     }
 
     /// Heap bytes [`Self::materialize`] holds at most against `normal`
@@ -568,6 +577,7 @@ impl ImageDomainReconstructionMaskPlans {
                     * size_of::<Option<PsfSummary>>() as u64
                     + cells * size_of::<bool>() as u64;
                 measurements
+                    + block_beam_bytes(channels, polarizations, shape)
                     + workers.min(channels).max(1) as u64
                         * (auto_multithresh_bytes(shape) + cells * read)
             })

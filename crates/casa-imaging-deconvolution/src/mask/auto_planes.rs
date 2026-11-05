@@ -14,8 +14,8 @@
 //! * the beam its masks are smoothed and pruned by: the common beam of the
 //!   block's PSF beams (`CasaImageBeamSet::getCommonBeam`), each CASA's fit
 //!   of its plane's PSF. A plane with no data holds the largest beam of
-//!   the set (`SIImageStore::makeImageBeamSet`), which leaves the common
-//!   beam as it is;
+//!   the whole image domain (`SIImageStore::makeImageBeamSet`), even when that
+//!   beam belongs to a different channel block;
 //! * whether its robust noise ignores the mask: when the inherited mask
 //!   covers the block's whole first plane, every plane of the block takes
 //!   Chauvenet statistics (`calcRobustImageStatistics`).
@@ -281,16 +281,17 @@ where
         return Err(MaskError::ShapeMismatch.into());
     }
     let polarizations = planes.polarizations();
-    let psfs = (0..planes.channels())
-        .flat_map(|channel| {
-            (0..polarizations).map(move |polarization| MaskPlaneKey {
+    // The materialization charge covers exactly one entry per plane.
+    let mut psfs = Vec::with_capacity(planes.count());
+    for channel in 0..planes.channels() {
+        for polarization in 0..polarizations {
+            psfs.push((source.psf)(MaskPlaneKey {
                 domain,
                 channel,
                 polarization,
-            })
-        })
-        .map(source.psf)
-        .collect::<Vec<_>>();
+            }));
+        }
+    }
     let sidelobe = psfs
         .iter()
         .flatten()
@@ -306,18 +307,14 @@ where
     let mut rows = vec![UNMASKED; planes.count()];
     let slots = Arc::get_mut(&mut support).expect("a support no one else holds yet");
     let per_channel = polarizations * cells;
-    for block in channel_blocks(planes.channels(), shape) {
+    for (block, beam) in block_beams(&psfs, polarizations, shape, sidelobe, state.coordinate) {
         let masking = Block {
             state,
             source,
             domain,
             shape,
             polarizations,
-            beam: block_beam(
-                &psfs[block.start * polarizations..block.end * polarizations],
-                sidelobe,
-                state.coordinate,
-            )?,
+            beam: beam?,
             first_plane_full: state
                 .previous
                 .and_then(|mask| mask.plane(block.start, 0))
@@ -376,43 +373,93 @@ where
 /// by the plane's, at least ten channels, or the whole cube when it has no
 /// more channels than that; the last block holds what remains.
 pub(super) fn channel_blocks(channels: usize, shape: [usize; 2]) -> Vec<Range<usize>> {
-    let optimum = ((8.0e6 / shape[0] as f64 / shape[1] as f64) as usize).max(10);
-    let size = if channels > optimum {
-        optimum
-    } else {
-        channels
-    }
-    .max(1);
+    let size = block_size(channels, shape);
     (0..channels)
         .step_by(size)
         .map(|start| start..(start + size).min(channels))
         .collect()
 }
 
-/// The beam a block's masks are smoothed and pruned by, with the image's
-/// sidelobe level: the common beam of its planes' PSF beams; `None` when no
-/// plane of the block has data. CASA converts the beam to pixels by the
-/// first direction axis's increment; the common beam is found in radians,
-/// as for restoration.
+/// The largest block, in channels, CASA forms for an image of `shape`.
+fn block_size(channels: usize, shape: [usize; 2]) -> usize {
+    let optimum = ((8.0e6 / shape[0] as f64 / shape[1] as f64) as usize).max(10);
+    channels.min(optimum).max(1)
+}
+
+/// The peak three simultaneously held beam arrays for one channel block:
+/// fitted beams, their numerical forms and the common-beam working copy.
+pub(super) fn block_beam_bytes(channels: usize, polarizations: usize, shape: [usize; 2]) -> u64 {
+    let planes = channels.min(block_size(channels, shape)) * polarizations;
+    let blocks = channels.div_ceil(block_size(channels, shape));
+    (planes * (size_of::<RestoringBeam>() + 2 * size_of::<casa_numerics::EllipticalGaussian>())
+        + blocks * size_of::<Range<usize>>()) as u64
+}
+
+/// Plan each channel block's beam from the complete image domain's beam set.
+fn block_beams(
+    psfs: &[Option<PsfSummary>],
+    polarizations: usize,
+    shape: [usize; 2],
+    sidelobe: f64,
+    coordinate: DirectionCoordinateSpec,
+) -> impl Iterator<Item = (Range<usize>, Result<Option<AutoMaskBeam>, MaskError>)> + '_ {
+    let largest = largest_beam(psfs);
+    channel_blocks(psfs.len() / polarizations, shape)
+        .into_iter()
+        .map(move |block| {
+            let beam = block_beam(
+                &psfs[block.start * polarizations..block.end * polarizations],
+                polarizations,
+                largest,
+                sidelobe,
+                coordinate,
+            );
+            (block, beam)
+        })
+}
+
+/// The largest fitted beam of the image domain, which CASA puts into each
+/// blank plane before it forms channel-block image stores.
+fn largest_beam(psfs: &[Option<PsfSummary>]) -> Option<RestoringBeam> {
+    psfs.iter().flatten().map(PsfSummary::beam).fold(
+        None,
+        |largest: Option<RestoringBeam>, beam| match largest {
+            Some(current) if current.area_sr() >= beam.area_sr() => Some(current),
+            _ => Some(beam),
+        },
+    )
+}
+
+/// The beam a block's masks are smoothed and pruned by: the common beam of
+/// its PSF beams, with blank planes holding the domain's largest. `None`
+/// means the whole domain has no fitted beam. CASA converts by the first
+/// direction axis's increment; the common beam is found in radians.
 fn block_beam(
     psfs: &[Option<PsfSummary>],
+    polarizations: usize,
+    largest: Option<RestoringBeam>,
     sidelobe: f64,
     coordinate: DirectionCoordinateSpec,
 ) -> Result<Option<AutoMaskBeam>, MaskError> {
     let cell = coordinate.increment_rad()[0].abs();
-    let beams = psfs
-        .iter()
-        .flatten()
-        .map(|summary| {
-            let beam = summary.beam();
-            RestoringBeam::new(
-                beam.major_fwhm_rad() * cell,
-                beam.minor_fwhm_rad() * cell,
-                beam.position_angle_rad(),
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| MaskError::InvalidBeamArea)?;
+    let mut beams = Vec::with_capacity(psfs.len());
+    // CASA iterates its channel-by-polarization beam matrix with channel
+    // varying fastest, even though our plane list is channel-major.
+    for polarization in 0..polarizations {
+        for channel in 0..psfs.len() / polarizations {
+            let summary = psfs[channel * polarizations + polarization];
+            if let Some(beam) = summary.map(|summary| summary.beam()).or(largest) {
+                beams.push(
+                    RestoringBeam::new(
+                        beam.major_fwhm_rad() * cell,
+                        beam.minor_fwhm_rad() * cell,
+                        beam.position_angle_rad(),
+                    )
+                    .map_err(|_| MaskError::InvalidBeamArea)?,
+                );
+            }
+        }
+    }
     if beams.is_empty() {
         return Ok(None);
     }
@@ -539,6 +586,220 @@ fn log_summary(first_channel: usize, rows: &[AutoMultithreshEvidence], polarizat
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A blank plane inherits the largest beam in the image, even when that
+    /// beam is in another channel block (`SIImageStore::makeImageBeamSet`).
+    #[test]
+    fn a_blank_plane_uses_the_image_domains_largest_beam_in_its_block() {
+        use crate::plane::PlaneShape;
+        use casa_imaging_model::{DirectionFrame, Projection, SkyDirection};
+
+        let shape = PlaneShape::new(64, 64);
+        let psf = (0..shape.len())
+            .map(|index| {
+                let [x, y] = shape.pixel(index);
+                let r2 = (x as f64 - 32.0).powi(2) + (y as f64 - 32.0).powi(2);
+                (-r2 / 8.0).exp()
+            })
+            .collect::<Vec<_>>();
+        let narrow = PsfSummary::new(&psf, shape).expect("narrow beam");
+        let broad = narrow.with_domain_beam(
+            &psf,
+            shape,
+            RestoringBeam::new(10.0, 8.0, 0.0).expect("broad beam"),
+        );
+        let coordinate = DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(DirectionFrame::J2000, 1.0, 0.5),
+            [1.0, 1.0],
+            [-1.0e-4, 1.0e-4],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 90.0],
+        );
+        let mut psfs = vec![Some(narrow); 11];
+        psfs[1] = None;
+        psfs[10] = Some(broad);
+        let largest = largest_beam(&psfs);
+        assert_eq!(largest, Some(broad.beam()));
+        let mut blocks = block_beams(&psfs, 1, [900, 900], 0.1, coordinate);
+        let (first, with_blank) = blocks.next().expect("first block");
+        let (second, _) = blocks.next().expect("second block");
+        assert_eq!((first, second), (0..10, 10..11));
+        assert!(blocks.next().is_none());
+        let with_blank = with_blank.unwrap();
+        let mut filled = psfs[..10].to_vec();
+        filled[1] = Some(broad);
+        let with_explicit_broad = block_beam(&filled, 1, largest, 0.1, coordinate).unwrap();
+        let without_blank = block_beam(&psfs[2..10], 1, largest, 0.1, coordinate).unwrap();
+        assert_eq!(with_blank, with_explicit_broad);
+        assert_ne!(with_blank, without_blank);
+        assert!(
+            block_beam(&[None], 1, None, 0.1, coordinate)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// A narrow 25-pixel island survives its own beam, but CASA prunes it
+    /// when a blank plane brings in a larger beam from the next block.
+    #[test]
+    fn a_blank_plane_changes_the_materialized_mask_through_its_block_beam() {
+        use crate::plane::PlaneShape;
+        use casa_imaging_model::{DirectionFrame, NoiseEstimate, Projection, SkyDirection};
+
+        let psf_shape = PlaneShape::new(64, 64);
+        let psf = (0..psf_shape.len())
+            .map(|index| {
+                let [x, y] = psf_shape.pixel(index);
+                let r2 = (x as f64 - 32.0).powi(2) + (y as f64 - 32.0).powi(2);
+                (-r2 / 8.0).exp()
+            })
+            .collect::<Vec<_>>();
+        let narrow = PsfSummary::new(&psf, psf_shape).unwrap();
+        let broad =
+            narrow.with_domain_beam(&psf, psf_shape, RestoringBeam::new(10.0, 8.0, 0.0).unwrap());
+        let coordinate = DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(DirectionFrame::J2000, 1.0, 0.5),
+            [450.0, 450.0],
+            [-1.0e-4, 1.0e-4],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 90.0],
+        );
+        let controls = AutoMultithreshControls {
+            sidelobe_factor: 2.0,
+            noise_factor: 4.25,
+            low_noise_factor: 1.5,
+            negative_factor: 0.0,
+            minimum_beam_fraction: 0.5,
+            smooth_factor: 1.0,
+            cut_threshold: 0.01,
+            grow_iterations: 0,
+            grow_prune: true,
+            minimum_percent_change: -1.0,
+            noise: NoiseEstimate::Fast,
+            verbose: false,
+        };
+        let shape = [900, 900];
+        let read = |key: MaskPlaneKey| {
+            if !matches!(key.channel, 0 | 10) {
+                return Ok::<_, MaskError>(None);
+            }
+            let mut residual = vec![0.0; shape[0] * shape[1]];
+            if key.channel == 0 {
+                for x in 448..453 {
+                    for y in 448..453 {
+                        residual[x * shape[1] + y] = 10.0;
+                    }
+                }
+            }
+            Ok(Some(AutoMaskPlane {
+                residual,
+                valid: vec![true; shape[0] * shape[1]],
+                statistics: None,
+            }))
+        };
+        let psfs = |key: MaskPlaneKey| match key.channel {
+            0 => Some(narrow),
+            10 => Some(broad),
+            _ => None,
+        };
+        let source = AutoMaskSource {
+            read: &read,
+            psf: &psfs,
+            workers: 1,
+        };
+        let state = AutoMaskState {
+            coordinate,
+            controls: &controls,
+            completed_major_cycles: 0,
+            threshold_reached: false,
+            previous: None,
+            stopped_channels: &[],
+        };
+        let (mask, evidence) =
+            auto_mask_domain(&state, 0, shape, MaskPlanes::new(11, 1).unwrap(), &source).unwrap();
+        let row = evidence.plane(0, 0).unwrap();
+        assert_eq!((row.regions, row.pruned_regions), (1, 1));
+        assert!(!mask.plane(0, 0).unwrap().iter().any(|pixel| *pixel));
+    }
+
+    /// CASA's common-beam iteration visits every channel of a Stokes plane
+    /// before the next Stokes plane, regardless of our plane storage order.
+    #[test]
+    fn a_multistokes_block_uses_casas_beam_matrix_order() {
+        use crate::plane::PlaneShape;
+        use casa_imaging_model::{DirectionFrame, Projection, SkyDirection};
+
+        let shape = PlaneShape::new(64, 64);
+        let psf = (0..shape.len())
+            .map(|index| {
+                let [x, y] = shape.pixel(index);
+                let r2 = (x as f64 - 32.0).powi(2) + (y as f64 - 32.0).powi(2);
+                (-r2 / 8.0).exp()
+            })
+            .collect::<Vec<_>>();
+        let template = PsfSummary::new(&psf, shape).expect("a PSF");
+        let axes = [
+            (
+                0.000_659_920_363_505_466_7,
+                0.000_277_714_375_479_345_24,
+                -1.006_629_886_598_266_8,
+            ),
+            (
+                0.000_489_199_949_523_298_2,
+                0.000_332_711_701_991_262_23,
+                0.534_970_100_282_602_5,
+            ),
+            (
+                0.000_575_668_982_898_358_4,
+                0.000_251_585_111_889_876_9,
+                0.498_537_038_391_696_7,
+            ),
+            (
+                0.000_445_553_375_482_662,
+                0.000_232_902_929_545_132_06,
+                0.677_320_743_101_792_8,
+            ),
+        ];
+        let summaries = axes.map(|(major, minor, pa)| {
+            template.with_domain_beam(&psf, shape, RestoringBeam::new(major, minor, pa).unwrap())
+        });
+        let mut psfs = vec![Some(summaries[3]); 22];
+        psfs[0] = None;
+        psfs[1] = Some(summaries[1]);
+        psfs[2] = Some(summaries[2]);
+        psfs[20] = Some(summaries[0]);
+        let coordinate = DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(DirectionFrame::J2000, 1.0, 0.5),
+            [1.0, 1.0],
+            [-1.0, 1.0],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 90.0],
+        );
+        let mut blocks = block_beams(&psfs, 2, [900, 900], 0.1, coordinate);
+        let (_, actual) = blocks.next().expect("first block");
+        let actual = actual.expect("the block beam");
+        let mut casa_order = Vec::with_capacity(20);
+        for polarization in 0..2 {
+            for channel in 0..10 {
+                casa_order.push(
+                    psfs[channel * 2 + polarization]
+                        .unwrap_or(summaries[0])
+                        .beam(),
+                );
+            }
+        }
+        let expected = RestoringBeam::common_enclosing(&casa_order).unwrap();
+        let expected = AutoMaskBeam::new(
+            expected.major_fwhm_rad(),
+            expected.minor_fwhm_rad(),
+            expected.position_angle_rad(),
+            0.1,
+        );
+        assert_eq!(actual, Some(expected));
+    }
 
     #[test]
     fn a_cube_is_masked_in_casa_channel_blocks() {

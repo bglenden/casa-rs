@@ -1,0 +1,497 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "method": "exp",
+      "input": "1",
+      "result": {
+        "unit": "",
+        "value": 2.718281828459045
+      }
+    },
+    {
+      "method": "exp",
+      "input": "50%",
+      "result": {
+        "unit": "",
+        "value": 1.6487212707001282
+      }
+    },
+    {
+      "method": "exp",
+      "input": "1_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::exp illegal unit type '_'"
+      }
+    },
+    {
+      "method": "exp",
+      "input": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::exp illegal unit type 'rad'"
+      }
+    },
+    {
+      "method": "exp",
+      "input": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::exp illegal unit type 'm'"
+      }
+    },
+    {
+      "method": "exp",
+      "input": "4m2",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::exp illegal unit type 'm2'"
+      }
+    },
+    {
+      "method": "exp",
+      "input": 0.5,
+      "result": {
+        "unit": "",
+        "value": 1.6487212707001282
+      }
+    },
+    {
+      "method": "exp",
+      "input": 0.0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "exp",
+      "input": -1.0,
+      "result": {
+        "unit": "",
+        "value": 0.36787944117144233
+      }
+    },
+    {
+      "method": "exp",
+      "input": 1.0,
+      "result": {
+        "unit": "",
+        "value": 2.718281828459045
+      }
+    },
+    {
+      "method": "exp",
+      "input": 10.0,
+      "result": {
+        "unit": "",
+        "value": 22026.465794806718
+      }
+    },
+    {
+      "method": "exp",
+      "input": 1000.0,
+      "result": {
+        "unit": "",
+        "value": "Infinity"
+      }
+    },
+    {
+      "method": "exp",
+      "input": null,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "exp",
+      "input": [],
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "exp",
+      "input": [
+        1,
+        2
+      ],
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "exp",
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "exp",
+      "input": {},
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "exp",
+      "input": {
+        "value": 0.5,
+        "unit": ""
+      },
+      "result": {
+        "unit": "",
+        "value": 1.6487212707001282
+      }
+    },
+    {
+      "method": "exp",
+      "input": {
+        "value": [
+          0.5,
+          1.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "log",
+      "input": "1",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "log",
+      "input": "50%",
+      "result": {
+        "unit": "",
+        "value": -0.6931471805599453
+      }
+    },
+    {
+      "method": "log",
+      "input": "1_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::log illegal unit type '_'"
+      }
+    },
+    {
+      "method": "log",
+      "input": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::log illegal unit type 'rad'"
+      }
+    },
+    {
+      "method": "log",
+      "input": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::log illegal unit type 'm'"
+      }
+    },
+    {
+      "method": "log",
+      "input": "4m2",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::log illegal unit type 'm2'"
+      }
+    },
+    {
+      "method": "log",
+      "input": 0.5,
+      "result": {
+        "unit": "",
+        "value": -0.6931471805599453
+      }
+    },
+    {
+      "method": "log",
+      "input": 0.0,
+      "result": {
+        "unit": "",
+        "value": "-Infinity"
+      }
+    },
+    {
+      "method": "log",
+      "input": -1.0,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "method": "log",
+      "input": 1.0,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "log",
+      "input": 10.0,
+      "result": {
+        "unit": "",
+        "value": 2.302585092994046
+      }
+    },
+    {
+      "method": "log",
+      "input": 1000.0,
+      "result": {
+        "unit": "",
+        "value": 6.907755278982137
+      }
+    },
+    {
+      "method": "log",
+      "input": null,
+      "result": {
+        "unit": "",
+        "value": "-Infinity"
+      }
+    },
+    {
+      "method": "log",
+      "input": [],
+      "result": {
+        "unit": "",
+        "value": "-Infinity"
+      }
+    },
+    {
+      "method": "log",
+      "input": [
+        1,
+        2
+      ],
+      "result": {
+        "unit": "",
+        "value": "-Infinity"
+      }
+    },
+    {
+      "method": "log",
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "log",
+      "input": {},
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "log",
+      "input": {
+        "value": 0.5,
+        "unit": ""
+      },
+      "result": {
+        "unit": "",
+        "value": -0.6931471805599453
+      }
+    },
+    {
+      "method": "log",
+      "input": {
+        "value": [
+          0.5,
+          1.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "log10",
+      "input": "1",
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "log10",
+      "input": "50%",
+      "result": {
+        "unit": "",
+        "value": -0.3010299956639812
+      }
+    },
+    {
+      "method": "log10",
+      "input": "1_",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::log10 illegal unit type '_'"
+      }
+    },
+    {
+      "method": "log10",
+      "input": "1rad",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::log10 illegal unit type 'rad'"
+      }
+    },
+    {
+      "method": "log10",
+      "input": "1m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::log10 illegal unit type 'm'"
+      }
+    },
+    {
+      "method": "log10",
+      "input": "4m2",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Quantum::log10 illegal unit type 'm2'"
+      }
+    },
+    {
+      "method": "log10",
+      "input": 0.5,
+      "result": {
+        "unit": "",
+        "value": -0.3010299956639812
+      }
+    },
+    {
+      "method": "log10",
+      "input": 0.0,
+      "result": {
+        "unit": "",
+        "value": "-Infinity"
+      }
+    },
+    {
+      "method": "log10",
+      "input": -1.0,
+      "result": {
+        "unit": "",
+        "value": "NaN"
+      }
+    },
+    {
+      "method": "log10",
+      "input": 1.0,
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "method": "log10",
+      "input": 10.0,
+      "result": {
+        "unit": "",
+        "value": 1.0
+      }
+    },
+    {
+      "method": "log10",
+      "input": 1000.0,
+      "result": {
+        "unit": "",
+        "value": 3.0
+      }
+    },
+    {
+      "method": "log10",
+      "input": null,
+      "result": {
+        "unit": "",
+        "value": "-Infinity"
+      }
+    },
+    {
+      "method": "log10",
+      "input": [],
+      "result": {
+        "unit": "",
+        "value": "-Infinity"
+      }
+    },
+    {
+      "method": "log10",
+      "input": [
+        1,
+        2
+      ],
+      "result": {
+        "unit": "",
+        "value": "-Infinity"
+      }
+    },
+    {
+      "method": "log10",
+      "input": "nonsense",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"nonsense\": Illegal input units or format\n in converting quantity"
+      }
+    },
+    {
+      "method": "log10",
+      "input": {},
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error Illegal Quantum record in QuantumHolder::fromRecord\n in converting quantity"
+      }
+    },
+    {
+      "method": "log10",
+      "input": {
+        "value": 0.5,
+        "unit": ""
+      },
+      "result": {
+        "unit": "",
+        "value": -0.3010299956639812
+      }
+    },
+    {
+      "method": "log10",
+      "input": {
+        "value": [
+          0.5,
+          1.0
+        ],
+        "unit": ""
+      },
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    }
+  ]
+}

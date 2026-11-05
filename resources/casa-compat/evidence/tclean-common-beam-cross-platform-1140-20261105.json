@@ -1,0 +1,59 @@
+{
+  "schema": "tclean-evidence-receipt/1",
+  "title": "Cross-platform CASA common-beam quantity conversion",
+  "work_issue": 1140,
+  "date": "2026-11-05",
+  "native_revision": "a6ca516704cac66508d43ac56494c75268ed8c37",
+  "imager_binary_sha256": "6fb1cff0b41320d5fddfd983179f9d323cd492fbe27a957815c5d422a668cf7e",
+  "casa_version": "casatools 6.7.6.14",
+  "source": "casacore Quantum::getValue divides by destination/source unit factors; CasaImageBeamSet constructs common ellipses in arcseconds.",
+  "platforms": [
+    "macOS arm64 installed CASA",
+    "Linux x86_64 official manylinux_2_28 CASA wheel in a disposable container"
+  ],
+  "casa_reference_radians": {
+    "macos": {
+      "115": [
+        0.000605180207818001,
+        0.0005428980093379462,
+        -0.13283829477670395
+      ],
+      "156": [
+        0.0007872168974667561,
+        0.0007636928222394346,
+        0.03956978561074942
+      ],
+      "409": [
+        0.000545050239229311,
+        0.000498470599938178,
+        -1.0532332214661313
+      ]
+    },
+    "linux": {
+      "115": [
+        0.000605180207818001,
+        0.0005428980093379464,
+        -0.13283829477670372
+      ],
+      "156": [
+        0.0007872168974667561,
+        0.0007636928222394346,
+        0.03956978561074942
+      ],
+      "409": [
+        0.0005457987913021708,
+        0.0004992818122598212,
+        -1.0586448315429147
+      ]
+    }
+  },
+  "law_cases": {
+    "115": "Same CASA reference on both platforms; changing arcsecond intermediate to radians fails on both.",
+    "156": "Same CASA reference on both platforms; replacing quantity division with reciprocal multiplication fails on both.",
+    "409": "CASA takes different floating-point enclosure paths across platforms; corrected native matches each platform."
+  },
+  "prior_ci": "At 075cfb1e619bceb5903f336b6b483841fcb0cc09 Linux reported three common-beam reference failures. Original case 53 CASA differs between macOS and Linux; native matched Linux. Two-beam native differed by one 0.1% enlargement until the division-order fix.",
+  "negative_hypothesis": "Keeping intermediate arcsecond axes separately did not repair case 156.",
+  "validation": "Both new or replacement laws passed and failed their targeted mutations on both platforms; source was restored exactly. Linux Rust tests were compiled with rustc --test; macOS used cargo test.",
+  "evidence_path": "/Volumes/home/casa-rs/tclean/20261105/ (archive to be added after full acceptance)."
+}
