@@ -2098,6 +2098,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#fluxerror-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fluxerror-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -5656,6 +5667,17 @@
     <span class="md-ellipsis">
       
         fluxpol-placeholder-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fluxerror-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fluxerror-casa
       
     </span>
   </a>
@@ -9922,9 +9944,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">23</td>
+<td style="text-align: right;">24</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">38</td>
+<td style="text-align: right;">37</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10042,7 +10064,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 23, Partial: 0, Not implemented: 38, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 24, Partial: 0, Not implemented: 37, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -10162,9 +10184,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>getfluxerror</code></td>
 <td><code>which</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Returns the real parts of the four stored component flux errors, with CASA index handling.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-fluxerror-casa">fluxerror-casa</a></td>
 </tr>
 <tr>
 <td><code>getfluxpol</code></td>
@@ -10619,6 +10641,15 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/64562dde202cd6201e8205a0bc4ee30e1ef1cf0e/tools/simulation/componentlist_fluxpol_oracle.py">tools/simulation/componentlist_fluxpol_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/64562dde202cd6201e8205a0bc4ee30e1ef1cf0e/crates/casars-python/python/tests/data/casa_componentlist_fluxpol.json">crates/casars-python/python/tests/data/casa_componentlist_fluxpol.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/64562dde202cd6201e8205a0bc4ee30e1ef1cf0e/crates/casars-python/python/tests/test_tools_componentlist.py">crates/casars-python/python/tests/test_tools_componentlist.py</a></li>
+</ul>
+<p><a id="componentlist-evidence-fluxerror-casa"></a></p>
+<h5 id="fluxerror-casa">fluxerror-casa<a class="headerlink" href="#fluxerror-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> Twelve CASA 6.7.6-14 calls cover nonzero real and complex errors, index narrowing and argument errors; the CASA-created table is retained. componentlist.getfluxerror.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/5074e93e7172c2d348f11beaa04daf83895a6e62/tools/simulation/componentlist_fluxerror_oracle.py">tools/simulation/componentlist_fluxerror_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/5074e93e7172c2d348f11beaa04daf83895a6e62/crates/casars-python/python/tests/data/casa_componentlist_fluxerror.json">crates/casars-python/python/tests/data/casa_componentlist_fluxerror.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/5074e93e7172c2d348f11beaa04daf83895a6e62/crates/casars-python/python/tests/data/casa_fluxerrors.cl.tgz">crates/casars-python/python/tests/data/casa_fluxerrors.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/5074e93e7172c2d348f11beaa04daf83895a6e62/crates/casars-python/python/tests/test_componentlist_fluxerror.py">crates/casars-python/python/tests/test_componentlist_fluxerror.py</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>
