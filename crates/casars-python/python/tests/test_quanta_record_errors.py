@@ -15,3 +15,9 @@ def test_quantity_record_errors_match_casa() -> None:
         with pytest.raises(RuntimeError) as error:
             getattr(qa, case["method"])(*case["args"])
         assert str(error.value) == case["error"]["message"], case
+    # CASA also checks an invalid unit before converting complex holders.
+    for value in (1 + 1j, [1 + 1j], [1 + 1j, 2 + 2j]):
+        for method, rest in ((qa.quantity, ()), (qa.add, (1.0,))):
+            with pytest.raises(RuntimeError) as error:
+                method({"value": value, "unit": "not-a-unit"}, *rest)
+            assert str(error.value) == "Unit::check Illegal unit string 'not-a-unit'"
