@@ -276,7 +276,31 @@ impl State {
             lines.push(LogLine::warning("componentlist is empty"));
             return Ok(CasaValue::empty_record());
         }
-        record(self.list.to_record())
+        let mut result = record(self.list.to_record())?;
+        for &index in self.shape_units.keys() {
+            let CasaValue::Record(components) = &mut result else {
+                continue;
+            };
+            let Some((_, CasaValue::Record(component))) = components
+                .iter_mut()
+                .find(|(name, _)| name == &format!("component{index}"))
+            else {
+                continue;
+            };
+            let Some((_, CasaValue::Record(shape))) =
+                component.iter_mut().find(|(name, _)| name == "shape")
+            else {
+                continue;
+            };
+            if let CasaValue::Record(quantities) = self.getshape(index as i64)? {
+                for (name, quantity) in quantities {
+                    if let Some((_, value)) = shape.iter_mut().find(|(key, _)| key == &name) {
+                        *value = quantity;
+                    }
+                }
+            }
+        }
+        Ok(result)
     }
 
     /// The component `which`, checked as CASA's `_checkIndex` checks it.
