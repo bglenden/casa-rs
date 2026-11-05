@@ -35,7 +35,7 @@ IMPLEMENTED = {
     'div', 'done', 'exp', 'floor', 'formxxx', 'getunit', 'getvalue',
     'isangle', 'isquantity', 'log', 'log10', 'mul', 'neg', 'quantity',
     'sin', 'splitdate', 'sub', 'tan', 'time', 'toangle', 'tos',
-    'totime', 'type', 'unit',
+    'totime', 'type', 'unit', 'eq', 'ne', 'lt', 'le', 'gt', 'ge',
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 

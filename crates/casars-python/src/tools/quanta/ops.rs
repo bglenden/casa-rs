@@ -214,6 +214,34 @@ pub(super) fn compare(left: &Variant, right: &Variant) -> ConvertResult<CasaValu
     ))
 }
 
+/// The six scalar relational operators convert the right value into the left
+/// unit. Equality allows unlike dimensions; ordered comparisons reject them.
+pub(super) fn relational(left: &Variant, right: &Variant, op: &str) -> ConvertResult<CasaValue> {
+    let (left, right) = (quantity(left)?, quantity(right)?);
+    let conformant = left.unit().val().dim == right.unit().val().dim;
+    if !conformant && !matches!(op, "eq" | "ne") {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::operator< unequal units '{}, '{}'",
+            left.unit().name(),
+            right.unit().name()
+        )));
+    }
+    let scaled = right.value() * (right.unit().val().factor / left.unit().val().factor);
+    let order = left.value().partial_cmp(&scaled);
+    let equal = conformant && order == Some(std::cmp::Ordering::Equal);
+    let result = match op {
+        "eq" => equal,
+        "ne" => !equal,
+        "lt" => order == Some(std::cmp::Ordering::Less),
+        "gt" => order == Some(std::cmp::Ordering::Greater),
+        // casacore defines <= as !(>) and >= as !(<), including for NaN.
+        "le" => order != Some(std::cmp::Ordering::Greater),
+        "ge" => order != Some(std::cmp::Ordering::Less),
+        _ => unreachable!("unknown quantity comparison"),
+    };
+    Ok(CasaValue::Bool(result))
+}
+
 /// `qa.checkfreq(cm)`: the dimensions accepted by casacore's MVFrequency.
 pub(super) fn checkfreq(value: &Variant) -> ConvertResult<CasaValue> {
     let dimension = quantity(value)?.unit().val().dim;
