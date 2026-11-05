@@ -72,7 +72,7 @@ impl AddComponent {
     ) -> ConvertResult<SkyComponent> {
         let flux = flux(&self.flux, &self.fluxunit, &self.polarization)?;
         let dir = match &self.dir {
-            Variant::Empty => Variant::Text(DEFAULT_DIRECTION.to_string()),
+            value if value.is_empty_sequence() => Variant::Text(DEFAULT_DIRECTION.to_string()),
             other => other.clone(),
         };
         let direction = measures::direction(&dir, measures)?
@@ -86,7 +86,7 @@ impl AddComponent {
         };
         let kind = spectral_kind(&self.spectrumtype, &self.index)?;
         let freq = match &self.freq {
-            Variant::Empty => Variant::Text(DEFAULT_FREQUENCY.to_string()),
+            value if value.is_empty_sequence() => Variant::Text(DEFAULT_FREQUENCY.to_string()),
             other => other.clone(),
         };
         let (frequency, warning) = measures::frequency(&freq)?;
@@ -235,7 +235,7 @@ fn flux(value: &Variant, unit: &str, polarization: &str) -> ConvertResult<Flux> 
             ))
         })?;
     let values: Vec<f64> = match value {
-        Variant::Empty => vec![0.0; 4],
+        value if value.is_empty_sequence() => vec![0.0; 4],
         other => complex_values(other)
             .ok_or_else(|| {
                 ConvertError::runtime("Could not understand the type of flux value variable")

@@ -99,6 +99,10 @@ impl CasaValue {
                 shape: vec![values.len()],
                 values: values.clone(),
             },
+            Variant::ComplexArray { shape, values } => Self::Complexes {
+                shape: shape.clone(),
+                values: values.clone(),
+            },
             Variant::Array { shape, values } => Self::Floats {
                 shape: shape.clone(),
                 values: values.clone(),

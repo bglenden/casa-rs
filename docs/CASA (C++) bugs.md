@@ -18,6 +18,7 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[complex quantity-array values](#casa-discards-the-values-of-bare-complex-quantity-arrays),
 [automatic-mask convolution on rectangular pixels](#automatic-mask-convolution-requires-square-pixels-in-casa),
 [byte order of integer quantity arrays](#casa-misreads-big-endian-integer-quantity-arrays),
 [a Taylor run with no weight on its first correlation](#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero),
@@ -3821,3 +3822,16 @@ The CASA failure was observed directly; there is no CASA mask to compare.
 - Evidence: `tools/casa-compat/quantity_record_endian_oracle.py`, CASA 6.7.6.14 on a little-endian Mac.
 
 A quantity record containing `np.array([1], dtype=">i4")` returns 16777216 m in CASA; the native-endian array returns 1 m. Big-endian 16-bit arrays return 256 m and 64-bit arrays return 0 m after integer narrowing. Signed and unsigned integer arrays show the same byte-order corruption, and arithmetic uses the corrupted values. casa-rs reads the numerical array value and returns 1 m for each. It still applies CASA's signed 32-bit narrowing to that value.
+
+## CASA discards the values of bare complex quantity arrays
+
+- Date noted: 2026-11-05
+- Status: CASA silently loses input values; casa-rs raises an error (#1170).
+- Evidence: `tools/casa-compat/quantity_record_complex_array_oracle.py`, CASA 6.7.6-14 on the Mac mini.
+
+`qa.quantity(np.array([1+2j]))` returns a dimensionless zero in CASA; the
+same happens for zero-dimensional and multidimensional complex64 and
+complex128 arrays. A complex number cannot be converted to a real quantity
+without losing information, so casa-rs raises `Wrong QuantumHolder to convert
+asQuantumDouble` instead. Complex arrays used as ordinary record data retain
+their values and shape.

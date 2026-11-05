@@ -1,0 +1,813 @@
+{
+  "casatools": "6.7.6-14",
+  "bare": [
+    {
+      "dtype": "complex64",
+      "shape": [],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "dtype": "complex64",
+      "shape": [
+        0
+      ],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "dtype": "complex64",
+      "shape": [
+        1
+      ],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "dtype": "complex64",
+      "shape": [
+        2
+      ],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "dtype": "complex64",
+      "shape": [
+        1,
+        1
+      ],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "dtype": "complex128",
+      "shape": [],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "dtype": "complex128",
+      "shape": [
+        0
+      ],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "dtype": "complex128",
+      "shape": [
+        1
+      ],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "dtype": "complex128",
+      "shape": [
+        2
+      ],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    },
+    {
+      "dtype": "complex128",
+      "shape": [
+        1,
+        1
+      ],
+      "result": {
+        "unit": "",
+        "value": 0.0
+      }
+    }
+  ],
+  "cases": [
+    {
+      "method": "quantity",
+      "dtype": "complex64",
+      "shape": [],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex64",
+      "shape": [],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex64",
+      "shape": [
+        0
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex64",
+      "shape": [
+        0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex64",
+      "shape": [
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex64",
+      "shape": [
+        1
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex64",
+      "shape": [
+        2
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex64",
+      "shape": [
+        2
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex64",
+      "shape": [
+        1,
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex64",
+      "shape": [
+        1,
+        1
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex128",
+      "shape": [],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex128",
+      "shape": [],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex128",
+      "shape": [
+        0
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex128",
+      "shape": [
+        0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex128",
+      "shape": [
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex128",
+      "shape": [
+        1
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex128",
+      "shape": [
+        2
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex128",
+      "shape": [
+        2
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex128",
+      "shape": [
+        1,
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "quantity",
+      "dtype": "complex128",
+      "shape": [
+        1,
+        1
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex64",
+      "shape": [],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex64",
+      "shape": [],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex64",
+      "shape": [
+        0
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex64",
+      "shape": [
+        0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex64",
+      "shape": [
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex64",
+      "shape": [
+        1
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex64",
+      "shape": [
+        2
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex64",
+      "shape": [
+        2
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex64",
+      "shape": [
+        1,
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex64",
+      "shape": [
+        1,
+        1
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex128",
+      "shape": [],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex128",
+      "shape": [],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex128",
+      "shape": [
+        0
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex128",
+      "shape": [
+        0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex128",
+      "shape": [
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex128",
+      "shape": [
+        1
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex128",
+      "shape": [
+        2
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex128",
+      "shape": [
+        2
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex128",
+      "shape": [
+        1,
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "getunit",
+      "dtype": "complex128",
+      "shape": [
+        1,
+        1
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex64",
+      "shape": [],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex64",
+      "shape": [],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex64",
+      "shape": [
+        0
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex64",
+      "shape": [
+        0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex64",
+      "shape": [
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex64",
+      "shape": [
+        1
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex64",
+      "shape": [
+        2
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex64",
+      "shape": [
+        2
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex64",
+      "shape": [
+        1,
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex64",
+      "shape": [
+        1,
+        1
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex128",
+      "shape": [],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex128",
+      "shape": [],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex128",
+      "shape": [
+        0
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex128",
+      "shape": [
+        0
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex128",
+      "shape": [
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex128",
+      "shape": [
+        1
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex128",
+      "shape": [
+        2
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex128",
+      "shape": [
+        2
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex128",
+      "shape": [
+        1,
+        1
+      ],
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Wrong QuantumHolder to convert asQuantumDouble"
+      }
+    },
+    {
+      "method": "add",
+      "dtype": "complex128",
+      "shape": [
+        1,
+        1
+      ],
+      "unit": "not_a_unit",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'not_a_unit'"
+      }
+    }
+  ]
+}

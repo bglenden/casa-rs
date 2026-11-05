@@ -71,7 +71,7 @@ pub(super) fn setoptions(
 ) -> PyResult<bool> {
     let result = tool.on_session(py, |session, lines| {
         if measures::position(&request.location, &session.measures)?.is_none()
-            && request.location != Variant::Empty
+            && !request.location.is_empty_sequence()
         {
             lines.push(LogLine::error(format!(
                 "Could not convert location {} to a Position Measures",
@@ -103,7 +103,7 @@ pub(super) struct VoltagePatternRequest<'a> {
 /// and `[]`, and converts anything else (raising when it cannot).
 fn angle_deg(value: &Variant, default_deg: f64) -> ConvertResult<f64> {
     match value {
-        Variant::Empty => Ok(default_deg),
+        value if value.is_empty_sequence() => Ok(default_deg),
         Variant::Text(text) if text.is_empty() => Ok(default_deg),
         other => value_in(&quantity(other)?, "deg"),
     }
