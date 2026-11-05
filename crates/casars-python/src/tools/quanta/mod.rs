@@ -23,10 +23,9 @@ use crate::tools::{LogLine, emit, not_yet_implemented_in};
 /// The Python logger the tool's warnings go to.
 const LOGGER: &str = "casars.tools.quanta";
 
-fn constant_name(value: &Bound<'_, PyAny>) -> PyResult<String> {
-    value
-        .extract::<String>()
-        .map_err(|_| PyTypeError::new_err("argument _v must be a string"))
+#[allow(clippy::unnecessary_wraps)] // PyO3's custom extractor requires a Result.
+fn constant_name(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    Ok(value.extract::<String>().ok())
 }
 
 /// CASA's `quanta` tool.
@@ -274,12 +273,13 @@ impl PyQuanta {
     }
 
     /// A named physical constant, using CASA's case-insensitive minimax lookup.
-    #[pyo3(signature = (v = String::from("pi")), text_signature = "($self, v='pi')")]
+    #[pyo3(signature = (v = Some(String::from("pi"))), text_signature = "($self, v='pi')")]
     fn constants(
         &self,
         py: Python<'_>,
-        #[pyo3(from_py_with = constant_name)] v: String,
+        #[pyo3(from_py_with = constant_name)] v: Option<String>,
     ) -> PyResult<Py<PyAny>> {
+        let v = v.ok_or_else(|| PyTypeError::new_err("argument _v must be a string"))?;
         call(py, || Ok(ops::constants(&v)))
     }
 
