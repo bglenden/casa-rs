@@ -47,7 +47,7 @@ pub(crate) fn normalize_overrides(
                 };
                 let note = error.binding_note(binding);
                 let message = if matches!(error, NormalizationError::Type(_)) && note.is_empty() {
-                    crate::casa_type_diagnostics::integer_refusal(bundle.surface.id(), name, value)
+                    crate::casa_type_diagnostics::scalar_refusal(bundle.surface.id(), name, value)
                 } else {
                     None
                 }
@@ -108,6 +108,18 @@ mod tests {
                 .message
                 .contains("invalid value for comp_nchan")
         );
+    }
+
+    #[test]
+    fn a_bool_casa_coerces_to_float_is_not_misreported_as_a_casa_refusal() {
+        let bundle = builtin_surface_bundle("tclean").unwrap();
+        let values = BTreeMap::from([("robust".to_string(), ParameterValue::Bool(true))]);
+        let Err(ProfileError::Diagnostics(diagnostics)) = normalize_overrides(&bundle, &values)
+        else {
+            panic!("casa-rs currently refuses booleans for floats");
+        };
+        assert!(diagnostics[0].message.contains("invalid value for robust"));
+        assert!(!diagnostics[0].message.contains("must be of cFloat type"));
     }
 
     #[test]

@@ -400,11 +400,10 @@ impl PyQuanta {
         stub("gt")
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v = None), text_signature = "($self, v=[])")]
-    fn isangle(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("isangle")
+    /// Whether a scalar quantity has angle or time dimensions.
+    #[pyo3(signature = (v = Variant::Empty), text_signature = "($self, v=[])")]
+    fn isangle(&self, py: Python<'_>, v: Variant) -> PyResult<Py<PyAny>> {
+        call(py, || ops::isangle(&v))
     }
 
     /// Not yet implemented in casa-rs.
