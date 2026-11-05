@@ -31,10 +31,32 @@ CASA = casa_signatures("quanta")
 
 IMPLEMENTED = {
     "abs", "add", "angle", "canon", "canonical", "check", "compare", "convert", "div", "done",
-    "formxxx", "getunit", "getvalue", "isangle", "isquantity", "mul", "neg", "quantity", "splitdate", "sub", "time",
+    "exp", "formxxx", "getunit", "getvalue", "isangle", "isquantity", "log", "log10", "mul", "neg", "quantity", "splitdate", "sub", "time",
     "toangle", "tos", "totime", "type", "unit",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
+
+
+def test_logarithms_match_casa() -> None:
+    fixture = json.loads((Path(__file__).parent / "data" / "casa_quanta_logarithms.json").read_text())
+    qa = quanta()
+    for case in fixture["cases"]:
+        method = getattr(qa, case["method"])
+        if "error" in case:
+            assert case["error"]["type"] == "RuntimeError"
+            with pytest.raises(RuntimeError) as error:
+                method(case["input"])
+            assert str(error.value) == case["error"]["message"]
+        else:
+            result = method(case["input"])
+            expected = case["result"]
+            assert result["unit"] == expected["unit"]
+            if expected["value"] == "NaN":
+                assert math.isnan(result["value"])
+            elif expected["value"] in ("Infinity", "-Infinity"):
+                assert result["value"] == float(expected["value"])
+            else:
+                assert result["value"] == pytest.approx(expected["value"], rel=1e-14, abs=1e-15)
 
 
 def test_isangle_matches_casa() -> None:

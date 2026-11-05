@@ -145,6 +145,25 @@ pub(super) fn abs(value: &Variant) -> ConvertResult<CasaValue> {
     )))
 }
 
+/// CASA's scalar exponential and logarithmic functions.
+pub(super) fn logarithm(value: &Variant, method: &str) -> ConvertResult<CasaValue> {
+    let value = quantity(value)?;
+    if value.unit().val().dim != UnitDim::NODIM {
+        return Err(ConvertError::runtime(format!(
+            "Quantum::{method} illegal unit type '{}'",
+            value.unit().name()
+        )));
+    }
+    let number = value.get_si_value();
+    let result = match method {
+        "exp" => number.exp(),
+        "log" => number.ln(),
+        "log10" => number.log10(),
+        _ => unreachable!("the binding selects an exponential or logarithmic method"),
+    };
+    Ok(record(&Quantity::dimensionless(result)))
+}
+
 /// `qa.compare(v, a)`: whether the units have the same dimensions.
 pub(super) fn compare(left: &Variant, right: &Variant) -> ConvertResult<CasaValue> {
     Ok(CasaValue::Bool(
