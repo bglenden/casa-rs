@@ -1551,7 +1551,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
 | [quanta](#quanta) | `casars.tools` | 57 | yes | 25 | 0 | 32 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 18 | 11 | 0 | 3 | 1 | 0 |
-| [simutil](#simutil) | `casars.simutil` | 57 | yes | 43 | 2 | 12 | 0 | 0 | 0 |
+| [simutil](#simutil) | `casars.simutil` | 57 | yes | 46 | 2 | 9 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
 
 ### componentlist
@@ -2848,11 +2848,11 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 43, Partial: 2, Not implemented: 12, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 46, Partial: 2, Not implemented: 9, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
-| `applyRotate` | `x, y, tcos, tsin` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `applyRotate` | `x, y, tcos, tsin` | Implemented | Returns the rotated x and y coordinates using the input numeric types, including NumPy arrays. | [signature](#simutil-evidence-signature), [arithmetic-casa](#simutil-evidence-arithmetic-casa) |
 | `approxBeam` | `configfile, freq` | Implemented | CASA's approximate synthesized beam of a configuration at a frequency. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `average_direction` | `directions=None` | Implemented | CASA's mean of directions, as text at its precision. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `bandname` | `freq` | Implemented | CASA's band names. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
@@ -2876,7 +2876,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `imtclean` | `mstoimage, imagename, gridder, deconvolver, cell, imsize, imdirection, interactive, niter, threshold, weighting, outertaper, pbcor, stokes, modelimage='', mask=[], dryrun=False` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `is4d` | `image` | Implemented | Whether a CASA image or FITS file has direction, Stokes and spectral axes in CASA's order; casa-rs leaves no image open (recorded deviation). | [signature](#simutil-evidence-signature), [helpers-casa](#simutil-evidence-helpers-casa) |
 | `isdirection` | `s, halt=True` | Implemented | CASA's direction test, with its message when `halt`. | [signature](#simutil-evidence-signature), [binding-tests](#simutil-evidence-binding-tests) |
-| `isEven` | `num` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `isEven` | `num` | Implemented | Tests parity using the input numeric type, including large integers and NumPy arrays. | [signature](#simutil-evidence-signature), [arithmetic-casa](#simutil-evidence-arithmetic-casa) |
 | `ismstp` | `s, halt=False` | Implemented | Whether a MeasurementSet is total power: its first antenna's name holds TP, it has one antenna, or every UVW value is zero (CASA tests any; decision ismstp-any-zero-uvw). With halt, CASA's messages. | [signature](#simutil-evidence-signature), [simanalyze-casa-fixture](#simutil-evidence-simanalyze-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `isquantity` | `s, halt=True` | Implemented | CASA's quantity test, with its message when `halt`. | [signature](#simutil-evidence-signature), [binding-tests](#simutil-evidence-binding-tests) |
 | `isreport` |  | Implemented | Whether self.report is the file self.reportfile names; true after closereport, as in CASA. | [signature](#simutil-evidence-signature), [helpers-casa](#simutil-evidence-helpers-casa) |
@@ -2887,7 +2887,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `median_direction` | `directions=None` | Implemented | CASA's median of directions, as text at its precision. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `modifymodel` | `inimage, outimage, inbright, indirection, incell, incenter, inwidth, innchan, flatimage=False` | Implemented | Rewrites a sky model's brightness, direction, cell, centre and width as CASA does and returns CASA's tuple; the axis, Stokes and two-cell defects listed below are decisions. | [signature](#simutil-evidence-signature), [skymodel-casa-fixture](#simutil-evidence-skymodel-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
 | `msg` | `s, origin=None, priority=None` | Implemented | Logs at the level CASA's log shows (INFO, WARNING, DEBUG) on casars.<origin>; priority='error' raises RuntimeError with the message; with verbose, writes the open report as CASA does and logs once at INFO (recorded deviation). | [signature](#simutil-evidence-signature), [helpers-casa](#simutil-evidence-helpers-casa) |
-| `needsFiller` | `length, spacing, bs, npoints` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
+| `needsFiller` | `length, spacing, bs, npoints` | Implemented | Returns integer 1 if the map length exceeds the pattern plus beam, else 0. | [signature](#simutil-evidence-signature), [arithmetic-casa](#simutil-evidence-arithmetic-casa) |
 | `newfig` | `multi=0, show=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `nextfig` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053, which classifies it. | [signature](#simutil-evidence-signature), [refusals](#simutil-evidence-refusals) |
 | `noisetemp` | `telescope=None, freq=None, diam=None, epsilon=None, correlator=None` | Implemented | CASA's receiver and atmosphere parameters for ALMA, ACA, total power, the (E)VLA, SMA and other telescopes; the band-edge lookups CASA gets wrong are decisions below. | [signature](#simutil-evidence-signature), [simutil-casa-fixture](#simutil-evidence-simutil-casa-fixture), [binding-tests](#simutil-evidence-binding-tests) |
@@ -3167,3 +3167,12 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/simutil_tiling_oracle.py](https://github.com/bglenden/casa-rs/blob/50789c6def3dcf1b55dda2bcbe7d2ef39470f02a/tools/simulation/simutil_tiling_oracle.py)
 - [crates/casars-python/python/tests/data/casa_simutil_tiling.json](https://github.com/bglenden/casa-rs/blob/50789c6def3dcf1b55dda2bcbe7d2ef39470f02a/crates/casars-python/python/tests/data/casa_simutil_tiling.json)
 - [crates/casars-python/python/tests/test_simutil.py](https://github.com/bglenden/casa-rs/blob/50789c6def3dcf1b55dda2bcbe7d2ef39470f02a/crates/casars-python/python/tests/test_simutil.py)
+
+<a id="simutil-evidence-arithmetic-casa"></a>
+##### arithmetic-casa
+
+**CASA-recorded values — measured.** Nineteen cases recorded from CASA 6.7.6.14 cover scalars, large integers, NumPy arrays and scalars, boundary values and errors; the Python binding agrees on values and result types. applyRotate, isEven and needsFiller.
+
+- [tools/simulation/simutil_arithmetic_oracle.py](https://github.com/bglenden/casa-rs/blob/c59130fca34f967fd100cca36a5b067ee318ece9/tools/simulation/simutil_arithmetic_oracle.py)
+- [crates/casars-python/python/tests/data/casa_simutil_arithmetic.json](https://github.com/bglenden/casa-rs/blob/c59130fca34f967fd100cca36a5b067ee318ece9/crates/casars-python/python/tests/data/casa_simutil_arithmetic.json)
+- [crates/casars-python/python/tests/test_simutil.py](https://github.com/bglenden/casa-rs/blob/c59130fca34f967fd100cca36a5b067ee318ece9/crates/casars-python/python/tests/test_simutil.py)

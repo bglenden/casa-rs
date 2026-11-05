@@ -23,18 +23,6 @@ fn stub(method: &str) -> PyResult<Py<PyAny>> {
 )]
 impl PySimutil {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (x, y, tcos, tsin), text_signature = "($self, x, y, tcos, tsin)")]
-    fn applyRotate(
-        &self,
-        x: &Bound<'_, PyAny>,
-        y: &Bound<'_, PyAny>,
-        tcos: &Bound<'_, PyAny>,
-        tsin: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("applyRotate")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (show = None, filename = None), text_signature = "($self, show=True, filename='')")]
     fn endfig(
         &self,
@@ -107,24 +95,6 @@ impl PySimutil {
         dryrun: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("imtclean")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (num), text_signature = "($self, num)")]
-    fn isEven(&self, num: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("isEven")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (length, spacing, bs, npoints), text_signature = "($self, length, spacing, bs, npoints)")]
-    fn needsFiller(
-        &self,
-        length: &Bound<'_, PyAny>,
-        spacing: &Bound<'_, PyAny>,
-        bs: &Bound<'_, PyAny>,
-        npoints: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("needsFiller")
     }
 
     /// Not yet implemented in casa-rs.
