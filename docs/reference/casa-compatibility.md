@@ -1602,7 +1602,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
-| [quanta](#quanta) | `casars.tools` | 57 | yes | 54 | 0 | 3 | 0 | 0 | 0 |
+| [quanta](#quanta) | `casars.tools` | 57 | yes | 55 | 0 | 2 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 18 | 11 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 46 | 2 | 9 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
@@ -2092,7 +2092,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 54, Partial: 0, Not implemented: 3, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 55, Partial: 0, Not implemented: 2, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -2114,7 +2114,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `convertdop` | `v=[], outunit='km/s'` | Implemented | Converts scalar quantities between dimensionless Doppler values and speeds using CASA unit equivalencies. | [signature](#quanta-evidence-signature), [spectral-conversion-casa](#quanta-evidence-spectral-conversion-casa) |
 | `convertfreq` | `v=[], outunit='Hz'` | Implemented | Converts scalar quantities between frequency, period, wavelength, angular frequency, wavenumber, energy, and momentum using CASA unit equivalencies. | [signature](#quanta-evidence-signature), [spectral-conversion-casa](#quanta-evidence-spectral-conversion-casa) |
 | `cos` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
-| `define` | `name, v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `define` | `name, v=[]` | Implemented (#1053) | Defines and redefines process-wide user units, including built-in overrides; coordinated unit state keeps conversions and other tool operations consistent during concurrent changes. | [signature](#quanta-evidence-signature), [define-casa](#quanta-evidence-define-casa) |
 | `div` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `done` | `kill=False` | Implemented | As CASA's. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `eq` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
@@ -2377,6 +2377,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/casa-compat/quantity_record_zero_dim_oracle.py](https://github.com/bglenden/casa-rs/blob/56667e6a4ae6d0daca4ea89e2e68cac3a9d096d3/tools/casa-compat/quantity_record_zero_dim_oracle.py)
 - [crates/casars-python/python/tests/data/casa_quantity_record_zero_dim.json](https://github.com/bglenden/casa-rs/blob/56667e6a4ae6d0daca4ea89e2e68cac3a9d096d3/crates/casars-python/python/tests/data/casa_quantity_record_zero_dim.json)
 - [crates/casars-python/python/tests/test_quanta_record_zero_dim.py](https://github.com/bglenden/casa-rs/blob/56667e6a4ae6d0daca4ea89e2e68cac3a9d096d3/crates/casars-python/python/tests/test_quanta_record_zero_dim.py)
+
+<a id="quanta-evidence-define-casa"></a>
+##### define-casa
+
+**CASA-recorded values — measured.** 26 CASA 6.7.6-14 calls cover user definitions and redefinitions, shared instances, cached compounds, error handling, built-in overrides and FITS aliases. quanta.define and the process-wide unit registry.
+
+- [tools/casa-compat/quanta_define_oracle.py](https://github.com/bglenden/casa-rs/blob/19c603abfee0f2446f6b8c2a5c8db151f0a7d4ee/tools/casa-compat/quanta_define_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_define.json](https://github.com/bglenden/casa-rs/blob/19c603abfee0f2446f6b8c2a5c8db151f0a7d4ee/crates/casars-python/python/tests/data/casa_quanta_define.json)
+- [crates/casars-python/python/tests/test_quanta_define.py](https://github.com/bglenden/casa-rs/blob/19c603abfee0f2446f6b8c2a5c8db151f0a7d4ee/crates/casars-python/python/tests/test_quanta_define.py)
 
 ### simulator
 
