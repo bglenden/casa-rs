@@ -2099,6 +2099,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#indices-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        indices-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fluxerror-casa" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2513,6 +2524,17 @@
     <span class="md-ellipsis">
       
         atan2-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#power-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        power-casa
       
     </span>
   </a>
@@ -5674,6 +5696,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#indices-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        indices-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fluxerror-casa" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6088,6 +6121,17 @@
     <span class="md-ellipsis">
       
         atan2-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#power-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        power-casa
       
     </span>
   </a>
@@ -9944,9 +9988,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">24</td>
+<td style="text-align: right;">25</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">37</td>
+<td style="text-align: right;">36</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10016,9 +10060,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">57</td>
 <td>yes</td>
-<td style="text-align: right;">45</td>
+<td style="text-align: right;">46</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">12</td>
+<td style="text-align: right;">11</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10064,7 +10108,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 24, Partial: 0, Not implemented: 37, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 25, Partial: 0, Not implemented: 36, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -10303,9 +10347,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>indices</code></td>
 <td></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Matches CASA's placeholder: warns and returns an empty int64 array.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-indices-casa">indices-casa</a></td>
 </tr>
 <tr>
 <td><code>iscomponentlist</code></td>
@@ -10641,6 +10685,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/64562dde202cd6201e8205a0bc4ee30e1ef1cf0e/tools/simulation/componentlist_fluxpol_oracle.py">tools/simulation/componentlist_fluxpol_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/64562dde202cd6201e8205a0bc4ee30e1ef1cf0e/crates/casars-python/python/tests/data/casa_componentlist_fluxpol.json">crates/casars-python/python/tests/data/casa_componentlist_fluxpol.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/64562dde202cd6201e8205a0bc4ee30e1ef1cf0e/crates/casars-python/python/tests/test_tools_componentlist.py">crates/casars-python/python/tests/test_tools_componentlist.py</a></li>
+</ul>
+<p><a id="componentlist-evidence-indices-casa"></a></p>
+<h5 id="indices-casa">indices-casa<a class="headerlink" href="#indices-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> Four CASA 6.7.6-14 states, including a selection, return an empty int64 array and warn. The selection case cannot yet be exercised in casa-rs. componentlist.indices.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/aae16abef1d08ee2d1533befddec5c4e05d8bfb6/tools/simulation/componentlist_indices_oracle.py">tools/simulation/componentlist_indices_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/aae16abef1d08ee2d1533befddec5c4e05d8bfb6/crates/casars-python/python/tests/data/casa_componentlist_indices.json">crates/casars-python/python/tests/data/casa_componentlist_indices.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/aae16abef1d08ee2d1533befddec5c4e05d8bfb6/crates/casars-python/python/tests/test_componentlist_indices.py">crates/casars-python/python/tests/test_componentlist_indices.py</a></li>
 </ul>
 <p><a id="componentlist-evidence-fluxerror-casa"></a></p>
 <h5 id="fluxerror-casa">fluxerror-casa<a class="headerlink" href="#fluxerror-casa" title="Permanent link">&para;</a></h5>
@@ -11114,7 +11166,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="quanta">quanta<a class="headerlink" href="#quanta" title="Permanent link">&para;</a></h3>
 <h4 id="quanta-method-implementation">quanta method implementation<a class="headerlink" href="#quanta-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 45, Partial: 0, Not implemented: 12, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 46, Partial: 0, Not implemented: 11, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -11430,9 +11482,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>pow</code></td>
 <td><code>v=[], a=1</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>CASA scalar integer powers, with original unit spelling, C-int narrowing, non-finite values and exponent limits.</td>
+<td><a href="#quanta-evidence-signature">signature</a>, <a href="#quanta-evidence-power-casa">power-casa</a></td>
 </tr>
 <tr>
 <td><code>quantity</code></td>
@@ -11627,6 +11679,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/4d86ba7a97255eaafab86a745b660adc694aa3c7/tools/simulation/quanta_atan2_oracle.py">tools/simulation/quanta_atan2_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/4d86ba7a97255eaafab86a745b660adc694aa3c7/crates/casars-python/python/tests/data/casa_quanta_atan2.json">crates/casars-python/python/tests/data/casa_quanta_atan2.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/4d86ba7a97255eaafab86a745b660adc694aa3c7/crates/casars-python/python/tests/test_tools_quanta.py">crates/casars-python/python/tests/test_tools_quanta.py</a></li>
+</ul>
+<p><a id="quanta-evidence-power-casa"></a></p>
+<h5 id="power-casa">power-casa<a class="headerlink" href="#power-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 113 CASA 6.7.6-14 cases cover powers, compound units, signed zero, non-finite values, exponent limits and argument errors. quanta.pow.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/e8d45e80390ed698567a28e6d13cf97578b3d92b/tools/simulation/quanta_power_oracle.py">tools/simulation/quanta_power_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/e8d45e80390ed698567a28e6d13cf97578b3d92b/crates/casars-python/python/tests/data/casa_quanta_power.json">crates/casars-python/python/tests/data/casa_quanta_power.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/e8d45e80390ed698567a28e6d13cf97578b3d92b/crates/casars-python/python/tests/test_quanta_power.py">crates/casars-python/python/tests/test_quanta_power.py</a></li>
 </ul>
 <h3 id="simulator">simulator<a class="headerlink" href="#simulator" title="Permanent link">&para;</a></h3>
 <h4 id="simulator-method-implementation">simulator method implementation<a class="headerlink" href="#simulator-method-implementation" title="Permanent link">&para;</a></h4>
