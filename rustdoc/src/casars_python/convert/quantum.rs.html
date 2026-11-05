@@ -105,7 +105,7 @@
 <a href=#105 id=105 data-nosnippet>105</a><span class="doccomment">/// `QuantumHolder::fromRecord`: a value, or an array of values.
 <a href=#106 id=106 data-nosnippet>106</a></span><span class="kw">fn </span>record_quantum(record: <span class="kw-2">&amp;</span>BTreeMap&lt;String, Variant&gt;) -&gt; ConvertResult&lt;Quantum&gt; {
 <a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">let </span>wrap = |error: String| {
-<a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">if </span>error.starts_with(<span class="string">"Unit::check Illegal unit string "</span>) {
+<a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">if </span>error.starts_with(<span class="string">"Unit::check Illegal unit string "</span>) || error.starts_with(<span class="string">"Wrong"</span>) {
 <a href=#109 id=109 data-nosnippet>109</a>            ConvertError::runtime(error)
 <a href=#110 id=110 data-nosnippet>110</a>        } <span class="kw">else </span>{
 <a href=#111 id=111 data-nosnippet>111</a>            ConvertError::runtime(<span class="macro">format!</span>(<span class="string">"Error {error} in converting quantity"</span>))

@@ -566,18 +566,21 @@
 <a href=#566 id=566 data-nosnippet>566</a>            casacore_unit(unit)<span class="question-mark">?</span>;
 <a href=#567 id=567 data-nosnippet>567</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Wrong QuantumHolder to convert asQuantumDouble"</span>.to_string());
 <a href=#568 id=568 data-nosnippet>568</a>        }
-<a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Wrong QuantumHolder to convert asQuantumDouble"</span>.to_string()),
-<a href=#570 id=570 data-nosnippet>570</a>    };
-<a href=#571 id=571 data-nosnippet>571</a>    <span class="prelude-val">Ok</span>(Quantity::with_unit(value, casacore_unit(unit)<span class="question-mark">?</span>))
-<a href=#572 id=572 data-nosnippet>572</a>}
-<a href=#573 id=573 data-nosnippet>573</a>
-<a href=#574 id=574 data-nosnippet>574</a><span class="doccomment">/// casacore's `Unit(name)`: the name normalised as `Unit::check` normalises
-<a href=#575 id=575 data-nosnippet>575</a>/// it, failing with casacore's message for a name it cannot read.
-<a href=#576 id=576 data-nosnippet>576</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>casacore_unit(name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Unit, String&gt; {
-<a href=#577 id=577 data-nosnippet>577</a>    casa_types::quanta::casacore::casacore_unit(name).map_err(|error| error.<span class="number">0</span>)
-<a href=#578 id=578 data-nosnippet>578</a>}
-<a href=#579 id=579 data-nosnippet>579</a>
-<a href=#580 id=580 data-nosnippet>580</a><span class="attr">#[cfg(test)]
-<a href=#581 id=581 data-nosnippet>581</a>#[path = <span class="string">"convert_tests.rs"</span>]
-<a href=#582 id=582 data-nosnippet>582</a></span><span class="kw">mod </span>tests;
+<a href=#569 id=569 data-nosnippet>569</a>        Variant::Other(<span class="kw">_</span>) =&gt; {
+<a href=#570 id=570 data-nosnippet>570</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Wrong QuantumHolder to convert asQuantumDouble"</span>.to_string());
+<a href=#571 id=571 data-nosnippet>571</a>        }
+<a href=#572 id=572 data-nosnippet>572</a>        <span class="kw">_ </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="string">"Illegal Quantum record in QuantumHolder::fromRecord\n"</span>.to_string()),
+<a href=#573 id=573 data-nosnippet>573</a>    };
+<a href=#574 id=574 data-nosnippet>574</a>    <span class="prelude-val">Ok</span>(Quantity::with_unit(value, casacore_unit(unit)<span class="question-mark">?</span>))
+<a href=#575 id=575 data-nosnippet>575</a>}
+<a href=#576 id=576 data-nosnippet>576</a>
+<a href=#577 id=577 data-nosnippet>577</a><span class="doccomment">/// casacore's `Unit(name)`: the name normalised as `Unit::check` normalises
+<a href=#578 id=578 data-nosnippet>578</a>/// it, failing with casacore's message for a name it cannot read.
+<a href=#579 id=579 data-nosnippet>579</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>casacore_unit(name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Unit, String&gt; {
+<a href=#580 id=580 data-nosnippet>580</a>    casa_types::quanta::casacore::casacore_unit(name).map_err(|error| error.<span class="number">0</span>)
+<a href=#581 id=581 data-nosnippet>581</a>}
+<a href=#582 id=582 data-nosnippet>582</a>
+<a href=#583 id=583 data-nosnippet>583</a><span class="attr">#[cfg(test)]
+<a href=#584 id=584 data-nosnippet>584</a>#[path = <span class="string">"convert_tests.rs"</span>]
+<a href=#585 id=585 data-nosnippet>585</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>
