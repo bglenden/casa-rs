@@ -13,12 +13,11 @@
    ]
   },
   "acos": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
    "evidence": [
     "signature",
-    "refusals"
+    "trigonometry-casa"
    ]
   },
   "add": {
@@ -38,21 +37,19 @@
    ]
   },
   "asin": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
    "evidence": [
     "signature",
-    "refusals"
+    "trigonometry-casa"
    ]
   },
   "atan": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
    "evidence": [
     "signature",
-    "refusals"
+    "trigonometry-casa"
    ]
   },
   "atan2": {
@@ -150,12 +147,11 @@
    ]
   },
   "cos": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
    "evidence": [
     "signature",
-    "refusals"
+    "trigonometry-casa"
    ]
   },
   "define": {
@@ -402,12 +398,11 @@
    ]
   },
   "sin": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
    "evidence": [
     "signature",
-    "refusals"
+    "trigonometry-casa"
    ]
   },
   "splitdate": {
@@ -436,12 +431,11 @@
    ]
   },
   "tan": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Scalar trigonometry with CASA unit checking, quantity conversion errors and result units.",
    "evidence": [
     "signature",
-    "refusals"
+    "trigonometry-casa"
    ]
   },
   "time": {
@@ -550,6 +544,18 @@
    "links": [
     "docs/CASA (C++) bugs.md"
    ]
+  },
+  "trigonometry-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "108 CASA 6.7.6-14 cases cover angle and dimensionless inputs, scaled units, out-of-domain results and errors for all six functions.",
+   "scope": "quanta.sin, cos, tan, asin, acos and atan.",
+   "links": [
+    "tools/simulation/quanta_trigonometry_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_trigonometry.json",
+    "crates/casars-python/python/tests/test_tools_quanta.py"
+   ],
+   "source_revision": "6e66d1fabc1f57b1df9c09a00cdf2a661f1b58ad"
   }
  }
 }
