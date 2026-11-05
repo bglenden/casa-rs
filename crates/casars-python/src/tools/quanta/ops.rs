@@ -12,7 +12,7 @@ use casa_types::quanta::casacore;
 use casa_types::quanta::format::{
     CalendarDate, angle_format, format_angle, format_time, time_format,
 };
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
+use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, unique_prefix_index};
 
 use crate::convert::quantum::{self, Quantum, quantum_holder};
 use crate::convert::value::CasaValue;
@@ -29,6 +29,41 @@ fn has(quantity: &Quantity, dimension: Dimension) -> bool {
 
 fn record(quantity: &Quantity) -> CasaValue {
     Quantum::scalar(quantity).to_value()
+}
+
+/// CASA's physical constants use casacore's case-insensitive minimax lookup.
+pub(super) fn constants(name: &str) -> CasaValue {
+    const NAMES: &[&str] = &[
+        "pi", "ee", "c", "G", "h", "HI", "R", "NA", "e", "mp", "mp_me", "mu0", "epsilon0", "k",
+        "F", "me", "re", "a0", "R0", "k2",
+    ];
+    const VALUES: &[(f64, &str)] = &[
+        (std::f64::consts::PI, ""),
+        (std::f64::consts::E, ""),
+        (299_792_458.0, "m/s"),
+        (6.67259e-11, "N.m2/kg2"),
+        (6.6260755e-34, "J.s"),
+        (1420.405751786, "MHz"),
+        (8.31451, "J/K/mol"),
+        (6.0221367e23, "mol-1"),
+        (1.60217733e-19, "C"),
+        (1.6726231e-27, "kg"),
+        (1836.152701, ""),
+        (1.2566370614359173e-6, "H/m"),
+        (8.854187817620389e-12, "F/m"),
+        (1.3806577987510647e-23, "J/K"),
+        (96485.3089890101, "C/mol"),
+        (9.109389971155782e-31, "kg"),
+        (2.8179e-15, "m"),
+        (5.2918e-11, "m"),
+        (6.9599e8, "m"),
+        (0.00029591220828559115, "AU3/d2/S0"),
+    ];
+    let (value, unit) = unique_prefix_index(name, NAMES).map_or((0.0, ""), |index| VALUES[index]);
+    CasaValue::record([
+        ("value", CasaValue::Float(value)),
+        ("unit", CasaValue::Text(unit.into())),
+    ])
 }
 
 fn non_conforming(quantity: &Quantity) -> ConvertError {

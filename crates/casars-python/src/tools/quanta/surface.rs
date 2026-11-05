@@ -67,7 +67,7 @@ const METHODS: &[Method] = &[
         "constants",
         &[param("v", K::Text, Text("pi"))],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "convert",
