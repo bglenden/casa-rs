@@ -601,7 +601,8 @@
    "evidence": [
     "bugs-record"
    ],
-   "state": "Proposed"
+   "state": "Previously agreed",
+   "owner_decision": "Owner approved on 2026-11-05; see docs/simulation/owner-decisions-20261105.md."
   },
   {
    "id": "shape-axes-recorded-units",
@@ -609,12 +610,13 @@
    "inputs": "cl.addcomponent(majoraxis='1arcsec', ...) then reading the shape record.",
    "casa": "TwoSidedShape remembers the units its axes were set in and records them so ({'unit':'arcsec','value':1.0}); a shape read from a table records arcmin axes and degree position angle.",
    "ours": "Holds radians and records every shape as CASA records one read from a table (arcmin, 0.016666666666666666).",
-   "rationale": "The quantities are the same, and the table is the same either way.",
+   "rationale": "Match CASA units in memory; the physical quantities and persisted table already agree.",
    "impact": "The record's unit and value differ from the input's but denote the same quantity.",
    "evidence": [
     "bugs-record"
    ],
-   "state": "Proposed"
+   "state": "Unfinished",
+   "owner_decision": "Owner approved matching CASA input units on 2026-11-05; see #1187 and docs/simulation/owner-decisions-20261105.md."
   },
   {
    "id": "addcomponent-point-for-bad-shape",
