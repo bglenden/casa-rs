@@ -214,6 +214,7 @@ impl RestoringBeam {
     pub fn common_enclosing(beams: &[Self]) -> Result<Self, PsfBeamFitError> {
         Ok(restoring_beam(common_enclosing_gaussian(
             &beams.iter().copied().map(numeric_beam).collect::<Vec<_>>(),
+            1.0,
         )?))
     }
 

@@ -60,7 +60,7 @@ TOOL = json.loads((DATA / "casa_componentlist_tool.json").read_text(encoding="ut
 IMPLEMENTED = {
     "addcomponent", "close", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
     "getfluxpol", "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
-    "getrefdir", "getrefdirra", "getrefdirdec", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
+    "getrefdir", "getrefdirra", "getrefdirdec", "getrefdirframe", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
     "torecord",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
@@ -114,6 +114,22 @@ def test_refdir_string_placeholders_match_casa(caplog: pytest.LogCaptureFixture)
                     assert result == case["result"] and type(result) is str
                 expected_warning = "error" not in case or case["error"]["type"] == "SystemError"
                 assert caplog.messages == ([f"{case['method']} not implemented yet"] if expected_warning else [])
+
+
+def test_refdirframe_matches_casa() -> None:
+    fixture = json.loads((DATA / "casa_componentlist_refdirframe.json").read_text())
+    for case in fixture["cases"]:
+        cl = componentlist()
+        for direction in case["directions"]:
+            assert cl.addcomponent(flux=1, dir=direction, freq="1GHz")
+        if "error" in case:
+            expected = case["error"]
+            error_type = {"TypeError": TypeError, "RuntimeError": RuntimeError}[expected["type"]]
+            with pytest.raises(error_type) as error:
+                cl.getrefdirframe(case["which"])
+            assert str(error.value) == expected["message"]
+        else:
+            assert cl.getrefdirframe(case["which"]) == case["result"]
 
 #: Radians, hertz or janskys in each unit the records use.
 SI = {
