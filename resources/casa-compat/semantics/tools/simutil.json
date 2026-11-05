@@ -5,12 +5,11 @@
  "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
  "methods": {
   "applyRotate": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Returns the rotated x and y coordinates using the input numeric types, including NumPy arrays.",
    "evidence": [
     "signature",
-    "refusals"
+    "arithmetic-casa"
    ]
   },
   "approxBeam": {
@@ -205,12 +204,11 @@
    ]
   },
   "isEven": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Tests parity using the input numeric type, including large integers and NumPy arrays.",
    "evidence": [
     "signature",
-    "refusals"
+    "arithmetic-casa"
    ]
   },
   "isdirection": {
@@ -308,12 +306,11 @@
    ]
   },
   "needsFiller": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053, which classifies it.",
+   "status": "Implemented",
+   "scope": "Returns integer 1 if the map length exceeds the pattern plus beam, else 0.",
    "evidence": [
     "signature",
-    "refusals"
+    "arithmetic-casa"
    ]
   },
   "newfig": {
@@ -819,6 +816,18 @@
     "crates/casars-python/python/tests/test_simutil.py"
    ],
    "source_revision": "50789c6def3dcf1b55dda2bcbe7d2ef39470f02a"
+  },
+  "arithmetic-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "Nineteen cases recorded from CASA 6.7.6.14 cover scalars, large integers, NumPy arrays and scalars, boundary values and errors; the Python binding agrees on values and result types.",
+   "scope": "applyRotate, isEven and needsFiller.",
+   "links": [
+    "tools/simulation/simutil_arithmetic_oracle.py",
+    "crates/casars-python/python/tests/data/casa_simutil_arithmetic.json",
+    "crates/casars-python/python/tests/test_simutil.py"
+   ],
+   "source_revision": "c59130fca34f967fd100cca36a5b067ee318ece9"
   }
  }
 }
