@@ -29,7 +29,7 @@ mod slices;
 mod state;
 mod stubs;
 pub(crate) mod surface;
-mod values;
+pub(crate) mod values;
 mod write;
 mod write_cells;
 mod write_structure;

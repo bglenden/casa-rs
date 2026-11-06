@@ -58,6 +58,16 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// The attached table, required by CASA's keyword methods.
+    pub(crate) fn keyword_table_path(&self) -> ConvertResult<&Path> {
+        self.table
+            .as_ref()
+            .map(|table| table.path.as_path())
+            .ok_or_else(|| {
+                ConvertError::runtime("Exception: A table is not attached to this ComponentList.")
+            })
+    }
+
     /// The measures data, loaded on first use.
     fn measures(&mut self) -> ConvertResult<Arc<dyn MeasuresProvider>> {
         if let Some(measures) = &self.measures {

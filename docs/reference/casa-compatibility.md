@@ -1596,7 +1596,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 40 | 0 | 21 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 42 | 0 | 19 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1613,7 +1613,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 40, Partial: 0, Not implemented: 21, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 42, Partial: 0, Not implemented: 19, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1640,7 +1640,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `getfreqframe` | `which` | Implemented | Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency. | [signature](#componentlist-evidence-signature), [frequency-placeholders-casa](#componentlist-evidence-frequency-placeholders-casa) |
 | `getfrequnit` | `which` | Implemented | Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency. | [signature](#componentlist-evidence-signature), [frequency-placeholders-casa](#componentlist-evidence-frequency-placeholders-casa) |
 | `getfreqvalue` | `which` | Implemented | Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency. | [signature](#componentlist-evidence-signature), [frequency-placeholders-casa](#componentlist-evidence-frequency-placeholders-casa) |
-| `getkeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getkeyword` | `keyword='metadata'` | Implemented (#1053) | Reads a table keyword from the attached component list, including dotted paths through nested records; preserves CASA scalar and array result types. | [signature](#componentlist-evidence-signature), [keyword-reads-casa](#componentlist-evidence-keyword-reads-casa) |
 | `getlabel` | `which` | Implemented | A component's label. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getrefdir` | `which` | Implemented | A component's reference direction as a measure record. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getrefdirdec` | `which, unit='deg', precision=6` | Implemented | CASA's own placeholder logs a warning and returns an empty string, including for out-of-range indices. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
@@ -1648,7 +1648,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `getrefdirra` | `which, unit='deg', precision=6` | Implemented | CASA's own placeholder logs a warning and returns an empty string, including for out-of-range indices. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getshape` | `which` | Implemented | Returns CASA shape axes and errors, preserving supplied axis units in memory and table units after reopening; point shapes return an empty record. | [signature](#componentlist-evidence-signature), [getshape-casa](#componentlist-evidence-getshape-casa) |
 | `getspectrum` | `which` | Implemented | A component's spectrum record. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `haskeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `haskeyword` | `keyword='metadata'` | Implemented (#1053) | Tests whether the attached component list has a literal top-level table keyword; dotted names are not traversed. | [signature](#componentlist-evidence-signature), [keyword-reads-casa](#componentlist-evidence-keyword-reads-casa) |
 | `indices` |  | Implemented | Matches CASA's placeholder: warns and returns an empty int64 array. | [signature](#componentlist-evidence-signature), [indices-casa](#componentlist-evidence-indices-casa) |
 | `iscomponentlist` | `tool=[]` | Implemented | CASA placeholder logs a warning and returns False; cyclic arguments are handled safely. | [signature](#componentlist-evidence-signature), [iscomponentlist-casa](#componentlist-evidence-iscomponentlist-casa) |
 | `isphysical` | `which=[-1]` | Implemented | Checks selected components using CASA Stokes physicality; an explicit empty index list returns true, and selecting all on an empty list raises an owner-approved error rather than exiting. | [signature](#componentlist-evidence-signature), [isphysical-casa](#componentlist-evidence-isphysical-casa) |
@@ -2000,6 +2000,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/test_undefined_frequency.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/test_undefined_frequency.py)
 - [crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs)
 - [crates/casars-imager/tests/t1/virtual_model.rs](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-imager/tests/t1/virtual_model.rs)
+
+<a id="componentlist-evidence-keyword-reads-casa"></a>
+##### keyword-reads-casa
+
+**CASA-recorded values — measured.** 32 CASA 6.7.6-14 keyword read cases cover defaults, detached tools, missing and dotted names, nested records, typed arrays, read-only tables and argument errors; a CASA-created table exercises persistence and cross-tool updates. componentlist.getkeyword and haskeyword.
+
+- [tools/casa-compat/componentlist_keyword_read_oracle.py](https://github.com/bglenden/casa-rs/blob/5d69a948650dd925073d14348b2790c67ca470d5/tools/casa-compat/componentlist_keyword_read_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_keyword_read.json](https://github.com/bglenden/casa-rs/blob/5d69a948650dd925073d14348b2790c67ca470d5/crates/casars-python/python/tests/data/casa_componentlist_keyword_read.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_keyword_read.cl.tgz](https://github.com/bglenden/casa-rs/blob/5d69a948650dd925073d14348b2790c67ca470d5/crates/casars-python/python/tests/data/casa_componentlist_keyword_read.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_keyword_read.py](https://github.com/bglenden/casa-rs/blob/5d69a948650dd925073d14348b2790c67ca470d5/crates/casars-python/python/tests/test_componentlist_keyword_read.py)
 
 ### measures
 

@@ -7,9 +7,9 @@
 //! CASA's simulation tasks call are implemented (`open`, `addcomponent`,
 //! `rename`, `close`, `done`, `length`, `torecord`, `getspectrum`,
 //! `getrefdir`), with the accessors `getcomponent`, `getfluxvalue`,
-//! `getfluxunit`, `getlabel`, `shapetype` and `spectrumtype`, and CASA's
-//! `iscomponentlist` placeholder; the rest raise `NotImplementedError`
-//! naming #1053.
+//! `getfluxunit`, `getlabel`, `shapetype`, `spectrumtype`, table keyword
+//! reads, and CASA's `iscomponentlist` placeholder. The surface records
+//! the other implemented methods and refusals naming #1053.
 //!
 //! CASA's outcomes are kept ([`ops`] for the table, `add` for
 //! `addcomponent`): what CASA raises is a `RuntimeError` with CASA's
@@ -24,6 +24,7 @@
 //! the flux's double precision (`add`).
 
 mod add;
+mod keywords;
 mod ops;
 mod placeholder;
 mod selection;
@@ -536,10 +537,17 @@ impl PyComponentList {
         self.getter_placeholder(py, which, "getfreqvalue", CasaValue::Float(0.0))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Read a table keyword, including a dotted path into a nested record.
     #[pyo3(signature = (keyword = None), text_signature = "($self, keyword='metadata')")]
-    fn getkeyword(&self, keyword: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("getkeyword")
+    fn getkeyword(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] keyword: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let keyword = keywords::argument(py, keyword.as_ref())?;
+        self.call(py, move |state, _| {
+            keywords::get(state.keyword_table_path()?, &keyword)
+        })
     }
 
     /// Component `which`'s label.
@@ -628,10 +636,17 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Whether the attached table has the named top-level keyword.
     #[pyo3(signature = (keyword = None), text_signature = "($self, keyword='metadata')")]
-    fn haskeyword(&self, keyword: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("haskeyword")
+    fn haskeyword(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] keyword: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let keyword = keywords::argument(py, keyword.as_ref())?;
+        self.call(py, move |state, _| {
+            keywords::has(state.keyword_table_path()?, &keyword)
+        })
     }
 
     /// CASA's placeholder: logs a warning and returns an empty int64 array.

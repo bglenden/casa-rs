@@ -60,7 +60,7 @@ TOOL = json.loads((DATA / "casa_componentlist_tool.json").read_text(encoding="ut
 IMPLEMENTED = {
     "addcomponent", "close", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
     "getfluxerror", "getfluxpol", "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
-    "indices", "getrefdir", "getrefdirra", "getrefdirdec", "getrefdirframe", "getshape", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
+    "indices", "getkeyword", "haskeyword", "getrefdir", "getrefdirra", "getrefdirdec", "getrefdirframe", "getshape", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
     "select", "deselect", "selected", "setlabel", "setfreq", "setfreqframe", "remove", "recover", "purge", "sample", "convertfluxunit", "convertfrequnit", "torecord", "isphysical", "iscomponentlist",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
