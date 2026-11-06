@@ -961,6 +961,9 @@ mod imhead_restfreq_add;
 #[path = "casa_returns/imhead_projection_edits.rs"]
 mod imhead_projection_edits;
 
+#[path = "casa_returns/imhead_custom_arrays.rs"]
+mod imhead_custom_arrays;
+
 #[path = "casa_returns/imhead_mutations.rs"]
 mod imhead_mutations;
 

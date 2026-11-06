@@ -28,6 +28,7 @@ use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
 mod axes;
+mod custom_values;
 mod extrema;
 mod planes;
 mod projection_header;
@@ -1866,6 +1867,26 @@ pub fn imhead_custom_value(
             Value::Scalar(ScalarValue::Bool(_)) => Err(ImageError::InvalidMetadata(
                 "Unhandled data type Bool for user defined type. Send us a bug report".into(),
             )),
+            Value::Array(array)
+                if matches!(
+                    array,
+                    casa_types::ArrayValue::Bool(_)
+                        | casa_types::ArrayValue::Int32(_)
+                        | casa_types::ArrayValue::Float64(_)
+                        | casa_types::ArrayValue::String(_)
+                ) =>
+            {
+                let kind = match array {
+                    casa_types::ArrayValue::Bool(_) => "Bool",
+                    casa_types::ArrayValue::Int32(_) => "Int",
+                    casa_types::ArrayValue::Float64(_) => "double",
+                    casa_types::ArrayValue::String(_) => "String",
+                    _ => unreachable!(),
+                };
+                Err(ImageError::InvalidMetadata(format!(
+                    "Unhandled data type Array<{kind}> for user defined type. Send us a bug report"
+                )))
+            }
             _ => Err(ImageError::InvalidMetadata(format!(
                 "Reading this user-defined value is not implemented (#977): {key}"
             ))),
@@ -1880,11 +1901,25 @@ pub fn imhead_custom_value(
     }
 }
 
-/// Write or remove a user-defined scalar metadata field.
+/// Backwards-compatible entry point for changing user-defined metadata.
+///
+/// # Errors
+///
+/// Returns an error when the value or metadata operation is unsupported.
+pub fn imhead_custom_scalar(
+    path: impl AsRef<Path>,
+    mode: &str,
+    key: &str,
+    value: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    imhead_custom_value_change(path, mode, key, value)
+}
+
+/// Write or remove user-defined scalar and one-dimensional array metadata.
 ///
 /// `mode` is `"add"`, `"put"`, or `"del"`. Adds refuse an existing field;
 /// puts preserve its existing type. Values may be strings, booleans, 32-bit
-/// integers, or finite doubles. Deleting a field ignores `value`.
+/// integers, finite doubles, or flat arrays of those. Deleting ignores `value`.
 ///
 /// # Errors
 ///
@@ -1892,7 +1927,7 @@ pub fn imhead_custom_value(
 /// missing delete, incompatible existing field, or image I/O failure. The
 /// metadata may already be updated if appending image history fails, as in
 /// CASA's metadata writer.
-pub fn imhead_custom_scalar(
+pub fn imhead_custom_value_change(
     path: impl AsRef<Path>,
     mode: &str,
     key: &str,
@@ -1906,28 +1941,38 @@ pub fn imhead_custom_scalar(
         )));
     }
     let (stored, rendered) = if mode == "del" {
-        (ScalarValue::String(String::new()), String::new())
+        (
+            Value::Scalar(ScalarValue::String(String::new())),
+            String::new(),
+        )
     } else {
         match value {
-            ParameterValue::String(value) => {
-                (ScalarValue::String(value.clone()), format!("\"{value}\""))
-            }
+            ParameterValue::String(value) => (
+                Value::Scalar(ScalarValue::String(value.clone())),
+                format!("\"{value}\""),
+            ),
             ParameterValue::Integer(value) => (
-                ScalarValue::Int32(i32::try_from(*value).map_err(|_| {
+                Value::Scalar(ScalarValue::Int32(i32::try_from(*value).map_err(|_| {
                     ImageError::InvalidMetadata(
                         "User-defined integer is outside the supported 32-bit range (#977)".into(),
                     )
-                })?),
+                })?)),
                 value.to_string(),
             ),
             ParameterValue::Float(value) if value.is_finite() => (
-                ScalarValue::Float64(*value),
+                Value::Scalar(ScalarValue::Float64(*value)),
                 self::projection_header::cpp_number_precision(*value, 12),
             ),
             ParameterValue::Bool(value) => (
-                ScalarValue::Bool(*value),
+                Value::Scalar(ScalarValue::Bool(*value)),
                 if *value { "1" } else { "0" }.to_string(),
             ),
+            ParameterValue::Array(values) => {
+                let array = casa_provider_contracts::parameter_array_to_casa(values)
+                    .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
+                let rendered = custom_values::format_array(&array);
+                (Value::Array(array), rendered)
+            }
             _ => {
                 return Err(ImageError::InvalidMetadata(
                     "This user-defined value type is not implemented (#977)".into(),
@@ -1939,7 +1984,7 @@ pub fn imhead_custom_scalar(
         image: &mut PagedImage<T>,
         mode: &str,
         key: &str,
-        value: &ScalarValue,
+        value: &Value,
         rendered: &str,
     ) -> Result<String, ImageError> {
         let mut info = image.misc_info();
@@ -1965,17 +2010,14 @@ pub fn imhead_custom_scalar(
                 format!("Removed user-defined keyword {name}")
             }
             _ => {
-                if info.get(key).is_some_and(|old| match old {
-                    Value::Scalar(old) => {
-                        std::mem::discriminant(old) != std::mem::discriminant(value)
-                    }
-                    _ => true,
+                if info.get(key).is_some_and(|old| {
+                    old.type_tag().is_none() || old.type_tag() != value.type_tag()
                 }) {
                     return Err(ImageError::InvalidMetadata(format!(
                         "incorrect data type used for field {key}"
                     )));
                 }
-                info.upsert(key, Value::Scalar(value.clone()));
+                info.upsert(key, value.clone());
                 format!("Added {key} = {rendered}")
             }
         };

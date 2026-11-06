@@ -240,6 +240,14 @@ def test_imhead_history_is_visible_with_default_logging(
     assert 'Modified object from "python-fixture" to "M31"' in capsys.readouterr().err
 
 
+def test_imhead_custom_array_from_python(image: Path) -> None:
+    require_executables("imhead")
+    assert tasks.imhead(str(image), mode="add", hdkey="values", hdvalue=[1, 2.5]) is None
+    with pytest.raises(tasks.TaskExecutionError, match="Unhandled data type Array<double>"):
+        tasks.imhead(str(image), mode="get", hdkey="values")
+    assert tasks.imhead(str(image), mode="del", hdkey="values", hdvalue=[1, 2]) is None
+
+
 def test_imhead_put_accepts_rest_frequency_quantity_record(tmp_path: Path) -> None:
     require_executables("imhead")
     fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"

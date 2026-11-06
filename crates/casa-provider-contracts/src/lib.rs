@@ -15,6 +15,7 @@ mod projection;
 mod provider;
 mod reply;
 mod semantic;
+mod value_conversion;
 
 pub use casa_value::{
     CasaEntry, CasaFloat, CasaKey, CasaValue, ComplexDtype, FloatDtype, IntDtype,
@@ -37,6 +38,7 @@ pub use semantic::{
     ObjectSemanticContract, ObjectTypeContract, ProviderSurfaceKind, TaskOperationDescriptor,
     TaskSemanticContract,
 };
+pub use value_conversion::parameter_array_to_casa;
 
 #[cfg(test)]
 mod tests;

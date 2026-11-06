@@ -110,6 +110,7 @@ fn run_imhead(
             if matches!(hdvalue, ParameterValue::Array(_) | ParameterValue::Table(_))
                 && mode == "del"
                 && !beam_key
+                && !casa_images::analysis::imhead_is_custom_key(&hdkey)
             {
                 return Err(TaskFailure::validation(
                     "imhead del with an array or record hdvalue is not implemented (#977)",
@@ -145,7 +146,7 @@ fn run_imhead(
             } else if axis_quantity {
                 casa_images::analysis::imhead_put_axis_quantity(&path, &hdkey, &hdvalue)
             } else if casa_images::analysis::imhead_is_custom_key(&hdkey) {
-                casa_images::analysis::imhead_custom_scalar(&path, &mode, &hdkey, &hdvalue)
+                casa_images::analysis::imhead_custom_value_change(&path, &mode, &hdkey, &hdvalue)
             } else if mode == "del" {
                 imhead_add_delete(&path, &mode, &hdkey, "")
             } else if let ParameterValue::String(value) = &hdvalue {

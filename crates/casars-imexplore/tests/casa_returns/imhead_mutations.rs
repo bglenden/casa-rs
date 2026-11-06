@@ -862,7 +862,7 @@ fn imhead_refuses_unimplemented_variants_without_mutating_metadata() {
     assert!(matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("#977")));
     for value in [
         json!(1_i64 << 40),
-        json!([1, 2]),
+        json!([[1, 2], [3, 4]]),
         json!({"unit": "Hz", "value": 1.5}),
     ] {
         let (_, reply) = json_run(
