@@ -241,6 +241,11 @@
            "kind": {
             "str": null
            }
+          },
+          "dict[variant](kind)": {
+           "kind": {
+            "str": null
+           }
           }
          },
          "unit_dimension": {
@@ -1104,6 +1109,11 @@
            }
           },
           "dict[string](kind)": {
+           "kind": {
+            "str": null
+           }
+          },
+          "dict[variant](kind)": {
            "kind": {
             "str": null
            }
