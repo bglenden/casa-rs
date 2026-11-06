@@ -2417,6 +2417,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#simulate-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simulate-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6448,6 +6459,17 @@
     <span class="md-ellipsis">
       
         setspectrum-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#simulate-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        simulate-casa
       
     </span>
   </a>
@@ -10881,9 +10903,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">51</td>
+<td style="text-align: right;">52</td>
 <td style="text-align: right;">2</td>
-<td style="text-align: right;">8</td>
+<td style="text-align: right;">7</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -11001,7 +11023,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 51, Partial: 2, Not implemented: 8, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 52, Partial: 2, Not implemented: 7, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -11408,9 +11430,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>simulate</code></td>
 <td><code>howmany=1, log=True</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented (#1053)</td>
+<td>Appends the requested number of CASA default point components while preserving existing components, selection and table metadata. Nonpositive counts append nothing. Counts above the signed loop range are rejected before mutation.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-simulate-casa">simulate-casa</a></td>
 </tr>
 <tr>
 <td><code>sort</code></td>
@@ -11855,6 +11877,16 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/3deffa3f9816349671a9ce763a3dbb292881e338/crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz">crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/3deffa3f9816349671a9ce763a3dbb292881e338/crates/casars-python/python/tests/test_componentlist_setspectrum.py">crates/casars-python/python/tests/test_componentlist_setspectrum.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/3deffa3f9816349671a9ce763a3dbb292881e338/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
+</ul>
+<p><a id="componentlist-evidence-simulate-casa"></a></p>
+<h5 id="simulate-casa">simulate-casa<a class="headerlink" href="#simulate-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 40 CASA 6.7.6-14 calls on empty and populated lists cover default components, counts, selections, argument conversion and errors. CASA reopens a casa-rs-updated table and reads appended components with existing error columns and keyword intact. componentlist.simulate defaults, argument conversion and persistence.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/91a1067e692518a9280eb219df45e0219d1139f1/tools/simulation/componentlist_simulate_oracle.py">tools/simulation/componentlist_simulate_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/91a1067e692518a9280eb219df45e0219d1139f1/crates/casars-python/python/tests/data/casa_componentlist_simulate.json">crates/casars-python/python/tests/data/casa_componentlist_simulate.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/91a1067e692518a9280eb219df45e0219d1139f1/crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz">crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/91a1067e692518a9280eb219df45e0219d1139f1/crates/casars-python/python/tests/test_componentlist_simulate.py">crates/casars-python/python/tests/test_componentlist_simulate.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/91a1067e692518a9280eb219df45e0219d1139f1/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>

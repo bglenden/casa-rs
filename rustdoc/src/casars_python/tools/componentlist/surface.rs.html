@@ -348,31 +348,34 @@
 <a href=#348 id=348 data-nosnippet>348</a>        No,
 <a href=#349 id=349 data-nosnippet>349</a>    ),
 <a href=#350 id=350 data-nosnippet>350</a>    of_one(<span class="string">"shapetype"</span>, R::Text, Yes),
-<a href=#351 id=351 data-nosnippet>351</a>    method(
-<a href=#352 id=352 data-nosnippet>352</a>        <span class="string">"simulate"</span>,
-<a href=#353 id=353 data-nosnippet>353</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"howmany"</span>, K::Int, Int(<span class="number">1</span>)), LOG],
-<a href=#354 id=354 data-nosnippet>354</a>        R::Bool,
-<a href=#355 id=355 data-nosnippet>355</a>        No,
-<a href=#356 id=356 data-nosnippet>356</a>    ),
-<a href=#357 id=357 data-nosnippet>357</a>    method(
-<a href=#358 id=358 data-nosnippet>358</a>        <span class="string">"sort"</span>,
-<a href=#359 id=359 data-nosnippet>359</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"criteria"</span>, K::Text, Text(<span class="string">"Flux"</span>)), LOG],
-<a href=#360 id=360 data-nosnippet>360</a>        R::Bool,
-<a href=#361 id=361 data-nosnippet>361</a>        No,
-<a href=#362 id=362 data-nosnippet>362</a>    ),
-<a href=#363 id=363 data-nosnippet>363</a>    of_one(<span class="string">"spectrumtype"</span>, R::Text, Yes),
-<a href=#364 id=364 data-nosnippet>364</a>    method(<span class="string">"summarize"</span>, <span class="kw-2">&amp;</span>[param(<span class="string">"which"</span>, K::Int, Int(-<span class="number">1</span>))], R::Bool, No),
-<a href=#365 id=365 data-nosnippet>365</a>    method(<span class="string">"torecord"</span>, <span class="kw-2">&amp;</span>[], R::Record, Yes),
-<a href=#366 id=366 data-nosnippet>366</a>];
-<a href=#367 id=367 data-nosnippet>367</a>
-<a href=#368 id=368 data-nosnippet>368</a><span class="kw">const </span>WHICH_ALL_ONES: Parameter = param(<span class="string">"whichones"</span>, K::Ints, Ints(<span class="kw-2">&amp;</span>[-<span class="number">1</span>]));
-<a href=#369 id=369 data-nosnippet>369</a>
-<a href=#370 id=370 data-nosnippet>370</a><span class="doccomment">/// The `componentlist` tool's surface.
-<a href=#371 id=371 data-nosnippet>371</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>SURFACE: ToolSurface = ToolSurface {
-<a href=#372 id=372 data-nosnippet>372</a>    name: <span class="string">"componentlist"</span>,
-<a href=#373 id=373 data-nosnippet>373</a>    module: <span class="string">"casars.tools"</span>,
-<a href=#374 id=374 data-nosnippet>374</a>    constructor: <span class="kw-2">&amp;</span>[],
-<a href=#375 id=375 data-nosnippet>375</a>    methods: METHODS,
-<a href=#376 id=376 data-nosnippet>376</a>    lifecycle: <span class="kw-2">&amp;</span>[<span class="string">"open"</span>, <span class="string">"rename"</span>, <span class="string">"close"</span>, <span class="string">"done"</span>],
-<a href=#377 id=377 data-nosnippet>377</a>};
+<a href=#351 id=351 data-nosnippet>351</a>    Method {
+<a href=#352 id=352 data-nosnippet>352</a>        mutating: <span class="bool-val">true</span>,
+<a href=#353 id=353 data-nosnippet>353</a>        ..method(
+<a href=#354 id=354 data-nosnippet>354</a>            <span class="string">"simulate"</span>,
+<a href=#355 id=355 data-nosnippet>355</a>            <span class="kw-2">&amp;</span>[param(<span class="string">"howmany"</span>, K::Int, Int(<span class="number">1</span>)), LOG],
+<a href=#356 id=356 data-nosnippet>356</a>            R::Bool,
+<a href=#357 id=357 data-nosnippet>357</a>            Yes,
+<a href=#358 id=358 data-nosnippet>358</a>        )
+<a href=#359 id=359 data-nosnippet>359</a>    },
+<a href=#360 id=360 data-nosnippet>360</a>    method(
+<a href=#361 id=361 data-nosnippet>361</a>        <span class="string">"sort"</span>,
+<a href=#362 id=362 data-nosnippet>362</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"criteria"</span>, K::Text, Text(<span class="string">"Flux"</span>)), LOG],
+<a href=#363 id=363 data-nosnippet>363</a>        R::Bool,
+<a href=#364 id=364 data-nosnippet>364</a>        No,
+<a href=#365 id=365 data-nosnippet>365</a>    ),
+<a href=#366 id=366 data-nosnippet>366</a>    of_one(<span class="string">"spectrumtype"</span>, R::Text, Yes),
+<a href=#367 id=367 data-nosnippet>367</a>    method(<span class="string">"summarize"</span>, <span class="kw-2">&amp;</span>[param(<span class="string">"which"</span>, K::Int, Int(-<span class="number">1</span>))], R::Bool, No),
+<a href=#368 id=368 data-nosnippet>368</a>    method(<span class="string">"torecord"</span>, <span class="kw-2">&amp;</span>[], R::Record, Yes),
+<a href=#369 id=369 data-nosnippet>369</a>];
+<a href=#370 id=370 data-nosnippet>370</a>
+<a href=#371 id=371 data-nosnippet>371</a><span class="kw">const </span>WHICH_ALL_ONES: Parameter = param(<span class="string">"whichones"</span>, K::Ints, Ints(<span class="kw-2">&amp;</span>[-<span class="number">1</span>]));
+<a href=#372 id=372 data-nosnippet>372</a>
+<a href=#373 id=373 data-nosnippet>373</a><span class="doccomment">/// The `componentlist` tool's surface.
+<a href=#374 id=374 data-nosnippet>374</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>SURFACE: ToolSurface = ToolSurface {
+<a href=#375 id=375 data-nosnippet>375</a>    name: <span class="string">"componentlist"</span>,
+<a href=#376 id=376 data-nosnippet>376</a>    module: <span class="string">"casars.tools"</span>,
+<a href=#377 id=377 data-nosnippet>377</a>    constructor: <span class="kw-2">&amp;</span>[],
+<a href=#378 id=378 data-nosnippet>378</a>    methods: METHODS,
+<a href=#379 id=379 data-nosnippet>379</a>    lifecycle: <span class="kw-2">&amp;</span>[<span class="string">"open"</span>, <span class="string">"rename"</span>, <span class="string">"close"</span>, <span class="string">"done"</span>],
+<a href=#380 id=380 data-nosnippet>380</a>};
 </code></pre></div></section></main></body></html>
