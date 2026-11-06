@@ -124,6 +124,7 @@ impl std::fmt::Display for StokesType {
 #[derive(Debug, Clone)]
 pub struct StokesCoordinate {
     stokes: Vec<StokesType>,
+    axis_name: String,
 }
 
 impl StokesCoordinate {
@@ -143,7 +144,10 @@ impl StokesCoordinate {
     /// assert_eq!(coord.n_stokes(), 4);
     /// ```
     pub fn new(stokes: Vec<StokesType>) -> Self {
-        Self { stokes }
+        Self {
+            stokes,
+            axis_name: "Stokes".into(),
+        }
     }
 
     /// Returns the number of Stokes parameters.
@@ -158,6 +162,9 @@ impl StokesCoordinate {
 
     /// Reconstructs a Stokes coordinate from a serialized record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
+        let name = get_optional_vec_string(rec, "axes")
+            .and_then(|names| names.into_iter().next())
+            .unwrap_or_else(|| "Stokes".into());
         if let Ok(codes) = get_required_vec_i32(rec, "stokes") {
             let stokes = codes
                 .into_iter()
@@ -167,7 +174,10 @@ impl StokesCoordinate {
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            return Ok(Self::new(stokes));
+            return Ok(Self {
+                stokes,
+                axis_name: name,
+            });
         }
 
         let names = get_optional_vec_string(rec, "stokes")
@@ -180,7 +190,10 @@ impl StokesCoordinate {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Self::new(stokes))
+        Ok(Self {
+            stokes,
+            axis_name: name,
+        })
     }
 }
 
@@ -249,7 +262,7 @@ impl Coordinate for StokesCoordinate {
     }
 
     fn axis_names(&self) -> Vec<String> {
-        vec!["Stokes".into()]
+        vec![self.axis_name.clone()]
     }
 
     fn axis_units(&self) -> Vec<String> {

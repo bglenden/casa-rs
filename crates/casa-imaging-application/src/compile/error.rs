@@ -535,6 +535,14 @@ pub enum PrepareError {
         /// The mask's frame.
         frame: DirectionRef,
     },
+    /// A mask grid's native and converted frames cannot yet be represented.
+    #[error("mask direction conversion from {native} to {conversion} is unsupported (#977)")]
+    MaskImageConversion {
+        /// The native frame.
+        native: DirectionRef,
+        /// The conversion frame.
+        conversion: DirectionRef,
+    },
     /// A `startmodel` casa-rs cannot start from.
     #[error("startmodel {}: {reason}", path.display())]
     StartModel {

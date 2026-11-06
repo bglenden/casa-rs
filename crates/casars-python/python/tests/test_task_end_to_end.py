@@ -9,6 +9,7 @@ then a missing executable fails the run.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -205,6 +206,517 @@ def test_a_missing_input_image_is_a_parameter_error(
     completion = failure.value.completion
     assert completion.parameter == "imagename"
     assert completion.returncode == 2
+
+
+def test_imhead_preserves_python_scalar_header_types(
+    image: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    require_executables("imhead")
+    monkeypatch.chdir(image.parent)
+    assert tasks.imhead(image.name, mode="put", hdkey="count", hdvalue=42) is None
+    assert tasks.imhead(image.name, mode="put", hdkey="real", hdvalue=1.25) is None
+    assert tasks.imhead(image.name, mode="put", hdkey="literal", hdvalue="  42  ") is None
+    count = tasks.imhead(image.name, mode="get", hdkey="count")
+    real = tasks.imhead(image.name, mode="get", hdkey="real")
+    assert type(count) is int and count == 42
+    assert type(real) is float and real == 1.25
+    assert tasks.imhead(image.name, mode="get", hdkey="literal") == "  42  "
+    assert tasks.imhead(image.name, mode="put", hdkey="crpix1", hdvalue=3.5) is None
+    assert tasks.imhead(image.name, mode="get", hdkey="crpix1") == 3.5
+    assert tasks.imhead(image.name, mode="put", hdkey="ctype1", hdvalue="new axis") is None
+    assert tasks.imhead(image.name, mode="get", hdkey="ctype1") == "new axis"
+
+
+def test_imhead_history_is_visible_with_default_logging(
+    image: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    require_executables("imhead")
+    monkeypatch.chdir(image.parent)
+    for name in ("CASA_RS_LOG_TABLE", "CASA_RS_LOG_TABLE_PRIORITY", "CASA_RS_LOG_STDERR_PRIORITY"):
+        monkeypatch.delenv(name, raising=False)
+    assert tasks.imhead(image.name, mode="put", hdkey="object", hdvalue="M31") is None
+    capsys.readouterr()
+    assert tasks.imhead(image.name, mode="history") is None
+    assert 'Modified object from "python-fixture" to "M31"' in capsys.readouterr().err
+
+
+def test_imhead_custom_array_from_python(image: Path) -> None:
+    require_executables("imhead")
+    assert tasks.imhead(str(image), mode="add", hdkey="values", hdvalue=[1, 2.5]) is None
+    with pytest.raises(tasks.TaskExecutionError, match="Unhandled data type Array<double>"):
+        tasks.imhead(str(image), mode="get", hdkey="values")
+    assert tasks.imhead(str(image), mode="del", hdkey="values", hdvalue=[1, 2]) is None
+
+
+def test_imhead_custom_records_from_python(image: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    value = {
+        "nested": {
+            "values": [1, 2],
+            "label": "test",
+            "matrix": [[1, 2], [3, 4]],
+            "mixed": [True, 1.5, "x"],
+            "cube": [[[1, 2]], [[3, 4]]],
+        }
+    }
+    assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue=value) is None
+    nested = tasks.imhead(str(image), mode="get", hdkey="custom")["nested"]
+    assert nested["label"] == "test"
+    np.testing.assert_array_equal(nested["values"], np.array([1, 2], dtype=np.int64))
+    np.testing.assert_array_equal(nested["matrix"], [[1, 2], [3, 4]])
+    np.testing.assert_array_equal(nested["mixed"], ["1.000000", "1.500000", "x"])
+    np.testing.assert_array_equal(nested["cube"], [[[1, 2]], [[3, 4]]])
+
+
+def test_imhead_reads_casa_complex_scalars(tmp_path: Path) -> None:
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/custom_complex.im"
+    image = tmp_path / "complex.im"
+    shutil.copytree(fixture, image)
+    record = tasks.imhead(str(image), mode="get", hdkey="custom")
+    assert record == {"scalar": 1.25 - 2.5j, "nested": {"zero": 0j, "imag": -3j}}
+    assert type(record["scalar"]) is complex
+    assert type(record["nested"]["imag"]) is complex
+
+
+def test_imhead_writes_complex_records_and_roundtrips_profiles(tmp_path: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "complex-write.im"
+    shutil.copytree(fixture, image)
+    value = {"scalar": 1.25 - 2.5j, "nested": {"imag": -3j},
+             "ordinary": {"kind": "complex", "value": [1, 2]},
+             "numbers": [1 + 2j, 3, 2.5, True],
+             "words": [1 + 2j, complex(float("nan"), float("inf")), "x"]}
+    params = TaskParameters.defaults("imhead", workspace=tmp_path)
+    params.set_many({"imagename": str(image), "mode": "add", "hdkey": "custom", "hdvalue": value})
+    assert params["hdvalue"]["scalar"] == value["scalar"]
+    profile = params.save(tmp_path / "complex.toml")
+    assert "[typed_parameters]" in profile.read_text()
+    restored = TaskParameters.load("imhead", profile, workspace=tmp_path)
+    assert restored["hdvalue"]["scalar"] == value["scalar"]
+    assert tasks.run("imhead", restored).value is None
+    actual = tasks.imhead(str(image), mode="get", hdkey="custom")
+    assert actual["scalar"] == value["scalar"] and type(actual["scalar"]) is complex
+    assert actual["nested"] == value["nested"]
+    assert actual["ordinary"]["kind"] == "complex"
+    np.testing.assert_array_equal(actual["ordinary"]["value"], [1, 2])
+    np.testing.assert_array_equal(actual["numbers"], [1 + 2j, 3 + 0j, 2.5 + 0j, 1 + 0j])
+    assert actual["numbers"].dtype == np.dtype("complex128")
+    np.testing.assert_array_equal(actual["words"], ["(1.000000,2.000000)", "(nan,inf)", "x"])
+    assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue={"changed": -4 + 5j}) is None
+    assert tasks.imhead(str(image), mode="get", hdkey="custom") == {"changed": -4 + 5j}
+
+
+def test_imhead_writes_numpy_complex_matrix_in_record(tmp_path: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "complex-array.im"
+    shutil.copytree(fixture, image)
+    matrix = np.array([[1 + 2j, 3 + 4j, 5 + 6j], [7 + 8j, 9 + 10j, 11 + 12j]], dtype=np.complex64)
+    assert tasks.imhead(str(image), mode="add", hdkey="custom", hdvalue={"matrix": matrix}) is None
+    actual = tasks.imhead(str(image), mode="get", hdkey="custom")["matrix"]
+    assert actual.dtype == np.dtype("complex128")
+    np.testing.assert_array_equal(actual, matrix)
+
+
+def test_imhead_rejects_unsupported_extended_numpy_precision(tmp_path: Path) -> None:
+    import numpy as np
+
+    value = np.longdouble("1.25")
+    if type(value.tolist()) is not type(value):
+        pytest.skip("NumPy converts longdouble to a Python scalar on this platform")
+    params = TaskParameters.defaults("imhead", workspace=tmp_path)
+    for item in [value, np.array([value]), np.array([1], dtype=np.float16), np.array([1], dtype=object), np.array([b"x"], dtype="S4")]:
+        with pytest.raises(TypeError, match="unsupported NumPy parameter dtype"):
+            params["hdvalue"] = {"value": item}
+
+
+def test_imhead_empty_numpy_arrays_preserve_casa_dtype_and_shape(tmp_path: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "empty-arrays.im"
+    shutil.copytree(fixture, image)
+    cases = [(np.bool_, np.bool_), (np.int16, np.int64), (np.float32, np.float64),
+             (np.complex64, np.complex128), ("U4", "U5")]
+    for case, (given_dtype, expected_dtype) in enumerate(cases):
+        for index, shape in enumerate([(0,), (0, 2), (2, 0), (2, 0, 3)]):
+            item = np.empty(shape, dtype=given_dtype)
+            key = f"empty{case}_{index}"
+            assert tasks.imhead(str(image), mode="add", hdkey=key, hdvalue={"value": item}) is None
+            actual = tasks.imhead(str(image), mode="get", hdkey=key)["value"]
+            assert actual.dtype == np.dtype(expected_dtype)
+            assert actual.shape == ((0,) if given_dtype == "U4" and len(shape) > 1 else shape)
+    params = TaskParameters.defaults("imhead", workspace=tmp_path)
+    params.set_many({"imagename": str(image), "hdvalue": {"value": np.empty((0, 2), dtype=np.complex64)}})
+    profile = params.save(tmp_path / "empty.toml")
+    restored = TaskParameters.load("imhead", profile, workspace=tmp_path)["hdvalue"]["value"]
+    assert restored.shape == (0, 2) and restored.dtype == np.dtype("complex128")
+
+
+def test_imhead_reads_casa_created_empty_array_records(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    image = tmp_path / "casa-empty.im"
+    shutil.copytree(root / "custom_empty_arrays.im", image)
+    expected = json.loads((root / "custom_empty_arrays_expected.json").read_text())["record"]
+    actual = tasks.imhead(str(image), mode="get", hdkey="custom")
+    for name, recorded in expected.items():
+        assert actual[name].dtype == np.dtype(recorded["dtype"])
+        assert actual[name].shape == tuple(recorded["shape"])
+
+
+def test_imhead_nonfinite_header_values_roundtrip(tmp_path: Path) -> None:
+    import math
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "nonfinite.im"
+    shutil.copytree(fixture, image)
+    assert tasks.imhead(str(image), mode="add", hdkey="scalar", hdvalue=float("nan")) is None
+    assert math.isnan(tasks.imhead(str(image), mode="get", hdkey="scalar"))
+    value = {"scalar": -float("inf"), "negative_nan": -float("nan"), "array": [float("inf"), -float("nan")],
+             "words": [-float("nan"), "x"]}
+    params = TaskParameters.defaults("imhead", workspace=tmp_path)
+    params.set_many({"imagename": str(image), "mode": "add", "hdkey": "custom", "hdvalue": value})
+    profile = params.save(tmp_path / "nonfinite.toml")
+    restored = TaskParameters.load("imhead", profile, workspace=tmp_path)
+    assert math.isnan(restored["hdvalue"]["array"][1]) and np.signbit(restored["hdvalue"]["array"][1])
+    assert tasks.run("imhead", restored).value is None
+    actual = tasks.imhead(str(image), mode="get", hdkey="custom")
+    assert actual["scalar"] == -float("inf")
+    assert math.isnan(actual["negative_nan"]) and np.signbit(actual["negative_nan"])
+    assert actual["array"].dtype == np.dtype("float64")
+    assert np.isposinf(actual["array"][0]) and np.isnan(actual["array"][1]) and np.signbit(actual["array"][1])
+    np.testing.assert_array_equal(actual["words"], ["-nan", "x"])
+
+
+def test_imhead_reads_casa_created_nonfinite_record(tmp_path: Path) -> None:
+    import json
+    import math
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    image = tmp_path / "casa-nonfinite.im"
+    shutil.copytree(root / "custom_nonfinite.im", image)
+    expected = json.loads((root / "custom_nonfinite_expected.json").read_text())
+    actual = tasks.imhead(str(image), mode="get", hdkey="custom")
+    assert type(actual["scalar"]) is float and math.isnan(actual["scalar"]) and np.signbit(actual["scalar"])
+    assert actual["negative"] == -float("inf")
+    assert actual["array"].dtype == np.dtype(expected["array_dtype"])
+    assert actual["array"].shape == tuple(expected["array_shape"])
+    assert np.isposinf(actual["array"][0]) and np.isnan(actual["array"][1]) and np.signbit(actual["array"][1])
+    np.testing.assert_array_equal(actual["words"], expected["words"])
+
+
+@pytest.mark.parametrize("projection", ["car", "sfl", "mer", "ait"])
+def test_imhead_nonzenithal_spectral_reference_matches_casa(tmp_path: Path, projection: str) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    image = tmp_path / f"{projection}.im"
+    shutil.copytree(root / f"{projection}.im", image)
+    cases = json.loads((root / "axis_quantity_expected.json").read_text())["cases"]
+    expected = next(case for case in cases if case["image"] == projection and case["key"] == "crval4")
+    assert tasks.imhead(str(image), mode="put", hdkey="crval4", hdvalue="1.5GHz") is None
+    assert tasks.imhead(str(image), mode="get", hdkey="crval4") == expected["get"]
+    summary = tasks.imhead(str(image), mode="summary")
+    assert summary["refval"].dtype == np.dtype("float64")
+    np.testing.assert_array_equal(summary["refval"], expected["after"]["refval"])
+    np.testing.assert_array_equal(summary["refpix"], expected["after"]["refpix"])
+
+
+@pytest.mark.parametrize("key", ["bunit", "object", "observer", "telescope"])
+@pytest.mark.parametrize("ignored", [[1, 2], {"ignored": "yes"}])
+def test_imhead_delete_ignores_compound_value(tmp_path: Path, key: str, ignored: object) -> None:
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_put/base.im"
+    image = tmp_path / f"{key}.im"
+    shutil.copytree(fixture, image)
+    value = "K" if key == "bunit" else "Existing"
+    assert tasks.imhead(str(image), mode="put", hdkey=key, hdvalue=value) is None
+    assert tasks.imhead(str(image), mode="del", hdkey=key, hdvalue=ignored) is None
+    assert tasks.imhead(str(image), mode="get", hdkey=key) == ""
+
+
+def test_imhead_zero_dim_numpy_record_values_match_casa(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    oracle = json.loads((root / "zero_dim_expected.json").read_text())
+    for index, case in enumerate(oracle["cases"]):
+        image = tmp_path / f"zero-dim-{index}.im"
+        shutil.copytree(root / "normal.im", image)
+        value = complex(*case["input"]) if case["input_dtype"] == "complex128" else case["input"]
+        input_array = np.array(value, dtype=case["input_dtype"])
+        assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue={"value": input_array}) is None
+        actual = tasks.imhead(str(image), mode="get", hdkey="custom")["value"]
+        assert actual.dtype == np.dtype(case["dtype"])
+        assert actual.shape == tuple(case["shape"])
+        assert actual.tolist() == case["values"]
+        params = TaskParameters("imhead", workspace=tmp_path)
+        params.set_many({"imagename": str(image), "hdvalue": {"value": input_array}})
+        snapshot = params["hdvalue"]["value"]
+        assert isinstance(snapshot, np.ndarray) and snapshot.shape == () and snapshot.item() == value
+        profile = params.save(tmp_path / f"zero-dim-{index}.toml")
+        restored = TaskParameters.load("imhead", profile, workspace=tmp_path)["hdvalue"]["value"]
+        assert isinstance(restored, np.ndarray) and restored.shape == () and restored.item() == value
+
+
+@pytest.mark.parametrize("value", [True, 4, 1.5, "abc"])
+def test_imhead_zero_dim_direct_array_matches_casa_error_on_get(tmp_path: Path, value: object) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    source = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "zero-dim-direct.im"
+    shutil.copytree(source, image)
+    assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue=np.array(value)) is None
+    with pytest.raises(tasks.TaskExecutionError, match="Unhandled data type Array"):
+        tasks.imhead(str(image), mode="get", hdkey="custom")
+
+
+def test_imhead_ignores_zero_dim_arrays_inside_flat_lists(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    source = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "zero-dim-list.im"
+    shutil.copytree(source, image)
+    values = {"mixed": [1, np.array(2), 3], "empty": [np.array(4)]}
+    assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue=values) is None
+    result = tasks.imhead(str(image), mode="get", hdkey="custom")
+    expected = json.loads((source.parent / "zero_dim_expected.json").read_text())["list_cases"]
+    for key, record in expected.items():
+        assert result[key].dtype == np.dtype(record["dtype"])
+        assert result[key].shape == tuple(record["shape"])
+        assert result[key].tolist() == record["values"]
+
+
+def test_imhead_numpy_scalars_match_casa_by_context(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    oracle = json.loads((root / "numpy_scalar_expected.json").read_text())
+    for index, case in enumerate(oracle["cases"]):
+        value = complex(*case["input"]) if case["dtype"].startswith("complex") else case["input"]
+        scalar = getattr(np, case["dtype"])(value)
+        if case["dtype"] not in ("float64", "str_"):
+            params = TaskParameters("imhead", workspace=tmp_path)
+            params.set_many({"imagename": str(tmp_path / "placeholder.im"), "hdvalue": {"value": scalar}})
+            snapshot = params["hdvalue"]["value"]
+            assert isinstance(snapshot, np.generic) and snapshot.dtype == scalar.dtype and snapshot == scalar
+            profile = params.save(tmp_path / f"scalar-{index}.toml")
+            restored = TaskParameters.load("imhead", profile, workspace=tmp_path)["hdvalue"]["value"]
+            assert isinstance(restored, np.generic) and restored.dtype == scalar.dtype and restored == scalar
+        for context in ("root", "record", "list"):
+            image = tmp_path / f"scalar-{index}-{context}.im"
+            shutil.copytree(root / "normal.im", image)
+            given = scalar if context == "root" else {"value": scalar if context == "record" else [scalar, 2]}
+            expected = case[context]
+            if "error" in expected:
+                with pytest.raises((TypeError, ValueError, tasks.TaskExecutionError)):
+                    tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue=given)
+                continue
+            assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue=given) is None
+            got = tasks.imhead(str(image), mode="get", hdkey="custom")
+            if context == "root":
+                assert type(got) is type(expected["value"]) and got == expected["value"]
+            elif context == "record":
+                entry = expected["value"]
+                assert ("value" in got) == entry["present"]
+                if entry["present"]:
+                    expected_value = complex(*entry["value"]) if case["dtype"].startswith("complex") else entry["value"]
+                    assert got["value"] == expected_value
+            else:
+                got = got["value"]
+                assert got.dtype == np.dtype(expected["value"]["dtype"])
+                values = [[z.real, z.imag] for z in got] if got.dtype.kind == "c" else got.tolist()
+                assert values == expected["value"]["values"]
+
+
+def test_imhead_ignored_elements_in_multidimensional_arrays_match_casa(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    expected = json.loads((root / "ignored_matrix_expected.json").read_text())["cases"]
+    cases = {
+        "integers": [[1, np.array(2)], [np.array(3), 4]],
+        "floats": [[1.5, np.array(2.)], [np.array(3.), 4.5]],
+        "strings_before": [["a", np.array("b")], ["c", "d"]],
+        "strings_last": [["a", "b"], ["c", np.array("d")]],
+        "strings_trailing": [["a", np.array("b")], [np.array("c"), np.array("d")]],
+        "all_ignored": [[np.array(1), np.array(2)], [np.array(3), np.array(4)]],
+        "bool_scalars": [[np.bool_(True), False], [True, np.bool_(False)]],
+        "included_signed": [[np.int32(1), np.int32(2)], [np.int32(3), np.int32(4)]],
+        "integer_cube": [[[1, np.array(2), 3], [4, 5, 6]], [[7, 8, 9], [10, np.array(11), 12]]],
+        "string_cube": [[["a", np.array("b")], ["c", "d"]], [["e", "f"], ["g", np.array("h")]]],
+        "numeric_before_string": [[2, np.array(9)], ["a", np.array(9)]],
+        "float_bool_string": [[np.bool_(True), 1.25], [True, "a"]],
+        "single_row": [["a", np.array("b"), "c", np.array("d")]],
+        "single_column": [["a"], [np.array("b")], ["c"], [np.array("d")]],
+        "ordinary_promotion": [[True, 1.25], ["a", 2]],
+        "flat_float_then_string": [True, 1.5, "a"],
+        "flat_string_first": ["a", True, 1.5],
+        "flat_integer_then_string": [True, 2, "a"],
+    }
+    for name, value in cases.items():
+        image = tmp_path / f"{name}.im"
+        shutil.copytree(root / "normal.im", image)
+        assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue={"value": value}) is None
+        result = tasks.imhead(str(image), mode="get", hdkey="custom")["value"]
+        assert result.dtype == np.dtype(expected[name]["dtype"]), name
+        assert result.shape == tuple(expected[name]["shape"]), name
+        assert result.tolist() == expected[name]["values"], name
+
+
+def test_imhead_large_integer_record_uses_casa_conversion(tmp_path: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "large-integers.im"
+    shutil.copytree(fixture, image)
+    value = {"scalar": 2147483648, "integers": [2147483648, 4294967295],
+             "floats": [2147483648, 1.5]}
+    assert tasks.imhead(str(image), mode="add", hdkey="custom", hdvalue=value) is None
+    result = tasks.imhead(str(image), mode="get", hdkey="custom")
+    assert type(result["scalar"]) is int and result["scalar"] == -2147483648
+    assert result["integers"].dtype == np.dtype("int64")
+    np.testing.assert_array_equal(result["integers"], [-2147483648, -1])
+    assert result["floats"].dtype == np.dtype("float64")
+    np.testing.assert_array_equal(result["floats"], [2147483648, 1.5])
+
+
+def test_imhead_unsigned_record_array_uses_casa_dtype(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    image = tmp_path / "unsigned.im"
+    shutil.copytree(root / "custom_uint32.im", image)
+    expected = json.loads((root / "custom_uint32_expected.json").read_text())
+    actual = tasks.imhead(str(image), mode="get", hdkey="custom")["value"]
+    assert actual.dtype == np.dtype(expected["dtype"])
+    assert actual.shape == tuple(expected["shape"])
+    np.testing.assert_array_equal(actual, expected["value"])
+
+
+def test_complex_profile_nesting_is_bounded_before_it_is_saved(tmp_path: Path) -> None:
+    params = TaskParameters.defaults("imhead", workspace=tmp_path)
+    params["imagename"] = "image.im"
+    value = 1j
+    for _ in range(24):
+        value = [value]
+    for _ in range(24):
+        value = {"a": value}
+    params["hdvalue"] = value
+    profile = params.save(tmp_path / "deep.toml")
+    assert TaskParameters.load("imhead", profile, workspace=tmp_path)["hdvalue"] == value
+    with pytest.raises(TypeError, match="beyond 48 levels.*#977"):
+        params["hdvalue"] = {"a": value}
+
+
+def test_imhead_casa_record_multidimensional_arrays(tmp_path: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/custom_record.im"
+    image = tmp_path / "record.im"
+    shutil.copytree(fixture, image)
+    record = tasks.imhead(str(image), mode="get", hdkey="custom")
+    np.testing.assert_array_equal(record["matrix"], [[1, 2, 3], [4, 5, 6]])
+    np.testing.assert_array_equal(record["complex"], [[1 + 2j, 3 + 4j], [5 + 6j, 7 + 8j]])
+
+
+def test_imhead_put_accepts_rest_frequency_quantity_record(tmp_path: Path) -> None:
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "spectral.im"
+    shutil.copytree(fixture, image)
+    assert tasks.imhead(str(image), mode="put", hdkey="restfreq", hdvalue={"value": 1.5, "unit": "GHz"}) is None
+    assert tasks.imhead(str(image), mode="get", hdkey="restfreq") == {"value": 1.5e9, "unit": "Hz"}
+    assert tasks.imhead(str(image), mode="put", hdkey="crval4", hdvalue={"value": 1.5, "unit": "GHz"}) is None
+    assert tasks.imhead(str(image), mode="get", hdkey="crval4") == {"value": 1.5e9, "unit": "Hz"}
+    assert tasks.imhead(str(image), mode="put", hdkey="cunit1", hdvalue="deg") is None
+    assert tasks.imhead(str(image), mode="get", hdkey="cunit1") == "deg"
+    assert tasks.imhead(str(image), mode="get", hdkey="restfreq") == {"value": 1.5e9, "unit": "Hz"}
+    assert tasks.imhead(str(image), mode="put", hdkey="reffreqtype", hdvalue="B") is None
+    assert tasks.imhead(str(image), mode="get", hdkey="reffreqtype") == "BARY"
+
+
+def test_imhead_edits_and_removes_a_restoring_beam(tmp_path: Path) -> None:
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/beam.im"
+    image = tmp_path / "beam.im"
+    shutil.copytree(fixture, image)
+    assert tasks.imhead(str(image), mode="put", hdkey="bmaj", hdvalue={"value": 40.0, "unit": "arcsec"}) is None
+    assert tasks.imhead(str(image), mode="get", hdkey="bmaj") == {"value": 40.0, "unit": "arcsec"}
+    assert tasks.imhead(str(image), mode="del", hdkey="bpa", hdvalue=[1, 2]) is None
+    assert "restoringbeam" not in tasks.imhead(str(image), mode="summary")
+
+
+def test_imhead_verbose_preserves_summary_record(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/verbose_beams.im"
+    image = tmp_path / "verbose.im"
+    shutil.copytree(fixture, image)
+    normal = tasks.imhead(str(image), mode="summary", verbose=False)
+    verbose = tasks.imhead(str(image), mode="summary", verbose=True)
+    np.testing.assert_equal(verbose, normal)
+    oracle = json.loads((fixture.parent / "verbose_expected.json").read_text())
+    np.testing.assert_equal(verbose, oracle["summary"]["true"])
+    assert verbose["shape"].dtype == normal["shape"].dtype == np.dtype("int64")
+    assert verbose["refval"].dtype == normal["refval"].dtype == np.dtype("float64")
+    assert verbose["perplanebeams"]["nChannels"] == 4
+    assert verbose["perplanebeams"]["nStokes"] == 4
+
+
+def test_imhead_edits_stokes_reference_values(tmp_path: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/stokes_four.im"
+    image = tmp_path / "stokes.im"
+    shutil.copytree(fixture, image)
+    assert tasks.imhead(str(image), mode="put", hdkey="crval3", hdvalue=["V", "U", "Q", "I"]) is None
+    np.testing.assert_array_equal(tasks.imhead(str(image), mode="get", hdkey="crval3"), ["V", "U", "Q", "I"])
+
+
+def test_imhead_edits_direction_reference(tmp_path: Path) -> None:
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "direction.im"
+    shutil.copytree(fixture, image)
+    assert tasks.imhead(str(image), mode="put", hdkey="equinox", hdvalue="GAL") is None
+    assert tasks.imhead(str(image), mode="get", hdkey="equinox") == "GALACTIC"
+    assert tasks.imhead(str(image), mode="get", hdkey="minpos") == "266.457200 -28.925079 I 1.415e+09Hz"
 
 
 def test_msconvert_converts_both_ways_and_reports_its_losses(

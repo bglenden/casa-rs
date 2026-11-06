@@ -44,7 +44,7 @@ use pyo3::exceptions::{
     PyNotImplementedError, PyOverflowError, PyRuntimeWarning, PySystemError, PyTypeError,
 };
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyDict, PyString};
+use pyo3::types::{PyBool, PyBytes, PyDict, PyInt, PyString};
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, DoubleList, Variant};
@@ -1397,16 +1397,22 @@ impl PyComponentList {
         #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         let (count, pending) = if let Some(value) = howmany {
-            match value.extract::<i64>() {
-                Ok(count) => (count, false),
-                Err(error)
-                    if value.is_none()
-                        || error.is_instance_of::<PyOverflowError>(py)
-                        || value.is_instance(&py.import("numpy")?.getattr("bool_")?)? =>
-                {
-                    (-1, true)
+            if !value.is_instance_of::<PyInt>()
+                && value.is_instance(&py.import("numpy")?.getattr("bool_")?)?
+            {
+                (-1, true)
+            } else {
+                match value.extract::<i64>() {
+                    Ok(count) => (count, false),
+                    Err(error)
+                        if value.is_none() || error.is_instance_of::<PyOverflowError>(py) =>
+                    {
+                        (-1, true)
+                    }
+                    Err(_) => {
+                        return Err(PyTypeError::new_err("argument _howmany must be an integer"));
+                    }
                 }
-                Err(_) => return Err(PyTypeError::new_err("argument _howmany must be an integer")),
             }
         } else {
             (1, false)

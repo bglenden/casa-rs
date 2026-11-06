@@ -59,6 +59,14 @@ def test_numpy_integer_inputs():
         cl = componentlist(); assert cl.simulate(value); assert cl.length() == 2; assert cl.done()
 
 
+@pytest.mark.parametrize('value', [np.bool_(False), np.bool_(True)])
+def test_numpy_boolean_refused_without_changing_components(value):
+    cl = componentlist(); assert cl.simulate(); before = snapshot(cl)
+    with pytest.raises(SystemError, match='componentlist_simulate'):
+        cl.simulate(value)
+    compare(snapshot(cl), before); assert cl.done()
+
+
 def test_simulate_preserves_table_and_selection(tmp_path):
     with tarfile.open(DATA / 'casa_componentlist_setspectrum.cl.tgz') as archive:
         extract = {'filter': 'data'} if sys.version_info >= (3, 12) else {}

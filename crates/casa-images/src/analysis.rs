@@ -6,18 +6,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
-    CoordinateSystem, CoordinateType, FitsHeader, FitsValue, fits::to_fits_header,
+    Coordinate, CoordinateSystem, CoordinateType, FitsHeader, FitsValue, fits::to_fits_header,
 };
 use casa_fft::Fft2;
 use casa_lattices::{LatticeStatistics, Statistic, StatsElement, TiledShape};
 use casa_provider_contracts::{
-    NoAdditionalProviderSchemas, ProviderCliMachineActions, ProviderCliProjection,
+    NoAdditionalProviderSchemas, ParameterValue, ProviderCliMachineActions, ProviderCliProjection,
     ProviderProjectionMetadata, ProviderProtocolDescriptor, ProviderSurfaceKind,
     TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas, TaskSemanticContract,
     builtin_surface_bundle, merged_components,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayD, Value};
+use casa_types::{ArrayD, RecordValue, ScalarValue, Value};
 use fitsio::{
     FitsFile,
     images::{ImageDescription, ImageType as FitsImageType},
@@ -28,12 +28,22 @@ use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
 mod axes;
+mod custom_values;
+mod extrema;
+mod list_log;
 mod planes;
+mod projection_header;
+mod quantity_input;
+mod summary_log;
+mod world_header;
 
 use self::axes::{
     direction_plane_axes, legacy_subimage_coordinates, other_axes, subimage_coordinates,
 };
+pub use self::extrema::{ImageExtrema, imhead_extrema};
+pub use self::list_log::imhead_list_log;
 use self::planes::{PlaneAt, pv_samples, unravel_index};
+pub use self::summary_log::imhead_summary_log;
 use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
 use crate::regrid::{RegridMethod, RegridTemplate, Regridded, regrid};
 use crate::{
@@ -597,6 +607,8 @@ pub struct ImageAxisSummary {
     pub increment: f64,
     /// Axis units.
     pub unit: String,
+    /// Stokes labels in pixel order, for a Stokes axis.
+    pub stokes: Vec<String>,
 }
 
 /// CASA `imhead`-style image header summary.
@@ -608,10 +620,24 @@ pub struct ImageHeaderSummary {
     pub pixel_type: String,
     /// Image shape.
     pub shape: Vec<usize>,
+    /// Tile shape of the backing image.
+    pub tile_shape: Vec<usize>,
     /// Brightness units.
     pub units: String,
     /// Astronomical object name.
     pub object_name: String,
+    /// Observer name stored in the coordinate system.
+    pub observer: String,
+    /// Telescope name stored in the coordinate system.
+    pub telescope: String,
+    /// Observation date in CASA's YMD format.
+    pub observation_date: String,
+    /// Direction reference frame, if the image has a direction coordinate.
+    pub direction_reference: Option<String>,
+    /// CASA's direction projection description, if there is a direction axis.
+    pub direction_projection: Option<String>,
+    /// Frequency frame and rest frequencies when a spectral axis exists.
+    pub spectral: Option<Box<SpectralHeaderSummary>>,
     /// Image quantity classification.
     pub image_type: String,
     /// Stored default pixel mask name.
@@ -621,9 +647,67 @@ pub struct ImageHeaderSummary {
     /// Stored regions.
     pub regions: Vec<String>,
     /// Restoring beam if a single global beam is present.
-    pub restoring_beam: Option<RestoringBeamSummary>,
+    pub restoring_beam: Option<Box<RestoringBeamSummary>>,
+    /// Whether the image holds several per-plane beams.
+    pub has_multiple_beams: bool,
+    /// Per-channel and per-polarization beams, in channel-fastest order.
+    pub per_plane_beams: Option<Box<PerPlaneBeamSummary>>,
+    /// Pixel extrema when the task requested them.
+    pub extrema: Option<Box<ImageExtrema>>,
     /// Axis metadata.
     pub axes: Vec<ImageAxisSummary>,
+}
+
+impl ImageHeaderSummary {
+    /// Render a compact, human-readable summary of the image header.
+    ///
+    /// This is the casa-rs text presentation, rather than the detailed CASA
+    /// coordinate-system log emitted by `imhead` summary mode.
+    pub fn format_text(&self) -> String {
+        use std::fmt::Write as _;
+
+        let mut out = String::new();
+        let _ = writeln!(out, "Image name       : {}", self.imagename);
+        let _ = writeln!(out, "Image type       : {}", self.image_type);
+        let _ = writeln!(out, "Pixel type       : {}", self.pixel_type);
+        let _ = writeln!(out, "Image units      : {}", self.units);
+        let _ = writeln!(out, "Shape            : {:?}", self.shape);
+        if let Some(beam) = &self.restoring_beam {
+            let _ = writeln!(
+                out,
+                "Restoring Beam   : {:.6} arcsec, {:.6} arcsec, {:.6} deg",
+                beam.major_arcsec, beam.minor_arcsec, beam.position_angle_deg
+            );
+        }
+        for axis in &self.axes {
+            let _ = writeln!(
+                out,
+                "Axis {} {:<12} {:<18} shape={} refpix={:.3} crval={:.12e} cdelt={:.12e} {}",
+                axis.axis,
+                axis.coordinate_type,
+                axis.name,
+                axis.shape,
+                axis.reference_pixel,
+                axis.reference_value,
+                axis.increment,
+                axis.unit
+            );
+        }
+        out
+    }
+}
+
+/// Restoring beam grid, retaining each quantity's stored unit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PerPlaneBeamSummary {
+    /// Number of spectral channels in the grid.
+    pub channels: usize,
+    /// Number of polarization planes in the grid.
+    pub stokes: usize,
+    /// Beams in channel-fastest order.
+    pub beams: Vec<RestoringBeamSummary>,
+    /// Index of the beam with CASA's median area.
+    pub median_index: usize,
 }
 
 /// Restoring beam summary.
@@ -635,6 +719,36 @@ pub struct RestoringBeamSummary {
     pub minor_arcsec: f64,
     /// Position angle in degrees.
     pub position_angle_deg: f64,
+    /// Major-axis quantity in its stored unit.
+    pub major: BeamQuantity,
+    /// Minor-axis quantity in its stored unit.
+    pub minor: BeamQuantity,
+    /// Position-angle quantity in its stored unit and range.
+    pub position_angle: BeamQuantity,
+    /// Position angle wrapped to CASA's (-90, 90] degree range.
+    pub wrapped_position_angle: BeamQuantity,
+}
+
+/// A stored beam quantity, preserving its original unit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BeamQuantity {
+    /// Numerical value in `unit`.
+    pub value: f64,
+    /// Unit stored in the image.
+    pub unit: String,
+}
+
+/// Spectral metadata in the image's stored world-axis unit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SpectralHeaderSummary {
+    /// Native frequency reference frame.
+    pub reference_frame: String,
+    /// Unit used for the rest frequencies.
+    pub unit: String,
+    /// Active rest frequency.
+    pub rest_frequency: f64,
+    /// Rest-frequency list in the same unit.
+    pub rest_frequencies: Vec<f64>,
 }
 
 /// CASA `imstat`-style global image statistics.
@@ -780,33 +894,8 @@ pub fn imhead(path: impl AsRef<Path>) -> Result<ImageHeaderSummary, ImageError> 
     match &image {
         AnyPagedImage::Float32(image) => imhead_typed(path, image, image.pixel_type_label()),
         AnyPagedImage::Float64(image) => imhead_typed(path, image, image.pixel_type_label()),
-        AnyPagedImage::Complex32(_) | AnyPagedImage::Complex64(_) => {
-            let mut summary = ImageHeaderSummary {
-                imagename: path.display().to_string(),
-                pixel_type: format!("{:?}", image.pixel_type()),
-                shape: image.shape().to_vec(),
-                units: String::new(),
-                object_name: String::new(),
-                image_type: ImageType::Undefined.to_string(),
-                default_mask: image.default_mask_name(),
-                masks: image.mask_names(),
-                regions: image.region_names(),
-                restoring_beam: None,
-                axes: Vec::new(),
-            };
-            match &image {
-                AnyPagedImage::Complex32(image) => {
-                    summary.units = image.units().to_string();
-                    summary.axes = axis_summaries(image);
-                }
-                AnyPagedImage::Complex64(image) => {
-                    summary.units = image.units().to_string();
-                    summary.axes = axis_summaries(image);
-                }
-                _ => {}
-            }
-            Ok(summary)
-        }
+        AnyPagedImage::Complex32(image) => imhead_typed(path, image, "Complex32".into()),
+        AnyPagedImage::Complex64(image) => imhead_typed(path, image, "Complex64".into()),
     }
 }
 
@@ -1132,30 +1221,1144 @@ impl PixelTypeLabel for PagedImage<f64> {
     }
 }
 
-/// Apply the CASA tutorial-supported `imhead(..., mode="put")` metadata update.
+/// Apply a supported string-valued CASA `imhead(..., mode="put")` update.
 pub fn imhead_put(
     path: impl AsRef<Path>,
     hdkey: &str,
     hdvalue: impl Into<String>,
 ) -> Result<ImageHeaderSummary, ImageError> {
+    imhead_change_string(path, "put", hdkey, &hdvalue.into())
+}
+
+/// Set a CASA `crpixN` image-header value, preserving coordinate axis maps.
+///
+/// `hdvalue` may be a finite number or a numeric string. The change is saved
+/// with an image history entry and the updated header is returned.
+///
+/// # Errors
+///
+/// Returns an error for an invalid or polarization axis, non-numeric value,
+/// malformed metadata, or image I/O failure. As in CASA, a history I/O error
+/// can be reported after the metadata has been saved.
+pub fn imhead_put_reference_pixel(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
-    let hdkey = hdkey.trim();
-    let hdvalue = hdvalue.into();
-    if !hdkey.eq_ignore_ascii_case("bunit") {
+    validate_imhead_image(path)?;
+    let key = hdkey.to_ascii_lowercase();
+    let axis = key
+        .strip_prefix("crpix")
+        .and_then(imhead_axis_index)
+        .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    let mut image = AnyPagedImage::open(path)?;
+    let axis_type = match &image {
+        AnyPagedImage::Float32(image) => image.coordinates().pixel_axis_type(axis),
+        AnyPagedImage::Float64(image) => image.coordinates().pixel_axis_type(axis),
+        AnyPagedImage::Complex32(image) => image.coordinates().pixel_axis_type(axis),
+        AnyPagedImage::Complex64(image) => image.coordinates().pixel_axis_type(axis),
+    }
+    .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    if axis_type == CoordinateType::Stokes {
+        return Err(ImageError::InvalidMetadata(
+            "A polarization axis cannot have a reference pixel".into(),
+        ));
+    }
+    let (value, rendered) = match hdvalue {
+        ParameterValue::Integer(value) => {
+            let value = casa_provider_contracts::casa_variant_integer(*value);
+            (f64::from(value), value.to_string())
+        }
+        ParameterValue::Float(value) if value.is_finite() => {
+            (*value, projection_header::cpp_number_precision(*value, 12))
+        }
+        ParameterValue::String(value) => (
+            value.parse::<f64>().map_err(|_| {
+                ImageError::InvalidMetadata(format!("fromString failure for string {value:?}"))
+            })?,
+            format!("\"{value}\""),
+        ),
+        _ => {
+            return Err(ImageError::InvalidMetadata(
+                "For crpix, value must be numeric".into(),
+            ));
+        }
+    };
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_reference_pixel(axis, value)?,
+        AnyPagedImage::Float64(image) => image.set_reference_pixel(axis, value)?,
+        AnyPagedImage::Complex32(image) => image.set_reference_pixel(axis, value)?,
+        AnyPagedImage::Complex64(image) => image.set_reference_pixel(axis, value)?,
+    };
+    image.save()?;
+    drop(image);
+    let old = projection_header::cpp_number_precision(old, 12);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::_setCoordinateValue",
+        &[format!("Modified {key} from {old} to {rendered}")],
+    )?;
+    imhead(path)
+}
+
+/// Parse the one-based digit prefix used by CASA's image-header axis keys.
+pub(crate) fn imhead_axis_index(suffix: &str) -> Option<usize> {
+    let digits = suffix.bytes().take_while(u8::is_ascii_digit).count();
+    suffix[..digits].parse::<usize>().ok()?.checked_sub(1)
+}
+
+/// Set `cdeltN` or `crvalN` from a CASA quantity or Stokes names.
+///
+/// # Errors
+///
+/// Returns an error for invalid or unsupported axes, quantities, metadata,
+/// or image I/O. History I/O may fail after metadata has been saved.
+pub fn imhead_put_axis_quantity(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let key = hdkey.to_ascii_lowercase();
+    let (prefix, suffix) = key
+        .get(..5)
+        .zip(key.get(5..))
+        .filter(|(prefix, _)| ["cdelt", "crval"].contains(prefix))
+        .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    let axis = imhead_axis_index(suffix)
+        .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    let summary = imhead(path)?;
+    let header = summary
+        .axes
+        .get(axis)
+        .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    if header.coordinate_type == "Stokes" {
+        if prefix == "cdelt" {
+            return Err(ImageError::InvalidMetadata(
+                "A polarization axis cannot have an increment".into(),
+            ));
+        }
+        return imhead_put_stokes_values(path, &key, axis, hdvalue);
+    }
+    let (quantity, rendered) = quantity_input::parse(hdvalue)?;
+    let value = quantity_input::in_axis_unit(&quantity, &header.unit)?;
+    let old = if prefix == "cdelt" {
+        header.increment
+    } else {
+        header.reference_value
+    };
+    let old = format!(
+        "{}{}",
+        projection_header::cpp_number_precision(old, 6),
+        header.unit
+    );
+    let mut image = AnyPagedImage::open(path)?;
+    match (&mut image, prefix) {
+        (AnyPagedImage::Float32(image), "cdelt") => image.set_increment(axis, value)?,
+        (AnyPagedImage::Float64(image), "cdelt") => image.set_increment(axis, value)?,
+        (AnyPagedImage::Complex32(image), "cdelt") => image.set_increment(axis, value)?,
+        (AnyPagedImage::Complex64(image), "cdelt") => image.set_increment(axis, value)?,
+        (AnyPagedImage::Float32(image), _) => image.set_reference_value(axis, value)?,
+        (AnyPagedImage::Float64(image), _) => image.set_reference_value(axis, value)?,
+        (AnyPagedImage::Complex32(image), _) => image.set_reference_value(axis, value)?,
+        (AnyPagedImage::Complex64(image), _) => image.set_reference_value(axis, value)?,
+    };
+    image.save()?;
+    drop(image);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::_setCoordinateValue",
+        &[format!("Modified {key} from \"{old}\" to {rendered}")],
+    )?;
+    imhead(path)
+}
+
+fn imhead_put_stokes_values(
+    path: &Path,
+    key: &str,
+    axis: usize,
+    value: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let (names, rendered) = match value {
+        ParameterValue::String(value) if !value.is_empty() => {
+            (vec![value.clone()], format!("\"{value}\""))
+        }
+        ParameterValue::Array(values) if !values.is_empty() => {
+            let mixed = values
+                .iter()
+                .any(|value| matches!(value, ParameterValue::String(_)))
+                && values
+                    .iter()
+                    .any(|value| !matches!(value, ParameterValue::String(_)));
+            if mixed {
+                return Err(ImageError::InvalidMetadata(
+                    "Mixed-type polarization arrays are unsupported (#977)".into(),
+                ));
+            }
+            let names = values
+                .iter()
+                .map(|value| match value {
+                    ParameterValue::String(value) => Ok(value.clone()),
+                    _ => Err(ImageError::InvalidMetadata(
+                        "Polarization values must be strings".into(),
+                    )),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let rendered = format!("[{}]", names.join(", "));
+            (names, rendered)
+        }
+        _ => {
+            return Err(ImageError::InvalidMetadata(
+                "Polarization values must be a string or string array".into(),
+            ));
+        }
+    };
+    if names.iter().any(|name| name.contains('\0')) {
+        return Err(ImageError::InvalidMetadata(
+            "Polarization values containing NUL are unsupported (#977)".into(),
+        ));
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_stokes_types(axis, &names)?,
+        AnyPagedImage::Float64(image) => image.set_stokes_types(axis, &names)?,
+        AnyPagedImage::Complex32(image) => image.set_stokes_types(axis, &names)?,
+        AnyPagedImage::Complex64(image) => image.set_stokes_types(axis, &names)?,
+    };
+    image.save()?;
+    drop(image);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::_setCoordinateValue",
+        &[format!(
+            "Modified {key} from [{}] to {rendered}",
+            old.join(", ")
+        )],
+    )?;
+    imhead(path)
+}
+
+/// Set a CASA `restfreq` value from a quantity string or value-and-unit record.
+///
+/// # Errors
+///
+/// Returns an error for an invalid quantity, absent spectral metadata, or
+/// image I/O failure. History I/O may fail after the metadata is saved.
+pub fn imhead_put_rest_frequency(
+    path: impl AsRef<Path>,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let summary = imhead(path)?;
+    let spectral = summary
+        .spectral
+        .as_ref()
+        .ok_or_else(|| ImageError::InvalidMetadata("Image has no spectral coordinate".into()))?;
+    let (quantity, rendered) = quantity_input::parse(hdvalue)?;
+    if quantity.value() <= 0.0 {
+        return Err(ImageError::InvalidMetadata(
+            "Rest frequency must be positive".into(),
+        ));
+    }
+    // CASA interprets an unqualified rest frequency as Hz, unlike axis
+    // increments and reference values, which default to their axis units.
+    let quantity = if quantity.unit().name().is_empty() {
+        casa_types::quanta::Quantity::new(quantity.value(), "Hz")
+            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?
+    } else {
+        quantity
+    };
+    let frequency = quantity_input::in_unit(&quantity, &spectral.unit)?;
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_rest_frequency(frequency)?,
+        AnyPagedImage::Float64(image) => image.set_rest_frequency(frequency)?,
+        AnyPagedImage::Complex32(image) => image.set_rest_frequency(frequency)?,
+        AnyPagedImage::Complex64(image) => image.set_rest_frequency(frequency)?,
+    };
+    image.save()?;
+    drop(image);
+    let old = projection_header::cpp_number_precision(old, 12);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::set",
+        &[format!("Modified restfreq from {old} to {rendered}")],
+    )?;
+    imhead(path)
+}
+
+/// Add a rest frequency if the image does not already have a positive one.
+///
+/// # Errors
+///
+/// Returns an error if a rest frequency exists, or if the quantity or image
+/// cannot be updated. History I/O may fail after the metadata is saved.
+pub fn imhead_add_rest_frequency(
+    path: impl AsRef<Path>,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    let summary = imhead(path)?;
+    if summary
+        .spectral
+        .as_ref()
+        .is_some_and(|spectral| spectral.rest_frequency > 0.0)
+    {
+        return Err(ImageError::InvalidMetadata(
+            "Rest frequency already exists; it may be modified but not added".into(),
+        ));
+    }
+    imhead_put_rest_frequency(path, hdvalue)
+}
+
+/// Set CASA's observation date from a time quantity or date string.
+///
+/// # Errors
+///
+/// Returns an error for an invalid time quantity or image I/O failure.
+/// History I/O may fail after the metadata is saved.
+pub fn imhead_put_observation_date(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    use casa_types::measures::{EpochRef, MEpoch};
+    use casa_types::quanta::{Unit, casacore::get_conformant_value, format};
+
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    if matches!(hdvalue, ParameterValue::String(value) if value.is_empty()) {
         return Err(ImageError::InvalidMetadata(format!(
-            "imhead mode='put' only supports hdkey='bunit' for this tutorial slice, got {hdkey:?}"
+            "{hdkey} value not specified"
         )));
     }
-
+    let (quantity, rendered) = quantity_input::parse(hdvalue)?;
+    let days = get_conformant_value(&quantity, &Unit::new("d").expect("valid day unit")).map_err(
+        |_| ImageError::InvalidMetadata(format!("{hdkey} value must have units of time")),
+    )?;
+    // MVTime formatting uses integer calendar arithmetic. Refuse extreme
+    // values before writing rather than overflowing while building the reply.
+    if !days.is_finite() || days.abs() > 1.0e9 {
+        return Err(ImageError::InvalidMetadata(
+            "Non-finite or extreme observation dates are unsupported (#977)".into(),
+        ));
+    }
+    let epoch = MEpoch::from_mjd(days, EpochRef::UTC);
     let mut image = AnyPagedImage::open(path)?;
+    macro_rules! set_date {
+        ($image:expr) => {{
+            let old = $image
+                .coordinates()
+                .obs_info()
+                .date
+                .as_ref()
+                .map_or(0.0, |epoch| epoch.value().as_mjd());
+            if !old.is_finite() || old.abs() > 1.0e9 {
+                return Err(ImageError::InvalidMetadata(
+                    "Existing observation date is non-finite or extreme (#977)".into(),
+                ));
+            }
+            $image.set_observation_date(epoch)?;
+            old
+        }};
+    }
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => set_date!(image),
+        AnyPagedImage::Float64(image) => set_date!(image),
+        AnyPagedImage::Complex32(image) => set_date!(image),
+        AnyPagedImage::Complex64(image) => set_date!(image),
+    };
+    image.save()?;
+    drop(image);
+    let old = format::format_time(old, format::MJD, 10).replacen('/', "::", 1);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::set",
+        &[format!(
+            "Modified {} from \"Epoch: {old}\n\" to {rendered}",
+            hdkey
+        )],
+    )?;
+    imhead(path)
+}
+
+/// Set CASA's native direction reference while retaining its conversion frame.
+///
+/// # Errors
+///
+/// Returns an error for an invalid or unsupported frame or image I/O.
+/// History I/O may fail after the metadata is saved.
+pub fn imhead_put_direction_reference(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let ParameterValue::String(reference) = hdvalue else {
+        return Err(ImageError::InvalidMetadata(
+            "equinox value must be a string".into(),
+        ));
+    };
+    if reference.contains('\0') {
+        return Err(ImageError::InvalidMetadata(
+            "direction frames containing NUL are unsupported (#977)".into(),
+        ));
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_direction_reference(reference)?,
+        AnyPagedImage::Float64(image) => image.set_direction_reference(reference)?,
+        AnyPagedImage::Complex32(image) => image.set_direction_reference(reference)?,
+        AnyPagedImage::Complex64(image) => image.set_direction_reference(reference)?,
+    };
+    if old.is_some() {
+        image.save()?;
+    }
+    drop(image);
+    if let Some(old) = old {
+        crate::image::add_image_history(
+            path,
+            "ImageMetaDataRW::set",
+            &[format!(
+                "Modified {hdkey} from \"{old}\" to \"{reference}\""
+            )],
+        )?;
+    }
+    imhead(path)
+}
+
+/// Set CASA's direction projection where its coordinate model is supported.
+///
+/// # Errors
+///
+/// Returns an error for an invalid or unsupported projection or image I/O.
+/// History I/O may fail after the metadata is saved.
+pub fn imhead_put_projection(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let ParameterValue::String(projection) = hdvalue else {
+        return Err(ImageError::InvalidMetadata(
+            "projection value must be a string".into(),
+        ));
+    };
+    if projection.contains('\0') {
+        return Err(ImageError::InvalidMetadata(
+            "projection names containing NUL are unsupported (#977)".into(),
+        ));
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_direction_projection(projection)?,
+        AnyPagedImage::Float64(image) => image.set_direction_projection(projection)?,
+        AnyPagedImage::Complex32(image) => image.set_direction_projection(projection)?,
+        AnyPagedImage::Complex64(image) => image.set_direction_projection(projection)?,
+    };
+    if old.is_some() {
+        image.save()?;
+    }
+    drop(image);
+    if let Some(old) = old {
+        crate::image::add_image_history(
+            path,
+            "ImageMetaDataRW::set",
+            &[format!(
+                "Modified {hdkey} from \"{old}\" to \"{projection}\""
+            )],
+        )?;
+    }
+    imhead(path)
+}
+
+/// Set CASA's `reffreqtype`, resetting the spectral conversion frame.
+///
+/// # Errors
+///
+/// Returns an error for an invalid frame, absent or malformed spectral
+/// metadata, or image I/O failure. History I/O may fail after metadata is saved.
+pub fn imhead_put_spectral_reference(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let ParameterValue::String(reference) = hdvalue else {
+        return Err(ImageError::InvalidMetadata(
+            "reffreqtype value must be a string".into(),
+        ));
+    };
+    if reference.contains('\0') {
+        return Err(ImageError::InvalidMetadata(
+            "spectral frames containing NUL are unsupported (#977)".into(),
+        ));
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_spectral_reference(reference)?,
+        AnyPagedImage::Float64(image) => image.set_spectral_reference(reference)?,
+        AnyPagedImage::Complex32(image) => image.set_spectral_reference(reference)?,
+        AnyPagedImage::Complex64(image) => image.set_spectral_reference(reference)?,
+    };
+    if old.is_some() {
+        image.save()?;
+    }
+    drop(image);
+    if let Some(old) = old {
+        crate::image::add_image_history(
+            path,
+            "ImageMetaDataRW::set",
+            &[format!(
+                "Modified {hdkey} from \"{old}\" to \"{reference}\""
+            )],
+        )?;
+    }
+    imhead(path)
+}
+
+/// Add, modify, or remove restoring-beam header metadata.
+///
+/// The boolean indicates whether CASA would append task history. In
+/// particular, deleting a beam from an image without one is a no-op.
+///
+/// # Errors
+///
+/// Returns an error for invalid quantities, unsupported operations, malformed
+/// beam metadata, or image I/O failure. History I/O may fail after saving.
+pub fn imhead_change_beam(
+    path: impl AsRef<Path>,
+    mode: &str,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<(ImageHeaderSummary, bool), ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let key = hdkey.to_ascii_lowercase();
+    let component = match key.as_str() {
+        "beammajor" | "bmaj" => crate::BeamComponent::Major,
+        "beamminor" | "bmin" => crate::BeamComponent::Minor,
+        "beampa" | "bpa" => crate::BeamComponent::PositionAngle,
+        _ => {
+            return Err(ImageError::InvalidMetadata(format!(
+                "invalid beam keyword {hdkey:?}"
+            )));
+        }
+    };
+    let mut image = AnyPagedImage::open(path)?;
+    let history = match &mut image {
+        AnyPagedImage::Float32(image) => edit_beam(image, mode, hdkey, component, hdvalue)?,
+        AnyPagedImage::Float64(image) => edit_beam(image, mode, hdkey, component, hdvalue)?,
+        AnyPagedImage::Complex32(image) => edit_beam(image, mode, hdkey, component, hdvalue)?,
+        AnyPagedImage::Complex64(image) => edit_beam(image, mode, hdkey, component, hdvalue)?,
+    };
+    if history.is_some() {
+        image.save()?;
+    }
+    drop(image);
+    if let Some((origin, message)) = history {
+        crate::image::add_image_history(path, origin, &[message])?;
+        Ok((imhead(path)?, true))
+    } else {
+        Ok((imhead(path)?, false))
+    }
+}
+
+fn edit_beam<T: ImagePixel>(
+    image: &mut PagedImage<T>,
+    mode: &str,
+    hdkey: &str,
+    component: crate::BeamComponent,
+    hdvalue: &ParameterValue,
+) -> Result<Option<(&'static str, String)>, ImageError> {
+    use crate::BeamComponent;
+    let info = image.image_info()?;
+    if mode == "del" {
+        let multiple = info.beam_set.is_multi();
+        if !image.remove_restoring_beams()? {
+            return Ok(None);
+        }
+        let message = if multiple {
+            "Removed image's multiple beams"
+        } else {
+            "Removed image's single beam"
+        };
+        return Ok(Some(("ImageMetaDataRW::remove", message.into())));
+    }
+    if mode != "add" && mode != "put" {
+        return Err(ImageError::InvalidMetadata(format!(
+            "invalid beam operation {mode:?}"
+        )));
+    }
+    if mode == "add" && component == BeamComponent::PositionAngle {
+        return Err(ImageError::InvalidMetadata(
+            "Cannot add a beam position angle".into(),
+        ));
+    }
+    if mode == "add" && !info.beam_set.is_empty() {
+        return Err(ImageError::InvalidMetadata(
+            "This image already has a beam(s)".into(),
+        ));
+    }
+    if info.beam_set.is_multi() {
+        return Err(ImageError::InvalidMetadata(
+            "This image has multiple beams".into(),
+        ));
+    }
+    let (quantity, rendered) = quantity_input::parse(hdvalue)?;
+    let old = image.stored_restoring_beam()?;
+    let quantity_text = |quantity: &casa_types::quanta::Quantity| {
+        format!(
+            "{} {}",
+            projection_header::cpp_number_precision(quantity.value(), 6),
+            quantity.unit().name()
+        )
+    };
+    let (beam, message) = if let Some(old) = old {
+        let suffix = if component == BeamComponent::PositionAngle {
+            ""
+        } else {
+            "\n"
+        };
+        let previous = format!("{}{suffix}", quantity_text(old.component(component)));
+        let beam = old.with_component(component, quantity)?;
+        (
+            beam,
+            format!("Modified {hdkey} from \"{previous}\" to {rendered}"),
+        )
+    } else {
+        if component == BeamComponent::PositionAngle {
+            return Err(ImageError::InvalidMetadata(
+                "This image has no beam; add a beam axis before its position angle".into(),
+            ));
+        }
+        let beam = crate::StoredGaussianBeam::new(
+            quantity.clone(),
+            quantity,
+            casa_types::quanta::Quantity::new(0.0, "deg").expect("built-in degrees"),
+        )?;
+        let message = format!(
+            "Added beam major: {}, minor: {}, pa: {}",
+            quantity_text(beam.component(BeamComponent::Major)),
+            quantity_text(beam.component(BeamComponent::Minor)),
+            quantity_text(beam.component(BeamComponent::PositionAngle))
+        );
+        (beam, message)
+    };
+    image.set_stored_restoring_beam(&beam)?;
+    Ok(Some(("ImageMetaDataRW::set", message)))
+}
+
+/// Set a CASA `ctypeN` axis name and record the image history.
+///
+/// # Errors
+///
+/// Returns an error for an invalid axis or value, malformed metadata, or an
+/// image I/O failure. History I/O may fail after the metadata is saved.
+pub fn imhead_put_axis_name(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    imhead_put_axis_text(path.as_ref(), hdkey, hdvalue, "ctype")
+}
+
+/// Set a CASA `cunitN` axis unit and rescale its coordinate values.
+///
+/// # Errors
+///
+/// Returns an error for invalid units, unsupported axes, malformed metadata,
+/// or image I/O failure. History I/O may fail after the metadata is saved.
+pub fn imhead_put_axis_unit(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    imhead_put_axis_text(path.as_ref(), hdkey, hdvalue, "cunit")
+}
+
+fn imhead_put_axis_text(
+    path: &Path,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+    prefix: &str,
+) -> Result<ImageHeaderSummary, ImageError> {
+    validate_imhead_image(path)?;
+    let key = hdkey.to_ascii_lowercase();
+    let axis = key
+        .strip_prefix(prefix)
+        .and_then(imhead_axis_index)
+        .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    if prefix == "cunit" {
+        let summary = imhead(path)?;
+        let header = summary.axes.get(axis).ok_or_else(|| {
+            ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}"))
+        })?;
+        if header.coordinate_type == "Stokes" {
+            return Err(ImageError::InvalidMetadata(
+                "A polarization axis cannot have a unit".into(),
+            ));
+        }
+    }
+    let ParameterValue::String(name) = hdvalue else {
+        return Err(ImageError::InvalidMetadata(format!(
+            "{key} value must be a string"
+        )));
+    };
+    if name.contains('\0') {
+        return Err(ImageError::InvalidMetadata(
+            "Axis names and units containing NUL are not supported (#977)".into(),
+        ));
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match (&mut image, prefix) {
+        (AnyPagedImage::Float32(image), "cunit") => image.set_axis_unit(axis, name)?,
+        (AnyPagedImage::Float64(image), "cunit") => image.set_axis_unit(axis, name)?,
+        (AnyPagedImage::Complex32(image), "cunit") => image.set_axis_unit(axis, name)?,
+        (AnyPagedImage::Complex64(image), "cunit") => image.set_axis_unit(axis, name)?,
+        (AnyPagedImage::Float32(image), _) => image.set_axis_name(axis, name)?,
+        (AnyPagedImage::Float64(image), _) => image.set_axis_name(axis, name)?,
+        (AnyPagedImage::Complex32(image), _) => image.set_axis_name(axis, name)?,
+        (AnyPagedImage::Complex64(image), _) => image.set_axis_name(axis, name)?,
+    };
+    image.save()?;
+    drop(image);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::_setCoordinateValue",
+        &[format!("Modified {key} from \"{old}\" to \"{name}\"")],
+    )?;
+    imhead(path)
+}
+
+/// Add or remove a supported string-valued CASA image header field.
+pub fn imhead_add_delete(
+    path: impl AsRef<Path>,
+    mode: &str,
+    hdkey: &str,
+    hdvalue: &str,
+) -> Result<ImageHeaderSummary, ImageError> {
+    if !["add", "del"].contains(&mode) {
+        return Err(ImageError::InvalidMetadata(format!(
+            "unknown imhead operation {mode:?}"
+        )));
+    }
+    imhead_change_string(path, mode, hdkey, if mode == "del" { "" } else { hdvalue })
+}
+
+/// Whether a name is available for CASA's user-defined metadata fields.
+pub fn imhead_is_custom_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    !["cdelt", "crpix", "crval", "ctype", "cunit"]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+        && ![
+            "bunit",
+            "object",
+            "imtype",
+            "observer",
+            "telescope",
+            "date-obs",
+            "epoch",
+            "equinox",
+            "projection",
+            "reffreqtype",
+            "restfreq",
+            "masks",
+            "shape",
+            "datamin",
+            "datamax",
+            "minpixpos",
+            "maxpixpos",
+            "minpos",
+            "maxpos",
+            "beammajor",
+            "beamminor",
+            "beampa",
+            "bmaj",
+            "bmin",
+            "bpa",
+        ]
+        .contains(&lower.as_str())
+}
+
+/// Read a user-defined scalar field, preserving its stored casacore type.
+/// CASA checks the exact field name first and then its lowercase spelling.
+///
+/// # Errors
+///
+/// Returns an error for a missing field, a type CASA cannot read, an
+/// unsupported field type, or an unreadable image.
+pub fn imhead_custom_value(
+    path: impl AsRef<Path>,
+    key: &str,
+) -> Result<casa_provider_contracts::CasaValue, ImageError> {
+    fn get<T: ImagePixel>(
+        image: &PagedImage<T>,
+        key: &str,
+    ) -> Result<casa_provider_contracts::CasaValue, ImageError> {
+        use casa_provider_contracts::CasaValue;
+        let info = image.misc_info();
+        let value = info
+            .get(key)
+            .or_else(|| info.get(&key.to_ascii_lowercase()))
+            .ok_or_else(|| ImageError::InvalidMetadata(format!("Unknown keyword {key}")))?;
+        match value {
+            Value::Scalar(ScalarValue::String(value)) => Ok(CasaValue::string(value)),
+            Value::Scalar(ScalarValue::Int32(value)) => Ok(CasaValue::Int {
+                value: i64::from(*value),
+            }),
+            Value::Scalar(ScalarValue::Float64(value)) => Ok(CasaValue::float(*value)),
+            Value::Record(_) => casa_provider_contracts::casacore_value_to_casa(value)
+                .map_err(|error| ImageError::InvalidMetadata(error.into())),
+            Value::Scalar(ScalarValue::Bool(_)) => Err(ImageError::InvalidMetadata(
+                "Unhandled data type Bool for user defined type. Send us a bug report".into(),
+            )),
+            Value::Array(array)
+                if matches!(
+                    array,
+                    casa_types::ArrayValue::Bool(_)
+                        | casa_types::ArrayValue::Int32(_)
+                        | casa_types::ArrayValue::Float64(_)
+                        | casa_types::ArrayValue::String(_)
+                ) =>
+            {
+                let kind = match array {
+                    casa_types::ArrayValue::Bool(_) => "Bool",
+                    casa_types::ArrayValue::Int32(_) => "Int",
+                    casa_types::ArrayValue::Float64(_) => "double",
+                    casa_types::ArrayValue::String(_) => "String",
+                    _ => unreachable!(),
+                };
+                Err(ImageError::InvalidMetadata(format!(
+                    "Unhandled data type Array<{kind}> for user defined type. Send us a bug report"
+                )))
+            }
+            _ => Err(ImageError::InvalidMetadata(format!(
+                "Reading this user-defined value is not implemented (#977): {key}"
+            ))),
+        }
+    }
+    let image = AnyPagedImage::open(path)?;
+    match &image {
+        AnyPagedImage::Float32(image) => get(image, key),
+        AnyPagedImage::Float64(image) => get(image, key),
+        AnyPagedImage::Complex32(image) => get(image, key),
+        AnyPagedImage::Complex64(image) => get(image, key),
+    }
+}
+
+/// Backwards-compatible entry point for changing user-defined metadata.
+///
+/// # Errors
+///
+/// Returns an error when the value or metadata operation is unsupported.
+pub fn imhead_custom_scalar(
+    path: impl AsRef<Path>,
+    mode: &str,
+    key: &str,
+    value: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    imhead_custom_value_change(path, mode, key, value)
+}
+
+/// Write or remove user-defined scalar, record, and array metadata.
+///
+/// `mode` is `"add"`, `"put"`, or `"del"`. Adds refuse an existing field;
+/// puts preserve its existing type. Values may be strings, booleans, 32-bit
+/// integers, finite doubles, or rectangular arrays of those. Deleting ignores `value`.
+///
+/// # Errors
+///
+/// Returns an error for a reserved key, unsupported value, duplicate add,
+/// missing delete, incompatible existing field, or image I/O failure. The
+/// metadata may already be updated if appending image history fails, as in
+/// CASA's metadata writer.
+pub fn imhead_custom_value_change(
+    path: impl AsRef<Path>,
+    mode: &str,
+    key: &str,
+    value: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    if !imhead_is_custom_key(key) || !["add", "put", "del"].contains(&mode) {
+        return Err(ImageError::InvalidMetadata(format!(
+            "Unsupported custom metadata operation {mode:?} for {key:?} (#977)"
+        )));
+    }
+    let (stored, rendered) = if mode == "del" {
+        (
+            Value::Scalar(ScalarValue::String(String::new())),
+            String::new(),
+        )
+    } else {
+        match value {
+            ParameterValue::String(value) => (
+                Value::Scalar(ScalarValue::String(value.clone())),
+                format!("\"{value}\""),
+            ),
+            ParameterValue::Integer(value) => {
+                let value = casa_provider_contracts::casa_variant_integer(*value);
+                (Value::Scalar(ScalarValue::Int32(value)), value.to_string())
+            }
+            ParameterValue::Float(value) => (
+                Value::Scalar(ScalarValue::Float64(*value)),
+                self::projection_header::cpp_number_precision(*value, 12),
+            ),
+            ParameterValue::Bool(value) => (
+                Value::Scalar(ScalarValue::Bool(*value)),
+                if *value { "1" } else { "0" }.to_string(),
+            ),
+            ParameterValue::Array(values) => {
+                let array = casa_provider_contracts::parameter_array_to_casa(values)
+                    .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
+                if matches!(array, casa_types::ArrayValue::Complex64(_)) {
+                    return Err(ImageError::InvalidMetadata(format!(
+                        "Unhandled value type Array<DComplex> for {key}"
+                    )));
+                }
+                let rendered = custom_values::format_array(&array);
+                (Value::Array(array), rendered)
+            }
+            ParameterValue::EmptyArray { dtype, shape } => {
+                let array = casa_provider_contracts::empty_parameter_array(*dtype, shape)
+                    .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
+                if matches!(array, casa_types::ArrayValue::Complex64(_)) {
+                    return Err(ImageError::InvalidMetadata(format!(
+                        "Unhandled value type Array<DComplex> for {key}"
+                    )));
+                }
+                let rendered = custom_values::format_array(&array);
+                (Value::Array(array), rendered)
+            }
+            ParameterValue::ScalarArray(value) => {
+                let array = casa_provider_contracts::scalar_parameter_array(value)
+                    .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
+                if matches!(array, casa_types::ArrayValue::Complex64(_)) {
+                    return Err(ImageError::InvalidMetadata(format!(
+                        "Unhandled value type Array<DComplex> for {key}"
+                    )));
+                }
+                let rendered = custom_values::format_array(&array);
+                (Value::Array(array), rendered)
+            }
+            ParameterValue::Table(_) => {
+                let stored = casa_provider_contracts::parameter_value_to_casacore(value)
+                    .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
+                let Value::Record(record) = &stored else {
+                    unreachable!()
+                };
+                let rendered = custom_values::format_record(record);
+                (stored, rendered)
+            }
+            _ => {
+                return Err(ImageError::InvalidMetadata(
+                    "This user-defined value type is not implemented (#977)".into(),
+                ));
+            }
+        }
+    };
+    fn change<T: ImagePixel>(
+        image: &mut PagedImage<T>,
+        mode: &str,
+        key: &str,
+        value: &Value,
+        rendered: &str,
+    ) -> Result<String, ImageError> {
+        let mut info = image.misc_info();
+        let lower = key.to_ascii_lowercase();
+        let existing = if info.get(key).is_some() {
+            Some(key)
+        } else if info.get(&lower).is_some() {
+            Some(lower.as_str())
+        } else {
+            None
+        };
+        let message = match mode {
+            "add" if existing.is_some() => {
+                return Err(ImageError::InvalidMetadata(format!(
+                    "Keyword {key} already exists so cannot be added."
+                )));
+            }
+            "del" => {
+                let name = existing.ok_or_else(|| {
+                    ImageError::InvalidMetadata(format!("Unknown keyword {lower}"))
+                })?;
+                info.remove(name);
+                format!("Removed user-defined keyword {name}")
+            }
+            _ => {
+                if info.get(key).is_some_and(|old| {
+                    old.kind() != value.kind() || old.type_tag() != value.type_tag()
+                }) {
+                    return Err(ImageError::InvalidMetadata(format!(
+                        "incorrect data type used for field {key}"
+                    )));
+                }
+                info.upsert(key, value.clone());
+                format!("Added {key} = {rendered}")
+            }
+        };
+        image.set_misc_info(info)?;
+        Ok(message)
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let message = match &mut image {
+        AnyPagedImage::Float32(image) => change(image, mode, key, &stored, &rendered)?,
+        AnyPagedImage::Float64(image) => change(image, mode, key, &stored, &rendered)?,
+        AnyPagedImage::Complex32(image) => change(image, mode, key, &stored, &rendered)?,
+        AnyPagedImage::Complex64(image) => change(image, mode, key, &stored, &rendered)?,
+    };
+    image.save()?;
+    drop(image);
+    let origin = if mode == "del" {
+        "ImageMetaDataRW::remove"
+    } else {
+        "ImageMetaDataRW::_setUserDefined"
+    };
+    crate::image::add_image_history(path, origin, &[message])?;
+    imhead(path)
+}
+
+fn imhead_change_string(
+    path: impl AsRef<Path>,
+    mode: &str,
+    hdkey: &str,
+    hdvalue: &str,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    if imhead_is_custom_key(hdkey) {
+        return imhead_custom_scalar(
+            path,
+            mode,
+            hdkey,
+            &ParameterValue::String(hdvalue.to_string()),
+        );
+    }
+    validate_imhead_image(path)?;
+    let key = hdkey.to_ascii_lowercase();
+    if !["bunit", "object", "observer", "telescope"].contains(&key.as_str())
+        && !(mode == "put" && key == "imtype")
+    {
+        return Err(ImageError::InvalidMetadata(format!(
+            "imhead mode={mode:?} does not yet support hdkey={hdkey:?} (#977)"
+        )));
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match &image {
+        AnyPagedImage::Float32(image) => header_string(image, &key)?,
+        AnyPagedImage::Float64(image) => header_string(image, &key)?,
+        AnyPagedImage::Complex32(image) => header_string(image, &key)?,
+        AnyPagedImage::Complex64(image) => header_string(image, &key)?,
+    };
+    if mode == "add" && !old.is_empty() {
+        return Err(ImageError::InvalidMetadata(format!(
+            "{hdkey} is already present and has value {old}. It may be modified but not added."
+        )));
+    }
+    let value = if key == "bunit" {
+        let unit = casa_types::quanta::unit::normalize_casa_unit_name(hdvalue);
+        casa_types::quanta::Unit::new(&unit)
+            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+        unit
+    } else if key == "imtype" {
+        hdvalue
+            .parse::<ImageType>()
+            .ok()
+            .filter(|kind| kind.to_string().eq_ignore_ascii_case(hdvalue))
+            .unwrap_or(ImageType::Intensity)
+            .to_string()
+    } else {
+        hdvalue.to_string()
+    };
     match &mut image {
-        AnyPagedImage::Float32(image) => image.set_units(hdvalue)?,
-        AnyPagedImage::Float64(image) => image.set_units(hdvalue)?,
-        AnyPagedImage::Complex32(image) => image.set_units(hdvalue)?,
-        AnyPagedImage::Complex64(image) => image.set_units(hdvalue)?,
+        AnyPagedImage::Float32(image) => put_header_string(image, &key, &value)?,
+        AnyPagedImage::Float64(image) => put_header_string(image, &key, &value)?,
+        AnyPagedImage::Complex32(image) => put_header_string(image, &key, &value)?,
+        AnyPagedImage::Complex64(image) => put_header_string(image, &key, &value)?,
     }
     image.save()?;
+    drop(image);
+    let origin = match (mode, key.as_str()) {
+        ("del", _) => "ImageMetaDataRW::remove",
+        ("add", "bunit") => "ImageMetaDataRW::add",
+        _ => "ImageMetaDataRW::set",
+    };
+    let history_key = if mode == "put" { hdkey } else { &key };
+    crate::image::add_image_history(
+        path,
+        origin,
+        &[format!(
+            "Modified {history_key} from \"{old}\" to \"{hdvalue}\""
+        )],
+    )?;
     imhead(path)
+}
+
+/// Validate image metadata required when CASA opens an image for `imhead`.
+///
+/// # Errors
+///
+/// Returns an error for an unreadable image or an invalid restoring-beam set.
+pub fn validate_imhead_image(path: impl AsRef<Path>) -> Result<(), ImageError> {
+    fn validate<T: ImagePixel>(image: &PagedImage<T>) -> Result<(), ImageError> {
+        let info = image.image_info()?;
+        per_plane_beam_summary(image, &info.beam_set)?;
+        Ok(())
+    }
+    match &AnyPagedImage::open(path)? {
+        AnyPagedImage::Float32(image) => validate(image),
+        AnyPagedImage::Float64(image) => validate(image),
+        AnyPagedImage::Complex32(image) => validate(image),
+        AnyPagedImage::Complex64(image) => validate(image),
+    }
+}
+
+fn header_string<T: ImagePixel>(image: &PagedImage<T>, key: &str) -> Result<String, ImageError> {
+    Ok(match key {
+        "bunit" => image.units().to_string(),
+        "object" => image.image_info()?.object_name,
+        "imtype" => header_image_type(image)?.to_string(),
+        "observer" => image.coordinates().obs_info().observer.clone(),
+        "telescope" => image.coordinates().obs_info().telescope.clone(),
+        _ => unreachable!("the caller checked the key"),
+    })
+}
+
+// casacore defaults ImageInfo to Intensity when its record or type is absent.
+fn header_image_type<T: ImagePixel>(image: &PagedImage<T>) -> Result<ImageType, ImageError> {
+    if image.has_image_type_record() {
+        Ok(image.image_info()?.image_type)
+    } else {
+        Ok(ImageType::Intensity)
+    }
+}
+
+fn put_header_string<T: ImagePixel>(
+    image: &mut PagedImage<T>,
+    key: &str,
+    value: &str,
+) -> Result<(), ImageError> {
+    match key {
+        "bunit" => image.set_units(value),
+        "object" => {
+            image.set_image_info_string("objectname", value);
+            Ok(())
+        }
+        "imtype" => {
+            image.set_image_info_string("imagetype", value);
+            Ok(())
+        }
+        "observer" | "telescope" => image.set_observation_string(key, value),
+        _ => unreachable!("the caller checked the key"),
+    }
 }
 
 fn imhead_typed<T>(
@@ -1171,25 +2374,205 @@ where
         imagename: path.display().to_string(),
         pixel_type,
         shape: image.shape().to_vec(),
+        tile_shape: image.tile_shape().to_vec(),
         units: image.units().to_string(),
         object_name: info.object_name.clone(),
-        image_type: info.image_type.to_string(),
+        observer: image.coordinates().obs_info().observer.clone(),
+        telescope: image.coordinates().obs_info().telescope.clone(),
+        observation_date: casa_types::quanta::format::format_time(
+            image
+                .coordinates()
+                .obs_info()
+                .date
+                .as_ref()
+                .map_or(0.0, |epoch| epoch.value().as_mjd()),
+            casa_types::quanta::format::YMD,
+            12,
+        ),
+        direction_reference: (0..image.coordinates().n_coordinates()).find_map(|index| match image
+            .coordinates()
+            .coordinate(index)
+        {
+            casa_coordinates::CoordinateModel::Direction(direction) => {
+                Some(direction.direction_ref().as_str().to_string())
+            }
+            _ => None,
+        }),
+        direction_projection: (0..image.coordinates().n_coordinates()).find_map(
+            |index| match image.coordinates().coordinate(index) {
+                casa_coordinates::CoordinateModel::Direction(direction) => {
+                    Some(projection_header::projection_header(direction))
+                }
+                _ => None,
+            },
+        ),
+        spectral: spectral_header(image)?.map(Box::new),
+        image_type: header_image_type(image)?.to_string(),
         default_mask: image.default_mask_name(),
         masks: image.mask_names(),
         regions: image.region_names(),
-        restoring_beam: info.beam_set.single_beam().and_then(format_beam),
+        restoring_beam: info
+            .beam_set
+            .single_beam()
+            .and_then(|beam| format_beam(beam, image.restoring_beam_record()))
+            .map(Box::new),
+        has_multiple_beams: info.beam_set.is_multi(),
+        per_plane_beams: per_plane_beam_summary(image, &info.beam_set)?.map(Box::new),
+        extrema: None,
         axes: axis_summaries(image),
     })
 }
 
-fn format_beam(beam: GaussianBeam) -> Option<RestoringBeamSummary> {
+fn per_plane_beam_summary<T: ImagePixel>(
+    image: &PagedImage<T>,
+    beam_set: &ImageBeamSet,
+) -> Result<Option<PerPlaneBeamSummary>, ImageError> {
+    if beam_set.single_beam().is_some_and(|beam| beam.is_null()) {
+        return Err(ImageError::InvalidMetadata(
+            "Invalid per plane beam found".into(),
+        ));
+    }
+    if !beam_set.is_multi() {
+        return Ok(None);
+    }
+    let channels = beam_set.n_channels();
+    let stokes = beam_set.n_stokes();
+    let mut axis = 0;
+    let mut image_channels = 1;
+    let mut image_stokes = 1;
+    for index in 0..image.coordinates().n_coordinates() {
+        let coordinate = image.coordinates().coordinate(index);
+        match coordinate.coordinate_type() {
+            CoordinateType::Spectral => {
+                image_channels = image.shape().get(axis).copied().unwrap_or(1)
+            }
+            CoordinateType::Stokes => image_stokes = image.shape().get(axis).copied().unwrap_or(1),
+            _ => {}
+        }
+        axis += coordinate.n_pixel_axes();
+    }
+    if channels != 1 && channels != image_channels {
+        return Err(ImageError::InvalidMetadata(
+            "Number of channels is not consistent".into(),
+        ));
+    }
+    if stokes != 1 && stokes != image_stokes {
+        return Err(ImageError::InvalidMetadata(
+            "Number of polarizations is not consistent".into(),
+        ));
+    }
+    let mut beams = Vec::with_capacity(channels * stokes);
+    let mut areas = Vec::with_capacity(channels * stokes);
+    let area_unit = casa_types::quanta::Unit::new("arcsec2")
+        .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+    for polarization in 0..stokes {
+        for channel in 0..channels {
+            let index = polarization * channels + channel;
+            let beam = *beam_set.beam(channel, polarization);
+            let raw = image
+                .per_plane_beam_record()
+                .and_then(|record| record.get(&format!("*{index}")))
+                .and_then(|value| match value {
+                    Value::Record(record) => Some(record),
+                    _ => None,
+                });
+            let formatted = format_beam(beam, raw).ok_or_else(|| {
+                ImageError::InvalidMetadata("Invalid per plane beam found".into())
+            })?;
+            // CASA multiplies the stored quantities before converting their
+            // product to arcsec². That order affects ties in the median.
+            let major_unit = casa_types::quanta::Unit::new(&formatted.major.unit)
+                .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+            let minor_unit = casa_types::quanta::Unit::new(&formatted.minor.unit)
+                .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+            let ratio =
+                area_unit.val().factor / (major_unit.val().factor * minor_unit.val().factor);
+            let area = std::f64::consts::PI / (4.0 * 2.0_f64.ln())
+                * (formatted.major.value * formatted.minor.value / ratio);
+            beams.push(formatted);
+            areas.push((index, area));
+        }
+    }
+    areas.sort_by(|left, right| left.1.total_cmp(&right.1));
+    let median_index = areas[areas.len() / 2].0;
+    Ok(Some(PerPlaneBeamSummary {
+        channels,
+        stokes,
+        beams,
+        median_index,
+    }))
+}
+
+fn spectral_header<T: ImagePixel>(
+    image: &PagedImage<T>,
+) -> Result<Option<SpectralHeaderSummary>, ImageError> {
+    let Some(spectral) = image.first_spectral_coordinate()? else {
+        return Ok(None);
+    };
+    let unit = spectral
+        .axis_units()
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "Hz".into());
+    // The stored record's rest frequencies are already in its axis unit.
+    Ok(Some(SpectralHeaderSummary {
+        reference_frame: if spectral.has_undefined_frame() {
+            "Undefined".into()
+        } else {
+            spectral.frequency_ref().as_str().into()
+        },
+        unit,
+        rest_frequency: spectral.rest_frequency(),
+        rest_frequencies: spectral.rest_frequencies().to_vec(),
+    }))
+}
+
+fn format_beam(beam: GaussianBeam, record: Option<&RecordValue>) -> Option<RestoringBeamSummary> {
     if beam.is_null() {
         return None;
     }
+    let major_arcsec = beam.major_in("arcsec").ok()?;
+    let minor_arcsec = beam.minor_in("arcsec").ok()?;
+    let position_angle_deg = beam.position_angle_in("deg").ok()?;
+    let fallback = |value, unit: &str| BeamQuantity {
+        value,
+        unit: unit.into(),
+    };
+    let major = record
+        .and_then(|r| beam_quantity(r, "major"))
+        .unwrap_or_else(|| fallback(major_arcsec, "arcsec"));
+    let minor = record
+        .and_then(|r| beam_quantity(r, "minor"))
+        .unwrap_or_else(|| fallback(minor_arcsec, "arcsec"));
+    let position_angle = record
+        .and_then(|r| beam_quantity(r, "positionangle"))
+        .unwrap_or_else(|| fallback(position_angle_deg, "deg"));
+    let quantity =
+        casa_types::quanta::Quantity::new(position_angle.value, &position_angle.unit).ok()?;
+    let wrapped = crate::beam::wrap_position_angle(&quantity).ok()?;
+    let wrapped_position_angle = BeamQuantity {
+        value: wrapped.value(),
+        unit: wrapped.unit().name().into(),
+    };
     Some(RestoringBeamSummary {
-        major_arcsec: beam.major_in("arcsec").ok()?,
-        minor_arcsec: beam.minor_in("arcsec").ok()?,
-        position_angle_deg: beam.position_angle_in("deg").ok()?,
+        major_arcsec,
+        minor_arcsec,
+        position_angle_deg,
+        major,
+        minor,
+        position_angle,
+        wrapped_position_angle,
+    })
+}
+
+fn beam_quantity(record: &RecordValue, key: &str) -> Option<BeamQuantity> {
+    let Value::Record(quantity) = record.get(key)? else {
+        return None;
+    };
+    let quantity = crate::beam::quantity_from_record(quantity).ok()?;
+    Some(BeamQuantity {
+        value: quantity.value(),
+        unit: casa_types::quanta::unit::normalize_casa_unit_name(quantity.unit().name()),
     })
 }
 
@@ -1226,6 +2609,12 @@ fn axis_summaries<T: ImagePixel>(image: &impl ImageInterface<T>) -> Vec<ImageAxi
                 reference_pixel: *refpix.get(axis_in_coord).unwrap_or(&0.0),
                 increment: *increments.get(axis_in_coord).unwrap_or(&0.0),
                 unit: units.get(axis_in_coord).cloned().unwrap_or_default(),
+                stokes: match coord {
+                    casa_coordinates::CoordinateModel::Stokes(stokes) => {
+                        stokes.stokes().iter().map(ToString::to_string).collect()
+                    }
+                    _ => Vec::new(),
+                },
             });
             axis += 1;
         }
@@ -1240,6 +2629,7 @@ fn axis_summaries<T: ImagePixel>(image: &impl ImageInterface<T>) -> Vec<ImageAxi
             reference_pixel: 0.0,
             increment: 1.0,
             unit: String::new(),
+            stokes: Vec::new(),
         });
         axis += 1;
     }
@@ -3566,7 +4956,14 @@ where
             .map_err(|error| ImageError::Io(error.to_string()))?;
         hdu.write_key(&mut fits, "BMIN", beam.minor_in("deg")?)
             .map_err(|error| ImageError::Io(error.to_string()))?;
-        hdu.write_key(&mut fits, "BPA", beam.position_angle_in("deg")?)
+        let stored = image
+            .stored_restoring_beam()?
+            .ok_or_else(|| ImageError::InvalidMetadata("missing restoring beam record".into()))?;
+        let wrapped = stored.wrapped_position_angle()?;
+        let degrees = casa_types::quanta::Unit::new("deg").expect("built-in degrees");
+        let bpa = casa_types::quanta::casacore::get_conformant_value(&wrapped, &degrees)
+            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+        hdu.write_key(&mut fits, "BPA", bpa)
             .map_err(|error| ImageError::Io(error.to_string()))?;
     }
     Ok(FitsExportSummary {
@@ -3701,6 +5098,7 @@ fn image_pixel_type<T: ImagePixel>() -> ImagePixelType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ImageType;
     use casa_coordinates::{
         DirectionCoordinate, Projection, ProjectionType, SpectralCoordinate, StokesCoordinate,
         StokesType,
