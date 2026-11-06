@@ -85,6 +85,83 @@ fn scale_axis_field(
 }
 
 impl CoordinateSystem {
+    /// Change the first direction coordinate's projection, preserving axis maps.
+    ///
+    /// Returns the old projection when it changed. Zenithal projections with
+    /// standard poles are supported; other transitions are refused (#977).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown or unsupported projection, or invalid
+    /// direction metadata. The input record is unchanged on error.
+    pub fn set_direction_projection_in_record(
+        record: &mut RecordValue,
+        projection: &str,
+    ) -> Result<(Self, Option<String>), CoordinateError> {
+        let system = Self::from_record(record)?;
+        if Self::record_coordinates(record)?
+            .iter()
+            .filter(|coordinate| coordinate.field.starts_with("direction"))
+            .count()
+            > 1
+        {
+            return Err(CoordinateError::InvalidRecord(
+                "projection changes with multiple direction coordinates are not implemented (#977)"
+                    .into(),
+            ));
+        }
+        let (field, direction) = Self::first_direction_in_record(record)?
+            .ok_or_else(|| CoordinateError::InvalidRecord("no direction coordinate".into()))?;
+        let name = projection.to_ascii_uppercase();
+        let supported = ["SIN", "TAN", "ARC", "ZEA", "STG"];
+        if name == "NCP" {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "unknown projection {projection:?}"
+            )));
+        }
+        if crate::ProjectionType::from_name(&name).is_none() {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "unknown or unsupported projection {projection:?} (#977)"
+            )));
+        }
+        let old = direction.projection().name().to_string();
+        if old == name {
+            return Ok((system, None));
+        }
+        let Some(Value::Record(stored)) = record.get(&field) else {
+            return Err(CoordinateError::InvalidRecord(
+                "missing direction record".into(),
+            ));
+        };
+        let conversion = crate::record_utils::get_optional_string(stored, "conversionSystem");
+        let standard_poles = (direction.longpole() - std::f64::consts::PI).abs() < 1e-12
+            && (direction.latpole() - direction.reference_value()[1]).abs() < 1e-12;
+        if !supported.contains(&old.as_str())
+            || !supported.contains(&name.as_str())
+            || direction
+                .projection()
+                .parameters()
+                .iter()
+                .any(|value| *value != 0.0)
+            || !standard_poles
+            || conversion.is_some_and(|frame| {
+                !frame.eq_ignore_ascii_case(direction.direction_ref().as_str())
+            })
+        {
+            return Err(CoordinateError::InvalidRecord(
+                "projection transition is not implemented (#977)".into(),
+            ));
+        }
+        let mut updated = record.clone();
+        let Some(Value::Record(direction)) = updated.get_mut(&field) else {
+            unreachable!()
+        };
+        direction.upsert("projection", Value::Scalar(ScalarValue::String(name)));
+        let system = Self::from_record(&updated)?;
+        *record = updated;
+        Ok((system, Some(old)))
+    }
+
     /// Set the native spectral reference frame and reset its conversion frame.
     ///
     /// Returns the previous frame when it changed, or `None` for a no-op.
@@ -614,6 +691,30 @@ mod tests {
     use crate::{
         LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType, TabularCoordinate,
     };
+
+    #[test]
+    fn projection_edit_refuses_multiple_direction_coordinates_without_mutation() {
+        use crate::{DirectionCoordinate, Projection, ProjectionType};
+        use casa_types::measures::direction::DirectionRef;
+        let direction = || {
+            DirectionCoordinate::new(
+                DirectionRef::J2000,
+                Projection::new(ProjectionType::SIN),
+                [0.0, 0.0],
+                [-0.01, 0.01],
+                [0.0, 0.0],
+            )
+        };
+        let mut system = CoordinateSystem::new();
+        system.add_coordinate(direction());
+        system.add_coordinate(direction());
+        let mut record = system.to_record();
+        let before = record.clone();
+        let error =
+            CoordinateSystem::set_direction_projection_in_record(&mut record, "TAN").unwrap_err();
+        assert!(error.to_string().contains("#977"));
+        assert_eq!(record, before);
+    }
 
     #[test]
     fn unit_edits_select_and_rescale_the_active_rest_frequency() {

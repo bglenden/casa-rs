@@ -78,6 +78,7 @@ fn run_imhead(
             let rest_frequency = (mode == "put" || mode == "add") && key == "restfreq";
             let observation_date = mode == "put" && ["date-obs", "epoch"].contains(&key.as_str());
             let spectral_reference = mode == "put" && key == "reffreqtype";
+            let projection = mode == "put" && key == "projection";
             let beam_key =
                 ["beammajor", "beamminor", "beampa", "bmaj", "bmin", "bpa"].contains(&key.as_str());
             let axis_quantity =
@@ -90,6 +91,7 @@ fn run_imhead(
                 && !rest_frequency
                 && !observation_date
                 && !spectral_reference
+                && !projection
                 && !beam_key
                 && !axis_quantity
                 && !casa_images::analysis::imhead_is_custom_key(&hdkey)
@@ -138,6 +140,8 @@ fn run_imhead(
                 casa_images::analysis::imhead_put_observation_date(&path, &hdkey, &hdvalue)
             } else if spectral_reference {
                 casa_images::analysis::imhead_put_spectral_reference(&path, &hdkey, &hdvalue)
+            } else if projection {
+                casa_images::analysis::imhead_put_projection(&path, &hdkey, &hdvalue)
             } else if axis_quantity {
                 casa_images::analysis::imhead_put_axis_quantity(&path, &hdkey, &hdvalue)
             } else if casa_images::analysis::imhead_is_custom_key(&hdkey) {

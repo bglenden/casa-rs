@@ -329,6 +329,29 @@ impl CoordinateSystem {
         }
         Ok(None)
     }
+
+    /// Return the first direction coordinate in the record's creation order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a coordinate record is malformed.
+    pub fn first_direction_in_record(
+        rec: &RecordValue,
+    ) -> Result<Option<(String, DirectionCoordinate)>, CoordinateError> {
+        for (_, key) in coordinate_record_entries(rec) {
+            let Some(Value::Record(coordinate)) = rec.get(&key) else {
+                return Err(CoordinateError::InvalidRecord(format!(
+                    "coordinate field {key:?} is not a record"
+                )));
+            };
+            if let CoordinateModel::Direction(direction) =
+                parse_coordinate_record(&key, coordinate)?
+            {
+                return Ok(Some((key, direction)));
+            }
+        }
+        Ok(None)
+    }
 }
 
 /// One coordinate of a casacore coordinate-system record, as

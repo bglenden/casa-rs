@@ -1479,6 +1479,52 @@ pub fn imhead_put_observation_date(
     imhead(path)
 }
 
+/// Set CASA's direction projection where its coordinate model is supported.
+///
+/// # Errors
+///
+/// Returns an error for an invalid or unsupported projection or image I/O.
+/// History I/O may fail after the metadata is saved.
+pub fn imhead_put_projection(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let ParameterValue::String(projection) = hdvalue else {
+        return Err(ImageError::InvalidMetadata(
+            "projection value must be a string".into(),
+        ));
+    };
+    if projection.contains('\0') {
+        return Err(ImageError::InvalidMetadata(
+            "projection names containing NUL are unsupported (#977)".into(),
+        ));
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_direction_projection(projection)?,
+        AnyPagedImage::Float64(image) => image.set_direction_projection(projection)?,
+        AnyPagedImage::Complex32(image) => image.set_direction_projection(projection)?,
+        AnyPagedImage::Complex64(image) => image.set_direction_projection(projection)?,
+    };
+    if old.is_some() {
+        image.save()?;
+    }
+    drop(image);
+    if let Some(old) = old {
+        crate::image::add_image_history(
+            path,
+            "ImageMetaDataRW::set",
+            &[format!(
+                "Modified {hdkey} from \"{old}\" to \"{projection}\""
+            )],
+        )?;
+    }
+    imhead(path)
+}
+
 /// Set CASA's `reffreqtype`, resetting the spectral conversion frame.
 ///
 /// # Errors

@@ -958,6 +958,9 @@ mod imhead_date_edits;
 #[path = "casa_returns/imhead_restfreq_add.rs"]
 mod imhead_restfreq_add;
 
+#[path = "casa_returns/imhead_projection_edits.rs"]
+mod imhead_projection_edits;
+
 #[path = "casa_returns/imhead_mutations.rs"]
 mod imhead_mutations;
 
@@ -1041,7 +1044,7 @@ fn imhead_put_of_an_empty_bunit_clears_it() {
     let (output, reply) = json_run(
         workspace.path(),
         "imhead",
-        json!({"imagename": image, "mode": "put", "hdkey": "projection", "hdvalue": "M31"}),
+        json!({"imagename": image, "mode": "put", "hdkey": "equinox", "hdvalue": "M31"}),
     );
     assert_eq!(output.status.code(), Some(2));
     let Some(TaskReply::Failed {

@@ -1642,6 +1642,22 @@ impl<T: ImagePixel> PagedImage<T> {
         })
     }
 
+    /// Change the first direction projection while preserving coordinate maps.
+    /// Call [`Self::save`] to persist a change.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown or unsupported projection, or invalid
+    /// direction metadata.
+    pub fn set_direction_projection(
+        &mut self,
+        projection: &str,
+    ) -> Result<Option<String>, ImageError> {
+        self.edit_coordinates(|record| {
+            CoordinateSystem::set_direction_projection_in_record(record, projection)
+        })
+    }
+
     /// Set an axis name, preserving the stored coordinate mappings.
     ///
     /// The change is persisted when [`Self::save`] is called.
