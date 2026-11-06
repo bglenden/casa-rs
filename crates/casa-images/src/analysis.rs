@@ -2029,11 +2029,11 @@ pub fn imhead_custom_scalar(
     imhead_custom_value_change(path, mode, key, value)
 }
 
-/// Write or remove user-defined scalar, record, array, and matrix metadata.
+/// Write or remove user-defined scalar, record, and array metadata.
 ///
 /// `mode` is `"add"`, `"put"`, or `"del"`. Adds refuse an existing field;
 /// puts preserve its existing type. Values may be strings, booleans, 32-bit
-/// integers, finite doubles, or arrays and matrices of those. Deleting ignores `value`.
+/// integers, finite doubles, or rectangular arrays of those. Deleting ignores `value`.
 ///
 /// # Errors
 ///

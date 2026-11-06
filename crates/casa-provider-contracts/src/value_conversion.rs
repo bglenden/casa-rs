@@ -36,7 +36,7 @@ pub fn parameter_value_to_casacore(value: &ParameterValue) -> Result<Value, &'st
                 // column-major order, while standalone string arrays retain
                 // their two-dimensional shape.
                 match array {
-                    ArrayValue::String(values) if depth > 0 && values.ndim() == 2 => {
+                    ArrayValue::String(values) if depth > 0 && values.ndim() > 1 => {
                         Value::Array(ArrayValue::from_string_vec(
                             values.view().reversed_axes().iter().cloned().collect(),
                         ))
@@ -174,51 +174,71 @@ pub fn casacore_value_to_casa(value: &Value) -> Result<CasaValue, &'static str> 
     convert(value, 0)
 }
 
-/// Convert a flat array or rectangular matrix into a casacore array, using CASA's numeric
+/// Convert a rectangular parameter array into a casacore array, using CASA's numeric
 /// promotion from booleans to 32-bit integers to doubles. Empty arrays have
 /// boolean element type, as in CASA's Python variant conversion.
 ///
 /// # Errors
 ///
-/// Returns an error for higher-dimensional, empty-row, or ragged arrays,
-/// non-finite values, or
+/// Returns an error for empty nested dimensions, ragged or deeply nested
+/// arrays, non-finite values, or
 /// integer-only values outside the supported 32-bit range (#977).
 pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, &'static str> {
     if values
         .iter()
         .any(|value| matches!(value, ParameterValue::Array(_)))
     {
-        let mut flat = Vec::new();
-        let mut columns = None;
-        for row in values {
-            let ParameterValue::Array(row) = row else {
-                return Err("ragged arrays are unsupported (#977)");
-            };
-            if row.is_empty() || columns.is_some_and(|n| n != row.len()) {
-                return Err("empty-row or ragged arrays are unsupported (#977)");
+        fn flatten(
+            values: &[ParameterValue],
+            depth: usize,
+            shape: &mut Vec<usize>,
+            leaf_depth: &mut Option<usize>,
+            out: &mut Vec<ParameterValue>,
+        ) -> Result<(), &'static str> {
+            if depth >= 32 {
+                return Err("array nesting is too deep (#977)");
             }
-            columns = Some(row.len());
-            if row
-                .iter()
-                .any(|value| matches!(value, ParameterValue::Array(_)))
-            {
-                return Err("arrays with more than two dimensions are unsupported (#977)");
+            if values.is_empty() {
+                return Err("empty nested array dimensions are unsupported (#977)");
             }
-            flat.extend_from_slice(row);
+            if let Some(expected) = shape.get(depth) {
+                if *expected != values.len() {
+                    return Err("ragged arrays are unsupported (#977)");
+                }
+            } else {
+                shape.push(values.len());
+            }
+            for value in values {
+                match value {
+                    ParameterValue::Array(nested) => {
+                        flatten(nested, depth + 1, shape, leaf_depth, out)?
+                    }
+                    value => {
+                        if leaf_depth.is_some_and(|expected| expected != depth + 1) {
+                            return Err("ragged arrays are unsupported (#977)");
+                        }
+                        *leaf_depth = Some(depth + 1);
+                        out.push(value.clone());
+                    }
+                }
+            }
+            Ok(())
         }
-        let shape = vec![values.len(), columns.expect("nonempty matrix")];
+        let mut flat = Vec::new();
+        let mut shape = Vec::new();
+        flatten(values, 0, &mut shape, &mut None, &mut flat)?;
         return match parameter_array_to_casa(&flat)? {
             ArrayValue::Bool(v) => Ok(ArrayValue::Bool(
-                v.into_shape_with_order(shape).expect("rectangular matrix"),
+                v.into_shape_with_order(shape).expect("rectangular array"),
             )),
             ArrayValue::Int32(v) => Ok(ArrayValue::Int32(
-                v.into_shape_with_order(shape).expect("rectangular matrix"),
+                v.into_shape_with_order(shape).expect("rectangular array"),
             )),
             ArrayValue::Float64(v) => Ok(ArrayValue::Float64(
-                v.into_shape_with_order(shape).expect("rectangular matrix"),
+                v.into_shape_with_order(shape).expect("rectangular array"),
             )),
             ArrayValue::String(v) => Ok(ArrayValue::String(
-                v.into_shape_with_order(shape).expect("rectangular matrix"),
+                v.into_shape_with_order(shape).expect("rectangular array"),
             )),
             _ => unreachable!("parameter arrays use supported primitive types"),
         };
@@ -343,7 +363,11 @@ mod tests {
             ])
             .is_err()
         );
-        assert!(parameter_array_to_casa(&[Array(vec![Array(vec![Integer(1)])])]).is_err());
+        let cube = [Array(vec![Array(vec![Integer(1), Integer(2)])])];
+        assert_eq!(parameter_array_to_casa(&cube).unwrap().shape(), &[1, 1, 2]);
+        assert!(
+            parameter_array_to_casa(&[Array(vec![Integer(1), Array(vec![Integer(2)])])]).is_err()
+        );
     }
 
     #[test]

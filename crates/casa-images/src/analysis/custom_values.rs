@@ -27,8 +27,39 @@ fn array_elements(array: &ArrayValue, column_major: bool) -> Vec<String> {
 }
 
 pub(super) fn format_array(array: &ArrayValue) -> String {
-    let values = array_elements(array, false);
-    if let [rows, columns] = array.shape() {
+    let shape = array.shape();
+    if shape.len() > 2 {
+        let values = array_elements(array, true);
+        let dimensions = shape
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let lines = values
+            .chunks(shape[0])
+            .enumerate()
+            .map(|(index, row)| {
+                let mut index = index;
+                let mut position = vec![0];
+                for size in &shape[1..] {
+                    position.push(index % size);
+                    index /= size;
+                }
+                let position = position
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("[{position}][{}]", row.join(", "))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "Ndim={} Axis Lengths: [{dimensions}] \n{lines}",
+            shape.len()
+        )
+    } else if let [rows, columns] = shape {
+        let values = array_elements(array, false);
         let lines = values
             .chunks(*columns)
             .map(|row| row.join(", "))
@@ -36,7 +67,7 @@ pub(super) fn format_array(array: &ArrayValue) -> String {
             .join("\n ");
         format!("Axis Lengths: [{rows}, {columns}]  (NB: Matrix in Row/Column order)\n[{lines}]")
     } else {
-        format!("[{}]", values.join(", "))
+        format!("[{}]", array_elements(array, false).join(", "))
     }
 }
 

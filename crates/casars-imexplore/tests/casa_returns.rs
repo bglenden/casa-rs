@@ -979,6 +979,9 @@ mod imhead_custom_mixed;
 #[path = "casa_returns/imhead_direction_edits.rs"]
 mod imhead_direction_edits;
 
+#[path = "casa_returns/imhead_custom_cubes.rs"]
+mod imhead_custom_cubes;
+
 #[path = "casa_returns/imhead_mutations.rs"]
 mod imhead_mutations;
 
