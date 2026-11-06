@@ -1609,7 +1609,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [componentlist](#componentlist) | `casars.tools` | 61 | yes | 54 | 3 | 4 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
-| [measures](#measures) | `casars.tools` | 48 | yes | 24 | 6 | 18 | 0 | 0 | 0 |
+| [measures](#measures) | `casars.tools` | 48 | yes | 24 | 7 | 17 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
 | [quanta](#quanta) | `casars.tools` | 57 | yes | 55 | 0 | 2 | 0 | 0 | 0 |
@@ -2190,11 +2190,11 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 24, Partial: 6, Not implemented: 18, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 24, Partial: 7, Not implemented: 17, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
-| `addxvalue` | `a` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `addxvalue` | `a` | Partial (#1053) | Returns direction cosines or the position vector for scalar supported records, and an empty record for epoch and frequency. Measure offsets, multivalued records and unsupported measure kinds are refused explicitly; cyclic or excessively deep records are rejected safely. | [signature](#measures-evidence-signature), [addxvalue-casa](#measures-evidence-addxvalue-casa) |
 | `asbaseline` | `pos` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `baseline` | `rf='ITRF', v0=[], v1=[], v2=[], off={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `cometangdiam` |  | Partial (#1053) | Returns CASA's -1 rad sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented. | [signature](#measures-evidence-signature), [no-comet-casa](#measures-evidence-no-comet-casa) |
@@ -2397,6 +2397,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/data/casa_measures_getoffset.json](https://github.com/bglenden/casa-rs/blob/7848842f91fc5eba9fab6c621ae5abd3f062644a/crates/casars-python/python/tests/data/casa_measures_getoffset.json)
 - [crates/casars-python/python/tests/test_measures_getoffset.py](https://github.com/bglenden/casa-rs/blob/7848842f91fc5eba9fab6c621ae5abd3f062644a/crates/casars-python/python/tests/test_measures_getoffset.py)
 - [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/7848842f91fc5eba9fab6c621ae5abd3f062644a/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="measures-evidence-addxvalue-casa"></a>
+##### addxvalue-casa
+
+**CASA-recorded values — measured.** 28 CASA 6.7.6-14 calls cover directions, ITRF and WGS84 positions, empty, malformed and other supported measures; an isolated cyclic-record probe crashes CASA, while casa-rs rejects it safely. measures.addxvalue for scalar directions, positions, epoch and frequency records.
+
+- [tools/simulation/measures_addxvalue_oracle.py](https://github.com/bglenden/casa-rs/blob/a960cd5c5fea86dea9badc358b58397374b11c2a/tools/simulation/measures_addxvalue_oracle.py)
+- [crates/casars-python/python/tests/data/casa_measures_addxvalue.json](https://github.com/bglenden/casa-rs/blob/a960cd5c5fea86dea9badc358b58397374b11c2a/crates/casars-python/python/tests/data/casa_measures_addxvalue.json)
+- [crates/casars-python/python/tests/test_measures_addxvalue.py](https://github.com/bglenden/casa-rs/blob/a960cd5c5fea86dea9badc358b58397374b11c2a/crates/casars-python/python/tests/test_measures_addxvalue.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/a960cd5c5fea86dea9badc358b58397374b11c2a/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 ### quanta
 

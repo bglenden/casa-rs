@@ -5,12 +5,12 @@
  "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
  "methods": {
   "addxvalue": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns direction cosines or the position vector for scalar supported records, and an empty record for epoch and frequency. Measure offsets, multivalued records and unsupported measure kinds are refused explicitly; cyclic or excessively deep records are rejected safely.",
    "evidence": [
     "signature",
-    "refusals"
+    "addxvalue-casa"
    ]
   },
   "asbaseline": {
@@ -605,6 +605,19 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "7848842f91fc5eba9fab6c621ae5abd3f062644a"
+  },
+  "addxvalue-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "28 CASA 6.7.6-14 calls cover directions, ITRF and WGS84 positions, empty, malformed and other supported measures; an isolated cyclic-record probe crashes CASA, while casa-rs rejects it safely.",
+   "scope": "measures.addxvalue for scalar directions, positions, epoch and frequency records.",
+   "links": [
+    "tools/simulation/measures_addxvalue_oracle.py",
+    "crates/casars-python/python/tests/data/casa_measures_addxvalue.json",
+    "crates/casars-python/python/tests/test_measures_addxvalue.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "a960cd5c5fea86dea9badc358b58397374b11c2a"
   }
  }
 }
