@@ -371,12 +371,12 @@
    ]
   },
   "replace": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Matches CASA's placeholder: validates arguments, warns and returns False without replacing components. Cyclic records are safe; cyclic or non-finite index inputs raise instead of crashing.",
    "evidence": [
     "signature",
-    "refusals"
+    "replace-casa"
    ]
   },
   "sample": {
@@ -991,6 +991,21 @@
     "crates/casars-python/python/tests/test_componentlist_edit.py"
    ],
    "source_revision": "cf9a4e6192aa75986b72835fb93080b49c499b0b"
+  },
+  "replace-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "147 CASA 6.7.6-14 calls cover records, index vectors, errors and empty, populated and released lists; five isolated crash probes cover cycles and non-finite indices.",
+   "scope": "componentlist.replace placeholder.",
+   "links": [
+    "tools/simulation/componentlist_replace_oracle.py",
+    "tools/simulation/componentlist_replace_crashes_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_replace.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json",
+    "crates/casars-python/python/tests/test_componentlist_replace.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "a14325107afdadcc52a58e7312c7c43f6a20411b"
   }
  }
 }

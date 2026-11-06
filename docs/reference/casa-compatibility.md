@@ -1596,7 +1596,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 45 | 0 | 16 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 46 | 0 | 15 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1613,7 +1613,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 45, Partial: 0, Not implemented: 16, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 46, Partial: 0, Not implemented: 15, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1659,7 +1659,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `recover` | `log=True` | Implemented | Appends removed components in reverse removal order, preserving their values and in-memory shape units; returns CASA's false result. | [signature](#componentlist-evidence-signature), [removal-casa](#componentlist-evidence-removal-casa) |
 | `remove` | `which=[-1], log=True` | Implemented | Removes validated component indices and keeps a recovery bin; repeated indices remove once to preserve other components, and remove-all on an empty list raises instead of crashing. | [signature](#componentlist-evidence-signature), [removal-casa](#componentlist-evidence-removal-casa) |
 | `rename` | `filename, log=True` | Implemented | Names the table the list is written to, writing at once. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `replace` | `which, list, whichones=[-1]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `replace` | `which, list, whichones=[-1]` | Implemented (#1053) | Matches CASA's placeholder: validates arguments, warns and returns False without replacing components. Cyclic records are safe; cyclic or non-finite index inputs raise instead of crashing. | [signature](#componentlist-evidence-signature), [replace-casa](#componentlist-evidence-replace-casa) |
 | `sample` | `direction=[], pixellatsize=[], pixellongsize=[], frequency=[]` | Implemented | Matches CASA's placeholder: warns and returns an empty float64 array without numerical sampling. Cyclic arguments return safely rather than crashing. | [signature](#componentlist-evidence-signature), [sample-casa](#componentlist-evidence-sample-casa) |
 | `select` | `which` | Implemented | Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
 | `selected` |  | Implemented | Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
@@ -2038,6 +2038,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/componentlist_edit_oracle.py](https://github.com/bglenden/casa-rs/blob/cf9a4e6192aa75986b72835fb93080b49c499b0b/tools/simulation/componentlist_edit_oracle.py)
 - [crates/casars-python/python/tests/data/casa_componentlist_edit.json](https://github.com/bglenden/casa-rs/blob/cf9a4e6192aa75986b72835fb93080b49c499b0b/crates/casars-python/python/tests/data/casa_componentlist_edit.json)
 - [crates/casars-python/python/tests/test_componentlist_edit.py](https://github.com/bglenden/casa-rs/blob/cf9a4e6192aa75986b72835fb93080b49c499b0b/crates/casars-python/python/tests/test_componentlist_edit.py)
+
+<a id="componentlist-evidence-replace-casa"></a>
+##### replace-casa
+
+**CASA-recorded values — measured.** 147 CASA 6.7.6-14 calls cover records, index vectors, errors and empty, populated and released lists; five isolated crash probes cover cycles and non-finite indices. componentlist.replace placeholder.
+
+- [tools/simulation/componentlist_replace_oracle.py](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/tools/simulation/componentlist_replace_oracle.py)
+- [tools/simulation/componentlist_replace_crashes_oracle.py](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/tools/simulation/componentlist_replace_crashes_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_replace.json](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/crates/casars-python/python/tests/data/casa_componentlist_replace.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json)
+- [crates/casars-python/python/tests/test_componentlist_replace.py](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/crates/casars-python/python/tests/test_componentlist_replace.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 ### measures
 
