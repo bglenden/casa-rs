@@ -205,12 +205,12 @@
    ]
   },
   "getkeyword": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Reads a table keyword from the attached component list, including dotted paths through nested records; preserves CASA scalar and array result types.",
    "evidence": [
     "signature",
-    "refusals"
+    "keyword-reads-casa"
    ]
   },
   "getlabel": {
@@ -276,12 +276,12 @@
    ]
   },
   "haskeyword": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Tests whether the attached component list has a literal top-level table keyword; dotted names are not traversed.",
    "evidence": [
     "signature",
-    "refusals"
+    "keyword-reads-casa"
    ]
   },
   "indices": {
@@ -941,6 +941,19 @@
     "crates/casars-imager/tests/t1/virtual_model.rs"
    ],
    "source_revision": "3d64b4397df26f904ab94e7b477acdd5ab2e55e0"
+  },
+  "keyword-reads-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "32 CASA 6.7.6-14 keyword read cases cover defaults, detached tools, missing and dotted names, nested records, typed arrays, read-only tables and argument errors; a CASA-created table exercises persistence and cross-tool updates.",
+   "scope": "componentlist.getkeyword and haskeyword.",
+   "links": [
+    "tools/casa-compat/componentlist_keyword_read_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_keyword_read.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_keyword_read.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_keyword_read.py"
+   ],
+   "source_revision": "5d69a948650dd925073d14348b2790c67ca470d5"
   }
  }
 }
