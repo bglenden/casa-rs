@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record CASA reference-pixel edits on normal and transposed images."""
+"""Record CASA coordinate-header edits on normal and transposed images."""
 import json
 import shutil
 import tempfile
@@ -30,6 +30,11 @@ def main():
         ('normal', 'crpix3', 5), ('normal', 'crpix0', 1), ('normal', 'crpix5', 1),
         ('normal', 'crpix1x', 4), ('normal', 'crpix001foo', 4), ('normal', 'crpix1.0', 4),
         ('normal', 'crpix1 2', 4), ('normal', 'crpix+1', 4),
+        ('normal', 'ctype1', 'longitude'), ('normal', 'ctype2', 'DEC'),
+        ('normal', 'ctype3', 'polarization'), ('normal', 'ctype4', 'velocity'),
+        ('normal', 'ctype1', ''), ('normal', 'ctype1', 23),
+        ('normal', 'ctype1x', 'RA---SIN'), ('transposed', 'ctype1', 'pol'),
+        ('transposed', 'ctype2', 'frequency'), ('transposed', 'ctype3', 'lon'),
         ('transposed', 'crpix2', 0.75), ('transposed', 'crpix3', 3.5), ('transposed', 'crpix4', -2.0), ('transposed', 'crpix1', 1),
     ]
     result = {'casa_version': version_string(), 'cases': []}

@@ -73,9 +73,11 @@ fn run_imhead(
             })?;
             let key = hdkey.to_ascii_lowercase();
             let reference_pixel = mode == "put" && key.starts_with("crpix");
+            let axis_name = mode == "put" && key.starts_with("ctype");
             if !["bunit", "object", "observer", "telescope"].contains(&key.as_str())
                 && !(mode == "put" && key == "imtype")
                 && !reference_pixel
+                && !axis_name
                 && !casa_images::analysis::imhead_is_custom_key(&hdkey)
             {
                 return Err(TaskFailure::validation(format!(
@@ -99,6 +101,8 @@ fn run_imhead(
             }
             let summary = if reference_pixel {
                 casa_images::analysis::imhead_put_reference_pixel(&path, &hdkey, &hdvalue)
+            } else if axis_name {
+                casa_images::analysis::imhead_put_axis_name(&path, &hdkey, &hdvalue)
             } else if casa_images::analysis::imhead_is_custom_key(&hdkey) {
                 casa_images::analysis::imhead_custom_scalar(&path, &mode, &hdkey, &hdvalue)
             } else if mode == "del" {

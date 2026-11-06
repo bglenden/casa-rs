@@ -68,6 +68,8 @@ pub struct DirectionCoordinate {
     /// casacore's `worldAxisUnits` (CASA's images use `'`, `deg` or `rad`);
     /// it computes in radians whatever they are.
     world_units: [String; 2],
+    /// Names supplied by the stored coordinate record, if any.
+    world_names: Option<[String; 2]>,
 }
 
 /// Returns the native latitude of the fiducial point for a given projection type.
@@ -200,6 +202,7 @@ impl DirectionCoordinate {
             latpole,
             native_pole,
             world_units: ["rad".into(), "rad".into()],
+            world_names: None,
         }
     }
 
@@ -393,6 +396,15 @@ impl DirectionCoordinate {
             [crpix[0], crpix[1]],
         );
         coord.world_units = [axis_units[0].clone(), axis_units[1].clone()];
+        if let Some(names) = get_optional_vec_string(rec, "axes") {
+            if names.len() != 2 {
+                return Err(CoordinateError::InvalidRecord(format!(
+                    "direction coordinate axes has {} values, expected 2",
+                    names.len()
+                )));
+            }
+            coord.world_names = Some([names[0].clone(), names[1].clone()]);
+        }
 
         if let Some(pc_flat) = get_optional_vec_f64(rec, "pc") {
             if pc_flat.len() != 4 {
@@ -759,6 +771,9 @@ impl Coordinate for DirectionCoordinate {
     }
 
     fn axis_names(&self) -> Vec<String> {
+        if let Some(names) = &self.world_names {
+            return names.to_vec();
+        }
         match self.direction_ref {
             DirectionRef::GALACTIC | DirectionRef::SUPERGAL => {
                 vec!["Longitude".into(), "Latitude".into()]

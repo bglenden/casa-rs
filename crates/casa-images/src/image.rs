@@ -1467,6 +1467,28 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(old)
     }
 
+    /// Set an axis name, preserving the stored coordinate mappings.
+    ///
+    /// The change is persisted when [`Self::save`] is called.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the axis or coordinate record is invalid.
+    pub fn set_axis_name(&mut self, pixel_axis: usize, name: &str) -> Result<String, ImageError> {
+        let Some(Value::Record(mut record)) = self.table.keywords().get("coords").cloned() else {
+            return Err(ImageError::InvalidMetadata(
+                "image has no coordinate record".into(),
+            ));
+        };
+        let (coordinates, old) =
+            CoordinateSystem::set_axis_name_in_record(&mut record, pixel_axis, name)?;
+        self.table
+            .keywords_mut()
+            .upsert("coords", Value::Record(record));
+        self.coords = coordinates;
+        Ok(old)
+    }
+
     /// Replaces the image info record.
     pub fn set_image_info(&mut self, info: &ImageInfo) -> Result<(), ImageError> {
         self.table

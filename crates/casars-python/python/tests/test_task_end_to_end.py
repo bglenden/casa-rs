@@ -222,6 +222,8 @@ def test_imhead_preserves_python_scalar_header_types(
     assert tasks.imhead(image.name, mode="get", hdkey="literal") == "  42  "
     assert tasks.imhead(image.name, mode="put", hdkey="crpix1", hdvalue=3.5) is None
     assert tasks.imhead(image.name, mode="get", hdkey="crpix1") == 3.5
+    assert tasks.imhead(image.name, mode="put", hdkey="ctype1", hdvalue="new axis") is None
+    assert tasks.imhead(image.name, mode="get", hdkey="ctype1") == "new axis"
 
 
 def test_imhead_history_is_visible_with_default_logging(

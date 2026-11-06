@@ -5,7 +5,7 @@
 use super::*;
 
 #[test]
-fn imhead_edits_reference_pixels_on_normal_and_transposed_images() {
+fn imhead_edits_coordinate_headers_on_normal_and_transposed_images() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
     let oracle: Value =
         serde_json::from_slice(&std::fs::read(fixture.join("expected.json")).unwrap()).unwrap();
@@ -82,6 +82,12 @@ fn imhead_refuses_unimplemented_variants_without_mutating_metadata() {
     let workspace = tempfile::tempdir().unwrap();
     let path = workspace.path().join("variants.im");
     copy_tree(&fixture, &path);
+    let (_, reply) = json_run(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": path, "mode": "put", "hdkey": "ctype1", "hdvalue": "a\0b"}),
+    );
+    assert!(matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("#977")));
     for value in [
         json!(1_i64 << 40),
         json!([1, 2]),

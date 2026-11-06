@@ -1267,6 +1267,51 @@ pub(crate) fn imhead_axis_index(suffix: &str) -> Option<usize> {
     suffix[..digits].parse::<usize>().ok()?.checked_sub(1)
 }
 
+/// Set a CASA `ctypeN` axis name and record the image history.
+///
+/// # Errors
+///
+/// Returns an error for an invalid axis or value, malformed metadata, or an
+/// image I/O failure. History I/O may fail after the metadata is saved.
+pub fn imhead_put_axis_name(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let key = hdkey.to_ascii_lowercase();
+    let axis = key
+        .strip_prefix("ctype")
+        .and_then(imhead_axis_index)
+        .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    let ParameterValue::String(name) = hdvalue else {
+        return Err(ImageError::InvalidMetadata(format!(
+            "{key} value must be a string"
+        )));
+    };
+    if name.contains('\0') {
+        return Err(ImageError::InvalidMetadata(
+            "Axis names containing NUL are not supported (#977)".into(),
+        ));
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_axis_name(axis, name)?,
+        AnyPagedImage::Float64(image) => image.set_axis_name(axis, name)?,
+        AnyPagedImage::Complex32(image) => image.set_axis_name(axis, name)?,
+        AnyPagedImage::Complex64(image) => image.set_axis_name(axis, name)?,
+    };
+    image.save()?;
+    drop(image);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::_setCoordinateValue",
+        &[format!("Modified {key} from \"{old}\" to \"{name}\"")],
+    )?;
+    imhead(path)
+}
+
 /// Add or remove a supported string-valued CASA image header field.
 pub fn imhead_add_delete(
     path: impl AsRef<Path>,

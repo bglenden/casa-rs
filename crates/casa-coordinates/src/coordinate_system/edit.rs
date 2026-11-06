@@ -7,6 +7,77 @@ use super::CoordinateSystem;
 use crate::{CoordinateError, CoordinateType};
 
 impl CoordinateSystem {
+    /// Update a stored world-axis name while preserving coordinate axis maps.
+    ///
+    /// Returns the updated coordinate system and the previous name. The
+    /// record is changed only after the updated system parses successfully.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid axis or unsupported coordinate record.
+    pub fn set_axis_name_in_record(
+        record: &mut RecordValue,
+        pixel_axis: usize,
+        name: &str,
+    ) -> Result<(Self, String), CoordinateError> {
+        let system = Self::from_record(record)?;
+        let old = (0..system.n_coordinates())
+            .flat_map(|index| system.coordinate(index).axis_names())
+            .nth(pixel_axis)
+            .ok_or(CoordinateError::AxisOutOfRange {
+                index: pixel_axis,
+                naxes: system.n_pixel_axes(),
+            })?;
+        let coordinates = Self::record_coordinates(record)?;
+        let (coordinate, local_axis) = coordinates
+            .iter()
+            .find_map(|coordinate| {
+                coordinate
+                    .pixel_axes
+                    .iter()
+                    .position(|axis| *axis == Some(pixel_axis))
+                    .map(|axis| (coordinate, axis))
+            })
+            .ok_or(CoordinateError::AxisOutOfRange {
+                index: pixel_axis,
+                naxes: system.n_pixel_axes(),
+            })?;
+        let mut updated = record.clone();
+        let Some(Value::Record(target)) = updated.get_mut(&coordinate.field) else {
+            return Err(CoordinateError::InvalidRecord(
+                "missing coordinate record".into(),
+            ));
+        };
+        if coordinate.field.starts_with("spectral") {
+            target.upsert("name", Value::Scalar(ScalarValue::String(name.into())));
+            if let Some(Value::Record(tabular)) = target.get_mut("tabular")
+                && let Some(Value::Array(ArrayValue::String(names))) = tabular.get_mut("axes")
+                && let Some(first) = names.iter_mut().next()
+            {
+                *first = name.into();
+            }
+        } else if coordinate.field.starts_with("tabular") {
+            target.upsert("name", Value::Scalar(ScalarValue::String(name.into())));
+            if let Some(Value::Array(ArrayValue::String(names))) = target.get_mut("axes")
+                && let Some(first) = names.iter_mut().next()
+            {
+                *first = name.into();
+            }
+        } else {
+            let Some(Value::Array(ArrayValue::String(names))) = target.get_mut("axes") else {
+                return Err(CoordinateError::InvalidRecord(
+                    "coordinate names are missing".into(),
+                ));
+            };
+            let axis_name = names.iter_mut().nth(local_axis).ok_or_else(|| {
+                CoordinateError::InvalidRecord("coordinate names are missing an axis".into())
+            })?;
+            *axis_name = name.into();
+        }
+        let system = Self::from_record(&updated)?;
+        *record = updated;
+        Ok((system, old))
+    }
     /// Return the coordinate type owning a zero-based pixel axis.
     #[must_use]
     pub fn pixel_axis_type(&self, pixel_axis: usize) -> Option<CoordinateType> {
@@ -65,6 +136,14 @@ impl CoordinateSystem {
         if coordinate.field.starts_with("stokes") {
             return Ok((Self::from_record(record)?, 0.0));
         }
+        if coordinate.field.starts_with("tabular")
+            || (coordinate.field.starts_with("spectral")
+                && matches!(record.get(&coordinate.field), Some(Value::Record(inner)) if inner.get("tabular").is_some()))
+        {
+            return Err(CoordinateError::InvalidRecord(
+                "tabular reference-pixel edits are not implemented (#977)".into(),
+            ));
+        }
         let mut updated = record.clone();
         let Some(Value::Record(coordinate_record)) = updated.get_mut(&coordinate.field) else {
             return Err(CoordinateError::InvalidRecord(
@@ -119,7 +198,63 @@ impl CoordinateSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LinearCoordinate, StokesCoordinate, StokesType};
+    use crate::{
+        LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType, TabularCoordinate,
+    };
+
+    #[test]
+    fn tabular_axis_names_update_both_record_forms() {
+        let mut system = CoordinateSystem::new();
+        system.add_coordinate(TabularCoordinate::new(
+            vec![0., 1.],
+            vec![2., 3.],
+            "original",
+            "Hz",
+        ));
+        let mut record = system.to_record();
+        let Some(Value::Record(tabular)) = record.get_mut("tabular0") else {
+            panic!("missing coordinate")
+        };
+        tabular.upsert("name", Value::Scalar(ScalarValue::String("old".into())));
+        let (system, old) =
+            CoordinateSystem::set_axis_name_in_record(&mut record, 0, "new").unwrap();
+        assert_eq!(old, "old");
+        assert_eq!(system.coordinate(0).axis_names(), vec!["new"]);
+        let Some(Value::Record(tabular)) = record.get_mut("tabular0") else {
+            panic!("missing coordinate")
+        };
+        assert_eq!(
+            tabular.get("axes"),
+            Some(&Value::Array(ArrayValue::from_string_vec(vec![
+                "new".into()
+            ])))
+        );
+        tabular.remove("axes");
+        let (system, old) =
+            CoordinateSystem::set_axis_name_in_record(&mut record, 0, "last").unwrap();
+        assert_eq!(old, "new");
+        assert_eq!(system.coordinate(0).axis_names(), vec!["last"]);
+        let before = record.clone();
+        assert!(CoordinateSystem::set_reference_pixel_in_record(&mut record, 0, 9.).is_err());
+        assert_eq!(record, before);
+        let mut spectral = CoordinateSystem::new();
+        spectral.add_coordinate(
+            SpectralCoordinate::from_tabular(
+                casa_types::measures::frequency::FrequencyRef::LSRK,
+                vec![0., 1.],
+                vec![2., 3.],
+                2.,
+                1.,
+                0.,
+                2.,
+            )
+            .unwrap(),
+        );
+        let mut record = spectral.to_record();
+        let before = record.clone();
+        assert!(CoordinateSystem::set_reference_pixel_in_record(&mut record, 0, 9.).is_err());
+        assert_eq!(record, before);
+    }
 
     #[test]
     fn reference_pixel_edits_follow_transposed_maps_and_are_atomic() {

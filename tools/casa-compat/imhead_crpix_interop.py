@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Have CASA reopen reference-pixel edits written by the native task."""
+"""Have CASA reopen coordinate-header edits written by the native task."""
 import argparse
 import json
 import shutil
@@ -31,7 +31,7 @@ def main():
                 ia=image();ia.open(str(path));history=ia.history(list=False);ia.done()
                 assert history[-3] == case['history'][0], (case, history[-3:])
                 assert history[-1] == case['history'][2].replace('<IMAGE>', str(path)), (case, history[-3:])
-    print(f"CASA {version_string()} reopened {len(expected['cases'])} native reference-pixel results")
+    print(f"CASA {version_string()} reopened {len(expected['cases'])} native coordinate-header results")
 
 
 if __name__ == '__main__':
