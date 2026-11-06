@@ -419,6 +419,7 @@ pub(crate) fn run(
                     scientific: outcome.scientific,
                     masks: outcome.masks,
                     facet_sum_weights: outcome.facet_sum_weights,
+                    mem_alpha: outcome.mem_alpha,
                     saved_psf_beams,
                     vla_selection_hz,
                 },
@@ -485,6 +486,7 @@ struct ProductSource {
     scientific: MajorCycleCompletion,
     masks: Option<ReconstructionMaskSet>,
     facet_sum_weights: FacetSumWeights,
+    mem_alpha: Option<f32>,
     saved_psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
     vla_selection_hz: Option<f64>,
 }
@@ -512,7 +514,7 @@ fn publish_products(
     problem: &CompiledProblem,
     source: ProductSource,
     runtime: &ApplicationRuntime,
-    publication: ApplicationPublication,
+    mut publication: ApplicationPublication,
     team: &WorkerTeam,
     published: &mut Vec<String>,
     lanes: &mut (usize, Option<String>),
@@ -521,9 +523,13 @@ fn publish_products(
         scientific,
         masks: reconstruction_masks,
         facet_sum_weights,
+        mem_alpha,
         saved_psf_beams,
         vla_selection_hz,
     } = source;
+    if let Some(alpha) = mem_alpha {
+        publication.writer.set_mem_alpha(alpha)?;
+    }
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
     if let Some(frequency) = vla_selection_hz {
         inputs = inputs.with_vla_selection_frequency(frequency);

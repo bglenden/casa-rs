@@ -308,7 +308,11 @@ fn tclean_returns_casas_summary_record() {
 fn values_casa_rs_cannot_honour_are_refused_at_their_parameter() {
     let directory = tempfile::tempdir().expect("run directory");
     for (values, parameter, issue) in [
-        (json!({ "deconvolver": "mem" }), "deconvolver", "#1060"),
+        (
+            json!({ "deconvolver": "mem", "stokes": "IQUV" }),
+            "deconvolver",
+            "#1060",
+        ),
         // tclean reads interactive whether it iterates or not: it checks for
         // its viewer first (Astra's #1015 F8).
         (
@@ -1453,44 +1457,42 @@ fn mtmfs_restart_reuses_the_saved_psf_beam() {
 }
 
 #[test]
-fn tclean_uses_the_measurement_frame_when_frequency_metadata_is_incomplete() {
+fn mem_writes_its_last_entropy_multipliers_only_on_a_solved_model() {
     let observation = Observation::synthesise(&[("point", POINT)]);
-    let directory = observation.scratch("incomplete-frequency-reference");
+    let directory = observation.scratch("mem-metadata");
     std::fs::create_dir_all(&directory).unwrap();
-    let mut ms = casa_ms::MeasurementSet::open(observation.measurement_set()).unwrap();
-    let spw = ms
-        .subtable_mut(casa_ms::SubtableId::SpectralWindow)
-        .unwrap();
-    for row in 0..spw.row_count() {
-        spw.cell_accessor_mut(row, "MEAS_FREQ_REF")
-            .unwrap()
-            .set(CellValue::Scalar(ScalarValue::Int32(5)))
-            .unwrap();
-    }
-    for name in ["CHAN_FREQ", "REF_FREQUENCY"] {
-        let mut keywords = spw.column_keywords(name).unwrap().clone();
-        let Some(CellValue::Record(info)) = keywords.get_mut("MEASINFO") else {
-            panic!("frequency MEASINFO")
-        };
-        for key in ["Ref", "VarRefCol", "TabRefTypes", "TabRefCodes"] {
-            info.remove(key);
-        }
-        spw.set_column_keywords(name, keywords);
-    }
-    ms.save().unwrap();
-    drop(ms);
     let geometry = observation.geometry();
-    let reply = json_run(
-        &directory,
-        json!({
-            "vis": observation.measurement_set(),
-            "imagename": directory.join("image"),
+    for (name, niter) in [("dirty", 0), ("clean", 2)] {
+        let values = json!({
+            "vis": observation.measurement_set(), "imagename": directory.join(name),
             "imsize": geometry.image_size,
             "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
-            "backend": "cpu",
-            "niter": 0,
-        }),
-    );
-    assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
-    assert!(directory.join("image.psf").is_dir());
+            "backend":"cpu", "niter":niter, "deconvolver":"mem",
+            "cyclefactor":0.0001, "minpsffraction":0.0
+        });
+        let reply = json_run(&directory, values);
+        assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+        for suffix in [".model", ".psf", ".residual"] {
+            let image =
+                casa_images::PagedImage::<f32>::open(directory.join(format!("{name}{suffix}")))
+                    .unwrap();
+            let misc = image.misc_info();
+            if niter > 0 && suffix == ".model" {
+                let Some(CellValue::Scalar(ScalarValue::Float32(alpha))) = misc.get("ALPHA") else {
+                    panic!("MEM model has a float ALPHA")
+                };
+                assert!(
+                    alpha.is_finite() && *alpha > 0.0,
+                    "a solved MEM model retains its positive entropy multiplier: {alpha}"
+                );
+                assert_eq!(
+                    misc.get("BETA"),
+                    Some(&CellValue::Scalar(ScalarValue::Float32(0.0)))
+                );
+            } else {
+                assert!(misc.get("ALPHA").is_none(), "{name}{suffix}");
+                assert!(misc.get("BETA").is_none(), "{name}{suffix}");
+            }
+        }
+    }
 }

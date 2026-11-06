@@ -1044,3 +1044,103 @@ fn settling_an_off_centre_psf_holds_at_most_its_admission() {
         assert!(off.sidelobe() < 1.0, "{}", off.sidelobe());
     }
 }
+
+#[test]
+fn a_dense_mem_cycle_stays_within_solve_and_result_admissions() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    for channels in [1, 4] {
+        let problem = reconstruction_problem(
+            31,
+            32,
+            channels,
+            ReconstructionBasis::ChannelLocal { channels },
+            ReconstructionAlgorithm::Mem,
+            ReconstructionControls::new(2, 0.1, 0.0),
+        );
+        let scene = Scene::new(&problem).with_point([16, 16], &vec![1.0; channels]);
+        let lifecycle = model_lifecycle(&problem);
+        let mut cycle = MajorCycle::initial(
+            &problem,
+            empty_final_model(&lifecycle),
+            scene.resident_storage(),
+        )
+        .unwrap();
+        let (model, mut pass) = cycle.parts();
+        pass.append(scene.pass_images(model, true)).unwrap();
+        let completion = cycle.finish(SAMPLES, BLOCKS).unwrap();
+        let setup = MinorCycleSetup {
+            psf_cutoff: 0.35,
+            psf_beams: None,
+            mask_beams: None,
+            algorithm: ReconstructionAlgorithm::Mem,
+            accounting: HogbomIterationAccounting::Strict,
+            response: None,
+            nsigma: 0.0,
+            noise: casa_imaging_deconvolution::NoiseEstimate::Fast,
+            automask: false,
+            primary_beam: None,
+            residual_pixel_mask: false,
+            pbmask: 0.0,
+        };
+        let masks = ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::FullPlane {
+            coordinate: problem.geometry().domains()[0].direction(),
+        }])
+        .unwrap();
+        let controls = CycleControls {
+            iterations: 2,
+            threshold: 0.0,
+            threshold_reached: true,
+            gain: 0.1,
+            nsigma: 0.0,
+        };
+        let team = WorkerTeam::new(1).unwrap();
+        let mut cache = PsfCache::default();
+        let prepared = prepare_minor_cycle(&completion, &masks, &setup, &mut cache, &team).unwrap();
+        let mut no_solver = setup.clone();
+        no_solver.algorithm = ReconstructionAlgorithm::Dirty;
+        let planned = run_bytes(&completion, &setup, &controls, &cache, 1);
+        let base = run_bytes(&completion, &no_solver, &controls, &cache, 1);
+        assert_eq!(
+            planned - base,
+            casa_imaging_deconvolution::mem_plane_bytes(
+                casa_imaging_deconvolution::PlaneShape::new(32, 32)
+            ),
+            "the production planner admits the actual MEM plane owner"
+        );
+        ADMITTED.store(held(), Ordering::Relaxed);
+        let solving = admit(
+            &HOST,
+            &POLICY,
+            &Demand {
+                phase: "minor cycle",
+                memory: run_bytes(&completion, &setup, &controls, &cache, 1),
+            },
+        )
+        .unwrap();
+        EXCESS.store(i64::MIN, Ordering::Relaxed);
+        BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let outcome = run_minor_cycle(
+            prepared,
+            &completion,
+            &setup,
+            &controls,
+            &mut cache,
+            &team,
+            (&HOST, &POLICY),
+        );
+        MEASURING.store(false, Ordering::Relaxed);
+        drop(solving);
+        let outcome = outcome.unwrap();
+        let excess = EXCESS.load(Ordering::Relaxed);
+        assert!(
+            excess <= 0,
+            "{channels} planes exceed their admission by {excess} bytes"
+        );
+        assert_eq!(outcome.dense.len(), channels);
+        assert_eq!(
+            outcome.results.memory(),
+            MinorLayout::of(completion.normal_state()).result_bytes(&setup, controls.iterations)
+        );
+    }
+}

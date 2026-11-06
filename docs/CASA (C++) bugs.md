@@ -30,6 +30,7 @@ CASA behaviours casa-rs does not follow:
 [a Taylor run with no weight on its first correlation](#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero),
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
+[MEM masks on tiled images](#mem-reuses-the-first-mask-tile-for-its-alpha-update),
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [continuum `briggsabs` at robust 0 and noise 0](#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite),
@@ -358,6 +359,27 @@ dirty gridding numerical floor. On the full
 `niter=500`, `cycleniter=50` heavy row, the same CASA-compatible mode reduced the
 CASA/casa-rs product differences to `.model` RMS `1.71e-7`, `.residual` RMS
 `5.68e-5`, and `.image` RMS `5.87e-5`.
+
+## MEM reuses the first mask tile for its alpha update
+
+CASA 6.7.6.14's no-prior `EntropyI::formGDG` advances its model and residual
+lattice iterators but does not advance its mask iterator. Its separate
+`formGDGStep` does advance the mask. Consequently the alpha update reads the
+first mask tile repeatedly, even when the model and residual have advanced to
+later tiles. For a 512 × 512 image whose 256 × 128 first tile is outside an
+81 × 81 box mask, an instrumented CASA run gives a zero alpha-update gradient
+matrix, although its step matrix has a nonzero chi-square gradient. On the
+`refim_eptwochan.ms` two-iteration test, the original CASA model differs from
+the native model by 0.164 normalized RMS; an offset box gives 0.164 as well.
+
+A local CASA probe replaced only that Gram-matrix calculation with
+`formGDGStep`, which computes the same matrix while advancing the mask. The
+probe is identical to unmodified CASA for a 200 × 200 single-tile box, and
+its 512 × 512 centred and offset box models agree with casa-rs within
+2.2e-7 normalized RMS; the other image products also pass their normal
+tolerances. This is evidence for the cause, not a replacement CASA reference.
+casa-rs reads each pixel's actual mask for both calculations, rather than
+reproducing a result that depends on the image's storage tile layout (#1060).
 
 ## MatrixCleaner counts the iteration that stops it
 
