@@ -1596,7 +1596,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 51 | 2 | 8 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 52 | 2 | 7 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1613,7 +1613,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 51, Partial: 2, Not implemented: 8, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 52, Partial: 2, Not implemented: 7, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1673,7 +1673,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `setspectrum` | `which, type='spectral index', index=[], tabularfreqs=[100000000000.0], tabularflux=[1.0], tabularframe='LSRK'` | Implemented (#1053) | Replaces one component spectrum with a constant, spectral index, power-log polynomial or tabular model while retaining its reference frequency and frequency error. Tabulations must use the reference frame or REST; invalid, non-finite and cyclic arguments and failed conversions are rejected before unsafe mutation. | [signature](#componentlist-evidence-signature), [setspectrum-casa](#componentlist-evidence-setspectrum-casa) |
 | `setstokesspectrum` | `which, type='spectral index', index=[0.0], tabularfreqs=[100000000000.0], tabulari=[1.0], tabularq=[0.0], tabularu=[0.0], tabularv=[0.0], reffreq=[], frame='LSRK'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `shapetype` | `which` | Implemented | A component's shape name. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `simulate` | `howmany=1, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `simulate` | `howmany=1, log=True` | Implemented (#1053) | Appends the requested number of CASA default point components while preserving existing components, selection and table metadata. Nonpositive counts append nothing. Counts above the signed loop range are rejected before mutation. | [signature](#componentlist-evidence-signature), [simulate-casa](#componentlist-evidence-simulate-casa) |
 | `sort` | `criteria='Flux', log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `spectrumtype` | `which` | Implemented | A component's spectrum name. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `summarize` | `which=-1` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
@@ -2131,6 +2131,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz](https://github.com/bglenden/casa-rs/blob/3deffa3f9816349671a9ce763a3dbb292881e338/crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz)
 - [crates/casars-python/python/tests/test_componentlist_setspectrum.py](https://github.com/bglenden/casa-rs/blob/3deffa3f9816349671a9ce763a3dbb292881e338/crates/casars-python/python/tests/test_componentlist_setspectrum.py)
 - [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/3deffa3f9816349671a9ce763a3dbb292881e338/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-simulate-casa"></a>
+##### simulate-casa
+
+**CASA-recorded values — measured.** 40 CASA 6.7.6-14 calls on empty and populated lists cover default components, counts, selections, argument conversion and errors. CASA reopens a casa-rs-updated table and reads appended components with existing error columns and keyword intact. componentlist.simulate defaults, argument conversion and persistence.
+
+- [tools/simulation/componentlist_simulate_oracle.py](https://github.com/bglenden/casa-rs/blob/91a1067e692518a9280eb219df45e0219d1139f1/tools/simulation/componentlist_simulate_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_simulate.json](https://github.com/bglenden/casa-rs/blob/91a1067e692518a9280eb219df45e0219d1139f1/crates/casars-python/python/tests/data/casa_componentlist_simulate.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz](https://github.com/bglenden/casa-rs/blob/91a1067e692518a9280eb219df45e0219d1139f1/crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_simulate.py](https://github.com/bglenden/casa-rs/blob/91a1067e692518a9280eb219df45e0219d1139f1/crates/casars-python/python/tests/test_componentlist_simulate.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/91a1067e692518a9280eb219df45e0219d1139f1/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 ### measures
 

@@ -494,12 +494,12 @@
    ]
   },
   "simulate": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Appends the requested number of CASA default point components while preserving existing components, selection and table metadata. Nonpositive counts append nothing. Counts above the signed loop range are rejected before mutation.",
    "evidence": [
     "signature",
-    "refusals"
+    "simulate-casa"
    ]
   },
   "sort": {
@@ -1108,6 +1108,20 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "3deffa3f9816349671a9ce763a3dbb292881e338"
+  },
+  "simulate-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "40 CASA 6.7.6-14 calls on empty and populated lists cover default components, counts, selections, argument conversion and errors. CASA reopens a casa-rs-updated table and reads appended components with existing error columns and keyword intact.",
+   "scope": "componentlist.simulate defaults, argument conversion and persistence.",
+   "links": [
+    "tools/simulation/componentlist_simulate_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_simulate.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_simulate.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "91a1067e692518a9280eb219df45e0219d1139f1"
   }
  }
 }
