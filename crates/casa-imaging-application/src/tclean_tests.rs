@@ -1027,3 +1027,40 @@ fn w_facets_keep_their_count_and_refuse_unverified_modes() {
         assert!(refusal(args).to_string().contains("#1063"));
     }
 }
+
+/// Typed requests cannot bypass the W-facet scope by avoiding tclean's
+/// text-to-request conversion (#1063).
+#[test]
+fn w_facets_typed_requests_refuse_unverified_modes() {
+    let supported = request(json!({"gridder":"wproject", "wprojplanes":4, "facets":2}));
+    supported.validate().expect("measured mode");
+    let mut cube = supported.clone();
+    cube.specmode = SpecMode::Cube;
+    let mut taylor = supported.clone();
+    taylor.deconvolver = Deconvolver::Mtmfs;
+    taylor.nterms = 2;
+    let mut briggs = supported.clone();
+    briggs.weighting = crate::Weighting::Briggs;
+    let mut polarized = supported.clone();
+    polarized
+        .stokes
+        .push(casa_imaging_model::PolarizationCoordinate::StokesV);
+    let mut automatic = supported.clone();
+    automatic.gridder = Gridder::Wproject {
+        facets: NonZeroUsize::new(2).unwrap(),
+        wprojplanes: None,
+    };
+    let mut outlier = supported;
+    outlier.outlierfile = Some("outlier.txt".into());
+    for (label, image) in [
+        ("cube", cube),
+        ("taylor", taylor),
+        ("briggs", briggs),
+        ("polarized", polarized),
+        ("automatic", automatic),
+        ("outlier", outlier),
+    ] {
+        let error = image.validate().expect_err(label).to_string();
+        assert!(error.contains("#1063"), "{label}: {error}");
+    }
+}

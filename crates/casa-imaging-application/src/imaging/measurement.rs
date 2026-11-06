@@ -369,6 +369,12 @@ fn w_kernel_set(
     let set = screens.finish()?;
     drop(screening);
     kernels.retain(set.resident_bytes());
+    tracing::debug!(
+        target: "casa_imaging_application::w_kernel_charge",
+        resident_bytes = set.resident_bytes(),
+        reserved_bytes = kernels.memory(),
+        "W-projection kernels retained"
+    );
     Ok((set, Kernels::Admitted { _charge: kernels }))
 }
 

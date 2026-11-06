@@ -434,9 +434,9 @@ fn facets_run_with_the_standard_set_and_a_constant_basis() {
     .compile();
     assert_exactly_unsupported(on_cpu(&taylor), [Unsupported::FacetedBasis]);
     let mut w = faceted();
-    w.measurement_equation = w
-        .measurement_equation
-        .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
+    w.measurement_equation = w.measurement_equation.with_w_projection(
+        WProjectionContract::new(100.0, std::num::NonZeroUsize::new(4)).expect("W contract"),
+    );
     on_cpu(&w.compile()).expect("W-projection facets on CPU");
     let mut aw = faceted().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1);
     aw.measurement_equation = aw.measurement_equation.with_aw_projection(
@@ -458,12 +458,61 @@ fn facets_run_with_the_standard_set_and_a_constant_basis() {
     assert_exactly_unsupported(on_cpu(&aw.compile()), [Unsupported::FacetedKernelSet]);
 }
 
+/// The public compiled capability report has the same W-facet scope as
+/// the validated application request (#1063).
+#[test]
+fn w_facet_availability_refuses_unverified_compiled_modes() {
+    let base = || {
+        let mut fixture = ProblemFixture {
+            facets: FacetLayout::Regular {
+                columns: 2,
+                rows: 2,
+            },
+            ..ProblemFixture::standard()
+        };
+        fixture.measurement_equation = fixture.measurement_equation.with_w_projection(
+            WProjectionContract::new(100.0, std::num::NonZeroUsize::new(4)).unwrap(),
+        );
+        fixture
+    };
+    on_cpu(&base().compile()).expect("natural W facets");
+    let mut uniform = base();
+    uniform.weighting = WeightingScheme::Uniform;
+    on_cpu(&uniform.compile()).expect("uniform W facets");
+    let mut superuniform = base();
+    superuniform.weighting = WeightingScheme::Uniform;
+    superuniform.density_cells =
+        casa_imaging_model::DensityCells::Box(std::num::NonZeroUsize::new(3).unwrap());
+    assert_exactly_unsupported(on_cpu(&superuniform.compile()), [Unsupported::FacetedWMode]);
+    let mut automatic = base();
+    automatic.measurement_equation =
+        MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products())
+            .with_w_projection(WProjectionContract::new(100.0, None).unwrap());
+    assert_exactly_unsupported(on_cpu(&automatic.compile()), [Unsupported::FacetedWMode]);
+    let mut clark = base();
+    clark.algorithm = ReconstructionAlgorithm::Clark;
+    assert_exactly_unsupported(on_cpu(&clark.compile()), [Unsupported::FacetedWMode]);
+    let mut briggs = base();
+    briggs.weighting = WeightingScheme::Briggs { robust: 0.5 };
+    assert_exactly_unsupported(on_cpu(&briggs.compile()), [Unsupported::FacetedWMode]);
+    let mut polarized = base();
+    polarized
+        .polarizations
+        .push(PolarizationCoordinate::StokesV);
+    assert_exactly_unsupported(on_cpu(&polarized.compile()), [Unsupported::FacetedWMode]);
+    let mut outlier = base();
+    outlier.outlier = true;
+    assert_exactly_unsupported(on_cpu(&outlier.compile()), [Unsupported::FacetedWMode]);
+}
+
 /// One compiled-problem fixture; [`ProblemFixture::standard`] is a dirty
 /// Stokes-I MFS request with a scalar measurement equation.
 struct ProblemFixture {
     phase_centre: PhaseCentreLaw,
     basis: ReconstructionBasis,
     algorithm: ReconstructionAlgorithm,
+    weighting: WeightingScheme,
+    density_cells: casa_imaging_model::DensityCells,
     polarizations: Vec<PolarizationCoordinate>,
     uvw: UvwCoordinateLaw,
     facets: FacetLayout,
@@ -486,6 +535,8 @@ impl ProblemFixture {
             )),
             basis: ReconstructionBasis::Constant,
             algorithm: ReconstructionAlgorithm::Dirty,
+            weighting: WeightingScheme::Natural,
+            density_cells: casa_imaging_model::DensityCells::Image,
             polarizations: vec![PolarizationCoordinate::StokesI],
             uvw: UvwCoordinateLaw::PhaseTrackingCentre,
             facets: FacetLayout::Single,
@@ -517,6 +568,11 @@ impl ProblemFixture {
     fn request(self) -> ProblemInput {
         let iteration_budget =
             usize::from(!matches!(self.algorithm, ReconstructionAlgorithm::Dirty));
+        let density_scope = if self.weighting.uses_density() {
+            WeightDensityScope::GlobalSelection
+        } else {
+            WeightDensityScope::NotApplicable
+        };
         let ([nx, ny], [cell_x, cell_y]) = self.image;
         let direction = DirectionCoordinateSpec::new(
             Projection::Sin,
@@ -610,7 +666,8 @@ impl ProblemFixture {
                     ReconstructionControls::new(iteration_budget, 1.0, 0.0),
                     PolarizationContract::new(self.polarizations),
                 ),
-                WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+                WeightingContract::new(self.weighting, density_scope)
+                    .with_density_cells(self.density_cells),
                 ProductRequirements::new(
                     self.products,
                     ProductNormalization::UnitResponse,
