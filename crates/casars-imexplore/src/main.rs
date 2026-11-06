@@ -4,6 +4,7 @@
 //! surface (`imexplore imhead ...`, `imexplore imstat ...`); `imhead` runs
 //! otherwise.
 
+use std::ffi::OsString;
 use std::fmt::{Display, Write as _};
 use std::path::Path;
 use std::process::ExitCode;
@@ -16,8 +17,13 @@ use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
 
 fn main() -> ExitCode {
-    image_task_front_end("imexplore", &["imhead", "imstat"], run).main(
-        std::env::args_os().skip(1),
+    let args: Vec<OsString> = std::env::args_os().skip(1).collect();
+    let default_logging = !casa_task_runtime::CasaLoggingConfig::output_was_configured(&args);
+    image_task_front_end("imexplore", &["imhead", "imstat"], move |task| {
+        run(task, default_logging)
+    })
+    .main(
+        args,
         casa_task_runtime::CasaLoggingConfig::from_env(),
         std::env::set_current_dir,
         &mut std::io::stdout(),
@@ -25,41 +31,37 @@ fn main() -> ExitCode {
     )
 }
 
-fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+fn run(task: &TaskInvocation<'_>, default_logging: bool) -> Result<TaskSuccess, TaskFailure> {
     match task.surface() {
         "imstat" => run_imstat(task),
-        _ => run_imhead(task),
+        _ => run_imhead(task, default_logging),
     }
 }
 
 /// CASA's `imhead` returns its header record for `summary` and `list`, and
 /// `None` for `put`; `imstat` returns its statistics record.
-fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
+fn run_imhead(
+    task: &TaskInvocation<'_>,
+    default_logging: bool,
+) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("imagename")?;
     let mode = task.required_text("mode")?.to_ascii_lowercase();
     if mode == "history" {
         // Open the image first, just as CASA does, even if there is no logtable.
         casa_images::analysis::validate_imhead_image(&path)
             .map_err(|error| image_error("imhead", &path, error))?;
-        if !tracing::enabled!(tracing::Level::INFO) {
-            return Err(TaskFailure::validation("imhead history requires an INFO log sink; set CASA_RS_LOG_STDERR_PRIORITY=INFO or CASA_RS_LOG_TABLE (#977)").at("mode"));
-        }
         let entries = casa_images::image::image_history_entries(&path)
             .map_err(|error| image_error("imhead", &path, error))?;
+        let mut result = TaskSuccess::new(CasaValue::None, &())?;
         for entry in entries {
-            let location = if entry.location.is_empty() {
-                "ImageHistory::get"
-            } else {
-                &entry.location
-            };
-            tracing::info!(
-                casa.time_mjd_seconds = entry.time_mjd_seconds,
-                casa.location = location,
-                "{}",
-                entry.message
+            result = result.with_replayed_info(
+                entry.time_mjd_seconds,
+                &entry.replay_location(),
+                &entry.message,
+                default_logging,
             );
         }
-        return TaskSuccess::new(CasaValue::None, &());
+        return Ok(result);
     }
     let mut summary = match mode.as_str() {
         "summary" | "list" | "get" => {
@@ -164,7 +166,15 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let value = match mode.as_str() {
         "summary" => imhead_summary_record(&summary),
         "list" => imhead_list_record(&summary),
-        "get" => header_value(&summary, &path, &hdkey)?,
+        "get" => {
+            casa_images::imhead_get_value(&summary, &path, &hdkey).map_err(|error| match error {
+                casa_images::ImheadGetError::UnsupportedKey(_) => {
+                    TaskFailure::validation(error.to_string()).at("hdkey")
+                }
+                casa_images::ImheadGetError::Execution(message) => TaskFailure::execution(message),
+                casa_images::ImheadGetError::Image(error) => image_error("imhead", &path, error),
+            })?
+        }
         // CASA's put returns None.
         _ => CasaValue::None,
     };
@@ -188,125 +198,6 @@ fn history_value(value: &ParameterValue) -> String {
         ParameterValue::Float(value) => casa_provider_contracts::python_float(*value),
         _ => "...".to_string(),
     }
-}
-
-/// The header fields already represented by `ImageHeaderSummary`.
-/// Other CASA keys remain explicit refusals until their metadata is read (#977).
-fn header_value(
-    summary: &ImageHeaderSummary,
-    path: &Path,
-    key: &str,
-) -> Result<CasaValue, TaskFailure> {
-    let lower = key.to_ascii_lowercase();
-    let value = match lower.as_str() {
-        "bunit" => CasaValue::string(&summary.units),
-        "imtype" => CasaValue::string(&summary.image_type),
-        "object" => CasaValue::string(&summary.object_name),
-        "date-obs" | "epoch" => CasaValue::string(&summary.observation_date),
-        "observer" => CasaValue::string(&summary.observer),
-        "telescope" => CasaValue::string(&summary.telescope),
-        "equinox" => CasaValue::string(summary.direction_reference.as_deref().unwrap_or("")),
-        "projection" => CasaValue::string(summary.direction_projection.as_deref().unwrap_or("")),
-        "reffreqtype" => {
-            CasaValue::string(summary.spectral.as_ref().map_or("", |s| &s.reference_frame))
-        }
-        "restfreq" => {
-            let spectral = summary.spectral.as_ref().ok_or_else(|| {
-                TaskFailure::execution("Image has no spectral axis so there is no rest frequency")
-            })?;
-            CasaValue::dict([
-                ("unit", CasaValue::string(&spectral.unit)),
-                ("value", CasaValue::float(spectral.rest_frequency)),
-            ])
-        }
-        "masks" => CasaValue::str_vector(summary.masks.clone()),
-        "shape" => CasaValue::int64_vector(summary.shape.iter().map(|&n| n as i64)),
-        "datamin" | "datamax" | "minpixpos" | "maxpixpos" | "minpos" | "maxpos" => {
-            let extrema = summary.extrema.as_ref().ok_or_else(|| {
-                TaskFailure::execution(format!("RecordInterface: field {lower} is unknown"))
-            })?;
-            match lower.as_str() {
-                "datamin" => CasaValue::float(extrema.min),
-                "datamax" => CasaValue::float(extrema.max),
-                "minpixpos" => {
-                    CasaValue::int64_vector(extrema.min_position.iter().map(|&n| n as i64))
-                }
-                "maxpixpos" => {
-                    CasaValue::int64_vector(extrema.max_position.iter().map(|&n| n as i64))
-                }
-                "minpos" => CasaValue::string(&extrema.min_world),
-                _ => CasaValue::string(&extrema.max_world),
-            }
-        }
-        "beammajor" | "beamminor" | "beampa" | "bmaj" | "bmin" | "bpa" => {
-            let beam = summary.restoring_beam.as_ref().ok_or_else(|| {
-                TaskFailure::execution(if summary.has_multiple_beams {
-                    "This image has multiple beams."
-                } else {
-                    "This image has no beam(s)."
-                })
-            })?;
-            let value = match lower.as_str() {
-                "beammajor" | "bmaj" => &beam.major,
-                "beamminor" | "bmin" => &beam.minor,
-                _ => &beam.wrapped_position_angle,
-            };
-            CasaValue::dict([
-                ("unit", CasaValue::string(&value.unit)),
-                ("value", CasaValue::float(value.value)),
-            ])
-        }
-        _ if casa_images::analysis::imhead_is_custom_key(key) => {
-            return casa_images::analysis::imhead_custom_value(path, key)
-                .map_err(|error| image_error("imhead", path, error));
-        }
-        _ => return axis_header_value(summary, key, &lower),
-    };
-    Ok(value)
-}
-
-fn axis_header_value(
-    summary: &ImageHeaderSummary,
-    key: &str,
-    lower: &str,
-) -> Result<CasaValue, TaskFailure> {
-    if let Some((prefix, suffix)) = lower
-        .get(..5)
-        .zip(lower.get(5..))
-        .filter(|(prefix, _)| ["cdelt", "crpix", "crval", "ctype", "cunit"].contains(prefix))
-    {
-        let index = suffix.parse::<usize>().ok().and_then(|n| n.checked_sub(1));
-        let axis = index
-            .and_then(|index| summary.axes.get(index))
-            .ok_or_else(|| {
-                TaskFailure::execution(format!("imhead: invalid axis keyword {key:?}"))
-            })?;
-        let quantity = |value| {
-            CasaValue::dict([
-                ("unit", CasaValue::string(&axis.unit)),
-                ("value", CasaValue::float(value)),
-            ])
-        };
-        return match prefix {
-            "cdelt" => Ok(quantity(axis.increment)),
-            "crpix" => Ok(CasaValue::float(axis.reference_pixel)),
-            "crval" if axis.coordinate_type == "Stokes" => {
-                Ok(CasaValue::str_vector(axis.stokes.clone()))
-            }
-            "crval" => Ok(quantity(axis.reference_value)),
-            "ctype" => Ok(CasaValue::string(&axis.name)),
-            "cunit" => Ok(CasaValue::string(&axis.unit)),
-            _ => Err(unimplemented_header_key(key)),
-        };
-    }
-    Err(unimplemented_header_key(key))
-}
-
-fn unimplemented_header_key(key: &str) -> TaskFailure {
-    TaskFailure::validation(format!(
-        "imhead get of hdkey {key:?} is not implemented by casa-rs yet (#977)"
-    ))
-    .at("hdkey")
 }
 
 fn run_imstat(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {

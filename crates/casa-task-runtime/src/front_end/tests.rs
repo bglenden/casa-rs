@@ -230,6 +230,44 @@ fn json_run_writes_one_typed_reply_and_no_last() {
 }
 
 #[test]
+fn task_output_lines_are_visible_for_cli_and_json_without_changing_the_reply() {
+    let task = TaskFrontEnd::new(
+        "imexplore",
+        contract_hosting(&["imhead"]),
+        &["imhead"],
+        |_| {
+            Ok(TaskSuccess::new(CasaValue::None, &())
+                .unwrap()
+                .with_output_line("INFO ::origin history"))
+        },
+    )
+    .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let cli = task.dispatch(&in_workspace(
+        workspace.path(),
+        &["example.im", "--no-save-last"],
+    ));
+    assert_eq!(cli.code, 0);
+    assert_eq!(cli.stderr, ["INFO ::origin history"]);
+    let request = workspace.path().join("request.json");
+    std::fs::write(
+        &request,
+        json!({"surface": "imhead", "values": {"imagename": "example.im"}}).to_string(),
+    )
+    .unwrap();
+    let output = task.dispatch(&args(&["--json-run", request.to_str().unwrap()]));
+    assert_eq!(output.stderr, ["INFO ::origin history"]);
+    let reply: TaskReply = serde_json::from_str(&output.stdout).unwrap();
+    assert!(matches!(
+        reply,
+        TaskReply::Succeeded {
+            value: CasaValue::None,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn json_run_refuses_what_it_cannot_resolve_before_the_task_runs() {
     let calls = Calls::default();
     let front_end = front_end(&calls);

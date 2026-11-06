@@ -11,6 +11,9 @@ use casa_provider_contracts::{CasaEntry, CasaKey, CasaValue};
 
 use crate::analysis::{ImageHeaderSummary, ImageStatisticsSummary, RestoringBeamSummary};
 
+mod imhead_get;
+pub use imhead_get::{ImheadGetError, imhead_get_value};
+
 /// `imstat`'s statistics record over the whole selection, as CASA returns
 /// it with `axes=[]`: each statistic a one-element `float64` array, and the
 /// corners and extremum positions `int64` pixel arrays. A selection with no

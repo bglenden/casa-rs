@@ -54,6 +54,22 @@ pub struct ImageHistoryEntry {
     pub message: String,
 }
 
+impl ImageHistoryEntry {
+    /// Origin used when casacore replays this entry through `ImageHistory`.
+    ///
+    /// An empty location becomes `ImageHistory::get`. Otherwise casacore
+    /// treats the stored location as a global function name, which adds a
+    /// `::` prefix when the log origin is rendered.
+    #[must_use]
+    pub fn replay_location(&self) -> String {
+        if self.location.is_empty() {
+            "ImageHistory::get".into()
+        } else {
+            format!("::{}", self.location)
+        }
+    }
+}
+
 /// Read the persistent image log for replay by `imhead(mode="history")`.
 pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryEntry>, ImageError> {
     let image = path.as_ref();

@@ -222,6 +222,19 @@ def test_imhead_preserves_python_scalar_header_types(
     assert tasks.imhead(image.name, mode="get", hdkey="literal") == "  42  "
 
 
+def test_imhead_history_is_visible_with_default_logging(
+    image: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    require_executables("imhead")
+    monkeypatch.chdir(image.parent)
+    for name in ("CASA_RS_LOG_TABLE", "CASA_RS_LOG_TABLE_PRIORITY", "CASA_RS_LOG_STDERR_PRIORITY"):
+        monkeypatch.delenv(name, raising=False)
+    assert tasks.imhead(image.name, mode="put", hdkey="object", hdvalue="M31") is None
+    capsys.readouterr()
+    assert tasks.imhead(image.name, mode="history") is None
+    assert 'Modified object from "python-fixture" to "M31"' in capsys.readouterr().err
+
+
 def test_msconvert_converts_both_ways_and_reports_its_losses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

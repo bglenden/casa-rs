@@ -93,7 +93,9 @@ pub use analysis::{
 };
 pub use beam::{GaussianBeam, ImageBeamSet};
 pub use casa_lattices::{ScratchSpace, TempStoragePlan, TempStoragePolicy};
-pub use casa_return::{imhead_list_record, imhead_summary_record, imstat_record};
+pub use casa_return::{
+    ImheadGetError, imhead_get_value, imhead_list_record, imhead_summary_record, imstat_record,
+};
 pub use convolve2d::{Convolved, convolve2d};
 pub use error::ImageError;
 pub use fits_read::{FitsImage, read_fits_image};

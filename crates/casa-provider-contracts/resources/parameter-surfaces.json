@@ -11856,7 +11856,7 @@
     {
       "kind": "task",
       "id": "imhead",
-      "contract_version": 10,
+      "contract_version": 11,
       "display_name": "Image Header",
       "category": "Images",
       "summary": "Inspect or update CASA image header metadata.",
@@ -11943,7 +11943,7 @@
           "name": "mode",
           "concept": {
             "id": "imhead.mode",
-            "semantic_revision": 4
+            "semantic_revision": 5
           },
           "order": 1,
           "default": {
@@ -12080,7 +12080,7 @@
             },
             "python": {
               "name": "hdvalue",
-              "type_hint": null
+              "type_hint": "str | bool | int | float"
             },
             "presentation": {
               "label": "Header Value",
@@ -12145,6 +12145,12 @@
         {
           "from_contract": 9,
           "to_contract": 10,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 10,
+          "to_contract": 11,
           "steps": [],
           "changed_defaults": []
         }

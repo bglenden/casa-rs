@@ -325,7 +325,7 @@ def imhead(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     mode: Literal['add', 'del', 'get', 'history', 'list', 'put', 'summary'] = ...,
     hdkey: str = ...,
-    hdvalue: ParameterData = ...,
+    hdvalue: str | bool | int | float = ...,
     verbose: bool = ...,
 ) -> Any:
     ...

@@ -353,7 +353,9 @@ fn imhead_history_replays_casa_log_messages_with_original_times_and_origins() {
     let mut expected = casa_images::image::image_history_entries(&path).unwrap();
     assert!(!expected.is_empty());
     assert!(expected[0].location.is_empty());
-    expected[0].location = "ImageHistory::get".into();
+    for entry in &mut expected {
+        entry.location = entry.replay_location();
+    }
     let output_root = workspace.path().join("replayed");
     std::fs::create_dir(&output_root).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_imexplore"))
@@ -423,19 +425,73 @@ fn imhead_history_does_not_require_summary_metadata_to_be_understood() {
 }
 
 #[test]
-fn imhead_history_refuses_when_no_info_sink_can_show_it() {
+fn imhead_history_is_visible_by_default_and_respects_explicit_filtering() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_put/base.im");
+    let oracle: Value = serde_json::from_slice(
+        &std::fs::read(fixture.parent().unwrap().join("history_expected.json")).unwrap(),
+    )
+    .unwrap();
+    let expected: Vec<&str> = oracle["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| line.as_str().unwrap())
+        .collect();
     let workspace = tempfile::tempdir().unwrap();
     let path = workspace.path().join("history.im");
     copy_tree(&fixture, &path);
-    let (_, reply) = json_run(
-        workspace.path(),
-        "imhead",
-        json!({"imagename": path, "mode": "history"}),
-    );
-    assert!(
-        matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("INFO log sink"))
-    );
+    for config in [
+        "default",
+        "off",
+        "table_priority_only",
+        "cli_off",
+        "cli_table_priority_only",
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_imexplore"));
+        command
+            .args(["imhead", "--json-run", "-"])
+            .current_dir(workspace.path())
+            .env_remove("CASA_RS_LOG_TABLE")
+            .env_remove("CASA_RS_LOG_TABLE_PRIORITY")
+            .env_remove("CASA_RS_LOG_STDERR_PRIORITY")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if config == "off" {
+            command.env("CASA_RS_LOG_STDERR_PRIORITY", "off");
+        } else if config == "table_priority_only" {
+            command.env("CASA_RS_LOG_TABLE_PRIORITY", "WARN");
+        } else if config == "cli_off" {
+            command.args(["--log-stderr-priority", "off"]);
+        } else if config == "cli_table_priority_only" {
+            command.args(["--log-table-priority", "WARN"]);
+        }
+        let mut child = command.spawn().unwrap();
+        write!(
+            child.stdin.take().unwrap(),
+            "{}",
+            json!({"surface":"imhead", "values":{"imagename":path, "mode":"history"}})
+        )
+        .unwrap();
+        let output = child.wait_with_output().unwrap();
+        let reply: TaskReply = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(matches!(
+            reply,
+            TaskReply::Succeeded {
+                value: CasaValue::None,
+                ..
+            }
+        ));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            stderr.contains("Created Paged image"),
+            !["off", "cli_off"].contains(&config),
+            "{config}: {stderr}"
+        );
+        if !["off", "cli_off"].contains(&config) {
+            assert_eq!(stderr.lines().collect::<Vec<_>>(), expected, "{config}");
+        }
+    }
 }
 
 #[test]

@@ -1437,7 +1437,7 @@ fn imhead_change_string(
         )));
     }
     let value = if key == "bunit" {
-        let unit = normalize_casa_unit(hdvalue);
+        let unit = casa_types::quanta::unit::normalize_casa_unit_name(hdvalue);
         casa_types::quanta::Unit::new(&unit)
             .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
         unit
@@ -1492,52 +1492,6 @@ pub fn validate_imhead_image(path: impl AsRef<Path>) -> Result<(), ImageError> {
         AnyPagedImage::Complex32(image) => validate(image),
         AnyPagedImage::Complex64(image) => validate(image),
     }
-}
-
-// Mirrors the two spelling-normalization passes in casacore Unit::check.
-fn normalize_casa_unit(input: &str) -> String {
-    let mut chars = input.chars().peekable();
-    let mut first = String::new();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '^' => {}
-            '*' if chars.peek() == Some(&'*') => {
-                chars.next();
-            }
-            '*' => first.push('.'),
-            ' ' => {
-                let mut separator = '.';
-                while matches!(chars.peek(), Some(' ' | '/')) {
-                    if chars.next() == Some('/') {
-                        separator = '/';
-                    }
-                }
-                first.push(separator);
-            }
-            '/' if chars.peek() == Some(&'/') => {
-                chars.next();
-                first.push('.');
-            }
-            _ => first.push(ch),
-        }
-    }
-    let first = first.trim_matches('.');
-    let mut chars = first.chars().peekable();
-    let mut output = String::new();
-    while let Some(ch) = chars.next() {
-        if ch == '.' {
-            let mut separator = '.';
-            while matches!(chars.peek(), Some('.' | '/')) {
-                if chars.next() == Some('/') {
-                    separator = '/';
-                }
-            }
-            output.push(separator);
-        } else {
-            output.push(ch);
-        }
-    }
-    output
 }
 
 fn header_string<T: ImagePixel>(image: &PagedImage<T>, key: &str) -> Result<String, ImageError> {
@@ -1806,7 +1760,7 @@ fn beam_quantity(record: &RecordValue, key: &str) -> Option<BeamQuantity> {
     };
     Some(BeamQuantity {
         value,
-        unit: normalize_casa_unit(unit),
+        unit: casa_types::quanta::unit::normalize_casa_unit_name(unit),
     })
 }
 

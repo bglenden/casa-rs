@@ -449,7 +449,8 @@
                "str": null
               },
               "type_hint": {
-               "null": null
+               "null": null,
+               "str": null
               }
              }
             },
@@ -648,7 +649,8 @@
             "str": null
            },
            "type_hint": {
-            "null": null
+            "null": null,
+            "str": null
            }
           }
          },
@@ -849,7 +851,8 @@
               "str": null
              },
              "type_hint": {
-              "null": null
+              "null": null,
+              "str": null
              }
             }
            },

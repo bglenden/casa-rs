@@ -78,6 +78,7 @@ pub struct TaskSuccess {
     result: Value,
     text: Option<String>,
     notes: Vec<String>,
+    output_lines: Vec<String>,
 }
 
 impl TaskSuccess {
@@ -94,6 +95,7 @@ impl TaskSuccess {
             result: to_json(result)?,
             text: None,
             notes: Vec::new(),
+            output_lines: Vec::new(),
         })
     }
 
@@ -110,6 +112,37 @@ impl TaskSuccess {
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
+    }
+
+    /// Add a task output line to stderr, including for JSON-run requests.
+    /// This is for tasks whose result is deliberately displayed as text
+    /// while their CASA return value remains `None`.
+    #[must_use]
+    pub fn with_output_line(mut self, line: impl Into<String>) -> Self {
+        self.output_lines.push(line.into());
+        self
+    }
+
+    /// Replay an INFO message with its original time through the log sinks.
+    /// If `fallback_to_text` is true and no INFO sink is enabled, display a
+    /// timestamped line on stderr instead. The CASA return value is unchanged.
+    #[must_use]
+    pub fn with_replayed_info(
+        self,
+        time_mjd_seconds: f64,
+        location: &str,
+        message: &str,
+        fallback_to_text: bool,
+    ) -> Self {
+        match casa_logging::replay_info_record(
+            time_mjd_seconds,
+            location,
+            message,
+            fallback_to_text,
+        ) {
+            Some(line) => self.with_output_line(line),
+            None => self,
+        }
     }
 }
 
@@ -588,6 +621,7 @@ where
         match outcome {
             Ok(success) => {
                 stderr.extend(success.notes);
+                stderr.extend(success.output_lines);
                 let stdout = match success.text {
                     Some(text) => text,
                     None if success.value == CasaValue::None => String::new(),
@@ -611,10 +645,19 @@ where
     }
 
     fn run_json(&self, default: &SurfaceContractBundle, source: &str) -> FrontEndOutput {
-        reply_output(&self.json_reply(default, source))
+        let mut lines = Vec::new();
+        let reply = self.json_reply(default, source, &mut lines);
+        let mut output = reply_output(&reply);
+        output.stderr.extend(lines);
+        output
     }
 
-    fn json_reply(&self, default: &SurfaceContractBundle, source: &str) -> TaskReply {
+    fn json_reply(
+        &self,
+        default: &SurfaceContractBundle,
+        source: &str,
+        output_lines: &mut Vec<String>,
+    ) -> TaskReply {
         let refuse =
             |surface: &str, message: String, parameter: Option<String>| TaskReply::Failed {
                 surface: surface.to_string(),
@@ -770,11 +813,14 @@ where
             );
         }
         match self.execute(&session, &workspace) {
-            Ok(success) => TaskReply::Succeeded {
-                surface: request.surface,
-                value: success.value,
-                result: success.result,
-            },
+            Ok(success) => {
+                output_lines.extend(success.output_lines);
+                TaskReply::Succeeded {
+                    surface: request.surface,
+                    value: success.value,
+                    result: success.result,
+                }
+            }
             Err(failure) => TaskReply::Failed {
                 surface: request.surface,
                 kind: failure.kind,
