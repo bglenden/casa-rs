@@ -110,6 +110,9 @@ pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
     if let Some(beam) = &summary.restoring_beam {
         entries.push(("restoringbeam", beam_record(beam)));
     }
+    if let Some(beams) = &summary.per_plane_beams {
+        entries.push(("perplanebeams", summary_beam_grid(beams)));
+    }
     sorted(entries)
 }
 
@@ -146,6 +149,9 @@ pub fn imhead_list_record(summary: &ImageHeaderSummary) -> CasaValue {
             CasaValue::string(&summary.telescope),
         ),
     ];
+    if let Some(beams) = &summary.per_plane_beams {
+        entries.push(("perplanebeams".to_string(), listed_beam_grid(beams)));
+    }
     if let Some(frame) = &summary.direction_reference {
         entries.push(("equinox".to_string(), CasaValue::string(frame)));
     }
@@ -240,6 +246,63 @@ fn beam_record(beam: &RestoringBeamSummary) -> CasaValue {
     ])
 }
 
+fn summary_beam_grid(grid: &crate::analysis::PerPlaneBeamSummary) -> CasaValue {
+    let channels = (0..grid.channels)
+        .map(|channel| {
+            let stokes = (0..grid.stokes)
+                .map(|polarization| {
+                    (
+                        format!("*{polarization}"),
+                        beam_record(&grid.beams[polarization * grid.channels + channel]),
+                    )
+                })
+                .collect();
+            (format!("*{channel}"), sorted(stokes))
+        })
+        .collect();
+    CasaValue::dict([
+        ("beams", sorted(channels)),
+        (
+            "nChannels",
+            CasaValue::Int {
+                value: grid.channels as i64,
+            },
+        ),
+        (
+            "nStokes",
+            CasaValue::Int {
+                value: grid.stokes as i64,
+            },
+        ),
+    ])
+}
+
+fn listed_beam_grid(grid: &crate::analysis::PerPlaneBeamSummary) -> CasaValue {
+    let mut entries: Vec<(String, CasaValue)> = grid
+        .beams
+        .iter()
+        .enumerate()
+        .map(|(index, beam)| (format!("*{index}"), beam_record(beam)))
+        .collect();
+    entries.push((
+        "median area beam".into(),
+        beam_record(&grid.beams[grid.median_index]),
+    ));
+    entries.push((
+        "nChannels".into(),
+        CasaValue::Int {
+            value: grid.channels as i64,
+        },
+    ));
+    entries.push((
+        "nStokes".into(),
+        CasaValue::Int {
+            value: grid.stokes as i64,
+        },
+    ));
+    sorted(entries)
+}
+
 /// A dictionary with its keys in alphabetical order, as CASA's records are.
 fn sorted<K: Into<String>>(entries: Vec<(K, CasaValue)>) -> CasaValue {
     let mut entries = entries
@@ -327,6 +390,7 @@ mod tests {
                 },
             })),
             has_multiple_beams: false,
+            per_plane_beams: None,
             extrema: None,
             axes: vec![
                 axis(0, "Right Ascension", "rad"),

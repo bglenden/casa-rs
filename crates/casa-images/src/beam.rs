@@ -30,7 +30,7 @@ impl GaussianBeam {
 
     /// Returns `true` if the beam is null.
     pub fn is_null(&self) -> bool {
-        self.major == 0.0 && self.minor == 0.0
+        self.major == 0.0 || self.minor == 0.0
     }
 
     /// Returns the beam area in steradians.
@@ -95,6 +95,11 @@ impl GaussianBeam {
 
     /// Deserializes a beam from a casacore quantity record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, ImageError> {
+        if rec.len() != 3 {
+            return Err(ImageError::InvalidMetadata(
+                "Beam record does not contain 3 fields".into(),
+            ));
+        }
         fn read_quantity(rec: &RecordValue, key: &str) -> Result<f64, ImageError> {
             match rec.get(key) {
                 Some(Value::Record(sub)) => {
@@ -134,10 +139,23 @@ impl GaussianBeam {
             }
         }
 
+        let major = read_quantity(rec, "major")?;
+        let minor = read_quantity(rec, "minor")?;
+        let position_angle = read_quantity(rec, "positionangle")?;
+        if !major.is_finite() || !minor.is_finite() || major < 0.0 || minor < 0.0 || major < minor {
+            return Err(ImageError::InvalidMetadata(
+                "Invalid restoring beam axes".into(),
+            ));
+        }
+        if !position_angle.is_finite() {
+            return Err(ImageError::InvalidMetadata(
+                "Invalid restoring beam position angle".into(),
+            ));
+        }
         Ok(Self {
-            major: read_quantity(rec, "major")?,
-            minor: read_quantity(rec, "minor")?,
-            position_angle: read_quantity(rec, "positionangle")?,
+            major,
+            minor,
+            position_angle,
         })
     }
 
@@ -495,14 +513,12 @@ impl ImageBeamSet {
 
     /// Deserializes a beam set from the casacore `ImageBeamSet::fromRecord()` layout.
     pub fn from_record(rec: &RecordValue) -> Result<Self, ImageError> {
-        let mut nchan = read_record_usize(rec, "nChannels").unwrap_or(1).max(1);
-        let mut nstokes = read_record_usize(rec, "nStokes").unwrap_or(1).max(1);
-        if nchan == 0 {
-            nchan = 1;
-        }
-        if nstokes == 0 {
-            nstokes = 1;
-        }
+        let nchan = read_record_usize(rec, "nChannels")
+            .ok_or_else(|| ImageError::InvalidMetadata("no valid nChannels field found".into()))?
+            .max(1);
+        let nstokes = read_record_usize(rec, "nStokes")
+            .ok_or_else(|| ImageError::InvalidMetadata("no valid nStokes field found".into()))?
+            .max(1);
 
         let mut rows = vec![vec![GaussianBeam::default(); nstokes]; nchan];
         for count in 0..(nchan * nstokes) {
@@ -739,6 +755,8 @@ mod tests {
         let beam = GaussianBeam::new(1.0, 0.5, 0.25);
         assert!(!beam.is_null());
         assert!(GaussianBeam::default().is_null());
+        assert!(GaussianBeam::new(1.0, 0.0, 0.0).is_null());
+        assert!(GaussianBeam::new(0.0, 1.0, 0.0).is_null());
 
         let empty = ImageBeamSet::default();
         assert!(empty.is_empty());

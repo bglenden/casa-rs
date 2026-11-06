@@ -186,12 +186,31 @@ impl ImageInfo {
 
     /// Deserializes image info from a casacore-compatible keyword record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, ImageError> {
-        let beam_set = if let Some(Value::Record(beam_rec)) = rec.get("perplanebeams") {
-            ImageBeamSet::from_record(beam_rec)?
-        } else if let Some(Value::Record(beam_rec)) = rec.get("restoringbeam") {
-            ImageBeamSet::new(GaussianBeam::from_record(beam_rec)?)
-        } else {
-            ImageBeamSet::default()
+        let single = match rec.get("restoringbeam") {
+            Some(Value::Record(beam_rec)) => {
+                let beam = GaussianBeam::from_record(beam_rec)?;
+                if beam.is_null() {
+                    return Err(ImageError::InvalidMetadata(
+                        "Beam is null and therefore invalid".into(),
+                    ));
+                }
+                Some(beam)
+            }
+            Some(_) => {
+                return Err(ImageError::InvalidMetadata(
+                    "Invalid restoring beam record".into(),
+                ));
+            }
+            None => None,
+        };
+        let beam_set = match rec.get("perplanebeams") {
+            Some(Value::Record(beam_rec)) => ImageBeamSet::from_record(beam_rec)?,
+            Some(_) => {
+                return Err(ImageError::InvalidMetadata(
+                    "Invalid per-plane beam record".into(),
+                ));
+            }
+            None => single.map_or_else(ImageBeamSet::default, ImageBeamSet::new),
         };
 
         // ImageInfo::fromRecord uses ImageInfo::imageType, which maps an

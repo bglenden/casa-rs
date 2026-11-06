@@ -644,10 +644,25 @@ pub struct ImageHeaderSummary {
     pub restoring_beam: Option<Box<RestoringBeamSummary>>,
     /// Whether the image holds several per-plane beams.
     pub has_multiple_beams: bool,
+    /// Per-channel and per-polarization beams, in channel-fastest order.
+    pub per_plane_beams: Option<Box<PerPlaneBeamSummary>>,
     /// Pixel extrema when the task requested them.
     pub extrema: Option<Box<ImageExtrema>>,
     /// Axis metadata.
     pub axes: Vec<ImageAxisSummary>,
+}
+
+/// Restoring beam grid, retaining each quantity's stored unit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PerPlaneBeamSummary {
+    /// Number of spectral channels in the grid.
+    pub channels: usize,
+    /// Number of polarization planes in the grid.
+    pub stokes: usize,
+    /// Beams in channel-fastest order.
+    pub beams: Vec<RestoringBeamSummary>,
+    /// Index of the beam with CASA's median area.
+    pub median_index: usize,
 }
 
 /// Restoring beam summary.
@@ -1284,6 +1299,7 @@ pub fn imhead_custom_scalar(
     value: &ParameterValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
+    validate_imhead_image(path)?;
     if !imhead_is_custom_key(key) || !["add", "put", "del"].contains(&mode) {
         return Err(ImageError::InvalidMetadata(format!(
             "Unsupported custom metadata operation {mode:?} for {key:?} (#977)"
@@ -1399,6 +1415,7 @@ fn imhead_change_string(
             &ParameterValue::String(hdvalue.to_string()),
         );
     }
+    validate_imhead_image(path)?;
     let key = hdkey.to_ascii_lowercase();
     if !["bunit", "object", "observer", "telescope"].contains(&key.as_str())
         && !(mode == "put" && key == "imtype")
@@ -1456,6 +1473,25 @@ fn imhead_change_string(
         )],
     )?;
     imhead(path)
+}
+
+/// Validate image metadata required when CASA opens an image for `imhead`.
+///
+/// # Errors
+///
+/// Returns an error for an unreadable image or an invalid restoring-beam set.
+pub fn validate_imhead_image(path: impl AsRef<Path>) -> Result<(), ImageError> {
+    fn validate<T: ImagePixel>(image: &PagedImage<T>) -> Result<(), ImageError> {
+        let info = image.image_info()?;
+        per_plane_beam_summary(image, &info.beam_set)?;
+        Ok(())
+    }
+    match &AnyPagedImage::open(path)? {
+        AnyPagedImage::Float32(image) => validate(image),
+        AnyPagedImage::Float64(image) => validate(image),
+        AnyPagedImage::Complex32(image) => validate(image),
+        AnyPagedImage::Complex64(image) => validate(image),
+    }
 }
 
 // Mirrors the two spelling-normalization passes in casacore Unit::check.
@@ -1600,9 +1636,90 @@ where
             .and_then(|beam| format_beam(beam, image.restoring_beam_record()))
             .map(Box::new),
         has_multiple_beams: info.beam_set.is_multi(),
+        per_plane_beams: per_plane_beam_summary(image, &info.beam_set)?.map(Box::new),
         extrema: None,
         axes: axis_summaries(image),
     })
+}
+
+fn per_plane_beam_summary<T: ImagePixel>(
+    image: &PagedImage<T>,
+    beam_set: &ImageBeamSet,
+) -> Result<Option<PerPlaneBeamSummary>, ImageError> {
+    if beam_set.single_beam().is_some_and(|beam| beam.is_null()) {
+        return Err(ImageError::InvalidMetadata(
+            "Invalid per plane beam found".into(),
+        ));
+    }
+    if !beam_set.is_multi() {
+        return Ok(None);
+    }
+    let channels = beam_set.n_channels();
+    let stokes = beam_set.n_stokes();
+    let mut axis = 0;
+    let mut image_channels = 1;
+    let mut image_stokes = 1;
+    for index in 0..image.coordinates().n_coordinates() {
+        let coordinate = image.coordinates().coordinate(index);
+        match coordinate.coordinate_type() {
+            CoordinateType::Spectral => {
+                image_channels = image.shape().get(axis).copied().unwrap_or(1)
+            }
+            CoordinateType::Stokes => image_stokes = image.shape().get(axis).copied().unwrap_or(1),
+            _ => {}
+        }
+        axis += coordinate.n_pixel_axes();
+    }
+    if channels != 1 && channels != image_channels {
+        return Err(ImageError::InvalidMetadata(
+            "Number of channels is not consistent".into(),
+        ));
+    }
+    if stokes != 1 && stokes != image_stokes {
+        return Err(ImageError::InvalidMetadata(
+            "Number of polarizations is not consistent".into(),
+        ));
+    }
+    let mut beams = Vec::with_capacity(channels * stokes);
+    let mut areas = Vec::with_capacity(channels * stokes);
+    let area_unit = casa_types::quanta::Unit::new("arcsec2")
+        .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+    for polarization in 0..stokes {
+        for channel in 0..channels {
+            let index = polarization * channels + channel;
+            let beam = *beam_set.beam(channel, polarization);
+            let raw = image
+                .per_plane_beam_record()
+                .and_then(|record| record.get(&format!("*{index}")))
+                .and_then(|value| match value {
+                    Value::Record(record) => Some(record),
+                    _ => None,
+                });
+            let formatted = format_beam(beam, raw).ok_or_else(|| {
+                ImageError::InvalidMetadata("Invalid per plane beam found".into())
+            })?;
+            // CASA multiplies the stored quantities before converting their
+            // product to arcsec². That order affects ties in the median.
+            let major_unit = casa_types::quanta::Unit::new(&formatted.major.unit)
+                .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+            let minor_unit = casa_types::quanta::Unit::new(&formatted.minor.unit)
+                .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+            let ratio =
+                area_unit.val().factor / (major_unit.val().factor * minor_unit.val().factor);
+            let area = std::f64::consts::PI / (4.0 * 2.0_f64.ln())
+                * (formatted.major.value * formatted.minor.value / ratio);
+            beams.push(formatted);
+            areas.push((index, area));
+        }
+    }
+    areas.sort_by(|left, right| left.1.total_cmp(&right.1));
+    let median_index = areas[areas.len() / 2].0;
+    Ok(Some(PerPlaneBeamSummary {
+        channels,
+        stokes,
+        beams,
+        median_index,
+    }))
 }
 
 fn spectral_header<T: ImagePixel>(image: &PagedImage<T>) -> Option<SpectralHeaderSummary> {
@@ -1689,7 +1806,7 @@ fn beam_quantity(record: &RecordValue, key: &str) -> Option<BeamQuantity> {
     };
     Some(BeamQuantity {
         value,
-        unit: unit.clone(),
+        unit: normalize_casa_unit(unit),
     })
 }
 

@@ -685,6 +685,82 @@ fn copy_tree(from: &Path, to: &Path) {
 }
 
 #[test]
+fn imhead_reports_casas_per_plane_beams_and_median() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_beams");
+    let expected: Value =
+        serde_json::from_slice(&std::fs::read(fixture.join("multi_expected.json")).unwrap())
+            .unwrap();
+    assert_eq!(expected["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for name in ["multiple", "multiple_mixed", "spaced_units", "nearly_equal"] {
+        let path = workspace.path().join(format!("{name}.im"));
+        copy_tree(&fixture.join(format!("{name}.im")), &path);
+        for mode in ["summary", "list"] {
+            let actual = returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": mode}),
+            )
+            .to_plain_json();
+            assert_eq!(
+                actual["perplanebeams"], expected["cases"][name][mode],
+                "{name} {mode}"
+            );
+        }
+    }
+    let dual = workspace.path().join("single_dual.im");
+    copy_tree(&fixture.join("single_dual.im"), &dual);
+    let summary = returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": dual, "mode": "summary"}),
+    )
+    .to_plain_json();
+    let listed = returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": dual, "mode": "list"}),
+    )
+    .to_plain_json();
+    assert_eq!(summary["restoringbeam"], expected["single_dual"]["summary"]);
+    for key in ["beammajor", "beamminor", "beampa"] {
+        assert_eq!(listed[key], expected["single_dual"]["list"][key]);
+    }
+    for name in expected["invalid"].as_object().unwrap().keys() {
+        let path = workspace.path().join(format!("{name}.im"));
+        copy_tree(&fixture.join(format!("{name}.im")), &path);
+        for mode in ["summary", "list", "get"] {
+            let (_, reply) = json_run(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": mode, "hdkey": "bunit"}),
+            );
+            assert!(
+                matches!(reply, Some(TaskReply::Failed { .. })),
+                "{name} {mode}: {reply:?}"
+            );
+        }
+        let table = std::fs::read(path.join("table.dat")).unwrap();
+        for key in ["object", "custom"] {
+            let (_, reply) = json_run(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "put", "hdkey": key, "hdvalue": "must not be written"}),
+            );
+            assert!(
+                matches!(reply, Some(TaskReply::Failed { .. })),
+                "{name} put {key}: {reply:?}"
+            );
+            assert_eq!(
+                std::fs::read(path.join("table.dat")).unwrap(),
+                table,
+                "{name} put {key}"
+            );
+        }
+    }
+}
+
+#[test]
 fn imhead_spectral_metadata_uses_casas_stored_world_units() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_spectral");
     let expected: Value =

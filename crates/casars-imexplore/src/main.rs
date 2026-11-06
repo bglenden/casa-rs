@@ -39,7 +39,7 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let mode = task.required_text("mode")?.to_ascii_lowercase();
     if mode == "history" {
         // Open the image first, just as CASA does, even if there is no logtable.
-        casa_images::AnyPagedImage::open(&path)
+        casa_images::analysis::validate_imhead_image(&path)
             .map_err(|error| image_error("imhead", &path, error))?;
         if !tracing::enabled!(tracing::Level::INFO) {
             return Err(TaskFailure::validation("imhead history requires an INFO log sink; set CASA_RS_LOG_STDERR_PRIORITY=INFO or CASA_RS_LOG_TABLE (#977)").at("mode"));
