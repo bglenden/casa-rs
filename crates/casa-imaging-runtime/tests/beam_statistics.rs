@@ -942,7 +942,9 @@ fn full_stokes_automatic_masks_measure_each_channel_and_polarization() {
     let mut images = scene.pass_images(model, true);
     images.polarizations = 4;
     images.psf = images.psf.take().map(|psf| {
-        psf.chunks_exact(WIDTH * WIDTH)
+        psf.as_chunks::<{ WIDTH * WIDTH }>()
+            .0
+            .iter()
             .flat_map(|plane| plane.repeat(4))
             .collect()
     });

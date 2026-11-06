@@ -329,24 +329,9 @@ fn a_solve_measuring_through_a_beam_holds_at_most_its_admission() {
     );
 }
 
-/// CASA's automatic mask of every channel (#980): preparing a minor cycle
-/// measures every plane's PSF, masks each channel side by side on the team
-/// and keeps the masks, a support and a summary row per plane. It holds no
-/// more than [`prepare_bytes`], which charges the new masks, the planes
-/// being masked and what it records of each plane, and the PSF summaries it
-/// measures, which the run holds ([`psf_cache_bytes`]); the mask it evolves
-/// from is the run's, outside the measurement. At the first boundary and the next, which grows each mask
-/// from the one before, on one worker and on four: cubes of a few channels,
-/// one block of 240 channels of 16 by 16 pixels, whose per-plane results a
-/// block once gathered beside the mask, and a five-term Taylor family,
-/// whose mask once read every term and PSF moment to keep the first.
-#[test]
-fn an_automatic_cube_mask_holds_at_most_its_admission() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
-    let mtmfs = ReconstructionAlgorithm::Mtmfs {
-        scales_px: vec![0.0],
-        small_scale_bias: 0.0,
-    };
+type AutomaticMemoryCase = (usize, ReconstructionBasis, usize, bool, bool);
+
+fn automatic_memory_cases() -> impl Iterator<Item = (AutomaticMemoryCase, usize)> {
     // The cases with a beam read an analytic `.pb` for the residual's
     // pixel mask and an `nsigma` noise inside it (#1078, #1079); the EVLA's
     // beam covers the cubes' 1.05 to 7.35 GHz.
@@ -412,7 +397,7 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
         // weight image's, read into an owned sensitivity plane.
         (64, ReconstructionBasis::Taylor { terms: 5 }, 1, true, true),
     ];
-    let cases = cases.into_iter().map(|case| (case, 1)).chain([(
+    cases.into_iter().map(|case| (case, 1)).chain([(
         (
             32,
             ReconstructionBasis::ChannelLocal { channels: 16 },
@@ -421,7 +406,28 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
             false,
         ),
         4,
-    )]);
+    )])
+}
+
+/// CASA's automatic mask of every channel (#980): preparing a minor cycle
+/// measures every plane's PSF, masks each channel side by side on the team
+/// and keeps the masks, a support and a summary row per plane. It holds no
+/// more than [`prepare_bytes`], which charges the new masks, the planes
+/// being masked and what it records of each plane, and the PSF summaries it
+/// measures, which the run holds ([`psf_cache_bytes`]); the mask it evolves
+/// from is the run's, outside the measurement. At the first boundary and the next, which grows each mask
+/// from the one before, on one worker and on four: cubes of a few channels,
+/// one block of 240 channels of 16 by 16 pixels, whose per-plane results a
+/// block once gathered beside the mask, and a five-term Taylor family,
+/// whose mask once read every term and PSF moment to keep the first.
+#[test]
+fn an_automatic_cube_mask_holds_at_most_its_admission() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let mtmfs = ReconstructionAlgorithm::Mtmfs {
+        scales_px: vec![0.0],
+        small_scale_bias: 0.0,
+    };
+    let cases = automatic_memory_cases();
     for ((width, basis, workers, with_beam, with_response), polarizations) in cases {
         let (channels, planes_per_polarization, algorithm, fluxes) = match basis {
             ReconstructionBasis::ChannelLocal { channels } => (

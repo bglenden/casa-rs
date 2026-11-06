@@ -3,6 +3,96 @@
 
 use super::*;
 
+/// Inputs for an automatic mask's channel-scoped materialization.
+pub(super) struct Automatic<'a> {
+    pub(super) normal: &'a FinalNormalState,
+    pub(super) base: &'a ModelGeneration,
+    pub(super) setup: &'a MinorCycleSetup<'a>,
+    pub(super) taylor: bool,
+    pub(super) cache: &'a PsfCache,
+    pub(super) plans: &'a ImageDomainReconstructionMaskPlans,
+    pub(super) team: &'a WorkerTeam,
+    pub(super) measurements: &'a std::sync::Mutex<Vec<Option<Measured>>>,
+    pub(super) share_beam: bool,
+}
+
+impl Automatic<'_> {
+    /// Build masks after all of their PSF summaries are available.
+    pub(super) fn materialize(
+        &self,
+    ) -> Result<casa_imaging_deconvolution::ImageDomainMaskMaterialization, MinorCycleRunError>
+    {
+        let Self {
+            normal,
+            base,
+            setup,
+            taylor,
+            cache,
+            plans,
+            team,
+            measurements,
+            share_beam,
+        } = *self;
+        let reading = Reading {
+            normal,
+            base,
+            setup,
+            taylor,
+            summaries: &cache.summaries,
+            first: plans.completed_major_cycles() == 0,
+            beams: cache.beams.as_deref(),
+        };
+        let read_plane = |key: MaskPlaneKey| {
+            read(&reading, absolute(normal, taylor, key), None)
+                .map(|plane| plane.map(|(plane, _)| plane))
+        };
+        let psf = |key: MaskPlaneKey| {
+            let key = absolute(normal, taylor, key);
+            let summary = cache.summaries.get(&key).copied().or_else(|| {
+                saved_psf_beam(normal, setup, key).map(PsfSummary::blank_with_saved_beam)
+            });
+            let beam = saved_beam(normal, &setup.mask_beams, key);
+            match (summary, beam) {
+                (Some(summary), Some(beam)) => Some(summary.with_mask_beam(beam)),
+                (None, Some(beam)) => Some(PsfSummary::blank_with_saved_beam(beam)),
+                (summary, None) => summary,
+            }
+        };
+        let open = |_key: MaskPlaneKey| -> Result<
+            Box<dyn casa_imaging_deconvolution::AutoMaskChannel<MinorCycleRunError> + '_>,
+            MinorCycleRunError,
+        > {
+            Ok(Box::new(Shared {
+                reading: &reading,
+                plans,
+                measured: measurements,
+                beam: None,
+                valid: None,
+            }))
+        };
+        let source = AutoMaskSource {
+            channel: share_beam.then_some(&open),
+            read: &read_plane,
+            psf: &psf,
+            workers: team.workers(),
+        };
+        let roles = base.shape().domain_roles();
+        let beam = |key: MaskPlaneKey, level: f32| {
+            pixels::plane_beam(
+                normal,
+                setup,
+                (roles, absolute(normal, taylor, key), taylor),
+                level,
+            )
+        };
+        let sources = MaskSources {
+            auto: Some(&source),
+            beam: Some(&beam),
+        };
+        team.install(|| plans.materialize(base, normal, &sources))
+    }
+}
+
 /// What an automatic mask reads its planes from, with each plane's PSF
 /// measurements, and whether it masks the run's first boundary.
 pub(super) struct Reading<'a> {
@@ -19,11 +109,13 @@ pub(super) struct Reading<'a> {
 /// The plane `key` as its automatic mask reads it: the residual the minor
 /// cycle cleans (term 0 of a Taylor family) and the pixels it reads
 /// ([`pixels::automask_plane`]); `None` for a plane with no data.
+type ReadPlane = Option<(AutoMaskPlane, Option<Vec<bool>>)>;
+
 pub(super) fn read(
     reading: &Reading<'_>,
     key: PlaneKey,
     shared: Option<&pixels::BeamPixels>,
-) -> Result<Option<(AutoMaskPlane, Option<Vec<bool>>)>, MinorCycleRunError> {
+) -> Result<ReadPlane, MinorCycleRunError> {
     let Reading {
         normal,
         base,

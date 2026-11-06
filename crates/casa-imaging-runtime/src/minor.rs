@@ -383,55 +383,18 @@ pub fn prepare_minor_cycle(
         // thresholds by the image's sidelobe level, so every plane's PSF is
         // measured first.
         measure_psfs(normal, base, taylor, cache, &keys, setup, team)?;
-        let shared = &*cache;
-        let reading = channel::Reading {
+        channel::Automatic {
             normal,
             base,
             setup,
             taylor,
-            summaries: &shared.summaries,
-            first: mask_plans.completed_major_cycles() == 0,
-            beams: shared.beams.as_deref(),
-        };
-        let read = |key: MaskPlaneKey| {
-            channel::read(&reading, absolute(normal, taylor, key), None)
-                .map(|plane| plane.map(|(plane, _)| plane))
-        };
-        let psf = |key: MaskPlaneKey| {
-            let key = absolute(normal, taylor, key);
-            let summary = shared.summaries.get(&key).copied().or_else(|| {
-                saved_psf_beam(normal, setup, key).map(PsfSummary::blank_with_saved_beam)
-            });
-            let beam = saved_beam(normal, &setup.mask_beams, key);
-            match (summary, beam) {
-                (Some(summary), Some(beam)) => Some(summary.with_mask_beam(beam)),
-                (None, Some(beam)) => Some(PsfSummary::blank_with_saved_beam(beam)),
-                (summary, None) => summary,
-            }
-        };
-        let open = |_key: MaskPlaneKey| -> Result<
-            Box<dyn casa_imaging_deconvolution::AutoMaskChannel<MinorCycleRunError> + '_>,
-            MinorCycleRunError,
-        > {
-            Ok(Box::new(channel::Shared {
-                reading: &reading,
-                plans: mask_plans,
-                measured: &measurements,
-                beam: None,
-                valid: None,
-            }))
-        };
-        let source = AutoMaskSource {
-            channel: share_beam.then_some(&open),
-            read: &read,
-            psf: &psf,
-            workers: team.workers(),
-        };
-        let sources = MaskSources {
-            auto: Some(&source),
-            beam: Some(&beam),
-        };
-        team.install(|| mask_plans.materialize(base, normal, &sources))?
+            cache,
+            plans: mask_plans,
+            team,
+            measurements: &measurements,
+            share_beam,
+        }
+        .materialize()?
     } else {
         let sources = MaskSources {
             auto: None,
