@@ -39,7 +39,12 @@ fn cpp_number(value: f64) -> String {
 /// C++ defaultfloat with the supplied significant-digit precision.
 pub(super) fn cpp_number_precision(value: f64, precision: usize) -> String {
     if value.is_nan() {
-        return "nan".into();
+        return if value.is_sign_negative() {
+            "-nan"
+        } else {
+            "nan"
+        }
+        .into();
     }
     if value.is_infinite() {
         return if value.is_sign_negative() {

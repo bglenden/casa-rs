@@ -107,7 +107,11 @@ pub enum EmptyArrayType {
 pub enum ParameterValue {
     Bool(bool),
     Integer(i64),
-    Float(f64),
+    Float(
+        #[serde(with = "parameter_float_serde")]
+        #[schemars(with = "crate::CasaFloat")]
+        f64,
+    ),
     /// A complex scalar, with real and imaginary components.
     Complex([crate::CasaFloat; 2]),
     /// An empty NumPy array, retaining its dimensions and element type.
@@ -120,10 +124,22 @@ pub enum ParameterValue {
     Table(BTreeMap<String, ParameterValue>),
 }
 
+mod parameter_float_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::CasaFloat(*value).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+        crate::CasaFloat::deserialize(deserializer).map(|value| value.0)
+    }
+}
+
 impl ParameterValue {
     /// The value as plain JSON, as requests and profiles spell it: `"none"`,
-    /// `512`, `["0.5arcsec", "0.5arcsec"]`. A non-finite float, which
-    /// normalization never admits, becomes `null`.
+    /// `512`, `["0.5arcsec", "0.5arcsec"]`. Non-finite floats become
+    /// `null`; use typed transport when their identity must be preserved.
     #[must_use]
     pub fn to_plain_json(&self) -> serde_json::Value {
         use serde_json::Value;
@@ -152,6 +168,7 @@ impl ParameterValue {
     pub fn requires_typed_transport(&self) -> bool {
         match self {
             Self::Complex(_) | Self::EmptyArray { .. } => true,
+            Self::Float(value) if !value.is_finite() => true,
             Self::Array(values) => values.iter().any(Self::requires_typed_transport),
             Self::Table(values) => values.values().any(Self::requires_typed_transport),
             _ => false,
@@ -1673,9 +1690,6 @@ fn validate_variant_value(value: &ParameterValue) -> Result<(), String> {
     }
     fn validate(value: &ParameterValue) -> Result<(), String> {
         match value {
-            ParameterValue::Float(value) if !value.is_finite() => {
-                Err("non-finite numbers are forbidden".into())
-            }
             ParameterValue::EmptyArray { shape, .. }
                 if shape.is_empty() || shape.len() > 32 || !shape.contains(&0) || shape.iter().any(|&size| i32::try_from(size).is_err()) =>
             {

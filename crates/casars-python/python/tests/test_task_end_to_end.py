@@ -377,6 +377,51 @@ def test_imhead_reads_casa_created_empty_array_records(tmp_path: Path) -> None:
         assert actual[name].shape == tuple(recorded["shape"])
 
 
+def test_imhead_nonfinite_header_values_roundtrip(tmp_path: Path) -> None:
+    import math
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "nonfinite.im"
+    shutil.copytree(fixture, image)
+    assert tasks.imhead(str(image), mode="add", hdkey="scalar", hdvalue=float("nan")) is None
+    assert math.isnan(tasks.imhead(str(image), mode="get", hdkey="scalar"))
+    value = {"scalar": -float("inf"), "negative_nan": -float("nan"), "array": [float("inf"), -float("nan")],
+             "words": [-float("nan"), "x"]}
+    params = TaskParameters.defaults("imhead", workspace=tmp_path)
+    params.set_many({"imagename": str(image), "mode": "add", "hdkey": "custom", "hdvalue": value})
+    profile = params.save(tmp_path / "nonfinite.toml")
+    restored = TaskParameters.load("imhead", profile, workspace=tmp_path)
+    assert math.isnan(restored["hdvalue"]["array"][1]) and np.signbit(restored["hdvalue"]["array"][1])
+    assert tasks.run("imhead", restored).value is None
+    actual = tasks.imhead(str(image), mode="get", hdkey="custom")
+    assert actual["scalar"] == -float("inf")
+    assert math.isnan(actual["negative_nan"]) and np.signbit(actual["negative_nan"])
+    assert actual["array"].dtype == np.dtype("float64")
+    assert np.isposinf(actual["array"][0]) and np.isnan(actual["array"][1]) and np.signbit(actual["array"][1])
+    np.testing.assert_array_equal(actual["words"], ["-nan", "x"])
+
+
+def test_imhead_reads_casa_created_nonfinite_record(tmp_path: Path) -> None:
+    import json
+    import math
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    image = tmp_path / "casa-nonfinite.im"
+    shutil.copytree(root / "custom_nonfinite.im", image)
+    expected = json.loads((root / "custom_nonfinite_expected.json").read_text())
+    actual = tasks.imhead(str(image), mode="get", hdkey="custom")
+    assert type(actual["scalar"]) is float and math.isnan(actual["scalar"]) and np.signbit(actual["scalar"])
+    assert actual["negative"] == -float("inf")
+    assert actual["array"].dtype == np.dtype(expected["array_dtype"])
+    assert actual["array"].shape == tuple(expected["array_shape"])
+    assert np.isposinf(actual["array"][0]) and np.isnan(actual["array"][1]) and np.signbit(actual["array"][1])
+    np.testing.assert_array_equal(actual["words"], expected["words"])
+
+
 def test_complex_profile_nesting_is_bounded_before_it_is_saved(tmp_path: Path) -> None:
     params = TaskParameters.defaults("imhead", workspace=tmp_path)
     params["imagename"] = "image.im"

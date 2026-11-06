@@ -2116,7 +2116,7 @@ pub fn imhead_custom_value_change(
                 })?)),
                 value.to_string(),
             ),
-            ParameterValue::Float(value) if value.is_finite() => (
+            ParameterValue::Float(value) => (
                 Value::Scalar(ScalarValue::Float64(*value)),
                 self::projection_header::cpp_number_precision(*value, 12),
             ),

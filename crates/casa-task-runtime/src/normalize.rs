@@ -675,8 +675,11 @@ fn length(value: &ParameterValue) -> Option<usize> {
 fn values_semantically_equal(left: &ParameterValue, right: &ParameterValue) -> bool {
     match (left, right) {
         (ParameterValue::Float(left), ParameterValue::Float(right)) => {
-            let scale = left.abs().max(right.abs()).max(1.0);
-            (left - right).abs() <= scale * 1.0e-12
+            left == right
+                || (left.is_nan() && right.is_nan())
+                || (left.is_finite()
+                    && right.is_finite()
+                    && (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1.0e-12)
         }
         (ParameterValue::Complex(left), ParameterValue::Complex(right)) => {
             left.iter().zip(right).all(|(left, right)| {
@@ -701,6 +704,9 @@ fn values_semantically_equal(left: &ParameterValue, right: &ParameterValue) -> b
         (ParameterValue::Integer(left), ParameterValue::Integer(right)) => left == right,
         (ParameterValue::Integer(left), ParameterValue::Float(right))
         | (ParameterValue::Float(right), ParameterValue::Integer(left)) => {
+            if !right.is_finite() {
+                return false;
+            }
             let left = *left as f64;
             let scale = left.abs().max(right.abs()).max(1.0);
             (left - right).abs() <= scale * 1.0e-12
@@ -794,6 +800,21 @@ mod tests {
             complex(2.0, -3.0),
         )]));
         assert!(super::values_semantically_equal(&nested, &nested));
+    }
+
+    #[test]
+    fn variant_nonfinite_values_keep_type_and_compare_safely() {
+        let nan = ParameterValue::Float(f64::NAN);
+        let infinity = ParameterValue::Float(f64::INFINITY);
+        assert!(values_semantically_equal(&nan, &nan));
+        assert!(values_semantically_equal(&infinity, &infinity));
+        assert!(!values_semantically_equal(
+            &infinity,
+            &ParameterValue::Integer(1)
+        ));
+        let encoded = serde_json::to_string(&nan).unwrap();
+        let decoded: ParameterValue = serde_json::from_str(&encoded).unwrap();
+        assert!(matches!(decoded, ParameterValue::Float(value) if value.is_nan()));
     }
     use casa_provider_contracts::{
         CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, ParameterConceptId, ParameterDocs, ParameterRole,
@@ -969,7 +990,7 @@ mod tests {
     }
 
     #[test]
-    fn imhead_variant_preserves_types_and_rejects_nested_nonfinite_numbers() {
+    fn imhead_variant_preserves_types_including_nested_nonfinite_numbers() {
         let catalog = builtin_surface_catalog().unwrap();
         let concept = catalog
             .catalog
@@ -994,13 +1015,14 @@ mod tests {
         for value in values {
             assert_eq!(accepted(value.clone(), concept).unwrap(), value);
         }
-        assert!(
-            accepted(
-                ParameterValue::Array(vec![ParameterValue::Float(f64::NAN)]),
-                concept
-            )
-            .is_err()
-        );
+        let value = ParameterValue::Array(vec![
+            ParameterValue::Float(f64::NAN),
+            ParameterValue::Float(f64::INFINITY),
+        ]);
+        assert!(values_semantically_equal(
+            &accepted(value.clone(), concept).unwrap(),
+            &value
+        ));
     }
 
     #[test]

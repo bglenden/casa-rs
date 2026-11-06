@@ -63,9 +63,7 @@ pub fn parameter_value_to_casacore(value: &ParameterValue) -> Result<Value, &'st
             ParameterValue::Integer(value) => Value::Scalar(ScalarValue::Int32(
                 i32::try_from(*value).map_err(|_| "record integer is out of range (#977)")?,
             )),
-            ParameterValue::Float(value) if value.is_finite() => {
-                Value::Scalar(ScalarValue::Float64(*value))
-            }
+            ParameterValue::Float(value) => Value::Scalar(ScalarValue::Float64(*value)),
             ParameterValue::Complex([real, imag]) => Value::Scalar(ScalarValue::Complex64(
                 casa_types::Complex64::new(real.0, imag.0),
             )),
@@ -240,8 +238,7 @@ pub fn casacore_value_to_casa(value: &Value) -> Result<CasaValue, &'static str> 
 /// # Errors
 ///
 /// Returns an error for empty nested dimensions, ragged or deeply nested
-/// arrays, non-finite values, or
-/// integer-only values outside the supported 32-bit range (#977).
+/// arrays or integer-only values outside the supported 32-bit range (#977).
 pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, &'static str> {
     if values
         .iter()
@@ -310,7 +307,7 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
         rank = rank.max(match value {
             ParameterValue::Bool(_) => 0,
             ParameterValue::Integer(_) => 1,
-            ParameterValue::Float(value) if value.is_finite() => 2,
+            ParameterValue::Float(_) => 2,
             ParameterValue::Complex(_) => 3,
             ParameterValue::String(value) if !value.contains('\0') => 4,
             _ => return Err("array element is not supported (#977)"),
@@ -376,11 +373,22 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
                 .map(|value| match value {
                     ParameterValue::Bool(value) => value.to_string(),
                     ParameterValue::Integer(value) => value.to_string(),
+                    ParameterValue::Float(value) if value.is_nan() => if value.is_sign_negative() {
+                        "-nan"
+                    } else {
+                        "nan"
+                    }
+                    .to_string(),
                     ParameterValue::Float(value) => format!("{value:.6}"),
                     ParameterValue::Complex([real, imag]) => {
                         let component = |value: f64| {
                             if value.is_nan() {
-                                "nan".to_string()
+                                if value.is_sign_negative() {
+                                    "-nan"
+                                } else {
+                                    "nan"
+                                }
+                                .to_string()
                             } else {
                                 format!("{value:.6}")
                             }

@@ -163,7 +163,11 @@ pub fn python_repr(value: &ParameterValue) -> String {
 pub fn python_float(value: f64) -> String {
     if !value.is_finite() {
         return if value.is_nan() {
-            "nan"
+            if value.is_sign_negative() {
+                "-nan"
+            } else {
+                "nan"
+            }
         } else if value.is_sign_negative() {
             "-inf"
         } else {

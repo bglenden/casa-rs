@@ -240,7 +240,8 @@ The human interchange format is versioned sparse TOML. The `[casars]` table
 identifies format version, surface ID, surface kind (always `task`), and
 contract version. The `[parameters]` table contains required values and
 normalized semantic differences from current defaults.
-Values containing complex scalars or explicitly typed empty arrays are instead stored in an optional
+Values containing non-finite floats, complex scalars, or explicitly typed
+empty arrays are instead stored in an optional
 `[typed_parameters]` table, as JSON strings containing recursively tagged
 parameter values. This keeps complex values distinct from ordinary records
 and allows profiles to round-trip them without reserving any record key.
@@ -367,7 +368,7 @@ before anything starts, or `TypeError` for a value of the wrong type.
 
 A succeeded reply's `value` is CASA's return value as a tagged `CasaValue`
 (`casa-provider-contracts`): `none`, `bool`, `int`, `float` (non-finite
-values as `"nan"`, `"inf"` and `"-inf"`), `complex` (with real and imaginary
+values as `"nan"`, `"-nan"`, `"inf"` and `"-inf"`), `complex` (with real and imaginary
 components in the same float representation), `string`, `list`, an ordered
 `dict` whose keys are strings or integers, and typed arrays (`bool_array`,
 `int_array` with dtype `int32` or `int64`, `float_array` with `float32` or
