@@ -168,23 +168,53 @@ impl ModelLifecycle {
                 actual: main.len(),
             });
         }
+        self.initial_from_fn::<ModelLifecycleError>(|index| {
+            Ok(main.get(index).copied().unwrap_or(0.0))
+        })
+    }
+
+    /// Construct a valid model from its canonical samples in increasing order.
+    ///
+    /// The source is called once for every logical sample index. A producer
+    /// may construct one channel or other bounded window at a time, without
+    /// retaining a model-sized input. The lifecycle validates each value and
+    /// writes it through the storage plan's admitted window. No generation is
+    /// returned if the source, validation or backing storage fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns the source error, a non-finite or out-of-bounds model value,
+    /// or a storage failure.
+    pub fn initial_from_fn<E>(
+        &self,
+        mut source: impl FnMut(usize) -> Result<f32, E>,
+    ) -> Result<ModelGeneration, E>
+    where
+        E: From<ModelLifecycleError>,
+    {
         let bound = self.contract.bounds().max_absolute_model_value();
-        let mut samples = self.storage.create(target.sample_count())?;
+        let mut samples = self
+            .storage
+            .create(self.contract.target().sample_count())
+            .map_err(E::from)?;
         let chunk = samples.window_samples().min(1 << 16);
         let mut window = Vec::with_capacity(chunk);
         for start in (0..samples.len()).step_by(chunk) {
             window.clear();
             for index in start..(start + chunk).min(samples.len()) {
-                let value = main.get(index).map_or(0.0, |value| f64::from(*value));
+                let value = f64::from(source(index)?);
                 if value.abs() > bound {
-                    return Err(ModelLifecycleError::ModelValueBoundExceeded);
+                    return Err(E::from(ModelLifecycleError::ModelValueBoundExceeded));
                 }
-                window.push(ModelSample::valid(ModelValue::new(value)?));
+                let value = ModelValue::new(value)
+                    .map_err(ModelLifecycleError::from)
+                    .map_err(E::from)?;
+                window.push(ModelSample::valid(value));
             }
-            samples.write(start, &window)?;
+            samples.write(start, &window).map_err(E::from)?;
         }
         Ok(ModelGeneration {
-            shape: target.clone(),
+            shape: self.contract.target().clone(),
             samples,
         })
     }
