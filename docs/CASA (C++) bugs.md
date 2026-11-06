@@ -4092,3 +4092,15 @@ spectral indices, polynomial coefficients and tabular fluxes, and terminates
 with SIGSEGV for a cyclic tabular vector. casa-rs rejects these inputs before
 mutation. A failed Python conversion can likewise cause CASA to change the
 spectrum before raising `SystemError`; casa-rs preserves the original.
+
+## Simulating more than the signed loop range
+
+- Date noted: 2026-11-06
+- Status: CASA's component counter overflows for requests above `INT_MAX`; casa-rs rejects them (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `componentlist::simulate` in CASA's `componentlist_cmpt.cc` uses an `int` loop counter against a `long` request; `test_componentlist_simulate.py` checks refusal without allocating billions of components.
+
+`componentlist.simulate(2147483648)` increments a signed 32-bit counter past
+its maximum if it reaches the requested count. Signed overflow is undefined,
+and the request is liable to exhaust memory first. casa-rs refuses counts
+outside the loop's valid range before changing the component list.

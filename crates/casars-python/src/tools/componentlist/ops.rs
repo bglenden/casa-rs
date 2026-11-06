@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use casa_components::{
     ComponentList, ComponentListError, Flux, Polarisation, PowerLogPolynomial, SkyComponent,
-    SpectralIndex, SpectralKind, TabularSpectrum,
+    SpectralIndex, SpectralKind, SpectralModel, TabularSpectrum,
 };
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
@@ -62,6 +62,26 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// Append CASA's default point components, retaining existing selection.
+    pub(crate) fn simulate(&mut self, howmany: i64) -> ConvertResult<bool> {
+        if howmany > i64::from(i32::MAX) {
+            return Err(ConvertError::runtime(
+                "component count exceeds CASA's signed loop range (#1053)",
+            ));
+        }
+        let direction =
+            MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::J2000);
+        let component = SkyComponent::new(
+            Flux::stokes_jy(1.0, 0.0, 0.0, 0.0),
+            casa_components::ComponentShape::point(direction),
+            SpectralModel::constant(MFrequency::new(1e9, FrequencyRef::LSRK)),
+        );
+        for _ in 0..howmany {
+            self.list.push(component.clone());
+        }
+        Ok(true)
+    }
+
     /// Prepare a spectral model before replacing a component's spectral kind.
     pub(crate) fn setspectrum(
         &mut self,

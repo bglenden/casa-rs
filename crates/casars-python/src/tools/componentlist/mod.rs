@@ -1388,14 +1388,43 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Append default point components to the list.
     #[pyo3(signature = (howmany = None, log = None), text_signature = "($self, howmany=1, log=True)")]
     fn simulate(
         &self,
-        howmany: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] howmany: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("simulate")
+        let (count, pending) = if let Some(value) = howmany {
+            match value.extract::<i64>() {
+                Ok(count) => (count, false),
+                Err(error)
+                    if value.is_none()
+                        || error.is_instance_of::<PyOverflowError>(py)
+                        || value.is_instance(&py.import("numpy")?.getattr("bool_")?)? =>
+                {
+                    (-1, true)
+                }
+                Err(_) => return Err(PyTypeError::new_err("argument _howmany must be an integer")),
+            }
+        } else {
+            (1, false)
+        };
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_simulate', argument 3 of type 'bool'",
+            ));
+        }
+        let result = self.call(py, move |state, _| {
+            state.simulate(count).map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_simulate> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Not yet implemented in casa-rs.
