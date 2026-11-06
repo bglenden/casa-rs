@@ -238,7 +238,8 @@ impl MvcModelChannel<'_> {
         let mean_max = self.mean_pb.iter().copied().fold(0.0_f32, f32::max);
         let offset = (self.channel_hz - self.reference_hz) / self.reference_hz;
         for (index, value) in output.iter_mut().enumerate() {
-            let model = self.terms[0][index] + (offset * f64::from(self.terms[1][index])) as f32;
+            let model =
+                (f64::from(self.terms[0][index]) + offset * f64::from(self.terms[1][index])) as f32;
             *value = if channel_max <= 0.0 || mean_max <= 0.0 {
                 model
             } else if self.channel_pb[index] > self.cutoff {
@@ -289,6 +290,24 @@ mod model_channel_tests {
                 assert!((output[0] - expected[channel]).abs() < 1.0e-6);
             }
         }
+    }
+
+    /// CASA promotes the Float term into the Double Taylor expression and
+    /// rounds only the complete sum back to Float (#1069).
+    #[test]
+    fn model_taylor_sum_rounds_after_adding_the_double_product() {
+        let mut output = [0.0];
+        MvcModelChannel {
+            terms: [&[1.0], &[-1.0]],
+            channel_pb: &[1.0],
+            mean_pb: &[1.0],
+            channel_hz: 2.0 + 2.0_f64.powi(-25),
+            reference_hz: 1.0,
+            cutoff: 0.1,
+        }
+        .evaluate(&mut output)
+        .unwrap();
+        assert_eq!(output[0], -2.0_f32.powi(-25));
     }
 
     /// CASA preserves a polynomial plane when either whole PB is blank;
