@@ -8,7 +8,7 @@
 <a href=#8 id=8 data-nosnippet>8</a>//! `rename`, `close`, `done`, `length`, `torecord`, `getspectrum`,
 <a href=#9 id=9 data-nosnippet>9</a>//! `getrefdir`), with the accessors `getcomponent`, `getfluxvalue`,
 <a href=#10 id=10 data-nosnippet>10</a>//! `getfluxunit`, `getlabel`, `shapetype`, `spectrumtype`, table keyword
-<a href=#11 id=11 data-nosnippet>11</a>//! reads, and CASA's `iscomponentlist` placeholder. The surface records
+<a href=#11 id=11 data-nosnippet>11</a>//! reads and writes, and CASA's `iscomponentlist` placeholder. The surface records
 <a href=#12 id=12 data-nosnippet>12</a>//! the other implemented methods and refusals naming #1053.
 <a href=#13 id=13 data-nosnippet>13</a>//!
 <a href=#14 id=14 data-nosnippet>14</a>//! CASA's outcomes are kept ([`ops`] for the table, `add` for
@@ -735,439 +735,446 @@
 <a href=#735 id=735 data-nosnippet>735</a>        <span class="self">self</span>.call(py, |state, <span class="kw">_</span>| <span class="prelude-val">Ok</span>(CasaValue::Bool(state.purge())))
 <a href=#736 id=736 data-nosnippet>736</a>    }
 <a href=#737 id=737 data-nosnippet>737</a>
-<a href=#738 id=738 data-nosnippet>738</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#738 id=738 data-nosnippet>738</a>    <span class="doccomment">/// Write a keyword to the attached table, as CASA's `putkeyword` does.
 <a href=#739 id=739 data-nosnippet>739</a>    </span><span class="attr">#[pyo3(signature = (keyword = <span class="prelude-val">None</span>, value = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, keyword='metadata', value=[])"</span>)]
 <a href=#740 id=740 data-nosnippet>740</a>    </span><span class="kw">fn </span>putkeyword(
 <a href=#741 id=741 data-nosnippet>741</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#742 id=742 data-nosnippet>742</a>        keyword: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#743 id=743 data-nosnippet>743</a>        value: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#744 id=744 data-nosnippet>744</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#745 id=745 data-nosnippet>745</a>        stub(<span class="string">"putkeyword"</span>)
-<a href=#746 id=746 data-nosnippet>746</a>    }
-<a href=#747 id=747 data-nosnippet>747</a>
-<a href=#748 id=748 data-nosnippet>748</a>    <span class="doccomment">/// Append removed components in reverse removal order.
-<a href=#749 id=749 data-nosnippet>749</a>    </span><span class="attr">#[pyo3(signature = (log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, log=True)"</span>)]
-<a href=#750 id=750 data-nosnippet>750</a>    </span><span class="kw">fn </span>recover(
-<a href=#751 id=751 data-nosnippet>751</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#752 id=752 data-nosnippet>752</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#753 id=753 data-nosnippet>753</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>log: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#754 id=754 data-nosnippet>754</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#755 id=755 data-nosnippet>755</a>        <span class="kw">if </span>log.as_ref().is_some_and(|v| !v.is_instance_of::&lt;PyBool&gt;()) {
-<a href=#756 id=756 data-nosnippet>756</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(
-<a href=#757 id=757 data-nosnippet>757</a>                <span class="string">"in method 'componentlist_recover', argument 2 of type 'bool'"</span>,
-<a href=#758 id=758 data-nosnippet>758</a>            ));
-<a href=#759 id=759 data-nosnippet>759</a>        }
-<a href=#760 id=760 data-nosnippet>760</a>        <span class="self">self</span>.call(py, |state, <span class="kw">_</span>| <span class="prelude-val">Ok</span>(CasaValue::Bool(state.recover())))
-<a href=#761 id=761 data-nosnippet>761</a>    }
-<a href=#762 id=762 data-nosnippet>762</a>
-<a href=#763 id=763 data-nosnippet>763</a>    <span class="doccomment">/// Remove components, keeping them available for recovery.
-<a href=#764 id=764 data-nosnippet>764</a>    </span><span class="attr">#[pyo3(signature = (which = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which=[-1], log=True)"</span>)]
-<a href=#765 id=765 data-nosnippet>765</a>    </span><span class="kw">fn </span>remove(
-<a href=#766 id=766 data-nosnippet>766</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#767 id=767 data-nosnippet>767</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#768 id=768 data-nosnippet>768</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>which: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#769 id=769 data-nosnippet>769</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>log: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#770 id=770 data-nosnippet>770</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#771 id=771 data-nosnippet>771</a>        <span class="kw">let </span>(indices, pending) = <span class="kw">match </span>which {
-<a href=#772 id=772 data-nosnippet>772</a>            <span class="prelude-val">Some</span>(which) =&gt; selection::indices(<span class="kw-2">&amp;</span>which)<span class="question-mark">?</span>,
-<a href=#773 id=773 data-nosnippet>773</a>            <span class="prelude-val">None </span>=&gt; (<span class="macro">vec!</span>[-<span class="number">1</span>], <span class="bool-val">false</span>),
-<a href=#774 id=774 data-nosnippet>774</a>        };
-<a href=#775 id=775 data-nosnippet>775</a>        <span class="kw">if </span>log.as_ref().is_some_and(|v| !v.is_instance_of::&lt;PyBool&gt;()) {
-<a href=#776 id=776 data-nosnippet>776</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(
-<a href=#777 id=777 data-nosnippet>777</a>                <span class="string">"in method 'componentlist_remove', argument 3 of type 'bool'"</span>,
-<a href=#778 id=778 data-nosnippet>778</a>            ));
-<a href=#779 id=779 data-nosnippet>779</a>        }
-<a href=#780 id=780 data-nosnippet>780</a>        <span class="kw">let </span>result = <span class="self">self</span>.call(py, <span class="kw">move </span>|state, lines| {
-<a href=#781 id=781 data-nosnippet>781</a>            state.remove(<span class="kw-2">&amp;</span>indices, lines).map(CasaValue::Bool)
-<a href=#782 id=782 data-nosnippet>782</a>        })<span class="question-mark">?</span>;
-<a href=#783 id=783 data-nosnippet>783</a>        <span class="kw">if </span>pending {
-<a href=#784 id=784 data-nosnippet>784</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PySystemError::new_err(
-<a href=#785 id=785 data-nosnippet>785</a>                <span class="string">"&lt;built-in function componentlist_remove&gt; returned a result with an exception set"</span>,
-<a href=#786 id=786 data-nosnippet>786</a>            ));
-<a href=#787 id=787 data-nosnippet>787</a>        }
-<a href=#788 id=788 data-nosnippet>788</a>        <span class="prelude-val">Ok</span>(result)
-<a href=#789 id=789 data-nosnippet>789</a>    }
-<a href=#790 id=790 data-nosnippet>790</a>
-<a href=#791 id=791 data-nosnippet>791</a>    <span class="doccomment">/// Attach the list to a new table `filename`, written at once (a list
-<a href=#792 id=792 data-nosnippet>792</a>    /// not yet attached), or move its table there.
-<a href=#793 id=793 data-nosnippet>793</a>    </span><span class="attr">#[pyo3(signature = (filename, log = <span class="bool-val">true</span>), text_signature = <span class="string">"($self, filename, log=True)"</span>)]
-<a href=#794 id=794 data-nosnippet>794</a>    </span><span class="kw">fn </span>rename(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, filename: <span class="kw-2">&amp;</span>str, log: bool) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#795 id=795 data-nosnippet>795</a>        <span class="kw">let </span>filename = filename.to_string();
-<a href=#796 id=796 data-nosnippet>796</a>        <span class="self">self</span>.call(py, <span class="kw">move </span>|state, <span class="kw">_</span>| {
-<a href=#797 id=797 data-nosnippet>797</a>            state.rename(<span class="kw-2">&amp;</span>filename).map(CasaValue::Bool)
-<a href=#798 id=798 data-nosnippet>798</a>        })
-<a href=#799 id=799 data-nosnippet>799</a>    }
-<a href=#800 id=800 data-nosnippet>800</a>
-<a href=#801 id=801 data-nosnippet>801</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#802 id=802 data-nosnippet>802</a>    </span><span class="attr">#[pyo3(signature = (which, list, whichones = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which, list, whichones=[-1])"</span>)]
-<a href=#803 id=803 data-nosnippet>803</a>    </span><span class="kw">fn </span>replace(
-<a href=#804 id=804 data-nosnippet>804</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#805 id=805 data-nosnippet>805</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#806 id=806 data-nosnippet>806</a>        list: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#807 id=807 data-nosnippet>807</a>        whichones: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#808 id=808 data-nosnippet>808</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#809 id=809 data-nosnippet>809</a>        stub(<span class="string">"replace"</span>)
-<a href=#810 id=810 data-nosnippet>810</a>    }
-<a href=#811 id=811 data-nosnippet>811</a>
-<a href=#812 id=812 data-nosnippet>812</a>    <span class="doccomment">/// CASA's placeholder warns and returns an empty float array.
-<a href=#813 id=813 data-nosnippet>813</a>    </span><span class="attr">#[pyo3(
-<a href=#814 id=814 data-nosnippet>814</a>        signature = (direction = <span class="prelude-val">None</span>, pixellatsize = <span class="prelude-val">None</span>, pixellongsize = <span class="prelude-val">None</span>, frequency = <span class="prelude-val">None</span>),
-<a href=#815 id=815 data-nosnippet>815</a>        text_signature = <span class="string">"($self, direction=[], pixellatsize=[], pixellongsize=[], frequency=[])"
-<a href=#816 id=816 data-nosnippet>816</a>    </span>)]
-<a href=#817 id=817 data-nosnippet>817</a>    </span><span class="kw">fn </span>sample(
-<a href=#818 id=818 data-nosnippet>818</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#819 id=819 data-nosnippet>819</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#820 id=820 data-nosnippet>820</a>        direction: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#821 id=821 data-nosnippet>821</a>        pixellatsize: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#822 id=822 data-nosnippet>822</a>        pixellongsize: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#823 id=823 data-nosnippet>823</a>        frequency: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#824 id=824 data-nosnippet>824</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#825 id=825 data-nosnippet>825</a>        <span class="kw">let </span><span class="kw-2">mut </span>pending = <span class="bool-val">false</span>;
-<a href=#826 id=826 data-nosnippet>826</a>        <span class="kw">for </span>value <span class="kw">in </span>[direction, pixellatsize, pixellongsize, frequency]
-<a href=#827 id=827 data-nosnippet>827</a>            .into_iter()
-<a href=#828 id=828 data-nosnippet>828</a>            .flatten()
-<a href=#829 id=829 data-nosnippet>829</a>        {
-<a href=#830 id=830 data-nosnippet>830</a>            pending |= placeholder::pending_integer_overflow(value)<span class="question-mark">?</span>;
-<a href=#831 id=831 data-nosnippet>831</a>        }
-<a href=#832 id=832 data-nosnippet>832</a>        <span class="kw">let </span>result = <span class="self">self</span>.call(py, |<span class="kw">_</span>, lines| {
-<a href=#833 id=833 data-nosnippet>833</a>            lines.push(LogLine::warning(<span class="string">"sample not implemented yet"</span>));
-<a href=#834 id=834 data-nosnippet>834</a>            <span class="prelude-val">Ok</span>(CasaValue::floats(Vec::new()))
-<a href=#835 id=835 data-nosnippet>835</a>        })<span class="question-mark">?</span>;
-<a href=#836 id=836 data-nosnippet>836</a>        <span class="kw">if </span>pending {
-<a href=#837 id=837 data-nosnippet>837</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PySystemError::new_err(
-<a href=#838 id=838 data-nosnippet>838</a>                <span class="string">"&lt;built-in function componentlist_sample&gt; returned a result with an exception set"</span>,
-<a href=#839 id=839 data-nosnippet>839</a>            ));
-<a href=#840 id=840 data-nosnippet>840</a>        }
-<a href=#841 id=841 data-nosnippet>841</a>        <span class="prelude-val">Ok</span>(result)
-<a href=#842 id=842 data-nosnippet>842</a>    }
-<a href=#843 id=843 data-nosnippet>843</a>
-<a href=#844 id=844 data-nosnippet>844</a>    <span class="doccomment">/// Select component indices.
-<a href=#845 id=845 data-nosnippet>845</a>    </span><span class="attr">#[pyo3(signature = (which), text_signature = <span class="string">"($self, which)"</span>)]
-<a href=#846 id=846 data-nosnippet>846</a>    </span><span class="kw">fn </span>select(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#847 id=847 data-nosnippet>847</a>        <span class="kw">let </span>(indices, pending) = selection::indices(which)<span class="question-mark">?</span>;
-<a href=#848 id=848 data-nosnippet>848</a>        <span class="kw">let </span>result = <span class="self">self</span>.call(py, <span class="kw">move </span>|state, lines| {
-<a href=#849 id=849 data-nosnippet>849</a>            state.set_selection(<span class="kw-2">&amp;</span>indices, <span class="bool-val">true</span>, lines)
-<a href=#850 id=850 data-nosnippet>850</a>        })<span class="question-mark">?</span>;
-<a href=#851 id=851 data-nosnippet>851</a>        <span class="kw">if </span>pending {
-<a href=#852 id=852 data-nosnippet>852</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PySystemError::new_err(
-<a href=#853 id=853 data-nosnippet>853</a>                <span class="string">"&lt;built-in function componentlist_select&gt; returned a result with an exception set"</span>,
-<a href=#854 id=854 data-nosnippet>854</a>            ));
-<a href=#855 id=855 data-nosnippet>855</a>        }
-<a href=#856 id=856 data-nosnippet>856</a>        <span class="prelude-val">Ok</span>(result)
-<a href=#857 id=857 data-nosnippet>857</a>    }
-<a href=#858 id=858 data-nosnippet>858</a>
-<a href=#859 id=859 data-nosnippet>859</a>    <span class="doccomment">/// The selected component indices in ascending order.
-<a href=#860 id=860 data-nosnippet>860</a>    </span><span class="attr">#[pyo3(signature = (), text_signature = <span class="string">"($self)"</span>)]
-<a href=#861 id=861 data-nosnippet>861</a>    </span><span class="kw">fn </span>selected(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#862 id=862 data-nosnippet>862</a>        <span class="self">self</span>.call(py, |state, <span class="kw">_</span>| <span class="prelude-val">Ok</span>(state.selected()))
-<a href=#863 id=863 data-nosnippet>863</a>    }
-<a href=#864 id=864 data-nosnippet>864</a>
-<a href=#865 id=865 data-nosnippet>865</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#866 id=866 data-nosnippet>866</a>    </span><span class="attr">#[pyo3(
-<a href=#867 id=867 data-nosnippet>867</a>        signature = (which, value = <span class="prelude-val">None</span>, unit = <span class="prelude-val">None</span>, polarization = <span class="prelude-val">None</span>, error = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>),
-<a href=#868 id=868 data-nosnippet>868</a>        text_signature = <span class="string">"($self, which, value=[], unit='Jy', polarization='Stokes', error=[], log=True)"
-<a href=#869 id=869 data-nosnippet>869</a>    </span>)]
-<a href=#870 id=870 data-nosnippet>870</a>    #[allow(clippy::too_many_arguments)]
-<a href=#871 id=871 data-nosnippet>871</a>    </span><span class="kw">fn </span>setflux(
-<a href=#872 id=872 data-nosnippet>872</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#873 id=873 data-nosnippet>873</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#874 id=874 data-nosnippet>874</a>        value: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#875 id=875 data-nosnippet>875</a>        unit: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#876 id=876 data-nosnippet>876</a>        polarization: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#877 id=877 data-nosnippet>877</a>        error: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#878 id=878 data-nosnippet>878</a>        log: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#879 id=879 data-nosnippet>879</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#880 id=880 data-nosnippet>880</a>        stub(<span class="string">"setflux"</span>)
-<a href=#881 id=881 data-nosnippet>881</a>    }
-<a href=#882 id=882 data-nosnippet>882</a>
-<a href=#883 id=883 data-nosnippet>883</a>    <span class="doccomment">/// Change a component's reference frequency and its record unit.
-<a href=#884 id=884 data-nosnippet>884</a>    </span><span class="attr">#[pyo3(signature = (which, value, unit = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which, value, unit='GHz', log=True)"</span>)]
-<a href=#885 id=885 data-nosnippet>885</a>    </span><span class="kw">fn </span>setfreq(
-<a href=#886 id=886 data-nosnippet>886</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#887 id=887 data-nosnippet>887</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#888 id=888 data-nosnippet>888</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#889 id=889 data-nosnippet>889</a>        value: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#890 id=890 data-nosnippet>890</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>unit: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#891 id=891 data-nosnippet>891</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>log: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#892 id=892 data-nosnippet>892</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#893 id=893 data-nosnippet>893</a>        <span class="kw">let </span>which = <span class="kw">match </span>which.extract::&lt;i64&gt;() {
-<a href=#894 id=894 data-nosnippet>894</a>            <span class="prelude-val">Ok</span>(index) =&gt; i64::from(index <span class="kw">as </span>i32),
-<a href=#895 id=895 data-nosnippet>895</a>            <span class="prelude-val">Err</span>(error) <span class="kw">if </span>which.is_none() || error.is_instance_of::&lt;PyOverflowError&gt;(py) =&gt; -<span class="number">1</span>,
-<a href=#896 id=896 data-nosnippet>896</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="string">"argument _which must be an integer"</span>)),
-<a href=#897 id=897 data-nosnippet>897</a>        };
-<a href=#898 id=898 data-nosnippet>898</a>        <span class="comment">// CASA's double typemap passes -1 through to the operation when
-<a href=#899 id=899 data-nosnippet>899</a>        // conversion fails, then reports a SystemError if it succeeded.
-<a href=#900 id=900 data-nosnippet>900</a>        </span><span class="kw">let </span>converted = value.extract::&lt;f64&gt;();
-<a href=#901 id=901 data-nosnippet>901</a>        <span class="kw">let </span>invalid_value = converted.is_err();
-<a href=#902 id=902 data-nosnippet>902</a>        <span class="kw">let </span>value = converted.unwrap_or(-<span class="number">1.0</span>);
-<a href=#903 id=903 data-nosnippet>903</a>        <span class="kw">let </span>unit: String = <span class="kw">match </span>unit {
-<a href=#904 id=904 data-nosnippet>904</a>            <span class="prelude-val">None </span>=&gt; <span class="string">"GHz"</span>.to_string(),
-<a href=#905 id=905 data-nosnippet>905</a>            <span class="prelude-val">Some</span>(value) <span class="kw">if </span>value.is_instance_of::&lt;PyString&gt;() =&gt; value.extract()<span class="question-mark">?</span>,
-<a href=#906 id=906 data-nosnippet>906</a>            <span class="prelude-val">Some</span>(value) <span class="kw">if </span>value.is_instance_of::&lt;PyBytes&gt;() =&gt; {
-<a href=#907 id=907 data-nosnippet>907</a>                <span class="kw">let </span>bytes = value.cast::&lt;PyBytes&gt;()<span class="question-mark">?</span>.as_bytes();
-<a href=#908 id=908 data-nosnippet>908</a>                <span class="kw">let </span>end = bytes
-<a href=#909 id=909 data-nosnippet>909</a>                    .iter()
-<a href=#910 id=910 data-nosnippet>910</a>                    .position(|<span class="kw-2">&amp;</span>byte| byte == <span class="number">0</span>)
-<a href=#911 id=911 data-nosnippet>911</a>                    .unwrap_or(bytes.len());
-<a href=#912 id=912 data-nosnippet>912</a>                PyBytes::new(py, <span class="kw-2">&amp;</span>bytes[..end])
-<a href=#913 id=913 data-nosnippet>913</a>                    .call_method1(<span class="string">"decode"</span>, (<span class="string">"utf-8"</span>,))<span class="question-mark">?
-<a href=#914 id=914 data-nosnippet>914</a>                    </span>.extract()<span class="question-mark">?
-<a href=#915 id=915 data-nosnippet>915</a>            </span>}
-<a href=#916 id=916 data-nosnippet>916</a>            <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="string">"argument _unit must be a string"</span>)),
-<a href=#917 id=917 data-nosnippet>917</a>        };
-<a href=#918 id=918 data-nosnippet>918</a>        <span class="kw">if </span>log.is_some_and(|value| !value.is_instance_of::&lt;PyBool&gt;()) {
-<a href=#919 id=919 data-nosnippet>919</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(
-<a href=#920 id=920 data-nosnippet>920</a>                <span class="string">"in method 'componentlist_setfreq', argument 5 of type 'bool'"</span>,
-<a href=#921 id=921 data-nosnippet>921</a>            ));
-<a href=#922 id=922 data-nosnippet>922</a>        }
-<a href=#923 id=923 data-nosnippet>923</a>        <span class="kw">let </span>unit = unit.split(<span class="string">'\0'</span>).next().unwrap_or_default().to_string();
-<a href=#924 id=924 data-nosnippet>924</a>        <span class="kw">let </span>result = <span class="self">self</span>.call(py, <span class="kw">move </span>|state, <span class="kw">_</span>| {
-<a href=#925 id=925 data-nosnippet>925</a>            state.setfreq(which, value, <span class="kw-2">&amp;</span>unit).map(CasaValue::Bool)
-<a href=#926 id=926 data-nosnippet>926</a>        })<span class="question-mark">?</span>;
-<a href=#927 id=927 data-nosnippet>927</a>        <span class="kw">if </span>invalid_value {
-<a href=#928 id=928 data-nosnippet>928</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PySystemError::new_err(
-<a href=#929 id=929 data-nosnippet>929</a>                <span class="string">"&lt;built-in function componentlist_setfreq&gt; returned a result with an exception set"</span>,
-<a href=#930 id=930 data-nosnippet>930</a>            ));
-<a href=#931 id=931 data-nosnippet>931</a>        }
-<a href=#932 id=932 data-nosnippet>932</a>        <span class="prelude-val">Ok</span>(result)
-<a href=#933 id=933 data-nosnippet>933</a>    }
-<a href=#934 id=934 data-nosnippet>934</a>
-<a href=#935 id=935 data-nosnippet>935</a>    <span class="doccomment">/// Relabel one component's frequency frame without converting its value.
-<a href=#936 id=936 data-nosnippet>936</a>    </span><span class="attr">#[pyo3(signature = (which, frame = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which, frame='LSRK', log=True)"</span>)]
-<a href=#937 id=937 data-nosnippet>937</a>    </span><span class="kw">fn </span>setfreqframe(
-<a href=#938 id=938 data-nosnippet>938</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#939 id=939 data-nosnippet>939</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#940 id=940 data-nosnippet>940</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#941 id=941 data-nosnippet>941</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>frame: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#942 id=942 data-nosnippet>942</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>log: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#943 id=943 data-nosnippet>943</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#944 id=944 data-nosnippet>944</a>        <span class="kw">let </span>(which, pending) = <span class="kw">match </span>which.extract::&lt;i64&gt;() {
-<a href=#945 id=945 data-nosnippet>945</a>            <span class="prelude-val">Ok</span>(index) =&gt; (i64::from(index <span class="kw">as </span>i32), <span class="bool-val">false</span>),
-<a href=#946 id=946 data-nosnippet>946</a>            <span class="prelude-val">Err</span>(error) <span class="kw">if </span>which.is_none() || error.is_instance_of::&lt;PyOverflowError&gt;(py) =&gt; {
-<a href=#947 id=947 data-nosnippet>947</a>                (-<span class="number">1</span>, <span class="bool-val">true</span>)
-<a href=#948 id=948 data-nosnippet>948</a>            }
-<a href=#949 id=949 data-nosnippet>949</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="string">"argument _which must be an integer"</span>)),
-<a href=#950 id=950 data-nosnippet>950</a>        };
-<a href=#951 id=951 data-nosnippet>951</a>        <span class="kw">let </span>frame: String = <span class="kw">match </span>frame {
-<a href=#952 id=952 data-nosnippet>952</a>            <span class="prelude-val">None </span>=&gt; <span class="string">"LSRK"</span>.to_string(),
-<a href=#953 id=953 data-nosnippet>953</a>            <span class="prelude-val">Some</span>(value) <span class="kw">if </span>value.is_instance_of::&lt;PyString&gt;() =&gt; value.extract()<span class="question-mark">?</span>,
-<a href=#954 id=954 data-nosnippet>954</a>            <span class="prelude-val">Some</span>(value) <span class="kw">if </span>value.is_instance_of::&lt;PyBytes&gt;() =&gt; {
-<a href=#955 id=955 data-nosnippet>955</a>                <span class="kw">let </span>bytes = value.cast::&lt;PyBytes&gt;()<span class="question-mark">?</span>.as_bytes();
-<a href=#956 id=956 data-nosnippet>956</a>                <span class="kw">let </span>end = bytes
-<a href=#957 id=957 data-nosnippet>957</a>                    .iter()
-<a href=#958 id=958 data-nosnippet>958</a>                    .position(|<span class="kw-2">&amp;</span>byte| byte == <span class="number">0</span>)
-<a href=#959 id=959 data-nosnippet>959</a>                    .unwrap_or(bytes.len());
-<a href=#960 id=960 data-nosnippet>960</a>                PyBytes::new(py, <span class="kw-2">&amp;</span>bytes[..end])
-<a href=#961 id=961 data-nosnippet>961</a>                    .call_method1(<span class="string">"decode"</span>, (<span class="string">"utf-8"</span>,))<span class="question-mark">?
-<a href=#962 id=962 data-nosnippet>962</a>                    </span>.extract()<span class="question-mark">?
-<a href=#963 id=963 data-nosnippet>963</a>            </span>}
-<a href=#964 id=964 data-nosnippet>964</a>            <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="string">"argument _frame must be a string"</span>)),
-<a href=#965 id=965 data-nosnippet>965</a>        };
-<a href=#966 id=966 data-nosnippet>966</a>        <span class="kw">if </span>log.is_some_and(|value| !value.is_instance_of::&lt;PyBool&gt;()) {
-<a href=#967 id=967 data-nosnippet>967</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(
-<a href=#968 id=968 data-nosnippet>968</a>                <span class="string">"in method 'componentlist_setfreqframe', argument 4 of type 'bool'"</span>,
-<a href=#969 id=969 data-nosnippet>969</a>            ));
-<a href=#970 id=970 data-nosnippet>970</a>        }
-<a href=#971 id=971 data-nosnippet>971</a>        <span class="kw">let </span>frame = frame.split(<span class="string">'\0'</span>).next().unwrap_or_default().to_string();
-<a href=#972 id=972 data-nosnippet>972</a>        <span class="kw">let </span>result = <span class="self">self</span>.call(py, <span class="kw">move </span>|state, lines| {
-<a href=#973 id=973 data-nosnippet>973</a>            state
-<a href=#974 id=974 data-nosnippet>974</a>                .setfreqframe(which, <span class="kw-2">&amp;</span>frame, lines)
-<a href=#975 id=975 data-nosnippet>975</a>                .map(CasaValue::Bool)
-<a href=#976 id=976 data-nosnippet>976</a>        })<span class="question-mark">?</span>;
-<a href=#977 id=977 data-nosnippet>977</a>        <span class="kw">if </span>pending {
-<a href=#978 id=978 data-nosnippet>978</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PySystemError::new_err(
-<a href=#979 id=979 data-nosnippet>979</a>                <span class="string">"&lt;built-in function componentlist_setfreqframe&gt; returned a result with an exception set"</span>,
-<a href=#980 id=980 data-nosnippet>980</a>            ));
-<a href=#981 id=981 data-nosnippet>981</a>        }
-<a href=#982 id=982 data-nosnippet>982</a>        <span class="prelude-val">Ok</span>(result)
-<a href=#983 id=983 data-nosnippet>983</a>    }
-<a href=#984 id=984 data-nosnippet>984</a>
-<a href=#985 id=985 data-nosnippet>985</a>    <span class="doccomment">/// Replace the user label of one component.
-<a href=#986 id=986 data-nosnippet>986</a>    </span><span class="attr">#[pyo3(signature = (which, value, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which, value, log=True)"</span>)]
-<a href=#987 id=987 data-nosnippet>987</a>    </span><span class="kw">fn </span>setlabel(
-<a href=#988 id=988 data-nosnippet>988</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#989 id=989 data-nosnippet>989</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#990 id=990 data-nosnippet>990</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#991 id=991 data-nosnippet>991</a>        value: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#992 id=992 data-nosnippet>992</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>log: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#993 id=993 data-nosnippet>993</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#994 id=994 data-nosnippet>994</a>        <span class="kw">let </span>which = <span class="kw">match </span>which.extract::&lt;i64&gt;() {
-<a href=#995 id=995 data-nosnippet>995</a>            <span class="prelude-val">Ok</span>(index) =&gt; i64::from(index <span class="kw">as </span>i32),
-<a href=#996 id=996 data-nosnippet>996</a>            <span class="prelude-val">Err</span>(error) <span class="kw">if </span>which.is_none() || error.is_instance_of::&lt;PyOverflowError&gt;(py) =&gt; -<span class="number">1</span>,
-<a href=#997 id=997 data-nosnippet>997</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="string">"argument _which must be an integer"</span>)),
-<a href=#998 id=998 data-nosnippet>998</a>        };
-<a href=#999 id=999 data-nosnippet>999</a>        <span class="kw">let </span>value: String = <span class="kw">if </span>value.is_instance_of::&lt;PyString&gt;() {
-<a href=#1000 id=1000 data-nosnippet>1000</a>            value.extract()<span class="question-mark">?
-<a href=#1001 id=1001 data-nosnippet>1001</a>        </span>} <span class="kw">else if </span>value.is_instance_of::&lt;PyBytes&gt;() {
-<a href=#1002 id=1002 data-nosnippet>1002</a>            <span class="kw">let </span>bytes = value.cast::&lt;PyBytes&gt;()<span class="question-mark">?</span>.as_bytes();
-<a href=#1003 id=1003 data-nosnippet>1003</a>            <span class="kw">let </span>end = bytes
-<a href=#1004 id=1004 data-nosnippet>1004</a>                .iter()
-<a href=#1005 id=1005 data-nosnippet>1005</a>                .position(|<span class="kw-2">&amp;</span>byte| byte == <span class="number">0</span>)
-<a href=#1006 id=1006 data-nosnippet>1006</a>                .unwrap_or(bytes.len());
-<a href=#1007 id=1007 data-nosnippet>1007</a>            PyBytes::new(py, <span class="kw-2">&amp;</span>bytes[..end])
-<a href=#1008 id=1008 data-nosnippet>1008</a>                .call_method1(<span class="string">"decode"</span>, (<span class="string">"utf-8"</span>,))<span class="question-mark">?
-<a href=#1009 id=1009 data-nosnippet>1009</a>                </span>.extract()<span class="question-mark">?
-<a href=#1010 id=1010 data-nosnippet>1010</a>        </span>} <span class="kw">else </span>{
-<a href=#1011 id=1011 data-nosnippet>1011</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="string">"argument _value must be a string"</span>));
-<a href=#1012 id=1012 data-nosnippet>1012</a>        };
-<a href=#1013 id=1013 data-nosnippet>1013</a>        <span class="kw">if </span>log.as_ref().is_some_and(|v| !v.is_instance_of::&lt;PyBool&gt;()) {
-<a href=#1014 id=1014 data-nosnippet>1014</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(
-<a href=#1015 id=1015 data-nosnippet>1015</a>                <span class="string">"in method 'componentlist_setlabel', argument 4 of type 'bool'"</span>,
-<a href=#1016 id=1016 data-nosnippet>1016</a>            ));
-<a href=#1017 id=1017 data-nosnippet>1017</a>        }
-<a href=#1018 id=1018 data-nosnippet>1018</a>        <span class="comment">// The CASA wrapper passes a NUL-terminated C string to casacore.
-<a href=#1019 id=1019 data-nosnippet>1019</a>        </span><span class="kw">let </span>value = value.split(<span class="string">'\0'</span>).next().unwrap_or_default().to_string();
-<a href=#1020 id=1020 data-nosnippet>1020</a>        <span class="self">self</span>.call(py, <span class="kw">move </span>|state, lines| {
-<a href=#1021 id=1021 data-nosnippet>1021</a>            <span class="kw">match </span>state.setlabel(which, <span class="kw-2">&amp;</span>value) {
-<a href=#1022 id=1022 data-nosnippet>1022</a>                <span class="prelude-val">Ok</span>(result) =&gt; <span class="prelude-val">Ok</span>(CasaValue::Bool(result)),
-<a href=#1023 id=1023 data-nosnippet>1023</a>                <span class="prelude-val">Err</span>(error) =&gt; {
-<a href=#1024 id=1024 data-nosnippet>1024</a>                    lines.push(LogLine::error(<span class="macro">format!</span>(<span class="string">"Exception Reported: {error}"</span>)));
-<a href=#1025 id=1025 data-nosnippet>1025</a>                    <span class="prelude-val">Err</span>(error)
-<a href=#1026 id=1026 data-nosnippet>1026</a>                }
-<a href=#1027 id=1027 data-nosnippet>1027</a>            }
-<a href=#1028 id=1028 data-nosnippet>1028</a>        })
-<a href=#1029 id=1029 data-nosnippet>1029</a>    }
-<a href=#1030 id=1030 data-nosnippet>1030</a>
-<a href=#1031 id=1031 data-nosnippet>1031</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#1032 id=1032 data-nosnippet>1032</a>    </span><span class="attr">#[pyo3(signature = (which = <span class="prelude-val">None</span>, ra = <span class="prelude-val">None</span>, dec = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which=1, ra=[], dec=[], log=True)"</span>)]
-<a href=#1033 id=1033 data-nosnippet>1033</a>    </span><span class="kw">fn </span>setrefdir(
-<a href=#1034 id=1034 data-nosnippet>1034</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#1035 id=1035 data-nosnippet>1035</a>        which: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1036 id=1036 data-nosnippet>1036</a>        ra: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1037 id=1037 data-nosnippet>1037</a>        dec: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1038 id=1038 data-nosnippet>1038</a>        log: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1039 id=1039 data-nosnippet>1039</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#1040 id=1040 data-nosnippet>1040</a>        stub(<span class="string">"setrefdir"</span>)
-<a href=#1041 id=1041 data-nosnippet>1041</a>    }
-<a href=#1042 id=1042 data-nosnippet>1042</a>
-<a href=#1043 id=1043 data-nosnippet>1043</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#1044 id=1044 data-nosnippet>1044</a>    </span><span class="attr">#[pyo3(signature = (which, frame, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which, frame, log=True)"</span>)]
-<a href=#1045 id=1045 data-nosnippet>1045</a>    </span><span class="kw">fn </span>setrefdirframe(
-<a href=#1046 id=1046 data-nosnippet>1046</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#1047 id=1047 data-nosnippet>1047</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#1048 id=1048 data-nosnippet>1048</a>        frame: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#1049 id=1049 data-nosnippet>1049</a>        log: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1050 id=1050 data-nosnippet>1050</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#1051 id=1051 data-nosnippet>1051</a>        stub(<span class="string">"setrefdirframe"</span>)
-<a href=#1052 id=1052 data-nosnippet>1052</a>    }
-<a href=#1053 id=1053 data-nosnippet>1053</a>
-<a href=#1054 id=1054 data-nosnippet>1054</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#1055 id=1055 data-nosnippet>1055</a>    </span><span class="attr">#[pyo3(
-<a href=#1056 id=1056 data-nosnippet>1056</a>        signature = (which, r#type = <span class="prelude-val">None</span>, majoraxis = <span class="prelude-val">None</span>, minoraxis = <span class="prelude-val">None</span>, positionangle = <span class="prelude-val">None</span>, majoraxiserror = <span class="prelude-val">None</span>, minoraxiserror = <span class="prelude-val">None</span>, positionangleerror = <span class="prelude-val">None</span>, optionalparms = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>),
-<a href=#1057 id=1057 data-nosnippet>1057</a>        text_signature = <span class="string">"($self, which, type='Point', majoraxis=[], minoraxis=[], positionangle=[], majoraxiserror=[], minoraxiserror=[], positionangleerror=[], optionalparms=[0.0], log=True)"
-<a href=#1058 id=1058 data-nosnippet>1058</a>    </span>)]
-<a href=#1059 id=1059 data-nosnippet>1059</a>    #[allow(clippy::too_many_arguments)]
-<a href=#1060 id=1060 data-nosnippet>1060</a>    </span><span class="kw">fn </span>setshape(
-<a href=#1061 id=1061 data-nosnippet>1061</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#1062 id=1062 data-nosnippet>1062</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#1063 id=1063 data-nosnippet>1063</a>        r#type: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1064 id=1064 data-nosnippet>1064</a>        majoraxis: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1065 id=1065 data-nosnippet>1065</a>        minoraxis: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1066 id=1066 data-nosnippet>1066</a>        positionangle: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1067 id=1067 data-nosnippet>1067</a>        majoraxiserror: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1068 id=1068 data-nosnippet>1068</a>        minoraxiserror: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1069 id=1069 data-nosnippet>1069</a>        positionangleerror: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1070 id=1070 data-nosnippet>1070</a>        optionalparms: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1071 id=1071 data-nosnippet>1071</a>        log: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1072 id=1072 data-nosnippet>1072</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#1073 id=1073 data-nosnippet>1073</a>        stub(<span class="string">"setshape"</span>)
-<a href=#1074 id=1074 data-nosnippet>1074</a>    }
-<a href=#1075 id=1075 data-nosnippet>1075</a>
-<a href=#1076 id=1076 data-nosnippet>1076</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#1077 id=1077 data-nosnippet>1077</a>    </span><span class="attr">#[pyo3(
-<a href=#1078 id=1078 data-nosnippet>1078</a>        signature = (which, r#type = <span class="prelude-val">None</span>, index = <span class="prelude-val">None</span>, tabularfreqs = <span class="prelude-val">None</span>, tabularflux = <span class="prelude-val">None</span>, tabularframe = <span class="prelude-val">None</span>),
-<a href=#1079 id=1079 data-nosnippet>1079</a>        text_signature = <span class="string">"($self, which, type='spectral index', index=[], tabularfreqs=[100000000000.0], tabularflux=[1.0], tabularframe='LSRK')"
-<a href=#1080 id=1080 data-nosnippet>1080</a>    </span>)]
-<a href=#1081 id=1081 data-nosnippet>1081</a>    #[allow(clippy::too_many_arguments)]
-<a href=#1082 id=1082 data-nosnippet>1082</a>    </span><span class="kw">fn </span>setspectrum(
-<a href=#1083 id=1083 data-nosnippet>1083</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#1084 id=1084 data-nosnippet>1084</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#1085 id=1085 data-nosnippet>1085</a>        r#type: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1086 id=1086 data-nosnippet>1086</a>        index: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1087 id=1087 data-nosnippet>1087</a>        tabularfreqs: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1088 id=1088 data-nosnippet>1088</a>        tabularflux: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1089 id=1089 data-nosnippet>1089</a>        tabularframe: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1090 id=1090 data-nosnippet>1090</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#1091 id=1091 data-nosnippet>1091</a>        stub(<span class="string">"setspectrum"</span>)
-<a href=#1092 id=1092 data-nosnippet>1092</a>    }
-<a href=#1093 id=1093 data-nosnippet>1093</a>
-<a href=#1094 id=1094 data-nosnippet>1094</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#1095 id=1095 data-nosnippet>1095</a>    </span><span class="attr">#[pyo3(
-<a href=#1096 id=1096 data-nosnippet>1096</a>        signature = (which, r#type = <span class="prelude-val">None</span>, index = <span class="prelude-val">None</span>, tabularfreqs = <span class="prelude-val">None</span>, tabulari = <span class="prelude-val">None</span>, tabularq = <span class="prelude-val">None</span>, tabularu = <span class="prelude-val">None</span>, tabularv = <span class="prelude-val">None</span>, reffreq = <span class="prelude-val">None</span>, frame = <span class="prelude-val">None</span>),
-<a href=#1097 id=1097 data-nosnippet>1097</a>        text_signature = <span class="string">"($self, which, type='spectral index', index=[0.0], tabularfreqs=[100000000000.0], tabulari=[1.0], tabularq=[0.0], tabularu=[0.0], tabularv=[0.0], reffreq=[], frame='LSRK')"
-<a href=#1098 id=1098 data-nosnippet>1098</a>    </span>)]
-<a href=#1099 id=1099 data-nosnippet>1099</a>    #[allow(clippy::too_many_arguments)]
-<a href=#1100 id=1100 data-nosnippet>1100</a>    </span><span class="kw">fn </span>setstokesspectrum(
-<a href=#1101 id=1101 data-nosnippet>1101</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#1102 id=1102 data-nosnippet>1102</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
-<a href=#1103 id=1103 data-nosnippet>1103</a>        r#type: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1104 id=1104 data-nosnippet>1104</a>        index: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1105 id=1105 data-nosnippet>1105</a>        tabularfreqs: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1106 id=1106 data-nosnippet>1106</a>        tabulari: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1107 id=1107 data-nosnippet>1107</a>        tabularq: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1108 id=1108 data-nosnippet>1108</a>        tabularu: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1109 id=1109 data-nosnippet>1109</a>        tabularv: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1110 id=1110 data-nosnippet>1110</a>        reffreq: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1111 id=1111 data-nosnippet>1111</a>        frame: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1112 id=1112 data-nosnippet>1112</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#1113 id=1113 data-nosnippet>1113</a>        stub(<span class="string">"setstokesspectrum"</span>)
-<a href=#1114 id=1114 data-nosnippet>1114</a>    }
-<a href=#1115 id=1115 data-nosnippet>1115</a>
-<a href=#1116 id=1116 data-nosnippet>1116</a>    <span class="doccomment">/// Component `which`'s shape name (`Point`, `Gaussian`, `Disk`,
-<a href=#1117 id=1117 data-nosnippet>1117</a>    /// `Limbdarkeneddisk`).
-<a href=#1118 id=1118 data-nosnippet>1118</a>    </span><span class="attr">#[pyo3(signature = (which), text_signature = <span class="string">"($self, which)"</span>)]
-<a href=#1119 id=1119 data-nosnippet>1119</a>    </span><span class="kw">fn </span>shapetype(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, which: i64) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#1120 id=1120 data-nosnippet>1120</a>        <span class="self">self</span>.call(py, <span class="kw">move </span>|state, <span class="kw">_</span>| {
-<a href=#1121 id=1121 data-nosnippet>1121</a>            <span class="kw">let </span>component = state.unchecked(which)<span class="question-mark">?</span>;
-<a href=#1122 id=1122 data-nosnippet>1122</a>            <span class="prelude-val">Ok</span>(CasaValue::Text(
-<a href=#1123 id=1123 data-nosnippet>1123</a>                component.shape().shape_type().casa_name().to_string(),
-<a href=#1124 id=1124 data-nosnippet>1124</a>            ))
-<a href=#1125 id=1125 data-nosnippet>1125</a>        })
-<a href=#1126 id=1126 data-nosnippet>1126</a>    }
-<a href=#1127 id=1127 data-nosnippet>1127</a>
-<a href=#1128 id=1128 data-nosnippet>1128</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#1129 id=1129 data-nosnippet>1129</a>    </span><span class="attr">#[pyo3(signature = (howmany = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, howmany=1, log=True)"</span>)]
-<a href=#1130 id=1130 data-nosnippet>1130</a>    </span><span class="kw">fn </span>simulate(
-<a href=#1131 id=1131 data-nosnippet>1131</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#1132 id=1132 data-nosnippet>1132</a>        howmany: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1133 id=1133 data-nosnippet>1133</a>        log: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1134 id=1134 data-nosnippet>1134</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#1135 id=1135 data-nosnippet>1135</a>        stub(<span class="string">"simulate"</span>)
-<a href=#1136 id=1136 data-nosnippet>1136</a>    }
-<a href=#1137 id=1137 data-nosnippet>1137</a>
-<a href=#1138 id=1138 data-nosnippet>1138</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#1139 id=1139 data-nosnippet>1139</a>    </span><span class="attr">#[pyo3(signature = (criteria = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, criteria='Flux', log=True)"</span>)]
-<a href=#1140 id=1140 data-nosnippet>1140</a>    </span><span class="kw">fn </span>sort(
-<a href=#1141 id=1141 data-nosnippet>1141</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#1142 id=1142 data-nosnippet>1142</a>        criteria: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1143 id=1143 data-nosnippet>1143</a>        log: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
-<a href=#1144 id=1144 data-nosnippet>1144</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#1145 id=1145 data-nosnippet>1145</a>        stub(<span class="string">"sort"</span>)
-<a href=#1146 id=1146 data-nosnippet>1146</a>    }
-<a href=#1147 id=1147 data-nosnippet>1147</a>
-<a href=#1148 id=1148 data-nosnippet>1148</a>    <span class="doccomment">/// Component `which`'s spectral-model name (`Constant`, `Spectral
-<a href=#1149 id=1149 data-nosnippet>1149</a>    /// Index`, `Tabular Spectrum`, `Power Logarithmic Polynomial`).
-<a href=#1150 id=1150 data-nosnippet>1150</a>    </span><span class="attr">#[pyo3(signature = (which), text_signature = <span class="string">"($self, which)"</span>)]
-<a href=#1151 id=1151 data-nosnippet>1151</a>    </span><span class="kw">fn </span>spectrumtype(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, which: i64) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#1152 id=1152 data-nosnippet>1152</a>        <span class="self">self</span>.call(py, <span class="kw">move </span>|state, <span class="kw">_</span>| {
-<a href=#1153 id=1153 data-nosnippet>1153</a>            <span class="kw">let </span>component = state.unchecked(which)<span class="question-mark">?</span>;
-<a href=#1154 id=1154 data-nosnippet>1154</a>            <span class="prelude-val">Ok</span>(CasaValue::Text(
-<a href=#1155 id=1155 data-nosnippet>1155</a>                component.spectrum().spectral_type().casa_name().to_string(),
-<a href=#1156 id=1156 data-nosnippet>1156</a>            ))
-<a href=#1157 id=1157 data-nosnippet>1157</a>        })
-<a href=#1158 id=1158 data-nosnippet>1158</a>    }
-<a href=#1159 id=1159 data-nosnippet>1159</a>
-<a href=#1160 id=1160 data-nosnippet>1160</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
-<a href=#1161 id=1161 data-nosnippet>1161</a>    </span><span class="attr">#[pyo3(signature = (which = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which=-1)"</span>)]
-<a href=#1162 id=1162 data-nosnippet>1162</a>    </span><span class="kw">fn </span>summarize(<span class="kw-2">&amp;</span><span class="self">self</span>, which: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#1163 id=1163 data-nosnippet>1163</a>        stub(<span class="string">"summarize"</span>)
-<a href=#1164 id=1164 data-nosnippet>1164</a>    }
-<a href=#1165 id=1165 data-nosnippet>1165</a>
-<a href=#1166 id=1166 data-nosnippet>1166</a>    <span class="doccomment">/// The list's record: `nelements` and each component's as
-<a href=#1167 id=1167 data-nosnippet>1167</a>    /// `component&lt;i&gt;`; `{}` with CASA's warning for an empty list.
-<a href=#1168 id=1168 data-nosnippet>1168</a>    </span><span class="attr">#[pyo3(signature = (), text_signature = <span class="string">"($self)"</span>)]
-<a href=#1169 id=1169 data-nosnippet>1169</a>    </span><span class="kw">fn </span>torecord(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#1170 id=1170 data-nosnippet>1170</a>        <span class="self">self</span>.call(py, |state, lines| state.torecord(lines))
+<a href=#742 id=742 data-nosnippet>742</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#743 id=743 data-nosnippet>743</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>keyword: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#744 id=744 data-nosnippet>744</a>        value: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#745 id=745 data-nosnippet>745</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#746 id=746 data-nosnippet>746</a>        <span class="kw">let </span>name = keywords::argument(py, keyword.as_ref())<span class="question-mark">?</span>;
+<a href=#747 id=747 data-nosnippet>747</a>        <span class="kw">let </span>value = <span class="kw">crate</span>::tools::table::component_keyword_value(py, value)<span class="question-mark">?</span>;
+<a href=#748 id=748 data-nosnippet>748</a>        <span class="self">self</span>.call(py, <span class="kw">move </span>|state, <span class="kw">_</span>| {
+<a href=#749 id=749 data-nosnippet>749</a>            keywords::put(state.keyword_table_path()<span class="question-mark">?</span>, <span class="kw-2">&amp;</span>name, value)<span class="question-mark">?</span>;
+<a href=#750 id=750 data-nosnippet>750</a>            <span class="prelude-val">Ok</span>(CasaValue::Bool(<span class="bool-val">true</span>))
+<a href=#751 id=751 data-nosnippet>751</a>        })<span class="question-mark">?</span>;
+<a href=#752 id=752 data-nosnippet>752</a>        <span class="prelude-val">Ok</span>(py.<span class="prelude-val">None</span>())
+<a href=#753 id=753 data-nosnippet>753</a>    }
+<a href=#754 id=754 data-nosnippet>754</a>
+<a href=#755 id=755 data-nosnippet>755</a>    <span class="doccomment">/// Append removed components in reverse removal order.
+<a href=#756 id=756 data-nosnippet>756</a>    </span><span class="attr">#[pyo3(signature = (log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, log=True)"</span>)]
+<a href=#757 id=757 data-nosnippet>757</a>    </span><span class="kw">fn </span>recover(
+<a href=#758 id=758 data-nosnippet>758</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#759 id=759 data-nosnippet>759</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#760 id=760 data-nosnippet>760</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>log: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#761 id=761 data-nosnippet>761</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#762 id=762 data-nosnippet>762</a>        <span class="kw">if </span>log.as_ref().is_some_and(|v| !v.is_instance_of::&lt;PyBool&gt;()) {
+<a href=#763 id=763 data-nosnippet>763</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(
+<a href=#764 id=764 data-nosnippet>764</a>                <span class="string">"in method 'componentlist_recover', argument 2 of type 'bool'"</span>,
+<a href=#765 id=765 data-nosnippet>765</a>            ));
+<a href=#766 id=766 data-nosnippet>766</a>        }
+<a href=#767 id=767 data-nosnippet>767</a>        <span class="self">self</span>.call(py, |state, <span class="kw">_</span>| <span class="prelude-val">Ok</span>(CasaValue::Bool(state.recover())))
+<a href=#768 id=768 data-nosnippet>768</a>    }
+<a href=#769 id=769 data-nosnippet>769</a>
+<a href=#770 id=770 data-nosnippet>770</a>    <span class="doccomment">/// Remove components, keeping them available for recovery.
+<a href=#771 id=771 data-nosnippet>771</a>    </span><span class="attr">#[pyo3(signature = (which = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which=[-1], log=True)"</span>)]
+<a href=#772 id=772 data-nosnippet>772</a>    </span><span class="kw">fn </span>remove(
+<a href=#773 id=773 data-nosnippet>773</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#774 id=774 data-nosnippet>774</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#775 id=775 data-nosnippet>775</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>which: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#776 id=776 data-nosnippet>776</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>log: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#777 id=777 data-nosnippet>777</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#778 id=778 data-nosnippet>778</a>        <span class="kw">let </span>(indices, pending) = <span class="kw">match </span>which {
+<a href=#779 id=779 data-nosnippet>779</a>            <span class="prelude-val">Some</span>(which) =&gt; selection::indices(<span class="kw-2">&amp;</span>which)<span class="question-mark">?</span>,
+<a href=#780 id=780 data-nosnippet>780</a>            <span class="prelude-val">None </span>=&gt; (<span class="macro">vec!</span>[-<span class="number">1</span>], <span class="bool-val">false</span>),
+<a href=#781 id=781 data-nosnippet>781</a>        };
+<a href=#782 id=782 data-nosnippet>782</a>        <span class="kw">if </span>log.as_ref().is_some_and(|v| !v.is_instance_of::&lt;PyBool&gt;()) {
+<a href=#783 id=783 data-nosnippet>783</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(
+<a href=#784 id=784 data-nosnippet>784</a>                <span class="string">"in method 'componentlist_remove', argument 3 of type 'bool'"</span>,
+<a href=#785 id=785 data-nosnippet>785</a>            ));
+<a href=#786 id=786 data-nosnippet>786</a>        }
+<a href=#787 id=787 data-nosnippet>787</a>        <span class="kw">let </span>result = <span class="self">self</span>.call(py, <span class="kw">move </span>|state, lines| {
+<a href=#788 id=788 data-nosnippet>788</a>            state.remove(<span class="kw-2">&amp;</span>indices, lines).map(CasaValue::Bool)
+<a href=#789 id=789 data-nosnippet>789</a>        })<span class="question-mark">?</span>;
+<a href=#790 id=790 data-nosnippet>790</a>        <span class="kw">if </span>pending {
+<a href=#791 id=791 data-nosnippet>791</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PySystemError::new_err(
+<a href=#792 id=792 data-nosnippet>792</a>                <span class="string">"&lt;built-in function componentlist_remove&gt; returned a result with an exception set"</span>,
+<a href=#793 id=793 data-nosnippet>793</a>            ));
+<a href=#794 id=794 data-nosnippet>794</a>        }
+<a href=#795 id=795 data-nosnippet>795</a>        <span class="prelude-val">Ok</span>(result)
+<a href=#796 id=796 data-nosnippet>796</a>    }
+<a href=#797 id=797 data-nosnippet>797</a>
+<a href=#798 id=798 data-nosnippet>798</a>    <span class="doccomment">/// Attach the list to a new table `filename`, written at once (a list
+<a href=#799 id=799 data-nosnippet>799</a>    /// not yet attached), or move its table there.
+<a href=#800 id=800 data-nosnippet>800</a>    </span><span class="attr">#[pyo3(signature = (filename, log = <span class="bool-val">true</span>), text_signature = <span class="string">"($self, filename, log=True)"</span>)]
+<a href=#801 id=801 data-nosnippet>801</a>    </span><span class="kw">fn </span>rename(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, filename: <span class="kw-2">&amp;</span>str, log: bool) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#802 id=802 data-nosnippet>802</a>        <span class="kw">let </span>filename = filename.to_string();
+<a href=#803 id=803 data-nosnippet>803</a>        <span class="self">self</span>.call(py, <span class="kw">move </span>|state, <span class="kw">_</span>| {
+<a href=#804 id=804 data-nosnippet>804</a>            state.rename(<span class="kw-2">&amp;</span>filename).map(CasaValue::Bool)
+<a href=#805 id=805 data-nosnippet>805</a>        })
+<a href=#806 id=806 data-nosnippet>806</a>    }
+<a href=#807 id=807 data-nosnippet>807</a>
+<a href=#808 id=808 data-nosnippet>808</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#809 id=809 data-nosnippet>809</a>    </span><span class="attr">#[pyo3(signature = (which, list, whichones = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which, list, whichones=[-1])"</span>)]
+<a href=#810 id=810 data-nosnippet>810</a>    </span><span class="kw">fn </span>replace(
+<a href=#811 id=811 data-nosnippet>811</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#812 id=812 data-nosnippet>812</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#813 id=813 data-nosnippet>813</a>        list: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#814 id=814 data-nosnippet>814</a>        whichones: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#815 id=815 data-nosnippet>815</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#816 id=816 data-nosnippet>816</a>        stub(<span class="string">"replace"</span>)
+<a href=#817 id=817 data-nosnippet>817</a>    }
+<a href=#818 id=818 data-nosnippet>818</a>
+<a href=#819 id=819 data-nosnippet>819</a>    <span class="doccomment">/// CASA's placeholder warns and returns an empty float array.
+<a href=#820 id=820 data-nosnippet>820</a>    </span><span class="attr">#[pyo3(
+<a href=#821 id=821 data-nosnippet>821</a>        signature = (direction = <span class="prelude-val">None</span>, pixellatsize = <span class="prelude-val">None</span>, pixellongsize = <span class="prelude-val">None</span>, frequency = <span class="prelude-val">None</span>),
+<a href=#822 id=822 data-nosnippet>822</a>        text_signature = <span class="string">"($self, direction=[], pixellatsize=[], pixellongsize=[], frequency=[])"
+<a href=#823 id=823 data-nosnippet>823</a>    </span>)]
+<a href=#824 id=824 data-nosnippet>824</a>    </span><span class="kw">fn </span>sample(
+<a href=#825 id=825 data-nosnippet>825</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#826 id=826 data-nosnippet>826</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#827 id=827 data-nosnippet>827</a>        direction: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#828 id=828 data-nosnippet>828</a>        pixellatsize: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#829 id=829 data-nosnippet>829</a>        pixellongsize: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#830 id=830 data-nosnippet>830</a>        frequency: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#831 id=831 data-nosnippet>831</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#832 id=832 data-nosnippet>832</a>        <span class="kw">let </span><span class="kw-2">mut </span>pending = <span class="bool-val">false</span>;
+<a href=#833 id=833 data-nosnippet>833</a>        <span class="kw">for </span>value <span class="kw">in </span>[direction, pixellatsize, pixellongsize, frequency]
+<a href=#834 id=834 data-nosnippet>834</a>            .into_iter()
+<a href=#835 id=835 data-nosnippet>835</a>            .flatten()
+<a href=#836 id=836 data-nosnippet>836</a>        {
+<a href=#837 id=837 data-nosnippet>837</a>            pending |= placeholder::pending_integer_overflow(value)<span class="question-mark">?</span>;
+<a href=#838 id=838 data-nosnippet>838</a>        }
+<a href=#839 id=839 data-nosnippet>839</a>        <span class="kw">let </span>result = <span class="self">self</span>.call(py, |<span class="kw">_</span>, lines| {
+<a href=#840 id=840 data-nosnippet>840</a>            lines.push(LogLine::warning(<span class="string">"sample not implemented yet"</span>));
+<a href=#841 id=841 data-nosnippet>841</a>            <span class="prelude-val">Ok</span>(CasaValue::floats(Vec::new()))
+<a href=#842 id=842 data-nosnippet>842</a>        })<span class="question-mark">?</span>;
+<a href=#843 id=843 data-nosnippet>843</a>        <span class="kw">if </span>pending {
+<a href=#844 id=844 data-nosnippet>844</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PySystemError::new_err(
+<a href=#845 id=845 data-nosnippet>845</a>                <span class="string">"&lt;built-in function componentlist_sample&gt; returned a result with an exception set"</span>,
+<a href=#846 id=846 data-nosnippet>846</a>            ));
+<a href=#847 id=847 data-nosnippet>847</a>        }
+<a href=#848 id=848 data-nosnippet>848</a>        <span class="prelude-val">Ok</span>(result)
+<a href=#849 id=849 data-nosnippet>849</a>    }
+<a href=#850 id=850 data-nosnippet>850</a>
+<a href=#851 id=851 data-nosnippet>851</a>    <span class="doccomment">/// Select component indices.
+<a href=#852 id=852 data-nosnippet>852</a>    </span><span class="attr">#[pyo3(signature = (which), text_signature = <span class="string">"($self, which)"</span>)]
+<a href=#853 id=853 data-nosnippet>853</a>    </span><span class="kw">fn </span>select(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#854 id=854 data-nosnippet>854</a>        <span class="kw">let </span>(indices, pending) = selection::indices(which)<span class="question-mark">?</span>;
+<a href=#855 id=855 data-nosnippet>855</a>        <span class="kw">let </span>result = <span class="self">self</span>.call(py, <span class="kw">move </span>|state, lines| {
+<a href=#856 id=856 data-nosnippet>856</a>            state.set_selection(<span class="kw-2">&amp;</span>indices, <span class="bool-val">true</span>, lines)
+<a href=#857 id=857 data-nosnippet>857</a>        })<span class="question-mark">?</span>;
+<a href=#858 id=858 data-nosnippet>858</a>        <span class="kw">if </span>pending {
+<a href=#859 id=859 data-nosnippet>859</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PySystemError::new_err(
+<a href=#860 id=860 data-nosnippet>860</a>                <span class="string">"&lt;built-in function componentlist_select&gt; returned a result with an exception set"</span>,
+<a href=#861 id=861 data-nosnippet>861</a>            ));
+<a href=#862 id=862 data-nosnippet>862</a>        }
+<a href=#863 id=863 data-nosnippet>863</a>        <span class="prelude-val">Ok</span>(result)
+<a href=#864 id=864 data-nosnippet>864</a>    }
+<a href=#865 id=865 data-nosnippet>865</a>
+<a href=#866 id=866 data-nosnippet>866</a>    <span class="doccomment">/// The selected component indices in ascending order.
+<a href=#867 id=867 data-nosnippet>867</a>    </span><span class="attr">#[pyo3(signature = (), text_signature = <span class="string">"($self)"</span>)]
+<a href=#868 id=868 data-nosnippet>868</a>    </span><span class="kw">fn </span>selected(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#869 id=869 data-nosnippet>869</a>        <span class="self">self</span>.call(py, |state, <span class="kw">_</span>| <span class="prelude-val">Ok</span>(state.selected()))
+<a href=#870 id=870 data-nosnippet>870</a>    }
+<a href=#871 id=871 data-nosnippet>871</a>
+<a href=#872 id=872 data-nosnippet>872</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#873 id=873 data-nosnippet>873</a>    </span><span class="attr">#[pyo3(
+<a href=#874 id=874 data-nosnippet>874</a>        signature = (which, value = <span class="prelude-val">None</span>, unit = <span class="prelude-val">None</span>, polarization = <span class="prelude-val">None</span>, error = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>),
+<a href=#875 id=875 data-nosnippet>875</a>        text_signature = <span class="string">"($self, which, value=[], unit='Jy', polarization='Stokes', error=[], log=True)"
+<a href=#876 id=876 data-nosnippet>876</a>    </span>)]
+<a href=#877 id=877 data-nosnippet>877</a>    #[allow(clippy::too_many_arguments)]
+<a href=#878 id=878 data-nosnippet>878</a>    </span><span class="kw">fn </span>setflux(
+<a href=#879 id=879 data-nosnippet>879</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#880 id=880 data-nosnippet>880</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#881 id=881 data-nosnippet>881</a>        value: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#882 id=882 data-nosnippet>882</a>        unit: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#883 id=883 data-nosnippet>883</a>        polarization: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#884 id=884 data-nosnippet>884</a>        error: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#885 id=885 data-nosnippet>885</a>        log: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#886 id=886 data-nosnippet>886</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#887 id=887 data-nosnippet>887</a>        stub(<span class="string">"setflux"</span>)
+<a href=#888 id=888 data-nosnippet>888</a>    }
+<a href=#889 id=889 data-nosnippet>889</a>
+<a href=#890 id=890 data-nosnippet>890</a>    <span class="doccomment">/// Change a component's reference frequency and its record unit.
+<a href=#891 id=891 data-nosnippet>891</a>    </span><span class="attr">#[pyo3(signature = (which, value, unit = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which, value, unit='GHz', log=True)"</span>)]
+<a href=#892 id=892 data-nosnippet>892</a>    </span><span class="kw">fn </span>setfreq(
+<a href=#893 id=893 data-nosnippet>893</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#894 id=894 data-nosnippet>894</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#895 id=895 data-nosnippet>895</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#896 id=896 data-nosnippet>896</a>        value: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#897 id=897 data-nosnippet>897</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>unit: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#898 id=898 data-nosnippet>898</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>log: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#899 id=899 data-nosnippet>899</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#900 id=900 data-nosnippet>900</a>        <span class="kw">let </span>which = <span class="kw">match </span>which.extract::&lt;i64&gt;() {
+<a href=#901 id=901 data-nosnippet>901</a>            <span class="prelude-val">Ok</span>(index) =&gt; i64::from(index <span class="kw">as </span>i32),
+<a href=#902 id=902 data-nosnippet>902</a>            <span class="prelude-val">Err</span>(error) <span class="kw">if </span>which.is_none() || error.is_instance_of::&lt;PyOverflowError&gt;(py) =&gt; -<span class="number">1</span>,
+<a href=#903 id=903 data-nosnippet>903</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="string">"argument _which must be an integer"</span>)),
+<a href=#904 id=904 data-nosnippet>904</a>        };
+<a href=#905 id=905 data-nosnippet>905</a>        <span class="comment">// CASA's double typemap passes -1 through to the operation when
+<a href=#906 id=906 data-nosnippet>906</a>        // conversion fails, then reports a SystemError if it succeeded.
+<a href=#907 id=907 data-nosnippet>907</a>        </span><span class="kw">let </span>converted = value.extract::&lt;f64&gt;();
+<a href=#908 id=908 data-nosnippet>908</a>        <span class="kw">let </span>invalid_value = converted.is_err();
+<a href=#909 id=909 data-nosnippet>909</a>        <span class="kw">let </span>value = converted.unwrap_or(-<span class="number">1.0</span>);
+<a href=#910 id=910 data-nosnippet>910</a>        <span class="kw">let </span>unit: String = <span class="kw">match </span>unit {
+<a href=#911 id=911 data-nosnippet>911</a>            <span class="prelude-val">None </span>=&gt; <span class="string">"GHz"</span>.to_string(),
+<a href=#912 id=912 data-nosnippet>912</a>            <span class="prelude-val">Some</span>(value) <span class="kw">if </span>value.is_instance_of::&lt;PyString&gt;() =&gt; value.extract()<span class="question-mark">?</span>,
+<a href=#913 id=913 data-nosnippet>913</a>            <span class="prelude-val">Some</span>(value) <span class="kw">if </span>value.is_instance_of::&lt;PyBytes&gt;() =&gt; {
+<a href=#914 id=914 data-nosnippet>914</a>                <span class="kw">let </span>bytes = value.cast::&lt;PyBytes&gt;()<span class="question-mark">?</span>.as_bytes();
+<a href=#915 id=915 data-nosnippet>915</a>                <span class="kw">let </span>end = bytes
+<a href=#916 id=916 data-nosnippet>916</a>                    .iter()
+<a href=#917 id=917 data-nosnippet>917</a>                    .position(|<span class="kw-2">&amp;</span>byte| byte == <span class="number">0</span>)
+<a href=#918 id=918 data-nosnippet>918</a>                    .unwrap_or(bytes.len());
+<a href=#919 id=919 data-nosnippet>919</a>                PyBytes::new(py, <span class="kw-2">&amp;</span>bytes[..end])
+<a href=#920 id=920 data-nosnippet>920</a>                    .call_method1(<span class="string">"decode"</span>, (<span class="string">"utf-8"</span>,))<span class="question-mark">?
+<a href=#921 id=921 data-nosnippet>921</a>                    </span>.extract()<span class="question-mark">?
+<a href=#922 id=922 data-nosnippet>922</a>            </span>}
+<a href=#923 id=923 data-nosnippet>923</a>            <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="string">"argument _unit must be a string"</span>)),
+<a href=#924 id=924 data-nosnippet>924</a>        };
+<a href=#925 id=925 data-nosnippet>925</a>        <span class="kw">if </span>log.is_some_and(|value| !value.is_instance_of::&lt;PyBool&gt;()) {
+<a href=#926 id=926 data-nosnippet>926</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(
+<a href=#927 id=927 data-nosnippet>927</a>                <span class="string">"in method 'componentlist_setfreq', argument 5 of type 'bool'"</span>,
+<a href=#928 id=928 data-nosnippet>928</a>            ));
+<a href=#929 id=929 data-nosnippet>929</a>        }
+<a href=#930 id=930 data-nosnippet>930</a>        <span class="kw">let </span>unit = unit.split(<span class="string">'\0'</span>).next().unwrap_or_default().to_string();
+<a href=#931 id=931 data-nosnippet>931</a>        <span class="kw">let </span>result = <span class="self">self</span>.call(py, <span class="kw">move </span>|state, <span class="kw">_</span>| {
+<a href=#932 id=932 data-nosnippet>932</a>            state.setfreq(which, value, <span class="kw-2">&amp;</span>unit).map(CasaValue::Bool)
+<a href=#933 id=933 data-nosnippet>933</a>        })<span class="question-mark">?</span>;
+<a href=#934 id=934 data-nosnippet>934</a>        <span class="kw">if </span>invalid_value {
+<a href=#935 id=935 data-nosnippet>935</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PySystemError::new_err(
+<a href=#936 id=936 data-nosnippet>936</a>                <span class="string">"&lt;built-in function componentlist_setfreq&gt; returned a result with an exception set"</span>,
+<a href=#937 id=937 data-nosnippet>937</a>            ));
+<a href=#938 id=938 data-nosnippet>938</a>        }
+<a href=#939 id=939 data-nosnippet>939</a>        <span class="prelude-val">Ok</span>(result)
+<a href=#940 id=940 data-nosnippet>940</a>    }
+<a href=#941 id=941 data-nosnippet>941</a>
+<a href=#942 id=942 data-nosnippet>942</a>    <span class="doccomment">/// Relabel one component's frequency frame without converting its value.
+<a href=#943 id=943 data-nosnippet>943</a>    </span><span class="attr">#[pyo3(signature = (which, frame = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which, frame='LSRK', log=True)"</span>)]
+<a href=#944 id=944 data-nosnippet>944</a>    </span><span class="kw">fn </span>setfreqframe(
+<a href=#945 id=945 data-nosnippet>945</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#946 id=946 data-nosnippet>946</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#947 id=947 data-nosnippet>947</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#948 id=948 data-nosnippet>948</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>frame: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#949 id=949 data-nosnippet>949</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>log: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#950 id=950 data-nosnippet>950</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#951 id=951 data-nosnippet>951</a>        <span class="kw">let </span>(which, pending) = <span class="kw">match </span>which.extract::&lt;i64&gt;() {
+<a href=#952 id=952 data-nosnippet>952</a>            <span class="prelude-val">Ok</span>(index) =&gt; (i64::from(index <span class="kw">as </span>i32), <span class="bool-val">false</span>),
+<a href=#953 id=953 data-nosnippet>953</a>            <span class="prelude-val">Err</span>(error) <span class="kw">if </span>which.is_none() || error.is_instance_of::&lt;PyOverflowError&gt;(py) =&gt; {
+<a href=#954 id=954 data-nosnippet>954</a>                (-<span class="number">1</span>, <span class="bool-val">true</span>)
+<a href=#955 id=955 data-nosnippet>955</a>            }
+<a href=#956 id=956 data-nosnippet>956</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="string">"argument _which must be an integer"</span>)),
+<a href=#957 id=957 data-nosnippet>957</a>        };
+<a href=#958 id=958 data-nosnippet>958</a>        <span class="kw">let </span>frame: String = <span class="kw">match </span>frame {
+<a href=#959 id=959 data-nosnippet>959</a>            <span class="prelude-val">None </span>=&gt; <span class="string">"LSRK"</span>.to_string(),
+<a href=#960 id=960 data-nosnippet>960</a>            <span class="prelude-val">Some</span>(value) <span class="kw">if </span>value.is_instance_of::&lt;PyString&gt;() =&gt; value.extract()<span class="question-mark">?</span>,
+<a href=#961 id=961 data-nosnippet>961</a>            <span class="prelude-val">Some</span>(value) <span class="kw">if </span>value.is_instance_of::&lt;PyBytes&gt;() =&gt; {
+<a href=#962 id=962 data-nosnippet>962</a>                <span class="kw">let </span>bytes = value.cast::&lt;PyBytes&gt;()<span class="question-mark">?</span>.as_bytes();
+<a href=#963 id=963 data-nosnippet>963</a>                <span class="kw">let </span>end = bytes
+<a href=#964 id=964 data-nosnippet>964</a>                    .iter()
+<a href=#965 id=965 data-nosnippet>965</a>                    .position(|<span class="kw-2">&amp;</span>byte| byte == <span class="number">0</span>)
+<a href=#966 id=966 data-nosnippet>966</a>                    .unwrap_or(bytes.len());
+<a href=#967 id=967 data-nosnippet>967</a>                PyBytes::new(py, <span class="kw-2">&amp;</span>bytes[..end])
+<a href=#968 id=968 data-nosnippet>968</a>                    .call_method1(<span class="string">"decode"</span>, (<span class="string">"utf-8"</span>,))<span class="question-mark">?
+<a href=#969 id=969 data-nosnippet>969</a>                    </span>.extract()<span class="question-mark">?
+<a href=#970 id=970 data-nosnippet>970</a>            </span>}
+<a href=#971 id=971 data-nosnippet>971</a>            <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="string">"argument _frame must be a string"</span>)),
+<a href=#972 id=972 data-nosnippet>972</a>        };
+<a href=#973 id=973 data-nosnippet>973</a>        <span class="kw">if </span>log.is_some_and(|value| !value.is_instance_of::&lt;PyBool&gt;()) {
+<a href=#974 id=974 data-nosnippet>974</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(
+<a href=#975 id=975 data-nosnippet>975</a>                <span class="string">"in method 'componentlist_setfreqframe', argument 4 of type 'bool'"</span>,
+<a href=#976 id=976 data-nosnippet>976</a>            ));
+<a href=#977 id=977 data-nosnippet>977</a>        }
+<a href=#978 id=978 data-nosnippet>978</a>        <span class="kw">let </span>frame = frame.split(<span class="string">'\0'</span>).next().unwrap_or_default().to_string();
+<a href=#979 id=979 data-nosnippet>979</a>        <span class="kw">let </span>result = <span class="self">self</span>.call(py, <span class="kw">move </span>|state, lines| {
+<a href=#980 id=980 data-nosnippet>980</a>            state
+<a href=#981 id=981 data-nosnippet>981</a>                .setfreqframe(which, <span class="kw-2">&amp;</span>frame, lines)
+<a href=#982 id=982 data-nosnippet>982</a>                .map(CasaValue::Bool)
+<a href=#983 id=983 data-nosnippet>983</a>        })<span class="question-mark">?</span>;
+<a href=#984 id=984 data-nosnippet>984</a>        <span class="kw">if </span>pending {
+<a href=#985 id=985 data-nosnippet>985</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PySystemError::new_err(
+<a href=#986 id=986 data-nosnippet>986</a>                <span class="string">"&lt;built-in function componentlist_setfreqframe&gt; returned a result with an exception set"</span>,
+<a href=#987 id=987 data-nosnippet>987</a>            ));
+<a href=#988 id=988 data-nosnippet>988</a>        }
+<a href=#989 id=989 data-nosnippet>989</a>        <span class="prelude-val">Ok</span>(result)
+<a href=#990 id=990 data-nosnippet>990</a>    }
+<a href=#991 id=991 data-nosnippet>991</a>
+<a href=#992 id=992 data-nosnippet>992</a>    <span class="doccomment">/// Replace the user label of one component.
+<a href=#993 id=993 data-nosnippet>993</a>    </span><span class="attr">#[pyo3(signature = (which, value, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which, value, log=True)"</span>)]
+<a href=#994 id=994 data-nosnippet>994</a>    </span><span class="kw">fn </span>setlabel(
+<a href=#995 id=995 data-nosnippet>995</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#996 id=996 data-nosnippet>996</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#997 id=997 data-nosnippet>997</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#998 id=998 data-nosnippet>998</a>        value: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#999 id=999 data-nosnippet>999</a>        <span class="attr">#[pyo3(from_py_with = supplied)] </span>log: <span class="prelude-ty">Option</span>&lt;Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1000 id=1000 data-nosnippet>1000</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#1001 id=1001 data-nosnippet>1001</a>        <span class="kw">let </span>which = <span class="kw">match </span>which.extract::&lt;i64&gt;() {
+<a href=#1002 id=1002 data-nosnippet>1002</a>            <span class="prelude-val">Ok</span>(index) =&gt; i64::from(index <span class="kw">as </span>i32),
+<a href=#1003 id=1003 data-nosnippet>1003</a>            <span class="prelude-val">Err</span>(error) <span class="kw">if </span>which.is_none() || error.is_instance_of::&lt;PyOverflowError&gt;(py) =&gt; -<span class="number">1</span>,
+<a href=#1004 id=1004 data-nosnippet>1004</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="string">"argument _which must be an integer"</span>)),
+<a href=#1005 id=1005 data-nosnippet>1005</a>        };
+<a href=#1006 id=1006 data-nosnippet>1006</a>        <span class="kw">let </span>value: String = <span class="kw">if </span>value.is_instance_of::&lt;PyString&gt;() {
+<a href=#1007 id=1007 data-nosnippet>1007</a>            value.extract()<span class="question-mark">?
+<a href=#1008 id=1008 data-nosnippet>1008</a>        </span>} <span class="kw">else if </span>value.is_instance_of::&lt;PyBytes&gt;() {
+<a href=#1009 id=1009 data-nosnippet>1009</a>            <span class="kw">let </span>bytes = value.cast::&lt;PyBytes&gt;()<span class="question-mark">?</span>.as_bytes();
+<a href=#1010 id=1010 data-nosnippet>1010</a>            <span class="kw">let </span>end = bytes
+<a href=#1011 id=1011 data-nosnippet>1011</a>                .iter()
+<a href=#1012 id=1012 data-nosnippet>1012</a>                .position(|<span class="kw-2">&amp;</span>byte| byte == <span class="number">0</span>)
+<a href=#1013 id=1013 data-nosnippet>1013</a>                .unwrap_or(bytes.len());
+<a href=#1014 id=1014 data-nosnippet>1014</a>            PyBytes::new(py, <span class="kw-2">&amp;</span>bytes[..end])
+<a href=#1015 id=1015 data-nosnippet>1015</a>                .call_method1(<span class="string">"decode"</span>, (<span class="string">"utf-8"</span>,))<span class="question-mark">?
+<a href=#1016 id=1016 data-nosnippet>1016</a>                </span>.extract()<span class="question-mark">?
+<a href=#1017 id=1017 data-nosnippet>1017</a>        </span>} <span class="kw">else </span>{
+<a href=#1018 id=1018 data-nosnippet>1018</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(<span class="string">"argument _value must be a string"</span>));
+<a href=#1019 id=1019 data-nosnippet>1019</a>        };
+<a href=#1020 id=1020 data-nosnippet>1020</a>        <span class="kw">if </span>log.as_ref().is_some_and(|v| !v.is_instance_of::&lt;PyBool&gt;()) {
+<a href=#1021 id=1021 data-nosnippet>1021</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(PyTypeError::new_err(
+<a href=#1022 id=1022 data-nosnippet>1022</a>                <span class="string">"in method 'componentlist_setlabel', argument 4 of type 'bool'"</span>,
+<a href=#1023 id=1023 data-nosnippet>1023</a>            ));
+<a href=#1024 id=1024 data-nosnippet>1024</a>        }
+<a href=#1025 id=1025 data-nosnippet>1025</a>        <span class="comment">// The CASA wrapper passes a NUL-terminated C string to casacore.
+<a href=#1026 id=1026 data-nosnippet>1026</a>        </span><span class="kw">let </span>value = value.split(<span class="string">'\0'</span>).next().unwrap_or_default().to_string();
+<a href=#1027 id=1027 data-nosnippet>1027</a>        <span class="self">self</span>.call(py, <span class="kw">move </span>|state, lines| {
+<a href=#1028 id=1028 data-nosnippet>1028</a>            <span class="kw">match </span>state.setlabel(which, <span class="kw-2">&amp;</span>value) {
+<a href=#1029 id=1029 data-nosnippet>1029</a>                <span class="prelude-val">Ok</span>(result) =&gt; <span class="prelude-val">Ok</span>(CasaValue::Bool(result)),
+<a href=#1030 id=1030 data-nosnippet>1030</a>                <span class="prelude-val">Err</span>(error) =&gt; {
+<a href=#1031 id=1031 data-nosnippet>1031</a>                    lines.push(LogLine::error(<span class="macro">format!</span>(<span class="string">"Exception Reported: {error}"</span>)));
+<a href=#1032 id=1032 data-nosnippet>1032</a>                    <span class="prelude-val">Err</span>(error)
+<a href=#1033 id=1033 data-nosnippet>1033</a>                }
+<a href=#1034 id=1034 data-nosnippet>1034</a>            }
+<a href=#1035 id=1035 data-nosnippet>1035</a>        })
+<a href=#1036 id=1036 data-nosnippet>1036</a>    }
+<a href=#1037 id=1037 data-nosnippet>1037</a>
+<a href=#1038 id=1038 data-nosnippet>1038</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#1039 id=1039 data-nosnippet>1039</a>    </span><span class="attr">#[pyo3(signature = (which = <span class="prelude-val">None</span>, ra = <span class="prelude-val">None</span>, dec = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which=1, ra=[], dec=[], log=True)"</span>)]
+<a href=#1040 id=1040 data-nosnippet>1040</a>    </span><span class="kw">fn </span>setrefdir(
+<a href=#1041 id=1041 data-nosnippet>1041</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#1042 id=1042 data-nosnippet>1042</a>        which: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1043 id=1043 data-nosnippet>1043</a>        ra: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1044 id=1044 data-nosnippet>1044</a>        dec: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1045 id=1045 data-nosnippet>1045</a>        log: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1046 id=1046 data-nosnippet>1046</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#1047 id=1047 data-nosnippet>1047</a>        stub(<span class="string">"setrefdir"</span>)
+<a href=#1048 id=1048 data-nosnippet>1048</a>    }
+<a href=#1049 id=1049 data-nosnippet>1049</a>
+<a href=#1050 id=1050 data-nosnippet>1050</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#1051 id=1051 data-nosnippet>1051</a>    </span><span class="attr">#[pyo3(signature = (which, frame, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which, frame, log=True)"</span>)]
+<a href=#1052 id=1052 data-nosnippet>1052</a>    </span><span class="kw">fn </span>setrefdirframe(
+<a href=#1053 id=1053 data-nosnippet>1053</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#1054 id=1054 data-nosnippet>1054</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#1055 id=1055 data-nosnippet>1055</a>        frame: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#1056 id=1056 data-nosnippet>1056</a>        log: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1057 id=1057 data-nosnippet>1057</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#1058 id=1058 data-nosnippet>1058</a>        stub(<span class="string">"setrefdirframe"</span>)
+<a href=#1059 id=1059 data-nosnippet>1059</a>    }
+<a href=#1060 id=1060 data-nosnippet>1060</a>
+<a href=#1061 id=1061 data-nosnippet>1061</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#1062 id=1062 data-nosnippet>1062</a>    </span><span class="attr">#[pyo3(
+<a href=#1063 id=1063 data-nosnippet>1063</a>        signature = (which, r#type = <span class="prelude-val">None</span>, majoraxis = <span class="prelude-val">None</span>, minoraxis = <span class="prelude-val">None</span>, positionangle = <span class="prelude-val">None</span>, majoraxiserror = <span class="prelude-val">None</span>, minoraxiserror = <span class="prelude-val">None</span>, positionangleerror = <span class="prelude-val">None</span>, optionalparms = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>),
+<a href=#1064 id=1064 data-nosnippet>1064</a>        text_signature = <span class="string">"($self, which, type='Point', majoraxis=[], minoraxis=[], positionangle=[], majoraxiserror=[], minoraxiserror=[], positionangleerror=[], optionalparms=[0.0], log=True)"
+<a href=#1065 id=1065 data-nosnippet>1065</a>    </span>)]
+<a href=#1066 id=1066 data-nosnippet>1066</a>    #[allow(clippy::too_many_arguments)]
+<a href=#1067 id=1067 data-nosnippet>1067</a>    </span><span class="kw">fn </span>setshape(
+<a href=#1068 id=1068 data-nosnippet>1068</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#1069 id=1069 data-nosnippet>1069</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#1070 id=1070 data-nosnippet>1070</a>        r#type: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1071 id=1071 data-nosnippet>1071</a>        majoraxis: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1072 id=1072 data-nosnippet>1072</a>        minoraxis: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1073 id=1073 data-nosnippet>1073</a>        positionangle: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1074 id=1074 data-nosnippet>1074</a>        majoraxiserror: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1075 id=1075 data-nosnippet>1075</a>        minoraxiserror: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1076 id=1076 data-nosnippet>1076</a>        positionangleerror: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1077 id=1077 data-nosnippet>1077</a>        optionalparms: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1078 id=1078 data-nosnippet>1078</a>        log: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1079 id=1079 data-nosnippet>1079</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#1080 id=1080 data-nosnippet>1080</a>        stub(<span class="string">"setshape"</span>)
+<a href=#1081 id=1081 data-nosnippet>1081</a>    }
+<a href=#1082 id=1082 data-nosnippet>1082</a>
+<a href=#1083 id=1083 data-nosnippet>1083</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#1084 id=1084 data-nosnippet>1084</a>    </span><span class="attr">#[pyo3(
+<a href=#1085 id=1085 data-nosnippet>1085</a>        signature = (which, r#type = <span class="prelude-val">None</span>, index = <span class="prelude-val">None</span>, tabularfreqs = <span class="prelude-val">None</span>, tabularflux = <span class="prelude-val">None</span>, tabularframe = <span class="prelude-val">None</span>),
+<a href=#1086 id=1086 data-nosnippet>1086</a>        text_signature = <span class="string">"($self, which, type='spectral index', index=[], tabularfreqs=[100000000000.0], tabularflux=[1.0], tabularframe='LSRK')"
+<a href=#1087 id=1087 data-nosnippet>1087</a>    </span>)]
+<a href=#1088 id=1088 data-nosnippet>1088</a>    #[allow(clippy::too_many_arguments)]
+<a href=#1089 id=1089 data-nosnippet>1089</a>    </span><span class="kw">fn </span>setspectrum(
+<a href=#1090 id=1090 data-nosnippet>1090</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#1091 id=1091 data-nosnippet>1091</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#1092 id=1092 data-nosnippet>1092</a>        r#type: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1093 id=1093 data-nosnippet>1093</a>        index: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1094 id=1094 data-nosnippet>1094</a>        tabularfreqs: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1095 id=1095 data-nosnippet>1095</a>        tabularflux: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1096 id=1096 data-nosnippet>1096</a>        tabularframe: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1097 id=1097 data-nosnippet>1097</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#1098 id=1098 data-nosnippet>1098</a>        stub(<span class="string">"setspectrum"</span>)
+<a href=#1099 id=1099 data-nosnippet>1099</a>    }
+<a href=#1100 id=1100 data-nosnippet>1100</a>
+<a href=#1101 id=1101 data-nosnippet>1101</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#1102 id=1102 data-nosnippet>1102</a>    </span><span class="attr">#[pyo3(
+<a href=#1103 id=1103 data-nosnippet>1103</a>        signature = (which, r#type = <span class="prelude-val">None</span>, index = <span class="prelude-val">None</span>, tabularfreqs = <span class="prelude-val">None</span>, tabulari = <span class="prelude-val">None</span>, tabularq = <span class="prelude-val">None</span>, tabularu = <span class="prelude-val">None</span>, tabularv = <span class="prelude-val">None</span>, reffreq = <span class="prelude-val">None</span>, frame = <span class="prelude-val">None</span>),
+<a href=#1104 id=1104 data-nosnippet>1104</a>        text_signature = <span class="string">"($self, which, type='spectral index', index=[0.0], tabularfreqs=[100000000000.0], tabulari=[1.0], tabularq=[0.0], tabularu=[0.0], tabularv=[0.0], reffreq=[], frame='LSRK')"
+<a href=#1105 id=1105 data-nosnippet>1105</a>    </span>)]
+<a href=#1106 id=1106 data-nosnippet>1106</a>    #[allow(clippy::too_many_arguments)]
+<a href=#1107 id=1107 data-nosnippet>1107</a>    </span><span class="kw">fn </span>setstokesspectrum(
+<a href=#1108 id=1108 data-nosnippet>1108</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#1109 id=1109 data-nosnippet>1109</a>        which: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;,
+<a href=#1110 id=1110 data-nosnippet>1110</a>        r#type: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1111 id=1111 data-nosnippet>1111</a>        index: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1112 id=1112 data-nosnippet>1112</a>        tabularfreqs: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1113 id=1113 data-nosnippet>1113</a>        tabulari: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1114 id=1114 data-nosnippet>1114</a>        tabularq: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1115 id=1115 data-nosnippet>1115</a>        tabularu: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1116 id=1116 data-nosnippet>1116</a>        tabularv: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1117 id=1117 data-nosnippet>1117</a>        reffreq: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1118 id=1118 data-nosnippet>1118</a>        frame: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1119 id=1119 data-nosnippet>1119</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#1120 id=1120 data-nosnippet>1120</a>        stub(<span class="string">"setstokesspectrum"</span>)
+<a href=#1121 id=1121 data-nosnippet>1121</a>    }
+<a href=#1122 id=1122 data-nosnippet>1122</a>
+<a href=#1123 id=1123 data-nosnippet>1123</a>    <span class="doccomment">/// Component `which`'s shape name (`Point`, `Gaussian`, `Disk`,
+<a href=#1124 id=1124 data-nosnippet>1124</a>    /// `Limbdarkeneddisk`).
+<a href=#1125 id=1125 data-nosnippet>1125</a>    </span><span class="attr">#[pyo3(signature = (which), text_signature = <span class="string">"($self, which)"</span>)]
+<a href=#1126 id=1126 data-nosnippet>1126</a>    </span><span class="kw">fn </span>shapetype(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, which: i64) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#1127 id=1127 data-nosnippet>1127</a>        <span class="self">self</span>.call(py, <span class="kw">move </span>|state, <span class="kw">_</span>| {
+<a href=#1128 id=1128 data-nosnippet>1128</a>            <span class="kw">let </span>component = state.unchecked(which)<span class="question-mark">?</span>;
+<a href=#1129 id=1129 data-nosnippet>1129</a>            <span class="prelude-val">Ok</span>(CasaValue::Text(
+<a href=#1130 id=1130 data-nosnippet>1130</a>                component.shape().shape_type().casa_name().to_string(),
+<a href=#1131 id=1131 data-nosnippet>1131</a>            ))
+<a href=#1132 id=1132 data-nosnippet>1132</a>        })
+<a href=#1133 id=1133 data-nosnippet>1133</a>    }
+<a href=#1134 id=1134 data-nosnippet>1134</a>
+<a href=#1135 id=1135 data-nosnippet>1135</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#1136 id=1136 data-nosnippet>1136</a>    </span><span class="attr">#[pyo3(signature = (howmany = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, howmany=1, log=True)"</span>)]
+<a href=#1137 id=1137 data-nosnippet>1137</a>    </span><span class="kw">fn </span>simulate(
+<a href=#1138 id=1138 data-nosnippet>1138</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#1139 id=1139 data-nosnippet>1139</a>        howmany: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1140 id=1140 data-nosnippet>1140</a>        log: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1141 id=1141 data-nosnippet>1141</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#1142 id=1142 data-nosnippet>1142</a>        stub(<span class="string">"simulate"</span>)
+<a href=#1143 id=1143 data-nosnippet>1143</a>    }
+<a href=#1144 id=1144 data-nosnippet>1144</a>
+<a href=#1145 id=1145 data-nosnippet>1145</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#1146 id=1146 data-nosnippet>1146</a>    </span><span class="attr">#[pyo3(signature = (criteria = <span class="prelude-val">None</span>, log = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, criteria='Flux', log=True)"</span>)]
+<a href=#1147 id=1147 data-nosnippet>1147</a>    </span><span class="kw">fn </span>sort(
+<a href=#1148 id=1148 data-nosnippet>1148</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#1149 id=1149 data-nosnippet>1149</a>        criteria: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1150 id=1150 data-nosnippet>1150</a>        log: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;,
+<a href=#1151 id=1151 data-nosnippet>1151</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#1152 id=1152 data-nosnippet>1152</a>        stub(<span class="string">"sort"</span>)
+<a href=#1153 id=1153 data-nosnippet>1153</a>    }
+<a href=#1154 id=1154 data-nosnippet>1154</a>
+<a href=#1155 id=1155 data-nosnippet>1155</a>    <span class="doccomment">/// Component `which`'s spectral-model name (`Constant`, `Spectral
+<a href=#1156 id=1156 data-nosnippet>1156</a>    /// Index`, `Tabular Spectrum`, `Power Logarithmic Polynomial`).
+<a href=#1157 id=1157 data-nosnippet>1157</a>    </span><span class="attr">#[pyo3(signature = (which), text_signature = <span class="string">"($self, which)"</span>)]
+<a href=#1158 id=1158 data-nosnippet>1158</a>    </span><span class="kw">fn </span>spectrumtype(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, which: i64) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#1159 id=1159 data-nosnippet>1159</a>        <span class="self">self</span>.call(py, <span class="kw">move </span>|state, <span class="kw">_</span>| {
+<a href=#1160 id=1160 data-nosnippet>1160</a>            <span class="kw">let </span>component = state.unchecked(which)<span class="question-mark">?</span>;
+<a href=#1161 id=1161 data-nosnippet>1161</a>            <span class="prelude-val">Ok</span>(CasaValue::Text(
+<a href=#1162 id=1162 data-nosnippet>1162</a>                component.spectrum().spectral_type().casa_name().to_string(),
+<a href=#1163 id=1163 data-nosnippet>1163</a>            ))
+<a href=#1164 id=1164 data-nosnippet>1164</a>        })
+<a href=#1165 id=1165 data-nosnippet>1165</a>    }
+<a href=#1166 id=1166 data-nosnippet>1166</a>
+<a href=#1167 id=1167 data-nosnippet>1167</a>    <span class="doccomment">/// Not yet implemented in casa-rs.
+<a href=#1168 id=1168 data-nosnippet>1168</a>    </span><span class="attr">#[pyo3(signature = (which = <span class="prelude-val">None</span>), text_signature = <span class="string">"($self, which=-1)"</span>)]
+<a href=#1169 id=1169 data-nosnippet>1169</a>    </span><span class="kw">fn </span>summarize(<span class="kw-2">&amp;</span><span class="self">self</span>, which: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#1170 id=1170 data-nosnippet>1170</a>        stub(<span class="string">"summarize"</span>)
 <a href=#1171 id=1171 data-nosnippet>1171</a>    }
-<a href=#1172 id=1172 data-nosnippet>1172</a>}
+<a href=#1172 id=1172 data-nosnippet>1172</a>
+<a href=#1173 id=1173 data-nosnippet>1173</a>    <span class="doccomment">/// The list's record: `nelements` and each component's as
+<a href=#1174 id=1174 data-nosnippet>1174</a>    /// `component&lt;i&gt;`; `{}` with CASA's warning for an empty list.
+<a href=#1175 id=1175 data-nosnippet>1175</a>    </span><span class="attr">#[pyo3(signature = (), text_signature = <span class="string">"($self)"</span>)]
+<a href=#1176 id=1176 data-nosnippet>1176</a>    </span><span class="kw">fn </span>torecord(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#1177 id=1177 data-nosnippet>1177</a>        <span class="self">self</span>.call(py, |state, lines| state.torecord(lines))
+<a href=#1178 id=1178 data-nosnippet>1178</a>    }
+<a href=#1179 id=1179 data-nosnippet>1179</a>}
 </code></pre></div></section></main></body></html>

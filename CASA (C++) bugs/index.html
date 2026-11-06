@@ -3923,6 +3923,11 @@ stores a new keyword whose value does not fit 32 bits as a 64-bit integer, and
 refuses such a value for an existing 32-bit keyword with
 <code>RuntimeError: ... does not fit the integer keyword NAME, which holds fewer
 bits</code>, rather than store a wrong number.</p>
+<p><code>cl.putkeyword</code> uses the same CASA conversion: in CASA 6.7.6.14, writing
+<code>2**40</code> to either a new keyword or an existing 32-bit keyword stores <code>0</code>.
+casa-rs keeps a new value as a 64-bit integer and refuses an overflowing
+replacement of a 32-bit keyword, so neither call silently loses the value
+(#1053).</p>
 <h2 id="tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process"><code>tb</code> slices with a wrong rank or a start outside the array abort the process<a class="headerlink" href="#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-30</li>
