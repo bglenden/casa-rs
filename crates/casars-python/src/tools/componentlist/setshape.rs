@@ -4,11 +4,12 @@
 use casa_components::{ComponentShape, Ellipse, EllipseErrors, ShapeKind, ShapeType};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim};
-use pyo3::exceptions::{PyOverflowError, PySystemError, PyTypeError};
+use pyo3::exceptions::{PyOverflowError, PySystemError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyString};
+use pyo3::types::{PyBool, PyBytes, PyFloat, PyInt, PyList, PyString, PyTuple};
+use std::collections::HashSet;
 
-use super::{PyComponentList, replace_args, setrefdir_args, supplied};
+use super::{PyComponentList, setrefdir_args, supplied};
 use crate::convert::value::CasaValue;
 
 use crate::convert::{ConvertError, ConvertResult, Variant, quantity};
@@ -77,9 +78,12 @@ pub(super) fn prepare(
             return Ok(None);
         }
     }
-    let [major, minor, angle] = axes.each_ref().map(Quantity::get_si_value);
+    let [major, mut minor, angle] = axes.each_ref().map(Quantity::get_si_value);
     if let Some(message) = super::add::constructor_error(shape_type, major, minor, angle) {
         return Err(ConvertError::runtime(message));
+    }
+    if shape_type == ShapeType::Disk && (major - minor).abs() < 1e-17 {
+        minor = major;
     }
     if [major, minor, angle].iter().any(|value| !value.is_finite()) {
         return Err(ConvertError::runtime(
@@ -146,6 +150,54 @@ pub(super) fn prepare(
     }))
 }
 
+enum OptionalFrame<'py> {
+    Value(Bound<'py, PyAny>),
+    Leave(usize),
+}
+
+/// CASA converts, then ignores, this double vector; cycles crash the binding.
+fn optional_pending(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let ndarray = value.py().import("numpy")?.getattr("ndarray")?;
+    if value.is_instance(&ndarray)? {
+        return Ok(false);
+    }
+    let sequence = value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>();
+    if !sequence {
+        if value.is_instance_of::<PyInt>() {
+            return Ok(value.extract::<i64>().is_err());
+        }
+        return Ok(!value.is_instance_of::<PyFloat>()
+            && !value.is_instance_of::<PyString>()
+            && !value.is_instance_of::<PyBytes>());
+    }
+    let mut active = HashSet::new();
+    let mut stack = vec![OptionalFrame::Value(value.clone())];
+    let mut pending = false;
+    while let Some(frame) = stack.pop() {
+        let object = match frame {
+            OptionalFrame::Value(object) => object,
+            OptionalFrame::Leave(identity) => {
+                active.remove(&identity);
+                continue;
+            }
+        };
+        if object.is_instance_of::<PyList>() || object.is_instance_of::<PyTuple>() {
+            let identity = object.as_ptr() as usize;
+            if !active.insert(identity) {
+                return Err(PyValueError::new_err(
+                    "cyclic optional shape parameters (CASA crash: #1053)",
+                ));
+            }
+            let items = object.try_iter()?.collect::<PyResult<Vec<_>>>()?;
+            stack.push(OptionalFrame::Leave(identity));
+            stack.extend(items.into_iter().rev().map(OptionalFrame::Value));
+        } else if object.is_instance_of::<PyInt>() {
+            pending |= object.extract::<i64>().is_err();
+        }
+    }
+    Ok(pending)
+}
+
 #[pymethods]
 impl PyComponentList {
     /// Replace one component's shape, preserving its direction and errors.
@@ -207,7 +259,7 @@ impl PyComponentList {
             convert(positionangleerror)?,
         ];
         if let Some(value) = optionalparms {
-            pending |= replace_args::indices_pending(&value)?;
+            pending |= optional_pending(&value)?;
         }
         if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
             return Err(PyTypeError::new_err(

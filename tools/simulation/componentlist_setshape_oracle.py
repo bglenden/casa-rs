@@ -5,6 +5,8 @@ import base64
 import io
 import json
 import math
+import subprocess
+import sys
 import tarfile
 import tempfile
 from pathlib import Path
@@ -36,7 +38,10 @@ ell = {'type': 'Gaussian', 'majoraxis': '4arcmin', 'minoraxis': '2arcmin', 'posi
 errs = {'majoraxiserror': '6arcsec', 'minoraxiserror': '3arcsec', 'positionangleerror': '2deg'}
 calls = [
     ([0], {}), ([1], {}), ([0], ell), ([1], ell),
-    ([0], {**ell, 'type': 'Disk'}), ([0], {**ell, **errs}),
+    ([0], {**ell, 'type': 'Disk'}),
+    ([0], {'type': 'Disk', 'majoraxis': '3arcmin', 'minoraxis': '180arcsec', 'positionangle': '0deg'}),
+    ([0], {'type': 'Disk', 'majoraxis': '0.3arcsec', 'minoraxis': '300mas', 'positionangle': '0deg'}),
+    ([0], {'type': 'Disk', 'majoraxis': '5arcsec', 'minoraxis': '5000mas', 'positionangle': '0deg'}), ([0], {**ell, **errs}),
     ([0], {**ell, **errs, 'type': 'Disk'}),
     ([0], {**ell, 'majoraxiserror': 'bad'}),
     ([0], {**ell, **errs, 'majoraxiserror': 'bad'}),
@@ -71,6 +76,22 @@ for args, kwargs in calls:
         case['error'] = {'type': type(e).__name__, 'message': message}
     case['after'] = snap(c); results.append(case); c.done()
 
+optional_values = [
+    ('string', '1.0'), ('bad_string', 'bad'), ('inf', float('inf')),
+    ('nested_nan', [[float('nan')]]), ('huge', 2**100), ('nested_huge', [[2**100]]),
+    ('nested_mapping_huge', [{'a': 2**100}]), ('mapping', {}), ('complex', 1+2j),
+    ('numpy_scalar', np.float32(2.5)), ('numpy_array', np.array([1., 2.])),
+]
+optional_extra = []
+for name, value in optional_values:
+    c = componentlist(); initial(c)
+    case = {'case': name, 'before': snap(c)}
+    try: case['result'] = c.setshape(0, **ell, optionalparms=value)
+    except Exception as e: case['error'] = {'type': type(e).__name__, 'message': str(e)}
+    case['after'] = snap(c); optional_extra.append(case); c.done()
+cycle_code = "import resource;resource.setrlimit(resource.RLIMIT_CORE,(0,0));from casaconfig import config;config.data_auto_update=False;config.measures_auto_update=False;from casatools import componentlist;c=componentlist();c.addcomponent(flux=3);v=[];v.append(v);c.setshape(0,optionalparms=v)"
+cycle_returncode = subprocess.run([sys.executable, '-c', cycle_code], capture_output=True).returncode
+
 nonfinite = []
 for name, kwargs, field in [
     ('angle', {**ell, 'positionangle': {'value': float('nan'), 'unit': 'deg'}}, 'positionangle'),
@@ -91,5 +112,6 @@ with tempfile.TemporaryDirectory() as directory:
     c.open(path, nomodify=False); assert c.setshape(0, **ell, **errs); memory = snap(c); c.done()
     c.open(path, nomodify=True); persisted = snap(c); c.done()
     print('CASA_RESULT=' + json.dumps({'casatools': version_string(), 'cases': results,
-                                     'memory': memory, 'persisted': persisted, 'nonfinite': nonfinite}))
+                                     'memory': memory, 'persisted': persisted, 'nonfinite': nonfinite,
+                                     'optional_extra': optional_extra, 'cycle_returncode': cycle_returncode}))
     print('CASA_ARCHIVE=' + base64.b64encode(archive.getvalue()).decode())

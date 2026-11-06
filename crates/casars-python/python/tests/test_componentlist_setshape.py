@@ -111,6 +111,33 @@ def test_nonfinite_shape_inputs_are_rejected_without_mutation():
     assert cl.done()
 
 
+def test_ignored_optional_parameters_match_casa_and_cycles_are_safe():
+    values = {'string': '1.0', 'bad_string': 'bad', 'inf': float('inf'),
+              'nested_nan': [[float('nan')]], 'huge': 2**100, 'nested_huge': [[2**100]],
+              'nested_mapping_huge': [{'a': 2**100}], 'mapping': {}, 'complex': 1+2j,
+              'numpy_scalar': np.float32(2.5), 'numpy_array': np.array([1., 2.])}
+    for case in ORACLE['optional_extra']:
+        cl = componentlist(); initial(cl)
+        if 'error' in case:
+            assert case['error']['type'] == 'SystemError'
+            with pytest.raises(SystemError, match='returned a result with an exception set'):
+                cl.setshape(0, **ELL, optionalparms=values[case['case']])
+            expected = case['before']
+        else:
+            assert cl.setshape(0, **ELL, optionalparms=values[case['case']]) is case['result']
+            expected = case['after']
+        assert_snapshot(snapshot(cl), expected)
+        assert cl.done()
+    assert ORACLE['cycle_returncode'] == -11
+    cl = componentlist(); initial(cl)
+    before = snapshot(cl)
+    cyclic = []; cyclic.append(cyclic)
+    with pytest.raises(ValueError, match='cyclic'):
+        cl.setshape(0, **ELL, optionalparms=cyclic)
+    assert_snapshot(snapshot(cl), before)
+    assert cl.done()
+
+
 def test_contract_marks_setshape_mutating():
     obj = next(x for x in schema_bundle()['semantic']['objects'] if x['name'] == 'componentlist')
     assert next(x for x in obj['methods'] if x['name'] == 'setshape')['mutating'] is True

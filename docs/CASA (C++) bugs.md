@@ -4069,5 +4069,7 @@ only its direction and replaces both errors with zero. casa-rs preserves the
 original direction and both errors when changing the shape. Passing
 `optionalparms=None` can also update the shape before CASA raises
 `SystemError`; casa-rs reports the error without changing the component.
+Passing a cyclic `optionalparms` list terminates CASA with SIGSEGV; casa-rs
+rejects the cycle before changing the component.
 CASA accepts NaN as a Gaussian position angle or shape error and writes NaN;
 casa-rs rejects a non-finite shape or error before mutation.
