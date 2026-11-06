@@ -9,8 +9,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use casa_images::{
-    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_extrema,
-    imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_record,
+    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_add_delete,
+    imhead_extrema, imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_record,
 };
 use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
 
@@ -64,23 +64,29 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         "summary" | "list" | "get" => {
             imhead(&path).map_err(|error| image_error("imhead", &path, error))?
         }
-        "put" => {
+        "add" | "del" | "put" => {
             let hdkey = task.text("hdkey")?.ok_or_else(|| {
                 TaskFailure::validation("imhead mode put requires hdkey").at("hdkey")
             })?;
-            if !["bunit", "object", "imtype", "observer", "telescope"]
-                .contains(&hdkey.to_ascii_lowercase().as_str())
+            let key = hdkey.to_ascii_lowercase();
+            if !["bunit", "object", "observer", "telescope"].contains(&key.as_str())
+                && !(mode == "put" && key == "imtype")
+                && !casa_images::analysis::imhead_is_custom_key(&hdkey)
             {
                 return Err(TaskFailure::validation(format!(
-                    "imhead put of hdkey {hdkey:?} is not implemented by casa-rs yet (#977)"
+                    "imhead {mode} of hdkey {hdkey:?} is not implemented by casa-rs yet (#977)"
                 ))
                 .at("hdkey"));
             }
             // CASA's default '' is a value here: it clears the key, as
             // `hdkey='bunit', hdvalue=''` clears the brightness unit.
             let hdvalue = task.text("hdvalue")?.unwrap_or_default();
-            let summary = imhead_put(&path, &hdkey, &hdvalue)
-                .map_err(|error| image_error("imhead", &path, error))?;
+            let summary = if mode == "put" {
+                imhead_put(&path, &hdkey, &hdvalue)
+            } else {
+                imhead_add_delete(&path, &mode, &hdkey, &hdvalue)
+            }
+            .map_err(|error| image_error("imhead", &path, error))?;
             let verbose = if task.flag("verbose")? {
                 "True"
             } else {
@@ -97,8 +103,9 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             let history = [
                 format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
                 format!(
-                    "imhead(imagename={}, mode=\"put\", hdkey={}, hdvalue={}, verbose={verbose})",
+                    "imhead(imagename={}, mode={}, hdkey={}, hdvalue={}, verbose={verbose})",
                     history_string(imagename),
+                    history_string(&mode),
                     history_string(&hdkey),
                     history_string(&hdvalue)
                 ),
@@ -110,7 +117,7 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         }
         other => {
             return Err(TaskFailure::validation(format!(
-                "unsupported imhead mode {other:?}; expected summary, list, get, put, or history"
+                "unsupported imhead mode {other:?}; expected summary, list, get, add, del, put, or history"
             ))
             .at("mode"));
         }
@@ -135,7 +142,7 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let value = match mode.as_str() {
         "summary" => imhead_summary_record(&summary),
         "list" => imhead_list_record(&summary),
-        "get" => header_value(&summary, &hdkey)?,
+        "get" => header_value(&summary, &path, &hdkey)?,
         // CASA's put returns None.
         _ => CasaValue::None,
     };
@@ -153,7 +160,11 @@ fn history_string(value: &str) -> String {
 
 /// The header fields already represented by `ImageHeaderSummary`.
 /// Other CASA keys remain explicit refusals until their metadata is read (#977).
-fn header_value(summary: &ImageHeaderSummary, key: &str) -> Result<CasaValue, TaskFailure> {
+fn header_value(
+    summary: &ImageHeaderSummary,
+    path: &Path,
+    key: &str,
+) -> Result<CasaValue, TaskFailure> {
     let lower = key.to_ascii_lowercase();
     let value = match lower.as_str() {
         "bunit" => CasaValue::string(&summary.units),
@@ -212,6 +223,10 @@ fn header_value(summary: &ImageHeaderSummary, key: &str) -> Result<CasaValue, Ta
                 ("unit", CasaValue::string(&value.unit)),
                 ("value", CasaValue::float(value.value)),
             ])
+        }
+        _ if casa_images::analysis::imhead_is_custom_key(key) => {
+            return casa_images::analysis::imhead_custom_value(path, key)
+                .map_err(|error| image_error("imhead", path, error));
         }
         _ => return axis_header_value(summary, key, &lower),
     };

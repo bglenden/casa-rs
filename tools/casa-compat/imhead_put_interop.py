@@ -43,7 +43,47 @@ def main():
                 assert history[-2].startswith("version: casa-rs "), (case, history[-3:])
                 command = case["history"][2].replace("<IMAGE>", str(path))
                 assert history[-1] == command, (case, history[-3:])
-    print(f"CASA {version_string()} reopened {len(expected['cases'])} native imhead results")
+        added = json.loads((root / "add_del_expected.json").read_text())
+        for index, case in enumerate(added["cases"]):
+            path = Path(directory) / f"add-del-{index}.im"
+            shutil.copytree(root / "base.im", path)
+            imhead(str(path), mode="put", hdkey=case["key"], hdvalue=case["initial"])
+            request = {"surface": "imhead", "values": {
+                "imagename": str(path), "mode": case["mode"],
+                "hdkey": case["key"], "hdvalue": case["value"],
+            }}
+            result = subprocess.run([str(args.binary), "imhead", "--json-run", "-"],
+                                    input=json.dumps(request), text=True, capture_output=True)
+            assert (result.returncode != 0) == ("error" in case), (case, result.stderr)
+            assert imhead(str(path), mode="get", hdkey=case["key"]) == case["readback"], case
+            if "error" not in case:
+                tool = image()
+                tool.open(str(path))
+                history = tool.history(list=False)
+                tool.done()
+                assert history[-3] == case["history"][0], (case, history[-3:])
+                assert history[-1] == case["history"][2].replace("<IMAGE>", str(path)), (case, history[-3:])
+        custom = json.loads((root / "custom_expected.json").read_text())
+        for index, sequence in enumerate(custom["cases"]):
+            path = Path(directory) / f"custom-{index}.im"
+            shutil.copytree(root / "base.im", path)
+            for case in sequence:
+                request = {"surface": "imhead", "values": {
+                    "imagename": str(path), "mode": case["mode"],
+                    "hdkey": case["key"], "hdvalue": case["value"],
+                }}
+                result = subprocess.run([str(args.binary), "imhead", "--json-run", "-"],
+                                        input=json.dumps(request), text=True, capture_output=True)
+                assert (result.returncode != 0) == ("error" in case), (case, result.stderr)
+                if "error" not in case and case["mode"] in ("add", "put"):
+                    assert imhead(str(path), mode="get", hdkey=case["key"]) == case["value"], case
+                if "error" not in case and case["mode"] != "get":
+                    tool = image()
+                    tool.open(str(path))
+                    history = tool.history(list=False)
+                    tool.done()
+                    assert history[-3] == case["history"][0], (case, history[-3:])
+    print(f"CASA {version_string()} reopened {len(expected['cases']) + len(added['cases'])} native imhead results")
 
 
 if __name__ == "__main__":

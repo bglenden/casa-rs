@@ -194,9 +194,20 @@ impl ImageInfo {
             ImageBeamSet::default()
         };
 
+        // ImageInfo::fromRecord uses ImageInfo::imageType, which maps an
+        // unrecognized spelling (including an empty one) to Intensity.
         let image_type = match rec.get("imagetype") {
-            Some(Value::Scalar(ScalarValue::String(s))) => s.parse()?,
-            _ => ImageType::Undefined,
+            Some(Value::Scalar(ScalarValue::String(s))) => s
+                .parse::<ImageType>()
+                .ok()
+                .filter(|kind| kind.to_string().eq_ignore_ascii_case(s))
+                .unwrap_or(ImageType::Intensity),
+            None => ImageType::Intensity,
+            Some(_) => {
+                return Err(ImageError::InvalidMetadata(
+                    "incorrect data type for imageinfo.imagetype".into(),
+                ));
+            }
         };
 
         let object_name = match rec.get("objectname") {
@@ -245,6 +256,13 @@ mod tests {
             ImageType::VelocityDispersion
         );
         assert!("Garbage".parse::<ImageType>().is_err());
+    }
+
+    #[test]
+    fn record_rejects_a_non_string_image_type_as_casacore_does() {
+        let mut record = RecordValue::default();
+        record.upsert("imagetype", Value::Scalar(ScalarValue::Int32(1)));
+        assert!(ImageInfo::from_record(&record).is_err());
     }
 
     #[test]

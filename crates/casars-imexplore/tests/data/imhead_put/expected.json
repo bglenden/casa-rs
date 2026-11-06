@@ -475,5 +475,6 @@
   "missing_imageinfo": {
     "history": "Modified imtype from \"Intensity\" to \"Beam\"",
     "initial_imtype": "Intensity"
-  }
+  },
+  "unusual_imtype": "Intensity"
 }

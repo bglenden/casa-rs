@@ -535,11 +535,13 @@
     },
     {
       "id": "imhead.mode",
-      "semantic_revision": 3,
+      "semantic_revision": 4,
       "casa_name": "mode",
       "value_domain": {
         "kind": "choice",
         "values": [
+          "add",
+          "del",
           "get",
           "history",
           "list",
@@ -555,7 +557,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Header operation mode.",
-        "details": "get supports standard image, coordinate, spectral, beam, date and extrema metadata. put supports string-valued brightness unit, image type, object, observer and telescope. history replays the image log when an INFO log sink is configured; otherwise it is refused. User-defined keys and the remaining modes and values are unimplemented (#977).",
+        "details": "get supports standard image, coordinate, spectral, beam, date and extrema metadata. put supports string-valued brightness unit, image type, object, observer and telescope. add and del support brightness unit, object, observer and telescope. history replays the image log when an INFO log sink is configured; otherwise it is refused. String-valued user-defined keys and scalar integer and floating-point reads are supported; the remaining values and operations are unimplemented (#977).",
         "examples": [
           "summary"
         ]

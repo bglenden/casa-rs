@@ -1167,37 +1167,207 @@ pub fn imhead_put(
     hdkey: &str,
     hdvalue: impl Into<String>,
 ) -> Result<ImageHeaderSummary, ImageError> {
-    let path = path.as_ref();
-    let hdvalue = hdvalue.into();
-    let key = hdkey.to_ascii_lowercase();
-    if !["bunit", "object", "imtype", "observer", "telescope"].contains(&key.as_str()) {
+    imhead_change_string(path, "put", hdkey, &hdvalue.into())
+}
+
+/// Add or remove a supported string-valued CASA image header field.
+pub fn imhead_add_delete(
+    path: impl AsRef<Path>,
+    mode: &str,
+    hdkey: &str,
+    hdvalue: &str,
+) -> Result<ImageHeaderSummary, ImageError> {
+    if !["add", "del"].contains(&mode) {
         return Err(ImageError::InvalidMetadata(format!(
-            "imhead mode='put' does not yet support hdkey={hdkey:?} (#977)"
+            "unknown imhead operation {mode:?}"
         )));
     }
-    let unit = (key == "bunit").then(|| normalize_casa_unit(&hdvalue));
-    if let Some(unit) = &unit {
-        casa_types::quanta::Unit::new(unit)
-            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+    imhead_change_string(path, mode, hdkey, if mode == "del" { "" } else { hdvalue })
+}
+
+/// Whether a name is available for CASA's user-defined metadata fields.
+pub fn imhead_is_custom_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    !["cdelt", "crpix", "crval", "ctype", "cunit"]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+        && ![
+            "bunit",
+            "object",
+            "imtype",
+            "observer",
+            "telescope",
+            "date-obs",
+            "epoch",
+            "equinox",
+            "projection",
+            "reffreqtype",
+            "restfreq",
+            "masks",
+            "shape",
+            "datamin",
+            "datamax",
+            "minpixpos",
+            "maxpixpos",
+            "minpos",
+            "maxpos",
+            "beammajor",
+            "beamminor",
+            "beampa",
+            "bmaj",
+            "bmin",
+            "bpa",
+        ]
+        .contains(&lower.as_str())
+}
+
+/// Read a user-defined scalar field, preserving its stored casacore type.
+pub fn imhead_custom_value(
+    path: impl AsRef<Path>,
+    key: &str,
+) -> Result<casa_provider_contracts::CasaValue, ImageError> {
+    fn get<T: ImagePixel>(
+        image: &PagedImage<T>,
+        key: &str,
+    ) -> Result<casa_provider_contracts::CasaValue, ImageError> {
+        use casa_provider_contracts::CasaValue;
+        let info = image.misc_info();
+        let value = info
+            .get(key)
+            .or_else(|| info.get(&key.to_ascii_lowercase()))
+            .ok_or_else(|| ImageError::InvalidMetadata(format!("Unknown keyword {key}")))?;
+        match value {
+            Value::Scalar(ScalarValue::String(value)) => Ok(CasaValue::string(value)),
+            Value::Scalar(ScalarValue::Int32(value)) => Ok(CasaValue::Int {
+                value: i64::from(*value),
+            }),
+            Value::Scalar(ScalarValue::Float64(value)) => Ok(CasaValue::float(*value)),
+            _ => Err(ImageError::InvalidMetadata(format!(
+                "Reading this user-defined value is not implemented (#977): {key}"
+            ))),
+        }
     }
-    let value = if let Some(unit) = unit {
-        unit
-    } else if key == "imtype" {
-        hdvalue
-            .parse::<ImageType>()
-            .ok()
-            .filter(|kind| kind.to_string().eq_ignore_ascii_case(&hdvalue))
-            .unwrap_or(ImageType::Intensity)
-            .to_string()
-    } else {
-        hdvalue.clone()
+    let image = AnyPagedImage::open(path)?;
+    match &image {
+        AnyPagedImage::Float32(image) => get(image, key),
+        AnyPagedImage::Float64(image) => get(image, key),
+        AnyPagedImage::Complex32(image) => get(image, key),
+        AnyPagedImage::Complex64(image) => get(image, key),
+    }
+}
+
+fn imhead_change_custom_string(
+    path: &Path,
+    mode: &str,
+    key: &str,
+    value: &str,
+) -> Result<ImageHeaderSummary, ImageError> {
+    fn change<T: ImagePixel>(
+        image: &mut PagedImage<T>,
+        mode: &str,
+        key: &str,
+        value: &str,
+    ) -> Result<String, ImageError> {
+        let mut info = image.misc_info();
+        let lower = key.to_ascii_lowercase();
+        let existing = if info.get(key).is_some() {
+            Some(key)
+        } else if info.get(&lower).is_some() {
+            Some(lower.as_str())
+        } else {
+            None
+        };
+        let message = match mode {
+            "add" if existing.is_some() => {
+                return Err(ImageError::InvalidMetadata(format!(
+                    "Keyword {key} already exists so cannot be added."
+                )));
+            }
+            "del" => {
+                let name = existing.ok_or_else(|| {
+                    ImageError::InvalidMetadata(format!("Unknown keyword {lower}"))
+                })?;
+                info.remove(name);
+                format!("Removed user-defined keyword {name}")
+            }
+            _ => {
+                if info
+                    .get(key)
+                    .is_some_and(|value| !matches!(value, Value::Scalar(ScalarValue::String(_))))
+                {
+                    return Err(ImageError::InvalidMetadata(format!(
+                        "Changing the type of a user-defined field is not implemented (#977): {key}"
+                    )));
+                }
+                info.upsert(key, Value::Scalar(ScalarValue::String(value.to_string())));
+                format!("Added {key} = \"{value}\"")
+            }
+        };
+        image.set_misc_info(info)?;
+        Ok(message)
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let message = match &mut image {
+        AnyPagedImage::Float32(image) => change(image, mode, key, value)?,
+        AnyPagedImage::Float64(image) => change(image, mode, key, value)?,
+        AnyPagedImage::Complex32(image) => change(image, mode, key, value)?,
+        AnyPagedImage::Complex64(image) => change(image, mode, key, value)?,
     };
+    image.save()?;
+    drop(image);
+    let origin = if mode == "del" {
+        "ImageMetaDataRW::remove"
+    } else {
+        "ImageMetaDataRW::_setUserDefined"
+    };
+    crate::image::add_image_history(path, origin, &[message])?;
+    imhead(path)
+}
+
+fn imhead_change_string(
+    path: impl AsRef<Path>,
+    mode: &str,
+    hdkey: &str,
+    hdvalue: &str,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    if imhead_is_custom_key(hdkey) {
+        return imhead_change_custom_string(path, mode, hdkey, hdvalue);
+    }
+    let key = hdkey.to_ascii_lowercase();
+    if !["bunit", "object", "observer", "telescope"].contains(&key.as_str())
+        && !(mode == "put" && key == "imtype")
+    {
+        return Err(ImageError::InvalidMetadata(format!(
+            "imhead mode={mode:?} does not yet support hdkey={hdkey:?} (#977)"
+        )));
+    }
     let mut image = AnyPagedImage::open(path)?;
     let old = match &image {
         AnyPagedImage::Float32(image) => header_string(image, &key)?,
         AnyPagedImage::Float64(image) => header_string(image, &key)?,
         AnyPagedImage::Complex32(image) => header_string(image, &key)?,
         AnyPagedImage::Complex64(image) => header_string(image, &key)?,
+    };
+    if mode == "add" && !old.is_empty() {
+        return Err(ImageError::InvalidMetadata(format!(
+            "{hdkey} is already present and has value {old}. It may be modified but not added."
+        )));
+    }
+    let value = if key == "bunit" {
+        let unit = normalize_casa_unit(hdvalue);
+        casa_types::quanta::Unit::new(&unit)
+            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+        unit
+    } else if key == "imtype" {
+        hdvalue
+            .parse::<ImageType>()
+            .ok()
+            .filter(|kind| kind.to_string().eq_ignore_ascii_case(hdvalue))
+            .unwrap_or(ImageType::Intensity)
+            .to_string()
+    } else {
+        hdvalue.to_string()
     };
     match &mut image {
         AnyPagedImage::Float32(image) => put_header_string(image, &key, &value)?,
@@ -1207,10 +1377,18 @@ pub fn imhead_put(
     }
     image.save()?;
     drop(image);
+    let origin = match (mode, key.as_str()) {
+        ("del", _) => "ImageMetaDataRW::remove",
+        ("add", "bunit") => "ImageMetaDataRW::add",
+        _ => "ImageMetaDataRW::set",
+    };
+    let history_key = if mode == "put" { hdkey } else { &key };
     crate::image::add_image_history(
         path,
-        "ImageMetaDataRW::set",
-        &[format!("Modified {hdkey} from \"{old}\" to \"{hdvalue}\"")],
+        origin,
+        &[format!(
+            "Modified {history_key} from \"{old}\" to \"{hdvalue}\""
+        )],
     )?;
     imhead(path)
 }

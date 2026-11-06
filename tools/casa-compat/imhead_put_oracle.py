@@ -50,7 +50,8 @@ def main():
         ("bunit", "   K  "), ("bunit", " "), ("bunit", "Jy/beam "),
         ("object", "x" * 301),
     ]
-    result = {"casa_version": version_string(), "cases": []}
+    result = {"casa_version": version_string(), "cases": [],
+              "unusual_imtype": imhead(str(unusual), mode="get", hdkey="imtype")}
     with tempfile.TemporaryDirectory(prefix="imhead-put-oracle-") as directory:
         path = Path(directory) / "without_imageinfo.im"
         shutil.copytree(absent, path)
@@ -76,6 +77,8 @@ def main():
                 ia.done()
             result["cases"].append(entry)
     (root / "expected.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    for lock in unusual.rglob("table.lock"):
+        lock.unlink()
 
 
 if __name__ == "__main__":

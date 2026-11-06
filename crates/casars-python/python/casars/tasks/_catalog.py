@@ -348,7 +348,7 @@ def simobserve(
 
 def imhead(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
-    mode: Literal['get', 'history', 'list', 'put', 'summary'] = 'summary',
+    mode: Literal['add', 'del', 'get', 'history', 'list', 'put', 'summary'] = 'summary',
     hdkey: str = '',
     hdvalue: str = '',
     verbose: bool = False,

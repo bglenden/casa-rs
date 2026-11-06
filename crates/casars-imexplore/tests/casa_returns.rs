@@ -877,6 +877,136 @@ fn imhead_extrema_match_casa_with_masks_ties_and_complex_pixels() {
 }
 
 #[test]
+fn imhead_custom_string_keys_follow_casa_casing_and_history() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_put");
+    let expected: Value =
+        serde_json::from_slice(&std::fs::read(fixture.join("custom_expected.json")).unwrap())
+            .unwrap();
+    assert_eq!(expected["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for (index, sequence) in expected["cases"].as_array().unwrap().iter().enumerate() {
+        let path = workspace.path().join(format!("custom-{index}.im"));
+        copy_tree(&fixture.join("base.im"), &path);
+        for case in sequence.as_array().unwrap() {
+            let mode = case["mode"].as_str().unwrap();
+            let (_, reply) = json_run(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": mode, "hdkey": case["key"], "hdvalue": case["value"]}),
+            );
+            if case.get("error").is_some() {
+                assert!(
+                    matches!(
+                        reply,
+                        Some(TaskReply::Failed {
+                            kind: casa_provider_contracts::TaskFailureKind::Execution,
+                            ..
+                        })
+                    ),
+                    "{case}: {reply:?}"
+                );
+            } else {
+                let Some(TaskReply::Succeeded { value, .. }) = reply else {
+                    panic!("{case}: {reply:?}");
+                };
+                assert_eq!(value.to_plain_json(), case["return"], "{case}");
+                if mode != "get" {
+                    let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+                    let history = image.history().unwrap();
+                    let tail = &history[history.len() - 3..];
+                    assert_eq!(tail[0], case["history"][0], "{case}");
+                    assert_eq!(
+                        tail[2],
+                        case["history"][2]
+                            .as_str()
+                            .unwrap()
+                            .replace("<IMAGE>", &path.display().to_string()),
+                        "{case}"
+                    );
+                }
+            }
+        }
+    }
+    let numeric = workspace.path().join("numeric.im");
+    copy_tree(&fixture.join("numeric_custom.im"), &numeric);
+    for key in ["integer", "real"] {
+        assert_eq!(
+            returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": numeric, "mode": "get", "hdkey": key})
+            )
+            .to_plain_json(),
+            expected["numeric"][key]
+        );
+    }
+}
+
+#[test]
+fn imhead_add_and_delete_string_fields_follow_casa() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_put");
+    let expected: Value =
+        serde_json::from_slice(&std::fs::read(fixture.join("add_del_expected.json")).unwrap())
+            .unwrap();
+    assert_eq!(expected["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for (index, case) in expected["cases"].as_array().unwrap().iter().enumerate() {
+        let path = workspace.path().join(format!("{index}.im"));
+        copy_tree(&fixture.join("base.im"), &path);
+        let key = case["key"].as_str().unwrap();
+        returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "put", "hdkey": key, "hdvalue": case["initial"]}),
+        );
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": case["mode"], "hdkey": key, "hdvalue": case["value"]}),
+        );
+        if case.get("error").is_some() {
+            assert!(
+                matches!(reply, Some(TaskReply::Failed { .. })),
+                "{index}: {reply:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    reply,
+                    Some(TaskReply::Succeeded {
+                        value: CasaValue::None,
+                        ..
+                    })
+                ),
+                "{index}: {reply:?}"
+            );
+            let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+            let history = image.history().unwrap();
+            let tail = &history[history.len() - 3..];
+            assert_eq!(tail[0], case["history"][0], "{index}");
+            assert_eq!(
+                tail[2],
+                case["history"][2]
+                    .as_str()
+                    .unwrap()
+                    .replace("<IMAGE>", &path.display().to_string()),
+                "{index}"
+            );
+        }
+        assert_eq!(
+            returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "get", "hdkey": key})
+            )
+            .to_plain_json(),
+            case["readback"],
+            "{index}"
+        );
+    }
+}
+
+#[test]
 fn imhead_put_history_keeps_the_given_relative_image_path() {
     let workspace = tempfile::tempdir().unwrap();
     let path = workspace.path().join("relative.im");
@@ -921,6 +1051,17 @@ fn imhead_uses_casas_default_type_when_imageinfo_is_missing() {
     assert_eq!(
         history[history.len() - 3],
         expected["missing_imageinfo"]["history"]
+    );
+    let unusual = workspace.path().join("unusual.im");
+    copy_tree(&fixture.join("unusual_imtype.im"), &unusual);
+    assert_eq!(
+        returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": unusual, "mode": "get", "hdkey": "imtype"})
+        )
+        .to_plain_json(),
+        expected["unusual_imtype"]
     );
 }
 
