@@ -65,7 +65,7 @@ const METHODS: &[Method] = &[
         "addxvalue",
         &[param("a", K::Record, Required)],
         R::Record,
-        No,
+        Yes,
     ),
     method(
         "asbaseline",
