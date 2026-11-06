@@ -673,7 +673,10 @@ pub(super) fn setups_bytes(ms: &MeasurementSet) -> Result<usize, ObservationErro
 }
 
 /// Every `DATA_DESCRIPTION` row's spectral setup.
-pub(super) fn spectral_setups(ms: &MeasurementSet) -> Result<Vec<SpectralSetup>, ObservationError> {
+pub(super) fn spectral_setups(
+    ms: &MeasurementSet,
+    visibility_frequency_frame: bool,
+) -> Result<Vec<SpectralSetup>, ObservationError> {
     let descriptions = ms.data_description().map_err(storage)?;
     let windows = ms.spectral_window().map_err(storage)?;
     let frequency_refs = crate::columns::frequency_columns::ChanFreqColumn::new(windows.table());
@@ -688,9 +691,12 @@ pub(super) fn spectral_setups(ms: &MeasurementSet) -> Result<Vec<SpectralSetup>,
                 .map_err(|_| invalid("negative SPECTRAL_WINDOW_ID"))?;
             let polarization = usize::try_from(descriptions.polarization_id(row).map_err(storage)?)
                 .map_err(|_| invalid("negative POLARIZATION_ID"))?;
-            let frequency_frame = frequency_refs
-                .visibility_frequency_reference(window)
-                .map_err(storage)?;
+            let frequency_frame = if visibility_frequency_frame {
+                frequency_refs.visibility_frequency_reference(window)
+            } else {
+                frequency_refs.frequency_reference(window)
+            }
+            .map_err(storage)?;
             let correlations = polarizations
                 .corr_type(polarization)
                 .map_err(storage)?

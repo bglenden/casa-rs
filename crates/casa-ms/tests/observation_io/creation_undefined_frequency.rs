@@ -187,11 +187,41 @@ fn an_incomplete_frequency_descriptor_keeps_the_visibility_measurement_frame() {
         FrequencyRef::REST
     );
     drop(ms);
-    let observation = Msv2Observation::open(&input).unwrap();
+    let ordinary = Msv2Observation::open(&input).unwrap();
     assert_eq!(
-        observation.catalogue().partitions[0].frequency_frame,
+        ordinary.catalogue().partitions[0].frequency_frame,
+        FrequencyRef::REST
+    );
+    drop(ordinary);
+    let visibility = Msv2Observation::open_with(
+        &input,
+        &OpenOptions {
+            visibility_frequency_frame: true,
+            ..OpenOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        visibility.catalogue().partitions[0].frequency_frame,
         FrequencyRef::TOPO
     );
+    drop(visibility);
     let namespace = casa_ms::observation_io::NamespaceRows::read(&input).unwrap();
-    assert_eq!(namespace.spectral_windows[0].frame, FrequencyRef::TOPO);
+    assert_eq!(namespace.spectral_windows[0].frame, FrequencyRef::REST);
+    let output = root.path().join("copy.ms");
+    CreationPlan::new(
+        &[CreationInput::new(&input)],
+        &options(),
+        Destination::New(output.clone()),
+    )
+    .and_then(CreationPlan::write)
+    .unwrap();
+    assert_eq!(
+        Msv2Observation::open(output)
+            .unwrap()
+            .catalogue()
+            .partitions[0]
+            .frequency_frame,
+        FrequencyRef::REST
+    );
 }
