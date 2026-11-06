@@ -28,9 +28,9 @@ use casa_components::{
     SpectralIndex, SpectralKind, SpectralModel, TabularSpectrum,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::MeasuresProvider;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+use casa_types::measures::{MeasFrame, MeasureError, MeasuresProvider};
 use casa_types::quanta::{Dimension, Unit, UnitDim};
 use casa_types::{RecordValue, Value};
 
@@ -62,6 +62,32 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// Convert one component's reference direction, preserving its errors.
+    pub(crate) fn convertrefdir(&mut self, which: i64, frame: DirectionRef) -> ConvertResult<bool> {
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        let shape = component.shape_mut();
+        let converted = shape
+            .reference_direction()
+            .convert_to(frame, &MeasFrame::new())
+            .map_err(|error| match error {
+                MeasureError::MissingFrameData { .. } => {
+                    ConvertError::runtime("Missing information in Frame specified for conversion")
+                }
+                MeasureError::NotYetImplemented { route } => ConvertError::runtime(format!(
+                    "direction conversion {route} is not implemented (#1053)"
+                )),
+                other => ConvertError::runtime(other.to_string()),
+            })?;
+        shape.set_reference_direction(converted);
+        Ok(true)
+    }
+
     /// Append CASA's default point components, retaining existing selection.
     pub(crate) fn simulate(&mut self, howmany: i64) -> ConvertResult<bool> {
         if howmany > i64::from(i32::MAX) {
