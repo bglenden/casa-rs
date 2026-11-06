@@ -361,7 +361,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `antennalist` | `''` | `''`; `antennalist` → `antennalist` | Implemented | An interferometer configuration file or an ALMA resolution string. [antennas](#simobserve-behavior-antennas)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 | `sdantlist` | `'aca.tp.cfg'` | `'aca.tp.cfg'`; `sdantlist` → `sdantlist` | Implemented | The total-power configuration. [antennas](#simobserve-behavior-antennas)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
 | `sdant` | `0` | `0`; `sdant` → `sdant` | Implemented | The total-power antenna's index. [antennas](#simobserve-behavior-antennas)<br>Catalog domain: `integer` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [casa-suite-20261103](#simobserve-evidence-casa-suite-20261103), [refusals-1099-20261104](#simobserve-evidence-refusals-1099-20261104) |
-| `outframe` | `'LSRK'` | `'LSRK'`; `outframe` → `outframe` | Implemented | The spectral frame written. [observation](#simobserve-behavior-observation)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
+| `outframe` | `'LSRK'` | `'LSRK'`; `outframe` → `outframe` | Implemented | The spectral frame written. LSRK, TOPO and BARY are compared with CASA; other frames remain untested against the task. [observation](#simobserve-behavior-observation)<br>Catalog domain: `string` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [frequency-frames-20261106](#simobserve-evidence-frequency-frames-20261106) |
 | `thermalnoise` | `'tsys-atm'` | `'tsys-atm'`; `thermalnoise` → `thermalnoise` | Implemented | 'tsys-atm', 'tsys-manual' or '' noise through the simulator's setnoise. [noise](#simobserve-behavior-noise)<br>Catalog domain: ``, `tsys-atm`, `tsys-manual` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [casa-suite-20261103](#simobserve-evidence-casa-suite-20261103), [noise-seeds-20261103](#simobserve-evidence-noise-seeds-20261103) |
 | `user_pwv` | `0.5` | `0.5`; `user_pwv` → `user_pwv` | Implemented | Precipitable water vapour for tsys-atm. [noise](#simobserve-behavior-noise)<br>Catalog domain: `float`; Constraints: `[{"kind": "number_range", "min": 0.0}]` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [casa-suite-20261103](#simobserve-evidence-casa-suite-20261103), [noise-seeds-20261103](#simobserve-evidence-noise-seeds-20261103) |
 | `t_ground` | `270.0` | `270.0`; `t_ground` → `t_ground` | Implemented | Ground temperature. [noise](#simobserve-behavior-noise)<br>Catalog domain: `float`; Constraints: `[{"kind": "number_range", "min": 0.0}]` | [signature](#simobserve-evidence-signature), [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103) |
@@ -417,9 +417,9 @@ Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simo
 
 **Partial** — obsmode 'int', 'sd' and '' (corrupting an existing MeasurementSet), outframe, and the prediction of the model and calibrator.
 
-outframe other than LSRK is not compared.
+outframe LSRK, TOPO and BARY are compared; other frames are not yet compared against CASA.
 
-Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103).
+Evidence: [task-tests](#simobserve-evidence-task-tests), [parity-20261103](#simobserve-evidence-parity-20261103), [frequency-frames-20261106](#simobserve-evidence-frequency-frames-20261106).
 
 <a id="simobserve-behavior-noise"></a>
 ##### Thermal noise and leakage
@@ -620,6 +620,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `17c8206388b05beaf30c3c4ffadb4aedfa2c4e97`; CASA: `casatasks 6.7.6.14, casatools 6.7.6-14`.
 - Command: `CASAPY tools/simulation/simobserve_casa_suite.py --test-file CASA6/casatasks/tests/tasks/test_task_simobserve.py --casatestdata LOCAL_COPY --casars-bin TARGET/release/simobserve --out OUT --only testBad_comp_nchan testBad_sdant test_noProject (bg-mac-mini)`.
 - Receipt: `resources/casa-compat/evidence/simobserve-refusals-1099-20261104.json`.
+
+<a id="simobserve-evidence-frequency-frames-20261106"></a>
+##### frequency-frames-20261106
+
+**CASA-paired task runs — passed.** TOPO and BARY each agree with CASA on frequency-reference codes and channel frequencies; DATA NRMS is 1.04e-6 over 73,500 samples in each case (limit 1e-3). A separate existing LSRK pointing-file case also passed with the extended comparator. simobserve interferometric image-model predictions with TOPO and BARY output frequency frames, including MeasurementSet metadata.
+
+- [tools/simulation/simobserve_parity.py](https://github.com/bglenden/casa-rs/blob/49e280a16f1072ef67ed7995a21c1a951effa144/tools/simulation/simobserve_parity.py)
+- [tools/simulation/test_simobserve_parity.py](https://github.com/bglenden/casa-rs/blob/49e280a16f1072ef67ed7995a21c1a951effa144/tools/simulation/test_simobserve_parity.py)
+- Revision: `54a3ef4961ace31269764c9f4f0818c028bbdd0c`; CASA: `casatasks 6.7.6.14, casatools 6.7.6-14`.
+- Command: `CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata LOCAL_COPY --only frame_topo frame_bary (bg-mac-mini, CPU)`.
+- Receipt: `resources/casa-compat/evidence/simobserve-frequency-frames-20261106.json`.
 
 ### split
 
