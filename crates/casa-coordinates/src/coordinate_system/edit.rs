@@ -85,6 +85,88 @@ fn scale_axis_field(
 }
 
 impl CoordinateSystem {
+    /// Set the first direction coordinate's native reference frame while
+    /// retaining its reference-conversion frame and stored axis maps.
+    ///
+    /// Returns the previous frame, or `None` for a no-op. Frames whose
+    /// conversion requires unavailable context are rejected (#977).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown or unsupported frame or coordinate.
+    pub fn set_direction_reference_in_record(
+        record: &mut RecordValue,
+        reference: &str,
+    ) -> Result<(Self, Option<String>), CoordinateError> {
+        use casa_types::measures::MeasFrame;
+        use casa_types::measures::direction::{
+            DirectionRef, MDirection, casa_direction_frame_name,
+        };
+        use std::str::FromStr;
+        let system = Self::from_record(record)?;
+        if Self::record_coordinates(record)?
+            .iter()
+            .filter(|coordinate| coordinate.field.starts_with("direction"))
+            .count()
+            > 1
+        {
+            return Err(CoordinateError::InvalidRecord(
+                "multiple direction coordinates are unsupported (#977)".into(),
+            ));
+        }
+        let (field, direction) = Self::first_direction_in_record(record)?
+            .ok_or_else(|| CoordinateError::InvalidRecord("no direction coordinate".into()))?;
+        let canonical = casa_direction_frame_name(reference).ok_or_else(|| {
+            CoordinateError::InvalidRecord(format!(
+                "unknown direction reference frame {reference:?}"
+            ))
+        })?;
+        let target = DirectionRef::from_str(canonical).map_err(|_| {
+            CoordinateError::InvalidRecord(format!(
+                "direction frame {canonical} is unsupported (#977)"
+            ))
+        })?;
+        let old = direction.direction_ref();
+        if target == old {
+            return Ok((system, None));
+        }
+        let conversion = direction.conversion_direction_ref();
+        let frame = MeasFrame::new();
+        let direction_value = direction.reference_value();
+        for (from, to) in [(target, conversion), (conversion, target)] {
+            MDirection::from_angles(direction_value[0], direction_value[1], from)
+                .convert_to(to, &frame)
+                .map_err(|error| {
+                    CoordinateError::InvalidRecord(format!(
+                        "direction conversion is unsupported: {error} (#977)"
+                    ))
+                })?;
+        }
+        let mut updated = record.clone();
+        let Some(Value::Record(direction)) = updated.get_mut(&field) else {
+            unreachable!()
+        };
+        if direction.get("direction_ref").is_some() {
+            direction.upsert(
+                "direction_ref",
+                Value::Scalar(ScalarValue::String(canonical.into())),
+            );
+        }
+        direction.upsert(
+            "system",
+            Value::Scalar(ScalarValue::String(canonical.into())),
+        );
+        if direction.get("conversionSystem").is_none() {
+            direction.upsert(
+                "conversionSystem",
+                Value::Scalar(ScalarValue::String(conversion.as_str().into())),
+            );
+        }
+        let system = Self::from_record(&updated)?;
+        *record = updated;
+        Ok((system, Some(old.as_str().to_string())))
+    }
+
     /// Replace the Stokes coordinate on a pixel axis, preserving axis maps.
     ///
     /// Returns the previous Stokes names. Unsupported names and multiple
@@ -770,6 +852,46 @@ mod tests {
     use crate::{
         LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType, TabularCoordinate,
     };
+
+    #[test]
+    fn direction_frame_edit_preserves_an_implicit_conversion_frame() {
+        use crate::{DirectionCoordinate, Projection, ProjectionType};
+        use casa_types::measures::direction::DirectionRef;
+        let mut original = CoordinateSystem::new();
+        original.add_coordinate(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.0, 0.0],
+            [-1e-4, 1e-4],
+            [2.0, 2.0],
+        ));
+        let mut record = original.to_record();
+        let Some(Value::Record(direction)) = record.get_mut("direction0") else {
+            panic!("direction")
+        };
+        direction.remove("conversionSystem");
+        let (updated, old) =
+            CoordinateSystem::set_direction_reference_in_record(&mut record, "GAL").unwrap();
+        assert_eq!(old.as_deref(), Some("J2000"));
+        let crate::CoordinateModel::Direction(direction) = updated.coordinate(0) else {
+            panic!("direction")
+        };
+        assert_eq!(direction.direction_ref(), DirectionRef::GALACTIC);
+        assert_eq!(direction.conversion_direction_ref(), DirectionRef::J2000);
+        let restored = CoordinateSystem::from_record(&record).unwrap();
+        let crate::CoordinateModel::Direction(direction) = restored.coordinate(0) else {
+            panic!("direction")
+        };
+        assert_eq!(direction.conversion_direction_ref(), DirectionRef::J2000);
+        let before = record.clone();
+        assert!(
+            CoordinateSystem::set_direction_reference_in_record(&mut record, "JMEAN")
+                .unwrap_err()
+                .to_string()
+                .contains("#977")
+        );
+        assert_eq!(record, before);
+    }
 
     #[test]
     fn projection_edit_refuses_multiple_direction_coordinates_without_mutation() {

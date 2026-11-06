@@ -1674,6 +1674,21 @@ impl<T: ImagePixel> PagedImage<T> {
         })
     }
 
+    /// Set the native direction frame, preserving its conversion frame and maps.
+    /// Call [`Self::save`] to persist a change.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown or unsupported frame or coordinate.
+    pub fn set_direction_reference(
+        &mut self,
+        reference: &str,
+    ) -> Result<Option<String>, ImageError> {
+        self.edit_coordinates(|record| {
+            CoordinateSystem::set_direction_reference_in_record(record, reference)
+        })
+    }
+
     /// Set an axis name, preserving the stored coordinate mappings.
     ///
     /// The change is persisted when [`Self::save`] is called.

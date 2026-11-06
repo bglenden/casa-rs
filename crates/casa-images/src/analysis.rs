@@ -1546,6 +1546,52 @@ pub fn imhead_put_observation_date(
     imhead(path)
 }
 
+/// Set CASA's native direction reference while retaining its conversion frame.
+///
+/// # Errors
+///
+/// Returns an error for an invalid or unsupported frame or image I/O.
+/// History I/O may fail after the metadata is saved.
+pub fn imhead_put_direction_reference(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let ParameterValue::String(reference) = hdvalue else {
+        return Err(ImageError::InvalidMetadata(
+            "equinox value must be a string".into(),
+        ));
+    };
+    if reference.contains('\0') {
+        return Err(ImageError::InvalidMetadata(
+            "direction frames containing NUL are unsupported (#977)".into(),
+        ));
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_direction_reference(reference)?,
+        AnyPagedImage::Float64(image) => image.set_direction_reference(reference)?,
+        AnyPagedImage::Complex32(image) => image.set_direction_reference(reference)?,
+        AnyPagedImage::Complex64(image) => image.set_direction_reference(reference)?,
+    };
+    if old.is_some() {
+        image.save()?;
+    }
+    drop(image);
+    if let Some(old) = old {
+        crate::image::add_image_history(
+            path,
+            "ImageMetaDataRW::set",
+            &[format!(
+                "Modified {hdkey} from \"{old}\" to \"{reference}\""
+            )],
+        )?;
+    }
+    imhead(path)
+}
+
 /// Set CASA's direction projection where its coordinate model is supported.
 ///
 /// # Errors

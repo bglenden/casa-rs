@@ -19,7 +19,8 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::str::FromStr;
 
-use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::MeasFrame;
+use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{Array2, IxDyn, ShapeBuilder};
@@ -49,6 +50,8 @@ pub struct DirectionCoordinate {
     projection: Projection,
     /// The celestial reference frame (J2000, GALACTIC, etc.).
     direction_ref: DirectionRef,
+    /// The reference frame used by pixel/world conversion.
+    conversion_ref: DirectionRef,
     /// Reference celestial position [longitude, latitude] in radians (alpha_0, delta_0).
     crval: [f64; 2],
     /// Axis increments [dlon, dlat] in radians per pixel.
@@ -194,6 +197,7 @@ impl DirectionCoordinate {
         Self {
             projection,
             direction_ref,
+            conversion_ref: direction_ref,
             crval,
             cdelt,
             crpix,
@@ -301,6 +305,21 @@ impl DirectionCoordinate {
         self.direction_ref
     }
 
+    /// Reference frame presented by pixel/world conversion.
+    pub fn conversion_direction_ref(&self) -> DirectionRef {
+        self.conversion_ref
+    }
+
+    /// Set the reference frame used by pixel/world conversion.
+    ///
+    /// Conversions that need unavailable frame context return an error when
+    /// they are evaluated. Stored reference values remain in the native frame.
+    #[must_use]
+    pub fn with_conversion_direction_ref(mut self, reference: DirectionRef) -> Self {
+        self.conversion_ref = reference;
+        self
+    }
+
     /// Returns the native longitude of the celestial pole (phi_p) in radians.
     pub fn longpole(&self) -> f64 {
         self.longpole
@@ -395,6 +414,20 @@ impl DirectionCoordinate {
             cdelt,
             [crpix[0], crpix[1]],
         );
+        if rec.get("conversionSystem").is_some()
+            && get_optional_string(rec, "conversionSystem").is_none()
+        {
+            return Err(CoordinateError::InvalidRecord(
+                "invalid direction conversion frame".into(),
+            ));
+        }
+        if let Some(name) = get_optional_string(rec, "conversionSystem") {
+            coord.conversion_ref = DirectionRef::from_str(&name).map_err(|_| {
+                CoordinateError::InvalidRecord(format!(
+                    "unsupported direction conversion frame {name:?} (#977)"
+                ))
+            })?;
+        }
         coord.world_units = [axis_units[0].clone(), axis_units[1].clone()];
         if let Some(names) = get_optional_vec_string(rec, "axes") {
             if names.len() != 2 {
@@ -449,12 +482,17 @@ impl DirectionCoordinate {
     /// # Errors
     ///
     /// A pixel the projection has no sky position for (beyond a SIN
-    /// image's horizon, for instance).
+    /// image's horizon, for instance), or a frame conversion requiring
+    /// context that is not yet available (#977).
     pub fn pixel_to_world(&self, pixel: [f64; 2]) -> Result<[f64; 2], CoordinateError> {
         let (x, y) = self.pixel_to_intermediate(&pixel);
         let (phi, theta) = self.projection.deproject(x, y)?;
         let (longitude, latitude) = self.native_to_celestial(phi, theta);
-        Ok([longitude, latitude])
+        self.convert_frame(
+            [longitude, latitude],
+            self.direction_ref,
+            self.conversion_ref,
+        )
     }
 
     /// The pixel of `world`, `[longitude, latitude]` in radians in this
@@ -464,12 +502,36 @@ impl DirectionCoordinate {
     /// # Errors
     ///
     /// A direction the projection cannot place (behind a TAN image's
-    /// tangent plane, for instance), or a singular PC matrix.
+    /// tangent plane, for instance), a singular PC matrix, or a frame
+    /// conversion requiring context that is not yet available (#977).
     pub fn world_to_pixel(&self, world: [f64; 2]) -> Result<[f64; 2], CoordinateError> {
+        let world = self.convert_frame(world, self.conversion_ref, self.direction_ref)?;
         let (phi, theta) = self.celestial_to_native(world[0], world[1]);
         let (x, y) = self.projection.project(phi, theta)?;
         let (px, py) = self.intermediate_to_pixel(x, y)?;
         Ok([px, py])
+    }
+
+    fn convert_frame(
+        &self,
+        world: [f64; 2],
+        from: DirectionRef,
+        to: DirectionRef,
+    ) -> Result<[f64; 2], CoordinateError> {
+        if from == to {
+            return Ok(world);
+        }
+        let converted = MDirection::from_angles(world[0], world[1], from)
+            .convert_to(to, &MeasFrame::new())
+            .map_err(|error| CoordinateError::ConversionFailed(format!("{error} (#977)")))?;
+        let (longitude, latitude) = converted.as_angles();
+        // MVDirection::get uses atan2's signed longitude.
+        let longitude = if longitude > PI {
+            longitude - 2.0 * PI
+        } else {
+            longitude
+        };
+        Ok([longitude, latitude])
     }
 
     /// Pixel to intermediate world coordinates.
@@ -840,7 +902,7 @@ impl DirectionCoordinate {
         );
         rec.upsert(
             "conversionSystem",
-            Value::Scalar(ScalarValue::String(format!("{:?}", self.direction_ref))),
+            Value::Scalar(ScalarValue::String(format!("{:?}", self.conversion_ref))),
         );
         rec.upsert(
             "longpole",

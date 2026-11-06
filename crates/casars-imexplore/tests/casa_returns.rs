@@ -976,6 +976,9 @@ mod imhead_stokes_edits;
 #[path = "casa_returns/imhead_custom_mixed.rs"]
 mod imhead_custom_mixed;
 
+#[path = "casa_returns/imhead_direction_edits.rs"]
+mod imhead_direction_edits;
+
 #[path = "casa_returns/imhead_mutations.rs"]
 mod imhead_mutations;
 
@@ -1059,7 +1062,7 @@ fn imhead_put_of_an_empty_bunit_clears_it() {
     let (output, reply) = json_run(
         workspace.path(),
         "imhead",
-        json!({"imagename": image, "mode": "put", "hdkey": "equinox", "hdvalue": "M31"}),
+        json!({"imagename": image, "mode": "put", "hdkey": "shape", "hdvalue": "M31"}),
     );
     assert_eq!(output.status.code(), Some(2));
     let Some(TaskReply::Failed {

@@ -311,6 +311,16 @@ def test_imhead_edits_stokes_reference_values(tmp_path: Path) -> None:
     np.testing.assert_array_equal(tasks.imhead(str(image), mode="get", hdkey="crval3"), ["V", "U", "Q", "I"])
 
 
+def test_imhead_edits_direction_reference(tmp_path: Path) -> None:
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "direction.im"
+    shutil.copytree(fixture, image)
+    assert tasks.imhead(str(image), mode="put", hdkey="equinox", hdvalue="GAL") is None
+    assert tasks.imhead(str(image), mode="get", hdkey="equinox") == "GALACTIC"
+    assert tasks.imhead(str(image), mode="get", hdkey="minpos") == "266.457200 -28.925079 I 1.415e+09Hz"
+
+
 def test_msconvert_converts_both_ways_and_reports_its_losses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
