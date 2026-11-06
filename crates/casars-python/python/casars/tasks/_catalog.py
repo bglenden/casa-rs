@@ -356,8 +356,6 @@ def imhead(
     """Inspect or update CASA image header metadata.
 
     CASA's ``imhead``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``verbose``.
     """
     return _call_casa(imhead, locals())
 

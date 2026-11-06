@@ -985,34 +985,52 @@ mod imhead_custom_cubes;
 #[path = "casa_returns/imhead_mutations.rs"]
 mod imhead_mutations;
 
-/// CASA reads imhead's `verbose` only in summary mode, as its task XML
-/// shows it: list mode takes any value, and summary refuses all but the
-/// default, naming #977.
+#[path = "casa_returns/imhead_list_log.rs"]
+mod imhead_list_log;
+
+/// Verbose changes the human-readable beam listing, not the returned record.
 #[test]
-fn imhead_verbose_is_read_only_in_summary_mode() {
+fn imhead_verbose_summary_returns_casas_record() {
     let workspace = tempfile::tempdir().unwrap();
-    let image = workspace.path().join("fromshape.im");
-    write_fromshape(&image, "Jy/beam", false);
-    let list = returned(
-        workspace.path(),
-        "imhead",
-        json!({"imagename": image, "mode": "list", "verbose": true}),
-    );
-    assert!(matches!(list, CasaValue::Dict { .. }), "{list:?}");
-    let (output, reply) = json_run(
-        workspace.path(),
-        "imhead",
-        json!({"imagename": image, "verbose": true}),
-    );
-    assert_eq!(output.status.code(), Some(2));
-    let Some(TaskReply::Failed {
-        message, parameter, ..
-    }) = reply
-    else {
-        panic!("{reply:?}");
-    };
-    assert_eq!(parameter.as_deref(), Some("verbose"));
-    assert!(message.contains("#977"), "{message}");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let image = workspace.path().join("verbose_beams.im");
+    copy_tree(&fixture.join("verbose_beams.im"), &image);
+    let oracle: Value =
+        serde_json::from_slice(&std::fs::read(fixture.join("verbose_expected.json")).unwrap())
+            .unwrap();
+    let table = std::fs::read(image.join("table.dat")).unwrap();
+    let mut returns = Vec::new();
+    for verbose in [false, true] {
+        let (output, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": image, "mode": "summary", "verbose": verbose}),
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let Some(TaskReply::Succeeded { value, .. }) = reply else {
+            panic!("{reply:?}")
+        };
+        assert_eq!(
+            value.to_plain_json(),
+            oracle["summary"][verbose.to_string()],
+            "verbose={verbose}"
+        );
+        let text = String::from_utf8_lossy(&output.stderr);
+        assert!(text.contains("Restoring beams: 4 channels, 4 polarizations"));
+        assert_eq!(
+            text.lines()
+                .filter(|line| line.contains("channel ") && line.contains("polarization "))
+                .count(),
+            if verbose { 16 } else { 12 }
+        );
+        returns.push(value);
+    }
+    assert_eq!(returns[0], returns[1]);
+    assert_eq!(std::fs::read(image.join("table.dat")).unwrap(), table);
 }
 
 /// CASA's `imhead(image, mode='put', hdkey='bunit', hdvalue='')` clears the

@@ -10,8 +10,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use casa_images::{
-    ImageStatisticsSummary, image_task_front_end, imhead, imhead_add_delete, imhead_extrema,
-    imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_record,
+    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_add_delete,
+    imhead_extrema, imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_record,
 };
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
@@ -235,7 +235,40 @@ fn run_imhead(
         _ => CasaValue::None,
     };
     let text = summary.format_text();
-    Ok(TaskSuccess::new(value, &summary)?.with_text(text))
+    let result = TaskSuccess::new(value, &summary)?.with_text(text);
+    emit_header_log(result, task, &path, &mode, &summary, default_logging)
+}
+
+fn emit_header_log(
+    mut result: TaskSuccess,
+    task: &TaskInvocation<'_>,
+    path: &Path,
+    mode: &str,
+    summary: &ImageHeaderSummary,
+    default_logging: bool,
+) -> Result<TaskSuccess, TaskFailure> {
+    if mode == "list" || mode == "summary" {
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+        let mjd_seconds = seconds + 40_587.0 * 86_400.0;
+        let (location, messages) = if mode == "list" {
+            (
+                "ImageMetaDataBase::_toLog",
+                casa_images::analysis::imhead_list_log(summary),
+            )
+        } else {
+            (
+                "ImageMetaData::summary",
+                casa_images::analysis::imhead_summary_log(path, summary, task.flag("verbose")?)
+                    .map_err(|error| image_error("imhead", path, error))?,
+            )
+        };
+        for message in messages {
+            result = result.with_replayed_info(mjd_seconds, location, &message, default_logging);
+        }
+    }
+    Ok(result)
 }
 
 fn history_string(value: &str) -> String {

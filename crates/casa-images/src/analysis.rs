@@ -30,16 +30,20 @@ use serde::{Deserialize, Serialize};
 mod axes;
 mod custom_values;
 mod extrema;
+mod list_log;
 mod planes;
 mod projection_header;
 mod quantity_input;
+mod summary_log;
 mod world_header;
 
 use self::axes::{
     direction_plane_axes, legacy_subimage_coordinates, other_axes, subimage_coordinates,
 };
 pub use self::extrema::{ImageExtrema, imhead_extrema};
+pub use self::list_log::imhead_list_log;
 use self::planes::{PlaneAt, pv_samples, unravel_index};
+pub use self::summary_log::imhead_summary_log;
 use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
 use crate::regrid::{RegridMethod, RegridTemplate, Regridded, regrid};
 use crate::{

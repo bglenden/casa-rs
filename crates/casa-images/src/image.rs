@@ -1351,6 +1351,26 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(CoordinateSystem::first_spectral_in_record(record)?.map(|(_, coordinate)| coordinate))
     }
 
+    /// Pixel axis of the first spectral coordinate in stored creation order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the coordinate metadata is malformed.
+    pub fn first_spectral_pixel_axis(&self) -> Result<Option<usize>, ImageError> {
+        let Some(Value::Record(record)) = self.table.keywords().get("coords") else {
+            return Err(ImageError::InvalidMetadata(
+                "image has no coordinate record".into(),
+            ));
+        };
+        let Some((field, _)) = CoordinateSystem::first_spectral_in_record(record)? else {
+            return Ok(None);
+        };
+        Ok(CoordinateSystem::record_coordinates(record)?
+            .into_iter()
+            .find(|coordinate| coordinate.field == field)
+            .and_then(|coordinate| coordinate.pixel_axes.into_iter().next().flatten()))
+    }
+
     /// Replaces the coordinate system and updates the table keyword.
     pub fn set_coordinates(&mut self, coords: CoordinateSystem) -> Result<(), ImageError> {
         self.table

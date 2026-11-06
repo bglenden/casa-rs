@@ -309,6 +309,25 @@ def test_imhead_edits_and_removes_a_restoring_beam(tmp_path: Path) -> None:
     assert "restoringbeam" not in tasks.imhead(str(image), mode="summary")
 
 
+def test_imhead_verbose_preserves_summary_record(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/verbose_beams.im"
+    image = tmp_path / "verbose.im"
+    shutil.copytree(fixture, image)
+    normal = tasks.imhead(str(image), mode="summary", verbose=False)
+    verbose = tasks.imhead(str(image), mode="summary", verbose=True)
+    np.testing.assert_equal(verbose, normal)
+    oracle = json.loads((fixture.parent / "verbose_expected.json").read_text())
+    np.testing.assert_equal(verbose, oracle["summary"]["true"])
+    assert verbose["shape"].dtype == normal["shape"].dtype == np.dtype("int64")
+    assert verbose["refval"].dtype == normal["refval"].dtype == np.dtype("float64")
+    assert verbose["perplanebeams"]["nChannels"] == 4
+    assert verbose["perplanebeams"]["nStokes"] == 4
+
+
 def test_imhead_edits_stokes_reference_values(tmp_path: Path) -> None:
     import numpy as np
 

@@ -222,8 +222,11 @@ fn extrema<T: ImagePixel + StatsElement>(
             maximum.expect("a non-NaN first pixel"),
         )
     };
-    let min_world = super::world_header::format_position(image.coordinates(), &min.position)?;
-    let max_world = super::world_header::format_position(image.coordinates(), &max.position)?;
+    let spectral_axis = image.first_spectral_pixel_axis()?;
+    let min_world =
+        super::world_header::format_position(image.coordinates(), &min.position, spectral_axis)?;
+    let max_world =
+        super::world_header::format_position(image.coordinates(), &max.position, spectral_axis)?;
     Ok(Some(ImageExtrema {
         min: min.value,
         max: max.value,

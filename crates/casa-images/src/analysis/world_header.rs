@@ -11,6 +11,7 @@ use crate::ImageError;
 pub(super) fn format_position(
     coordinates: &CoordinateSystem,
     position: &[usize],
+    spectral_axis: Option<usize>,
 ) -> Result<String, ImageError> {
     let mut fields = Vec::with_capacity(position.len());
     let mut offset = 0;
@@ -37,11 +38,12 @@ pub(super) fn format_position(
                 );
             }
             CoordinateModel::Spectral(_) => {
-                fields.push(format!(
-                    "{}{}",
-                    number(world[0], increments[0]),
-                    coordinate.axis_units()[0]
-                ));
+                let unit = if spectral_axis == Some(offset) {
+                    coordinate.axis_units()[0].clone()
+                } else {
+                    String::new()
+                };
+                fields.push(format!("{}{unit}", number(world[0], increments[0])));
             }
             _ => {
                 for value in world {
