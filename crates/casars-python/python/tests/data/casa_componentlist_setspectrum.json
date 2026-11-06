@@ -1,0 +1,6015 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unrecognized type for index"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "constant"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        1
+      ],
+      "kwargs": {
+        "type": "constant"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "spectral",
+        "index": -0.7
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.7,
+            "stokesindex": [
+              -0.7
+            ],
+            "type": "Spectral Index"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        1
+      ],
+      "kwargs": {
+        "type": "Spectral Index",
+        "index": [
+          -0.7,
+          0.2
+        ]
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.7,
+            "stokesindex": [
+              -0.7
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "s",
+        "index": 0
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": 0.0,
+            "stokesindex": [
+              0.0
+            ],
+            "type": "Spectral Index"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "spectral",
+        "index": []
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unrecognized type for index"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "spectral",
+        "index": "bad"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unrecognized type for index"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "plp",
+        "index": [
+          -0.5,
+          0.1,
+          0.02
+        ]
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "coeffs": [
+              -0.5,
+              0.1,
+              0.02
+            ],
+            "error": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Power Logarithmic Polynomial"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "plp",
+        "index": 1
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "for a spectrum='plp'"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "plp",
+        "index": []
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "for a spectrum='plp'"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "tabular"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "There need to be at least 2 points"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "tabular",
+        "tabularfreqs": [
+          1000000000.0,
+          2000000000.0
+        ],
+        "tabularflux": [
+          1.0,
+          2.0
+        ]
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "freqRef": {
+              "m0": {
+                "unit": "Hz",
+                "value": 0.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "ival": [
+              1.0,
+              2.0
+            ],
+            "maxFreq": 2000000000.0,
+            "minFreq": 1000000000.0,
+            "qval": [
+              0.0,
+              0.0
+            ],
+            "referenceFreq": 1400000000.0,
+            "tabFreqVal": [
+              1000000000.0,
+              2000000000.0
+            ],
+            "type": "Tabular Spectrum",
+            "uval": [
+              0.0,
+              0.0
+            ],
+            "vval": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "tabular",
+        "tabularfreqs": [
+          1000000000.0,
+          2000000000.0
+        ],
+        "tabularflux": [
+          1.0,
+          2.0
+        ],
+        "tabularframe": "REST"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "freqRef": {
+              "m0": {
+                "unit": "Hz",
+                "value": 0.0
+              },
+              "refer": "REST",
+              "type": "frequency"
+            },
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "ival": [
+              1.0,
+              2.0
+            ],
+            "maxFreq": 2000000000.0,
+            "minFreq": 1000000000.0,
+            "qval": [
+              0.0,
+              0.0
+            ],
+            "referenceFreq": 1400000000.0,
+            "tabFreqVal": [
+              1000000000.0,
+              2000000000.0
+            ],
+            "type": "Tabular Spectrum",
+            "uval": [
+              0.0,
+              0.0
+            ],
+            "vval": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "tabular",
+        "tabularfreqs": [
+          1000000000.0,
+          2000000000.0
+        ],
+        "tabularflux": [
+          1.0,
+          2.0
+        ],
+        "tabularframe": "TOPO"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Cannot transform frequency"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "freqRef": {
+              "m0": {
+                "unit": "Hz",
+                "value": 0.0
+              },
+              "refer": "TOPO",
+              "type": "frequency"
+            },
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "ival": [
+              1.0,
+              2.0
+            ],
+            "maxFreq": 2000000000.0,
+            "minFreq": 1000000000.0,
+            "qval": [
+              0.0,
+              0.0
+            ],
+            "referenceFreq": 1000000000.0,
+            "tabFreqVal": [
+              1000000000.0,
+              2000000000.0
+            ],
+            "type": "Tabular Spectrum",
+            "uval": [
+              0.0,
+              0.0
+            ],
+            "vval": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "tabular",
+        "tabularfreqs": [
+          1000000000.0,
+          2000000000.0
+        ],
+        "tabularflux": [
+          1.0
+        ]
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "lengths of tabular frequencies and values"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "tabular",
+        "tabularfreqs": [
+          1000000000.0,
+          2000000000.0
+        ],
+        "tabularflux": [
+          1.0,
+          2.0
+        ],
+        "tabularframe": "bad"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "is an unsupported frequency frame"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "bad"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unkinown spectral type"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": ""
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unkinown spectral type"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        -1
+      ],
+      "kwargs": {
+        "type": "constant"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        2
+      ],
+      "kwargs": {
+        "type": "constant"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        null
+      ],
+      "kwargs": {
+        "type": "constant"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        1267650600228229401496703205376
+      ],
+      "kwargs": {
+        "type": "constant"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        4294967296
+      ],
+      "kwargs": {
+        "type": "constant"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0.5
+      ],
+      "kwargs": {
+        "type": "constant"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": null
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _type must be a string"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "constant",
+        "tabularfreqs": null
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_setspectrum> returned a result with an exception set"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        1
+      ],
+      "kwargs": {
+        "type": "constant",
+        "tabularfreqs": null
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_setspectrum> returned a result with an exception set"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "constant",
+        "tabularflux": null
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_setspectrum> returned a result with an exception set"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "constant",
+        "tabularframe": null
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _tabularframe must be a string"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    }
+  ],
+  "special": [
+    {
+      "case": "nan_index",
+      "result": true,
+      "stored_nan": true
+    },
+    {
+      "case": "nan_plp",
+      "result": true,
+      "stored_nan": true
+    },
+    {
+      "case": "nan_table",
+      "result": true,
+      "stored_nan": true
+    }
+  ],
+  "memory": [
+    {
+      "label": "first",
+      "flux": [
+        3.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "direction": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "spectrum": {
+        "error": 0.0,
+        "frequency": {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "index": -0.7,
+        "stokesindex": [
+          -0.7
+        ],
+        "type": "Spectral Index"
+      }
+    },
+    {
+      "label": "second",
+      "flux": [
+        5.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "direction": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.5235987755982988
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.2617993877991494
+        },
+        "refer": "GALACTIC",
+        "type": "direction"
+      },
+      "spectrum": {
+        "error": 0.0,
+        "frequency": {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "index": -0.5,
+        "stokesindex": [
+          -0.5
+        ],
+        "type": "Spectral Index"
+      }
+    }
+  ],
+  "persisted": [
+    {
+      "label": "first",
+      "flux": [
+        3.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "direction": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "spectrum": {
+        "error": 0.0,
+        "frequency": {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "index": -0.7,
+        "stokesindex": [
+          -0.7
+        ],
+        "type": "Spectral Index"
+      }
+    },
+    {
+      "label": "second",
+      "flux": [
+        5.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "direction": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.5235987755982988
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.2617993877991494
+        },
+        "refer": "GALACTIC",
+        "type": "direction"
+      },
+      "spectrum": {
+        "error": 0.0,
+        "frequency": {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        "index": -0.5,
+        "stokesindex": [
+          -0.5
+        ],
+        "type": "Spectral Index"
+      }
+    }
+  ],
+  "frequency_error_after": 0.0,
+  "vector_cases": [
+    {
+      "case": "strings",
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "freqRef": {
+              "m0": {
+                "unit": "Hz",
+                "value": 0.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "ival": [
+              1.0,
+              2.0
+            ],
+            "maxFreq": 2.0,
+            "minFreq": 1.0,
+            "qval": [
+              0.0,
+              0.0
+            ],
+            "referenceFreq": 1400000000.0,
+            "tabFreqVal": [
+              1.0,
+              2.0
+            ],
+            "type": "Tabular Spectrum",
+            "uval": [
+              0.0,
+              0.0
+            ],
+            "vval": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "case": "invalid_string",
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "freqRef": {
+              "m0": {
+                "unit": "Hz",
+                "value": 0.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "ival": [
+              1.0,
+              2.0
+            ],
+            "maxFreq": 1.0,
+            "minFreq": 0.0,
+            "qval": [
+              0.0,
+              0.0
+            ],
+            "referenceFreq": 1400000000.0,
+            "tabFreqVal": [
+              1.0,
+              0.0
+            ],
+            "type": "Tabular Spectrum",
+            "uval": [
+              0.0,
+              0.0
+            ],
+            "vval": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "case": "none_element",
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "freqRef": {
+              "m0": {
+                "unit": "Hz",
+                "value": 0.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "ival": [
+              1.0,
+              2.0
+            ],
+            "maxFreq": 1.0,
+            "minFreq": 0.0,
+            "qval": [
+              0.0,
+              0.0
+            ],
+            "referenceFreq": 1400000000.0,
+            "tabFreqVal": [
+              1.0,
+              0.0
+            ],
+            "type": "Tabular Spectrum",
+            "uval": [
+              0.0,
+              0.0
+            ],
+            "vval": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "case": "nested",
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "freqRef": {
+              "m0": {
+                "unit": "Hz",
+                "value": 0.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "ival": [
+              1.0,
+              2.0,
+              3.0,
+              4.0
+            ],
+            "maxFreq": 4.0,
+            "minFreq": 1.0,
+            "qval": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "referenceFreq": 1400000000.0,
+            "tabFreqVal": [
+              1.0,
+              3.0,
+              2.0,
+              4.0
+            ],
+            "type": "Tabular Spectrum",
+            "uval": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "vval": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "case": "numpy_matrix",
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "freqRef": {
+              "m0": {
+                "unit": "Hz",
+                "value": 0.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "ival": [
+              1.0,
+              2.0,
+              3.0,
+              4.0
+            ],
+            "maxFreq": 4.0,
+            "minFreq": 1.0,
+            "qval": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "referenceFreq": 1400000000.0,
+            "tabFreqVal": [
+              1.0,
+              3.0,
+              2.0,
+              4.0
+            ],
+            "type": "Tabular Spectrum",
+            "uval": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "vval": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    },
+    {
+      "case": "booleans",
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "spectrum": {
+            "freqRef": {
+              "m0": {
+                "unit": "Hz",
+                "value": 0.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "ival": [
+              1.0,
+              2.0
+            ],
+            "maxFreq": 1.0,
+            "minFreq": 0.0,
+            "qval": [
+              0.0,
+              0.0
+            ],
+            "referenceFreq": 1400000000.0,
+            "tabFreqVal": [
+              1.0,
+              0.0
+            ],
+            "type": "Tabular Spectrum",
+            "uval": [
+              0.0,
+              0.0
+            ],
+            "vval": [
+              0.0,
+              0.0
+            ]
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "spectrum": {
+            "error": 0.0,
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "index": -0.5,
+            "stokesindex": [
+              -0.5
+            ],
+            "type": "Spectral Index"
+          }
+        }
+      ]
+    }
+  ],
+  "cycle_returncode": -11
+}

@@ -23,7 +23,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_components::{ComponentList, ComponentListError, Flux, Polarisation, SkyComponent};
+use casa_components::{
+    ComponentList, ComponentListError, Flux, Polarisation, PowerLogPolynomial, SkyComponent,
+    SpectralIndex, SpectralKind, TabularSpectrum,
+};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -59,6 +62,131 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// Prepare a spectral model before replacing a component's spectral kind.
+    pub(crate) fn setspectrum(
+        &mut self,
+        which: i64,
+        request: &super::setspectrum::Request,
+        pending: bool,
+    ) -> ConvertResult<bool> {
+        let kind = match request.name.to_ascii_uppercase().chars().next() {
+            Some('C') => SpectralKind::Constant,
+            Some('S') => {
+                let index = match &request.index {
+                    Variant::Number(value) => Some(*value),
+                    Variant::Numbers(values) | Variant::Array { values, .. } => {
+                        values.first().copied()
+                    }
+                    _ => None,
+                }
+                .ok_or_else(|| {
+                    ConvertError::runtime(
+                        "Unrecognized type for index, must be double or doubleArray",
+                    )
+                })?;
+                if !index.is_finite() {
+                    return Err(ConvertError::runtime(
+                        "non-finite spectral index refused (#1053)",
+                    ));
+                }
+                SpectralKind::SpectralIndex(SpectralIndex::new(index))
+            }
+            Some('P') => {
+                let coefficients = match &request.index {
+                    Variant::Numbers(values) | Variant::Array { values, .. }
+                        if !values.is_empty() =>
+                    {
+                        values.clone()
+                    }
+                    _ => {
+                        return Err(ConvertError::runtime(
+                            "for a spectrum='plp', index must be a list of numbers",
+                        ));
+                    }
+                };
+                if coefficients.iter().any(|value| !value.is_finite()) {
+                    return Err(ConvertError::runtime(
+                        "non-finite spectrum coefficient refused (#1053)",
+                    ));
+                }
+                SpectralKind::PowerLogPolynomial(PowerLogPolynomial::new(coefficients))
+            }
+            Some('T') => {
+                if request.frequencies.values.len() < 2 {
+                    return Err(ConvertError::runtime(
+                        "There need to be at least 2 points in a tabular spectrum",
+                    ));
+                }
+                if request.frequencies.values.len() != request.flux.values.len() {
+                    return Err(ConvertError::runtime(
+                        "lengths of tabular frequencies and values have to be the same",
+                    ));
+                }
+                let frame = frequency_frame(&request.frame).ok_or_else(|| {
+                    ConvertError::runtime(format!(
+                        "{} is an unsupported frequency frame",
+                        request.frame
+                    ))
+                })?;
+                if request.frequencies.invalid || request.flux.invalid {
+                    return Err(ConvertError::runtime(
+                        "unrepresentable tabular value refused (#1053)",
+                    ));
+                }
+                if request
+                    .frequencies
+                    .values
+                    .iter()
+                    .chain(&request.flux.values)
+                    .any(|v| !v.is_finite())
+                {
+                    return Err(ConvertError::runtime(
+                        "non-finite tabular spectrum refused (#1053)",
+                    ));
+                }
+                let flux = request
+                    .flux
+                    .values
+                    .iter()
+                    .map(|&value| [value, 0.0, 0.0, 0.0])
+                    .collect();
+                let table = TabularSpectrum::new(frame, request.frequencies.values.clone(), flux)
+                    .map_err(|error| ConvertError::runtime(error.to_string()))?;
+                SpectralKind::Tabular(table)
+            }
+            _ => {
+                return Err(ConvertError::runtime(format!(
+                    "Unkinown spectral type {}",
+                    request.name
+                )));
+            }
+        };
+        if matches!(kind, SpectralKind::Tabular(_)) && which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        if let SpectralKind::Tabular(table) = &kind
+            && table
+                .reference_frequency_in_frame(component.spectrum().reference_frequency())
+                .is_err()
+        {
+            return Err(ConvertError::runtime(format!(
+                "Cannot transform frequency from {} to {}",
+                table.frame().as_str(),
+                component.spectrum().reference_frequency().refer().as_str()
+            )));
+        }
+        if pending {
+            return Ok(false);
+        }
+        // Replacing just the kind keeps the existing frequency error and unit.
+        *component.spectrum_mut().kind_mut() = kind;
+        Ok(true)
+    }
+
     pub(crate) fn setshape(
         &mut self,
         which: i64,

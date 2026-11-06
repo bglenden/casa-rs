@@ -1596,7 +1596,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 50 | 2 | 9 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 51 | 2 | 8 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1613,7 +1613,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 50, Partial: 2, Not implemented: 9, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 51, Partial: 2, Not implemented: 8, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1670,7 +1670,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `setrefdir` | `which=1, ra=[], dec=[], log=True` | Implemented (#1053) | Sets one or all component direction coordinates while preserving each reference frame and other component and table values. Rejects non-finite coordinates, cyclic records, empty-list all-indices and failed index conversions before unsafe mutation. | [signature](#componentlist-evidence-signature), [setrefdir-casa](#componentlist-evidence-setrefdir-casa) |
 | `setrefdirframe` | `which, frame, log=True` | Partial (#1053) | Relabels one component reference direction without converting its coordinates; accepts CASA frame prefixes and preserves component values and table metadata. Recognized frames absent from the shared direction model (B1950_VLA, BMEAN, BTRUE and planetary or comet references) raise NotImplementedError. Invalid names are rejected before mutation. | [signature](#componentlist-evidence-signature), [setrefdirframe-casa](#componentlist-evidence-setrefdirframe-casa) |
 | `setshape` | `which, type='Point', majoraxis=[], minoraxis=[], positionangle=[], majoraxiserror=[], minoraxiserror=[], positionangleerror=[], optionalparms=[0.0], log=True` | Implemented (#1053) | Sets Point, Gaussian or Disk shapes and angular errors while preserving the reference direction and its errors. Retains supplied shape units in memory and CASA table units after reopening. Rejects non-finite values and cyclic or failed argument conversions before unsafe mutation; unsupported names and limb-darkened disks return false as in CASA. | [signature](#componentlist-evidence-signature), [setshape-casa](#componentlist-evidence-setshape-casa) |
-| `setspectrum` | `which, type='spectral index', index=[], tabularfreqs=[100000000000.0], tabularflux=[1.0], tabularframe='LSRK'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setspectrum` | `which, type='spectral index', index=[], tabularfreqs=[100000000000.0], tabularflux=[1.0], tabularframe='LSRK'` | Implemented (#1053) | Replaces one component spectrum with a constant, spectral index, power-log polynomial or tabular model while retaining its reference frequency and frequency error. Tabulations must use the reference frame or REST; invalid, non-finite and cyclic arguments and failed conversions are rejected before unsafe mutation. | [signature](#componentlist-evidence-signature), [setspectrum-casa](#componentlist-evidence-setspectrum-casa) |
 | `setstokesspectrum` | `which, type='spectral index', index=[0.0], tabularfreqs=[100000000000.0], tabulari=[1.0], tabularq=[0.0], tabularu=[0.0], tabularv=[0.0], reffreq=[], frame='LSRK'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `shapetype` | `which` | Implemented | A component's shape name. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `simulate` | `howmany=1, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
@@ -2120,6 +2120,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/data/casa_componentlist_setshape.cl.tgz](https://github.com/bglenden/casa-rs/blob/bf58ba339a8b951d5b93aa14585441d23f8dbeb8/crates/casars-python/python/tests/data/casa_componentlist_setshape.cl.tgz)
 - [crates/casars-python/python/tests/test_componentlist_setshape.py](https://github.com/bglenden/casa-rs/blob/bf58ba339a8b951d5b93aa14585441d23f8dbeb8/crates/casars-python/python/tests/test_componentlist_setshape.py)
 - [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/bf58ba339a8b951d5b93aa14585441d23f8dbeb8/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-setspectrum-casa"></a>
+##### setspectrum-casa
+
+**CASA-recorded values — measured.** 30 CASA 6.7.6-14 setter cases, six vector conversion cases, three non-finite cases and an isolated cyclic-input crash cover supported models, errors and mutation safety. CASA reads a casa-rs-updated table with tabular spectrum, frequency and direction errors, and keyword intact. componentlist.setspectrum models, argument conversion and table persistence.
+
+- [tools/simulation/componentlist_setspectrum_oracle.py](https://github.com/bglenden/casa-rs/blob/3deffa3f9816349671a9ce763a3dbb292881e338/tools/simulation/componentlist_setspectrum_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_setspectrum.json](https://github.com/bglenden/casa-rs/blob/3deffa3f9816349671a9ce763a3dbb292881e338/crates/casars-python/python/tests/data/casa_componentlist_setspectrum.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz](https://github.com/bglenden/casa-rs/blob/3deffa3f9816349671a9ce763a3dbb292881e338/crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_setspectrum.py](https://github.com/bglenden/casa-rs/blob/3deffa3f9816349671a9ce763a3dbb292881e338/crates/casars-python/python/tests/test_componentlist_setspectrum.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/3deffa3f9816349671a9ce763a3dbb292881e338/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 ### measures
 

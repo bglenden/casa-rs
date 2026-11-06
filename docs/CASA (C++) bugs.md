@@ -4073,3 +4073,22 @@ Passing a cyclic `optionalparms` list terminates CASA with SIGSEGV; casa-rs
 rejects the cycle before changing the component.
 CASA accepts NaN as a Gaussian position angle or shape error and writes NaN;
 casa-rs rejects a non-finite shape or error before mutation.
+
+## Component spectrum changes can discard data
+
+- Date noted: 2026-11-06
+- Status: CASA clears a frequency error or leaves a partial update after an error; casa-rs preserves existing data (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setspectrum_oracle.py` and its CASA 6.7.6-14 fixture; the cyclic-input probe runs in an isolated process with core dumps disabled.
+
+Changing a component's spectral model with `setspectrum` resets its existing
+frequency error to zero. casa-rs keeps the original frequency error and unit.
+A tabulation in TOPO for a component whose reference frequency is LSRK raises
+`Cannot transform frequency` only after CASA replaces the old spectrum;
+casa-rs validates the frame conversion before mutation. An unconvertible
+numeric string in a tabular vector is silently stored as zero in CASA;
+casa-rs rejects it without changing the component. CASA also stores NaN
+spectral indices, polynomial coefficients and tabular fluxes, and terminates
+with SIGSEGV for a cyclic tabular vector. casa-rs rejects these inputs before
+mutation. A failed Python conversion can likewise cause CASA to change the
+spectrum before raising `SystemError`; casa-rs preserves the original.

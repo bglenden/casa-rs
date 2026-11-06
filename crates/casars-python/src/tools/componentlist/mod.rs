@@ -32,6 +32,7 @@ mod selection;
 mod setflux;
 mod setrefdir_args;
 mod setshape;
+mod setspectrum;
 pub(crate) mod surface;
 
 use std::ffi::CString;
@@ -1351,24 +1352,6 @@ impl PyComponentList {
             ));
         }
         Ok(result)
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(
-        signature = (which, r#type = None, index = None, tabularfreqs = None, tabularflux = None, tabularframe = None),
-        text_signature = "($self, which, type='spectral index', index=[], tabularfreqs=[100000000000.0], tabularflux=[1.0], tabularframe='LSRK')"
-    )]
-    #[allow(clippy::too_many_arguments)]
-    fn setspectrum(
-        &self,
-        which: &Bound<'_, PyAny>,
-        r#type: Option<&Bound<'_, PyAny>>,
-        index: Option<&Bound<'_, PyAny>>,
-        tabularfreqs: Option<&Bound<'_, PyAny>>,
-        tabularflux: Option<&Bound<'_, PyAny>>,
-        tabularframe: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setspectrum")
     }
 
     /// Not yet implemented in casa-rs.

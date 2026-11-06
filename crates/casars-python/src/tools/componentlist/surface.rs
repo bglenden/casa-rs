@@ -314,19 +314,22 @@ const METHODS: &[Method] = &[
             Yes,
         )
     },
-    method(
-        "setspectrum",
-        &[
-            WHICH,
-            param("type", K::Text, Text("spectral index")),
-            param("index", K::Any, Empty),
-            TABULAR_FREQS,
-            param("tabularflux", K::Floats, Floats(&[1.0])),
-            param("tabularframe", K::Text, Text("LSRK")),
-        ],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "setspectrum",
+            &[
+                WHICH,
+                param("type", K::Text, Text("spectral index")),
+                param("index", K::Any, Empty),
+                TABULAR_FREQS,
+                param("tabularflux", K::Floats, Floats(&[1.0])),
+                param("tabularframe", K::Text, Text("LSRK")),
+            ],
+            R::Bool,
+            Yes,
+        )
+    },
     method(
         "setstokesspectrum",
         &[

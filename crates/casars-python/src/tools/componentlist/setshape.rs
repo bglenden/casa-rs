@@ -156,7 +156,7 @@ enum OptionalFrame<'py> {
 }
 
 /// CASA converts, then ignores, this double vector; cycles crash the binding.
-fn optional_pending(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+pub(super) fn optional_pending(value: &Bound<'_, PyAny>) -> PyResult<bool> {
     let ndarray = value.py().import("numpy")?.getattr("ndarray")?;
     if value.is_instance(&ndarray)? {
         return Ok(false);
@@ -185,7 +185,7 @@ fn optional_pending(value: &Bound<'_, PyAny>) -> PyResult<bool> {
             let identity = object.as_ptr() as usize;
             if !active.insert(identity) {
                 return Err(PyValueError::new_err(
-                    "cyclic optional shape parameters (CASA crash: #1053)",
+                    "cyclic component double-vector argument (CASA crash: #1053)",
                 ));
             }
             let items = object.try_iter()?.collect::<PyResult<Vec<_>>>()?;
