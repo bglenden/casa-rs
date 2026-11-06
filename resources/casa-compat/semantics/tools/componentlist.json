@@ -440,12 +440,12 @@
    ]
   },
   "setrefdir": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Sets one or all component direction coordinates while preserving each reference frame and other component and table values. Rejects non-finite coordinates, cyclic records, empty-list all-indices and failed index conversions before unsafe mutation.",
    "evidence": [
     "signature",
-    "refusals"
+    "setrefdir-casa"
    ]
   },
   "setrefdirframe": {
@@ -1022,6 +1022,22 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "190e85bf30f31e18109abc39d8ff6c437c267306"
+  },
+  "setrefdir-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "34 CASA 6.7.6-14 calls cover angular quantities, normalization, indices, errors and unchanged components; a CASA-created table covers writable and read-only persistence. Five isolated probes record crashes or non-finite corruption. CASA also reads casa-rs updates with unrelated table values intact.",
+   "scope": "componentlist.setrefdir coordinates and safety.",
+   "links": [
+    "tools/simulation/componentlist_setrefdir_oracle.py",
+    "tools/simulation/componentlist_setrefdir_crashes_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setrefdir.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setrefdir_crashes.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setrefdir.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_setrefdir.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "5e4302e2db206b94c6410cc8054e64cba0ae1e2c"
   }
  }
 }
