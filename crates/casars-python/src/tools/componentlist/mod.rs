@@ -29,6 +29,7 @@ mod ops;
 mod placeholder;
 mod replace_args;
 mod selection;
+mod setrefdir_args;
 pub(crate) mod surface;
 
 use std::ffi::CString;
@@ -1123,16 +1124,45 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Set component direction coordinates, preserving their reference frames.
     #[pyo3(signature = (which = None, ra = None, dec = None, log = None), text_signature = "($self, which=1, ra=[], dec=[], log=True)")]
     fn setrefdir(
         &self,
-        which: Option<&Bound<'_, PyAny>>,
-        ra: Option<&Bound<'_, PyAny>>,
-        dec: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] which: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] ra: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] dec: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("setrefdir")
+        let (which, mut pending) = match which {
+            None => (1, false),
+            Some(value) => match value.extract::<i64>() {
+                Ok(index) => (i64::from(index as i32), false),
+                Err(error) if value.is_none() || error.is_instance_of::<PyOverflowError>(py) => {
+                    (-1, true)
+                }
+                Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+            },
+        };
+        let (ra, ra_pending) = setrefdir_args::argument(ra)?;
+        let (dec, dec_pending) = setrefdir_args::argument(dec)?;
+        pending |= ra_pending || dec_pending;
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_setrefdir', argument 5 of type 'bool'",
+            ));
+        }
+        let result = self.call(py, move |state, lines| {
+            state
+                .setrefdir(which, &ra, &dec, pending, lines)
+                .map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_setrefdir> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Relabel one component's direction frame without converting its value.

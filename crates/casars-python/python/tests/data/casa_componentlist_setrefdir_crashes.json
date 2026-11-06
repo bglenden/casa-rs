@@ -1,0 +1,39 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "case": "empty_all",
+      "returncode": -11,
+      "result": null
+    },
+    {
+      "case": "cycle",
+      "returncode": -11,
+      "result": null
+    },
+    {
+      "case": "nan",
+      "returncode": 0,
+      "result": {
+        "result": true,
+        "longitude_is_nan": true
+      }
+    },
+    {
+      "case": "inf",
+      "returncode": 0,
+      "result": {
+        "result": true,
+        "longitude_is_nan": true
+      }
+    },
+    {
+      "case": "-inf",
+      "returncode": 0,
+      "result": {
+        "result": true,
+        "longitude_is_nan": true
+      }
+    }
+  ]
+}
