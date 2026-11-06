@@ -412,8 +412,18 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
         // weight image's, read into an owned sensitivity plane.
         (64, ReconstructionBasis::Taylor { terms: 5 }, 1, true, true),
     ];
-    for (width, basis, workers, with_beam, with_response) in cases {
-        let (channels, planes, algorithm, fluxes) = match basis {
+    let cases = cases.into_iter().map(|case| (case, 1)).chain([(
+        (
+            32,
+            ReconstructionBasis::ChannelLocal { channels: 16 },
+            4,
+            true,
+            false,
+        ),
+        4,
+    )]);
+    for ((width, basis, workers, with_beam, with_response), polarizations) in cases {
+        let (channels, planes_per_polarization, algorithm, fluxes) = match basis {
             ReconstructionBasis::ChannelLocal { channels } => (
                 channels,
                 channels,
@@ -428,17 +438,32 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
             ),
             ReconstructionBasis::Constant => unreachable!("not measured here"),
         };
+        let planes = planes_per_polarization * polarizations;
         let label = format!(
-            "{basis:?} of {width} px on {workers} workers, beam {with_beam}, response {with_response}"
+            "{basis:?} of {width} px and {polarizations} polarizations on {workers} workers, beam {with_beam}, response {with_response}"
         );
-        let problem = reconstruction_problem(
-            31,
-            width,
-            channels,
-            basis,
-            algorithm.clone(),
-            ReconstructionControls::new(100, 0.1, 0.0),
-        );
+        let problem = if polarizations == 4 {
+            use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+            problems::reconstruction_problem_of_shape_and_polarizations(
+                31,
+                [width, width],
+                channels,
+                1,
+                basis,
+                algorithm.clone(),
+                ReconstructionControls::new(100, 0.1, 0.0),
+                vec![StokesI, StokesQ, StokesU, StokesV],
+            )
+        } else {
+            reconstruction_problem(
+                31,
+                width,
+                channels,
+                basis,
+                algorithm.clone(),
+                ReconstructionControls::new(100, 0.1, 0.0),
+            )
+        };
         let scene = Scene::new(&problem)
             .with_point([width * 3 / 8, width * 9 / 16], &fluxes)
             .with_noise(0.01);
@@ -450,7 +475,24 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
         )
         .expect("major cycle");
         let (model, mut pass) = cycle.parts();
-        pass.append(scene.pass_images(model, true)).expect("images");
+        let mut images = scene.pass_images(model, true);
+        if polarizations == 4 {
+            images.polarizations = 4;
+            let cells = width * width;
+            images.psf = images.psf.take().map(|psf| {
+                psf.chunks_exact(cells)
+                    .flat_map(|plane| plane.repeat(4))
+                    .collect()
+            });
+            images.residual = images
+                .residual
+                .chunks_exact(cells)
+                .flat_map(|plane| plane.repeat(4))
+                .collect();
+            images.sum_weights = vec![1.0; channels * 4];
+            images.published_sum_weights = vec![1.0; channels * 4];
+        }
+        pass.append(images).expect("images");
         let completion = cycle.finish(SAMPLES, BLOCKS).expect("complete");
         let centres = std::collections::BTreeMap::from([(
             casa_imaging_model::ImageDomainRole::Main,

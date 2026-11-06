@@ -41,6 +41,7 @@ use crate::pass::WorkerTeam;
 use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit};
 
 mod beams;
+mod channel;
 mod layout;
 mod pixels;
 mod polarized;
@@ -355,6 +356,15 @@ pub fn prepare_minor_cycle(
         }
     }
     let keys = plane_keys(normal, taylor);
+    let share_beam = pixels::reads_beam(setup)
+        && setup.primary_beam.is_some()
+        && setup.response.is_none()
+        && mask_plans.automatic();
+    let measurements = std::sync::Mutex::new(
+        (0..if share_beam { keys.len() } else { 0 })
+            .map(|_| None::<Measured>)
+            .collect::<Vec<_>>(),
+    );
     if pixels::reads_beam(setup) && setup.nsigma > 0.0 && cache.beams.is_none() {
         cache.beams = Some(pixels::domain_beams(normal, base, setup, taylor, &keys)?);
     }
@@ -374,7 +384,7 @@ pub fn prepare_minor_cycle(
         // measured first.
         measure_psfs(normal, base, taylor, cache, &keys, setup, team)?;
         let shared = &*cache;
-        let reading = Reading {
+        let reading = channel::Reading {
             normal,
             base,
             setup,
@@ -383,7 +393,10 @@ pub fn prepare_minor_cycle(
             first: mask_plans.completed_major_cycles() == 0,
             beams: shared.beams.as_deref(),
         };
-        let read = |key: MaskPlaneKey| automask_plane(&reading, absolute(normal, taylor, key));
+        let read = |key: MaskPlaneKey| {
+            channel::read(&reading, absolute(normal, taylor, key), None)
+                .map(|plane| plane.map(|(plane, _)| plane))
+        };
         let psf = |key: MaskPlaneKey| {
             let key = absolute(normal, taylor, key);
             let summary = shared.summaries.get(&key).copied().or_else(|| {
@@ -396,7 +409,20 @@ pub fn prepare_minor_cycle(
                 (summary, None) => summary,
             }
         };
+        let open = |_key: MaskPlaneKey| -> Result<
+            Box<dyn casa_imaging_deconvolution::AutoMaskChannel<MinorCycleRunError> + '_>,
+            MinorCycleRunError,
+        > {
+            Ok(Box::new(channel::Shared {
+                reading: &reading,
+                plans: mask_plans,
+                measured: &measurements,
+                beam: None,
+                valid: None,
+            }))
+        };
         let source = AutoMaskSource {
+            channel: share_beam.then_some(&open),
             read: &read,
             psf: &psf,
             workers: team.workers(),
@@ -421,9 +447,17 @@ pub fn prepare_minor_cycle(
         setup,
         taylor,
     };
+    let mut measured = measurements.into_inner().expect("measurements lock");
     let mut slots = keys
         .iter()
-        .map(|key| (*key, None::<Measured>, None::<RetainedPlane>))
+        .enumerate()
+        .map(|(index, key)| {
+            (
+                *key,
+                measured.get_mut(index).and_then(Option::take),
+                None::<RetainedPlane>,
+            )
+        })
         .collect::<Vec<_>>();
     let missing = keys
         .iter()
@@ -434,9 +468,22 @@ pub fn prepare_minor_cycle(
     let retain = keys.len() == 1 && setup.response.is_none();
     let shared = &*cache;
     team.for_each_mut(&mut slots, |_, (key, out, kept)| {
+        if out.is_some() && !retain {
+            return Ok(());
+        }
         let Some(plane) = load(&inputs, *key)? else {
             return Ok(());
         };
+        if out.is_some() {
+            *kept = Some(RetainedPlane {
+                key: *key,
+                residual: plane.residual,
+                psf: plane.psf,
+                support: plane.support,
+                valid: plane.valid,
+            });
+            return Ok(());
+        }
         let summary = match shared.summaries.get(key) {
             Some(summary) => *summary,
             None => summarize_psf(normal, base, setup, *key, &plane.psf[0], plane.shape)?,
@@ -816,77 +863,6 @@ fn absolute(normal: &FinalNormalState, taylor: bool, key: MaskPlaneKey) -> Plane
         channel: if taylor { first } else { first + key.channel },
         polarization: key.polarization,
     }
-}
-
-/// What an automatic mask reads its planes from, with each plane's PSF
-/// measurements, and whether it masks the run's first boundary.
-struct Reading<'a> {
-    normal: &'a FinalNormalState,
-    base: &'a ModelGeneration,
-    setup: &'a MinorCycleSetup<'a>,
-    taylor: bool,
-    summaries: &'a BTreeMap<PlaneKey, PsfSummary>,
-    first: bool,
-    /// [`PsfCache`]'s beams, when the cycle reads them.
-    beams: Option<&'a [bool]>,
-}
-
-/// The plane `key` as its automatic mask reads it: the residual the minor
-/// cycle cleans (term 0 of a Taylor family) and the pixels it reads
-/// ([`pixels::automask_plane`]); `None` for a plane with no data.
-fn automask_plane(
-    reading: &Reading<'_>,
-    key: PlaneKey,
-) -> Result<Option<AutoMaskPlane>, MinorCycleRunError> {
-    let Reading {
-        normal,
-        base,
-        setup,
-        taylor,
-        summaries,
-        first,
-        beams,
-    } = *reading;
-    if !holds_data(normal, taylor, key) {
-        return Ok(None);
-    }
-    let shape = plane_shape(normal, key);
-    let valid = valid_support(normal, base, taylor, key, shape)?;
-    let (residual, response) = if taylor {
-        let peak = summaries
-            .get(&key)
-            .ok_or(casa_imaging_deconvolution::Error::PsfPeak)?
-            .peak();
-        taylor_principal_residual(normal, setup, key.polarization, peak)?
-    } else {
-        let plane = normal.read_plane(key.domain, key.channel, key.polarization)?;
-        let raw = plane.read_residual()?;
-        single_residual(
-            normal,
-            setup,
-            key,
-            raw.iter().map(|value| value.re),
-            plane.sum_weight(),
-        )?
-    };
-    let beam = if pixels::reads_beam(setup) {
-        pixels::beam_pixels(
-            setup,
-            (base.shape().domain_roles(), key, taylor),
-            &valid,
-            response.as_ref(),
-        )?
-    } else {
-        None
-    };
-    let domain_beam = beams.is_none_or(|beams| beams[key.domain]);
-    Ok(Some(pixels::automask_plane(
-        setup,
-        (first, domain_beam),
-        residual,
-        valid,
-        beam,
-    )))
 }
 
 /// Which pixels of the plane `key` the model holds valid, every Taylor
