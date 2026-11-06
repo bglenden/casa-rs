@@ -467,12 +467,12 @@
    ]
   },
   "setspectrum": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Replaces one component spectrum with a constant, spectral index, power-log polynomial or tabular model while retaining its reference frequency and frequency error. Tabulations must use the reference frame or REST; invalid, non-finite and cyclic arguments and failed conversions are rejected before unsafe mutation.",
    "evidence": [
     "signature",
-    "refusals"
+    "setspectrum-casa"
    ]
   },
   "setstokesspectrum": {
@@ -1094,6 +1094,20 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "bf58ba339a8b951d5b93aa14585441d23f8dbeb8"
+  },
+  "setspectrum-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "30 CASA 6.7.6-14 setter cases, six vector conversion cases, three non-finite cases and an isolated cyclic-input crash cover supported models, errors and mutation safety. CASA reads a casa-rs-updated table with tabular spectrum, frequency and direction errors, and keyword intact.",
+   "scope": "componentlist.setspectrum models, argument conversion and table persistence.",
+   "links": [
+    "tools/simulation/componentlist_setspectrum_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setspectrum.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_setspectrum.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "3deffa3f9816349671a9ce763a3dbb292881e338"
   }
  }
 }
