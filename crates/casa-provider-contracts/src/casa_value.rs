@@ -28,6 +28,8 @@ pub enum CasaValue {
     Int { value: i64 },
     /// A `float`.
     Float { value: CasaFloat },
+    /// A Python `complex`, represented by real and imaginary components.
+    Complex { real: CasaFloat, imag: CasaFloat },
     /// A `str`.
     String { value: String },
     /// A `list`.
@@ -250,13 +252,17 @@ impl CasaValue {
 
     /// The value as plain JSON, as a command line prints it: arrays as
     /// nested lists in their shape, integer keys as strings, and non-finite
-    /// floats as `"nan"`, `"inf"` or `"-inf"`.
+    /// floats as `"nan"`, `"inf"` or `"-inf"`. Complex scalars are
+    /// represented as `[real, imaginary]` because JSON has no complex type.
     pub fn to_plain_json(&self) -> Value {
         match self {
             Self::None => Value::Null,
             Self::Bool { value } => Value::Bool(*value),
             Self::Int { value } => Value::from(*value),
             Self::Float { value } => plain_float(*value),
+            Self::Complex { real, imag } => {
+                Value::Array(vec![plain_float(*real), plain_float(*imag)])
+            }
             Self::String { value } => Value::String(value.clone()),
             Self::List { items } => Value::Array(items.iter().map(Self::to_plain_json).collect()),
             Self::Dict { entries } => Value::Object(
@@ -298,6 +304,7 @@ impl CasaValue {
             | Self::Bool { .. }
             | Self::Int { .. }
             | Self::Float { .. }
+            | Self::Complex { .. }
             | Self::String { .. } => true,
         }
     }

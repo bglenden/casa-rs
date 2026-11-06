@@ -358,7 +358,8 @@ before anything starts, or `TypeError` for a value of the wrong type.
 
 A succeeded reply's `value` is CASA's return value as a tagged `CasaValue`
 (`casa-provider-contracts`): `none`, `bool`, `int`, `float` (non-finite
-values as `"nan"`, `"inf"` and `"-inf"`), `string`, `list`, an ordered
+values as `"nan"`, `"inf"` and `"-inf"`), `complex` (with real and imaginary
+components in the same float representation), `string`, `list`, an ordered
 `dict` whose keys are strings or integers, and typed arrays (`bool_array`,
 `int_array` with dtype `int32` or `int64`, `float_array` with `float32` or
 `float64`, `complex_array`, `str_array`) that carry their shape and their

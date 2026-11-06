@@ -131,3 +131,36 @@ fn casa_created_record_returns_typed_values() {
         &CasaValue::string("abc")
     );
 }
+
+#[test]
+fn casa_created_record_returns_complex_scalars() {
+    use casa_provider_contracts::CasaFloat;
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let oracle: Value = serde_json::from_slice(
+        &std::fs::read(fixture.join("custom_complex_expected.json")).unwrap(),
+    )
+    .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("complex.im");
+    copy_tree(&fixture.join("custom_complex.im"), &path);
+    let value = returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": path, "mode":"get", "hdkey":"custom"}),
+    );
+    assert_eq!(value.to_plain_json(), oracle["record"]);
+    assert_eq!(
+        entry(&value, "scalar"),
+        &CasaValue::Complex {
+            real: CasaFloat(1.25),
+            imag: CasaFloat(-2.5)
+        }
+    );
+    assert_eq!(
+        entry(entry(&value, "nested"), "imag"),
+        &CasaValue::Complex {
+            real: CasaFloat(0.0),
+            imag: CasaFloat(-3.0)
+        }
+    );
+}

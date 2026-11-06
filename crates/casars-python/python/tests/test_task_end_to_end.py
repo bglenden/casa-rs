@@ -270,6 +270,17 @@ def test_imhead_custom_records_from_python(image: Path) -> None:
     np.testing.assert_array_equal(nested["cube"], [[[1, 2]], [[3, 4]]])
 
 
+def test_imhead_reads_casa_complex_scalars(tmp_path: Path) -> None:
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/custom_complex.im"
+    image = tmp_path / "complex.im"
+    shutil.copytree(fixture, image)
+    record = tasks.imhead(str(image), mode="get", hdkey="custom")
+    assert record == {"scalar": 1.25 - 2.5j, "nested": {"zero": 0j, "imag": -3j}}
+    assert type(record["scalar"]) is complex
+    assert type(record["nested"]["imag"]) is complex
+
+
 def test_imhead_casa_record_multidimensional_arrays(tmp_path: Path) -> None:
     import numpy as np
 

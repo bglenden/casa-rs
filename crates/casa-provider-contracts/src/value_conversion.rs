@@ -88,6 +88,14 @@ pub fn casacore_value_to_casa(value: &Value) -> Result<CasaValue, &'static str> 
             Value::Scalar(ScalarValue::Int64(value)) => CasaValue::Int { value: *value },
             Value::Scalar(ScalarValue::Float32(value)) => CasaValue::float(f64::from(*value)),
             Value::Scalar(ScalarValue::Float64(value)) => CasaValue::float(*value),
+            Value::Scalar(ScalarValue::Complex32(value)) => CasaValue::Complex {
+                real: CasaFloat(f64::from(value.re)),
+                imag: CasaFloat(f64::from(value.im)),
+            },
+            Value::Scalar(ScalarValue::Complex64(value)) => CasaValue::Complex {
+                real: CasaFloat(value.re),
+                imag: CasaFloat(value.im),
+            },
             Value::Scalar(ScalarValue::String(value)) => CasaValue::string(value),
             Value::Array(ArrayValue::Bool(values)) => CasaValue::BoolArray {
                 shape: values.shape().to_vec(),
@@ -410,5 +418,30 @@ mod tests {
                 .unwrap_err()
                 .contains("#977")
         );
+    }
+
+    #[test]
+    fn record_complex_scalars_preserve_components_and_promote_float32() {
+        let single = Value::Scalar(ScalarValue::Complex32(casa_types::Complex32::new(
+            1.25, -2.5,
+        )));
+        assert_eq!(
+            casacore_value_to_casa(&single).unwrap(),
+            CasaValue::Complex {
+                real: CasaFloat(1.25),
+                imag: CasaFloat(-2.5),
+            }
+        );
+        let double = Value::Scalar(ScalarValue::Complex64(casa_types::Complex64::new(
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        )));
+        let value = casacore_value_to_casa(&double).unwrap();
+        let json = serde_json::to_value(&value).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"kind": "complex", "real": "inf", "imag": "-inf"})
+        );
+        assert_eq!(serde_json::from_value::<CasaValue>(json).unwrap(), value);
     }
 }

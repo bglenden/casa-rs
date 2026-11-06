@@ -9,7 +9,7 @@ use num_complex::{Complex32, Complex64};
 use numpy::{Element, IntoPyArray};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyComplex, PyDict, PyList};
 
 use super::value::fortran_array;
 
@@ -20,6 +20,9 @@ pub(crate) fn reply_value(py: Python<'_>, value: &CasaValue) -> PyResult<Py<PyAn
         CasaValue::Bool { value } => value.into_pyobject(py)?.to_owned().into_any().unbind(),
         CasaValue::Int { value } => value.into_pyobject(py)?.into_any().unbind(),
         CasaValue::Float { value } => value.0.into_pyobject(py)?.into_any().unbind(),
+        CasaValue::Complex { real, imag } => PyComplex::from_doubles(py, real.0, imag.0)
+            .into_any()
+            .unbind(),
         CasaValue::String { value } => value.into_pyobject(py)?.into_any().unbind(),
         CasaValue::List { items } => {
             let items = items
