@@ -440,6 +440,9 @@ impl MuellerRouting {
 /// Per-row context a kernel set keys its cells on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RowContext {
+    /// Ratio of the native channel frequency to the frequency presented to
+    /// the resampler, for selecting AW cells in the observing frame.
+    pub native_frequency_ratio: f64,
     /// The row's MeasurementSet `UVW` in metres before the phase-centre
     /// rotation, when the source rotated the row; `None` when the row's
     /// uvw are the MeasurementSet's. The AW set keys its prediction cell

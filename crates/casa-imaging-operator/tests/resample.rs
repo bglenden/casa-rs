@@ -24,6 +24,7 @@ const STOKES_I: [PolarizationCoordinate; 1] = [PolarizationCoordinate::StokesI];
 
 fn context() -> RowContext {
     RowContext {
+        native_frequency_ratio: 1.0,
         original_uvw_m: None,
         time_s: 0.0,
         antennas: [0, 1],
@@ -119,6 +120,7 @@ fn the_standard_density_bins_the_measurement_set_uvw() {
         flags: &flags,
         row_flag: false,
         context: RowContext {
+            native_frequency_ratio: 1.0,
             original_uvw_m: Some(stored),
             ..context()
         },
@@ -346,6 +348,7 @@ fn the_cube_density_bins_and_looks_up_the_rotated_uvw() {
         flags: &flags,
         row_flag: false,
         context: RowContext {
+            native_frequency_ratio: 1.0,
             original_uvw_m: Some(stored),
             ..context()
         },

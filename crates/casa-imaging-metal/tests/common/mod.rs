@@ -519,6 +519,7 @@ pub fn sectioned_edge_placements(operator: &MeasurementOperator, rng: &mut Rng) 
     let [sx, sy] = geometry.scale();
     let max_w = 0.25 / W_INCREMENT_RAD[1];
     let context = RowContext {
+        native_frequency_ratio: 1.0,
         original_uvw_m: None,
         time_s: 0.0,
         antennas: [0, 1],

@@ -4004,6 +4004,35 @@ build. casa-rs logs the
 parse failure and raises a predictable `RuntimeError` before changing the
 component. The error text differs from the observed CASA assertion.
 
+## AW projection chooses frequency cells from averaged channel widths
+
+- Date noted: 2026-11-05
+- Status: CASA 6.7.6.14 divergence; casa-rs uses the actual channel frequency (#1121).
+- Affected code: `MSSelection::getChanFreqList`, `CFBuffer::initMaps` and
+  `AWVisResampler`.
+
+CASA constructs its per-channel AW convolution-cell map from the first
+selected channel frequency and the average channel width, rather than each
+selected channel's `CHAN_FREQ`. For irregular channel centres this can pick a
+cell on the other side of a frequency boundary. In a controlled three-channel
+VLA fixture with centres 1349.88, 1350.01 and 1350.15 MHz, widths of 100 kHz,
+and cache cells at 1200 and 1500 MHz, CASA maps the second channel using
+1349.98 MHz. That selects the 1200 MHz cell even though its actual 1350.01 MHz
+centre is closer to the 1500 MHz cell.
+
+A CASA control using 125 kHz widths maps that channel to the latter cell. Its
+start was adjusted to keep the output coordinates identical; the visibilities,
+weights, flags, selected channels and output grid were otherwise the same.
+The two CASA results differ by 0.104 normalized RMS in the PSF and 0.158 in the
+primary beam. On that control, casa-rs agrees with CASA on all compared
+products, masks and metadata, with worst normalized RMS 5.50e-7. The width
+metadata really differs between the controls; the comparison isolates the
+cell-selection effect on this natural-weighted fixture rather than asserting
+that channel widths are generally interchangeable. The per-row frame conversion
+can itself move a channel across a cell boundary, so casa-rs recovers the stored
+channel frequency for AW cell selection while retaining the converted frequency
+for UV placement. Rounding near an exact cell tie remains permitted.
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05

@@ -829,9 +829,14 @@ impl ConvolutionFunctionSet for AwCatalog {
         let pa_deg = (-row.parallactic_angle_rad[0]).to_degrees();
         let pa = self.pa_cell(pa_deg);
         let w = self.w_cell(w_lambda);
-        let group = self.group_index(pa, self.frequency_cell(freq_hz), w);
+        let native_frequency_hz = freq_hz * row.native_frequency_ratio;
+        let group = self.group_index(pa, self.frequency_cell(native_frequency_hz), w);
         let prediction_w = self.w_cell(self.prediction_w(row, freq_hz, w_lambda));
-        let native = self.group_index(pa, nearest(&self.frequencies_hz, freq_hz).0, prediction_w);
+        let native = self.group_index(
+            pa,
+            nearest(&self.frequencies_hz, native_frequency_hz).0,
+            prediction_w,
+        );
         CfKey {
             group: u16::try_from(group).expect("AW group fits u16"),
             cube: u16::try_from(native).expect("AW group fits u16"),
