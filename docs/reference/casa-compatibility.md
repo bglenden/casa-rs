@@ -1598,7 +1598,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [componentlist](#componentlist) | `casars.tools` | 61 | yes | 53 | 3 | 5 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
-| [measures](#measures) | `casars.tools` | 48 | yes | 24 | 5 | 19 | 0 | 0 | 0 |
+| [measures](#measures) | `casars.tools` | 48 | yes | 24 | 6 | 18 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
 | [quanta](#quanta) | `casars.tools` | 57 | yes | 55 | 0 | 2 | 0 | 0 | 0 |
@@ -2169,7 +2169,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 24, Partial: 5, Not implemented: 19, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 24, Partial: 6, Not implemented: 18, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -2192,7 +2192,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `framecomet` | `v=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `framenow` |  | Implemented | Sets the frame's epoch, position and direction. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `frequency` | `rf='LSRK', v0=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [undefined-frequency-casa](#measures-evidence-undefined-frequency-casa) |
-| `getoffset` | `v` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `getoffset` | `v` | Partial (#1053) | Returns scalar offsets for direction, epoch, position and frequency records, preserving scalar metadata and integer values. Array-valued and nested offsets and unsupported measure kinds are explicitly refused; cyclic and excessively deep records are rejected safely. | [signature](#measures-evidence-signature), [getoffset-casa](#measures-evidence-getoffset-casa) |
 | `getref` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `gettype` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `getvalue` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
@@ -2366,6 +2366,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/measures_no_comet_oracle.py](https://github.com/bglenden/casa-rs/blob/485ce77c1633a120b82b1f795e5fc0affaf69424/tools/simulation/measures_no_comet_oracle.py)
 - [crates/casars-python/python/tests/data/casa_measures_no_comet.json](https://github.com/bglenden/casa-rs/blob/485ce77c1633a120b82b1f795e5fc0affaf69424/crates/casars-python/python/tests/data/casa_measures_no_comet.json)
 - [crates/casars-python/python/tests/test_measures_no_comet.py](https://github.com/bglenden/casa-rs/blob/485ce77c1633a120b82b1f795e5fc0affaf69424/crates/casars-python/python/tests/test_measures_no_comet.py)
+
+<a id="measures-evidence-getoffset-casa"></a>
+##### getoffset-casa
+
+**CASA-recorded values — measured.** 16 CASA 6.7.6-14 cases cover scalar offset presence, malformed inputs and four measure types; a separate isolated probe records a cyclic input crash, and an additional case records large integer truncation. casa-rs preserves the integer and refuses cyclic input. measures.getoffset for supported scalar direction, epoch, position and frequency records.
+
+- [tools/simulation/measures_getoffset_oracle.py](https://github.com/bglenden/casa-rs/blob/7848842f91fc5eba9fab6c621ae5abd3f062644a/tools/simulation/measures_getoffset_oracle.py)
+- [crates/casars-python/python/tests/data/casa_measures_getoffset.json](https://github.com/bglenden/casa-rs/blob/7848842f91fc5eba9fab6c621ae5abd3f062644a/crates/casars-python/python/tests/data/casa_measures_getoffset.json)
+- [crates/casars-python/python/tests/test_measures_getoffset.py](https://github.com/bglenden/casa-rs/blob/7848842f91fc5eba9fab6c621ae5abd3f062644a/crates/casars-python/python/tests/test_measures_getoffset.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/7848842f91fc5eba9fab6c621ae5abd3f062644a/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 ### quanta
 

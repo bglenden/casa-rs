@@ -29,6 +29,7 @@
 mod define;
 mod frame;
 mod inspect;
+mod offset;
 pub(crate) mod surface;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -411,13 +412,6 @@ impl PyMeasures {
     #[pyo3(signature = (v = None), text_signature = "($self, v='')")]
     fn framecomet(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("framecomet")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v), text_signature = "($self, v)")]
-    fn getoffset(&self, v: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getoffset")
     }
 
     /// The rest lines of the measures data, their names joined by spaces

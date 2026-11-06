@@ -4120,3 +4120,16 @@ as a reference frequency and silently treats its numeric value as hertz; and
 an empty index is read out of bounds. casa-rs validates inputs and preserves
 the old component on these failures. Like `setspectrum`, replacing the model
 preserves an existing frequency error instead of resetting it to zero.
+
+## Measure-offset inspection can corrupt integers or crash
+
+- Date noted: 2026-11-06
+- Status: CASA truncates large integers in offset metadata and crashes on a cyclic Python record; casa-rs preserves the value or rejects the cycle (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/measures_getoffset_oracle.py` and its CASA 6.7.6-14 fixture; the cyclic-input probe runs in an isolated process with core dumps disabled.
+
+When an otherwise valid direction offset contains an extra integer value of
+`2**53 + 1`, CASA's `getoffset` returns `1`. casa-rs returns the supplied
+integer exactly. A self-referential input record terminates CASA with SIGSEGV;
+casa-rs raises a catchable `ValueError` before conversion. Array-valued and
+nested measure offsets remain explicitly unimplemented in casa-rs (#1053).
