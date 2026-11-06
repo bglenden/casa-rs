@@ -4813,6 +4813,19 @@ converts zero. CASA handles the same array correctly when passed without a
 record. casa-rs preserves <code>1.25 m</code> and converts it to <code>125 cm</code>, using the
 same one-element output shape. Its <code>getunit</code>, <code>getvalue</code> and scalar arithmetic
 still report CASA's wrong-holder error for the record.</p>
+<h2 id="unsafe-component-reference-direction-inputs">Unsafe component reference-direction inputs<a class="headerlink" href="#unsafe-component-reference-direction-inputs" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-06</li>
+<li>Status: CASA crashes or corrupts component directions; casa-rs rejects the inputs before mutation (#1053).</li>
+<li>Owner decision: Correct CASA crashes and data corruption as classes; see <code>docs/simulation/owner-decisions-20261105.md</code>.</li>
+<li>Evidence: <code>tools/simulation/componentlist_setrefdir_oracle.py</code>, <code>tools/simulation/componentlist_setrefdir_crashes_oracle.py</code>, and their recorded CASA 6.7.6-14 fixtures. Crash cases run in isolated processes with core dumps disabled.</li>
+</ul>
+<p>On an empty list, <code>cl.setrefdir(-1, '1rad', '0.5rad')</code> terminates CASA with
+SIGSEGV, as does a cyclic quantity record. A non-finite coordinate returns
+<code>True</code> but replaces the direction with NaN. Passing <code>None</code> or an integer too
+large for the binding as the component index raises <code>SystemError</code> only after
+changing every component's direction. casa-rs rejects these inputs without
+changing any components, and reports the crashes as catchable errors.</p>
 
 
 
