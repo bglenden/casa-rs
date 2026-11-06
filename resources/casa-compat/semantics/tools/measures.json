@@ -32,48 +32,48 @@
    ]
   },
   "cometangdiam": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns CASA's -1 rad sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
-    "refusals"
+    "no-comet-casa"
    ]
   },
   "cometdist": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns CASA's -1 AU sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
-    "refusals"
+    "no-comet-casa"
    ]
   },
   "cometname": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns the empty name and CASA warning when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
-    "refusals"
+    "no-comet-casa"
    ]
   },
   "comettopo": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns CASA's dimensionless zero vector and warning when no topocentric comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
-    "refusals"
+    "no-comet-casa"
    ]
   },
   "comettype": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns CASA's none type when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
-    "refusals"
+    "no-comet-casa"
    ]
   },
   "direction": {
@@ -580,6 +580,18 @@
     "crates/casars-imager/tests/t1/virtual_model.rs"
    ],
    "source_revision": "3d64b4397df26f904ab94e7b477acdd5ab2e55e0"
+  },
+  "no-comet-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "25 CASA 6.7.6-14 calls cover all five comet getters on a fresh frame, after epoch, direction and position settings, and after done; the no-table warnings are checked as well.",
+   "scope": "measures comet getters without a loaded comet table.",
+   "links": [
+    "tools/simulation/measures_no_comet_oracle.py",
+    "crates/casars-python/python/tests/data/casa_measures_no_comet.json",
+    "crates/casars-python/python/tests/test_measures_no_comet.py"
+   ],
+   "source_revision": "485ce77c1633a120b82b1f795e5fc0affaf69424"
   }
  }
 }
