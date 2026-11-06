@@ -15,7 +15,7 @@ pub fn image_task_front_end<F>(program: &str, surfaces: &[&str], execute: F) -> 
 where
     F: Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>,
 {
-    TaskFrontEnd::new(
+    TaskFrontEnd::new_with_deferred_schema(
         program,
         image_analysis_task_schema_bundle(),
         surfaces,

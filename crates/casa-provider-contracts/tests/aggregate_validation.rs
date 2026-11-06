@@ -2,8 +2,8 @@
 //! Aggregate validation must preserve the public bundle validator's diagnostics.
 
 use casa_provider_contracts::{
-    ContractValidationError, SurfaceCatalogBundle, SurfaceContractBundle, builtin_surface_catalog,
-    validate_surface_bundles,
+    Constraint, ContractValidationError, NormalizationRule, SurfaceCatalogBundle,
+    SurfaceContractBundle, builtin_surface_catalog, validate_surface_bundles,
 };
 
 // The aggregate historically validates an owned bundle per surface, each
@@ -56,6 +56,37 @@ fn aggregate_validation_matches_owned_bundle_diagnostics() {
     divergent_concept.catalog.concepts.push(duplicate);
     cases.push(("divergent concept", divergent_concept));
 
+    let mut identical_concept = base.clone();
+    identical_concept
+        .catalog
+        .concepts
+        .push(base.catalog.concepts[0].clone());
+    cases.push(("identical concept", identical_concept));
+
+    let mut unknown_capability = base.clone();
+    let capabilities = unknown_capability
+        .catalog
+        .concepts
+        .iter_mut()
+        .find_map(|concept| match &mut concept.normalization {
+            NormalizationRule::CasaSelector { capabilities, .. } => Some(capabilities),
+            _ => None,
+        })
+        .unwrap();
+    capabilities.push("not_a_real_capability".into());
+    cases.push(("unknown capability", unknown_capability));
+
+    let mut non_reflexive_concept = base.clone();
+    non_reflexive_concept.catalog.concepts[0]
+        .base_constraints
+        .push(Constraint::NumberRange {
+            min: Some(f64::NAN),
+            max: None,
+            min_inclusive: true,
+            max_inclusive: true,
+        });
+    cases.push(("non-reflexive concept", non_reflexive_concept));
+
     let mut no_surfaces = base.clone();
     no_surfaces.surfaces.clear();
     cases.push(("no surfaces", no_surfaces));
@@ -63,7 +94,9 @@ fn aggregate_validation_matches_owned_bundle_diagnostics() {
     for (name, catalog) in cases {
         let expected = validate_owned_bundles(&catalog);
         match name {
-            "valid" | "no surfaces" => assert!(expected.is_ok(), "{name}"),
+            "valid" | "no surfaces" | "identical concept" => {
+                assert!(expected.is_ok(), "{name}")
+            }
             _ => {
                 let errors = expected.as_ref().unwrap_err();
                 let code = match name {
@@ -71,6 +104,8 @@ fn aggregate_validation_matches_owned_bundle_diagnostics() {
                     "duplicate surface" => "duplicate_surface",
                     "missing concept" => "missing_concept",
                     "divergent concept" => "divergent_concept",
+                    "non-reflexive concept" => "divergent_concept",
+                    "unknown capability" => "unknown_selector_capability",
                     _ => unreachable!(),
                 };
                 let count = errors.iter().filter(|error| error.code == code).count();
@@ -80,6 +115,12 @@ fn aggregate_validation_matches_owned_bundle_diagnostics() {
                     "schema version" | "catalog schema version" | "divergent concept"
                 ) {
                     assert_eq!(count, base.surfaces.len(), "{name} diagnostics per surface");
+                }
+                if name == "unknown capability" {
+                    assert_eq!(count, 1, "capabilities are checked on first definition");
+                }
+                if name == "non-reflexive concept" {
+                    assert_eq!(count, base.surfaces.len() - 1);
                 }
             }
         }

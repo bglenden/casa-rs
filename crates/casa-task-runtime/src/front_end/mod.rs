@@ -41,7 +41,7 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use casa_logging::{CasaLoggingConfig, CasaLoggingError, CasaLoggingGuard};
 use casa_provider_contracts::{
@@ -277,10 +277,18 @@ impl FrontEndOutput {
 /// The front end of one task binary.
 pub struct TaskFrontEnd<F> {
     program: String,
-    contract: Value,
+    contract: ContractDocument,
     protocol: Value,
     surfaces: Vec<SurfaceContractBundle>,
     execute: F,
+}
+
+enum ContractDocument {
+    Eager(Value),
+    Deferred {
+        contract: Box<TaskProviderContract>,
+        value: OnceLock<Result<Value, String>>,
+    },
 }
 
 /// The one action a command line asks for.
@@ -305,9 +313,50 @@ where
     /// first runs when the command line's first word names none.
     pub fn new<E: Serialize>(
         program: impl Into<String>,
+        contract: TaskProviderContract<E>,
+        surfaces: &[&str],
+        execute: F,
+    ) -> Result<Self, String> {
+        Self::construct(program, contract, surfaces, execute, |contract| {
+            serde_json::to_value(&contract)
+                .map(ContractDocument::Eager)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    /// Construct a front end for a standard task contract, deferring its
+    /// machine-readable schema document until it is requested.
+    ///
+    /// Contract validation and a serialization check still run immediately;
+    /// task parameter validation is unchanged. The concrete standard contract
+    /// contains only owned, deterministic values, so later schema rendering
+    /// preserves the output of [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same contract, surface or serialization errors as
+    /// [`Self::new`].
+    pub fn new_with_deferred_schema(
+        program: impl Into<String>,
+        contract: TaskProviderContract,
+        surfaces: &[&str],
+        execute: F,
+    ) -> Result<Self, String> {
+        Self::construct(program, contract, surfaces, execute, |contract| {
+            serde_json::to_writer(std::io::sink(), &contract).map_err(|error| error.to_string())?;
+            Ok(ContractDocument::Deferred {
+                contract: Box::new(contract),
+                value: OnceLock::new(),
+            })
+        })
+    }
+
+    fn construct<E: Serialize>(
+        program: impl Into<String>,
         mut contract: TaskProviderContract<E>,
         surfaces: &[&str],
         execute: F,
+        document: impl FnOnce(TaskProviderContract<E>) -> Result<ContractDocument, String>,
     ) -> Result<Self, String> {
         contract.validate().map_err(|errors| {
             errors
@@ -335,7 +384,7 @@ where
             .front_end
             .get_or_insert_with(TaskFrontEndSchemas::default);
         let protocol = serde_json::to_value(&contract.protocol).map_err(|e| e.to_string())?;
-        let contract = serde_json::to_value(&contract).map_err(|e| e.to_string())?;
+        let contract = document(contract)?;
         Ok(Self {
             program: program.into(),
             contract,
@@ -499,7 +548,20 @@ where
             Action::Help => {
                 FrontEndOutput::print(help::render_help(&self.program, &self.surfaces, bundle))
             }
-            Action::JsonSchema => pretty(&self.contract),
+            Action::JsonSchema => match &self.contract {
+                ContractDocument::Eager(value) => pretty(value),
+                ContractDocument::Deferred { contract, value } => {
+                    match value.get_or_init(|| {
+                        serde_json::to_value(contract.as_ref()).map_err(|error| error.to_string())
+                    }) {
+                        Ok(value) => pretty(value),
+                        Err(error) => FrontEndOutput::error(
+                            EXIT_EXECUTION_FAILED,
+                            format!("failed to serialize the task schema: {error}"),
+                        ),
+                    }
+                }
+            },
             Action::ProtocolInfo => pretty(&self.protocol),
             Action::JsonRun(source) => self.run_json(bundle, &source),
             Action::Template => match render_documented_template(bundle) {

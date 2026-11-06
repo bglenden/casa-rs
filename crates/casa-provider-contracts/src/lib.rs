@@ -6,8 +6,12 @@
 //! presentation-specific views from those canonical contracts.
 
 mod application;
+mod build_catalog;
 mod builtin;
 mod casa_value;
+#[cfg(any(test, casa_generated_surfaces))]
+mod catalog_number_probe;
+mod catalog_parse;
 mod components;
 mod executable;
 mod parameters;
@@ -15,6 +19,8 @@ mod projection;
 mod provider;
 mod reply;
 mod semantic;
+#[cfg(test)]
+mod surface_codegen;
 mod value_conversion;
 
 pub use casa_value::{
