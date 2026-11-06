@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Measure warm task-process latency for imhead and msconvert.
 
-Build both binaries in release mode, then provide a small CASA image::
+Build both binaries in release mode, then run the benchmark against the
+included small CASA image::
 
     cargo build --release -p casars-imexplore -p casars-msconvert --bins
-    python scripts/bench-task-startup.py --image /path/to/image.im
+    python scripts/bench-task-startup.py
 
 The image and the repository's small MSv2 fixture are copied to a temporary
 workspace. Times include process startup and the requested task. Run on an
@@ -22,6 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MS_FIXTURE = ROOT / "crates/casa-ms/tests/fixtures/ms_trial/ms_trial.ms.tgz"
+IMAGE_FIXTURE = ROOT / "crates/casa-images/tests/data/casa-6.7.6/axis_maps/transposed.image"
 
 
 def measure(command, *, cwd, request, warmup, iterations, cleanup=None):
@@ -40,14 +42,19 @@ def measure(command, *, cwd, request, warmup, iterations, cleanup=None):
             raise RuntimeError(f"{command}: expected output {cleanup} was not created")
         if run >= warmup:
             elapsed.append(duration)
-    return {"median_ms": round(statistics.median(elapsed), 3),
-            "min_ms": round(min(elapsed), 3), "max_ms": round(max(elapsed), 3),
-            "samples": len(elapsed)}
+    return {
+        "median_ms": round(statistics.median(elapsed), 3),
+        "min_ms": round(min(elapsed), 3),
+        "max_ms": round(max(elapsed), 3),
+        "samples": len(elapsed),
+    }
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", type=Path, required=True, help="small CASA image directory")
+    parser.add_argument(
+        "--image", type=Path, default=IMAGE_FIXTURE, help="small CASA image directory"
+    )
     parser.add_argument("--binary-dir", type=Path, default=ROOT / "target/release")
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--warmup", type=int, default=3)

@@ -34,6 +34,10 @@ fn aggregate_validation_matches_owned_bundle_diagnostics() {
     wrong_version.schema_version += 1;
     cases.push(("schema version", wrong_version));
 
+    let mut wrong_catalog_version = base.clone();
+    wrong_catalog_version.catalog.schema_version += 1;
+    cases.push(("catalog schema version", wrong_catalog_version));
+
     let mut duplicate_surface = base.clone();
     duplicate_surface.surfaces.push(base.surfaces[0].clone());
     cases.push(("duplicate surface", duplicate_surface));
@@ -58,8 +62,26 @@ fn aggregate_validation_matches_owned_bundle_diagnostics() {
 
     for (name, catalog) in cases {
         let expected = validate_owned_bundles(&catalog);
-        if name != "valid" && name != "no surfaces" {
-            assert!(expected.is_err(), "{name} must exercise an error");
+        match name {
+            "valid" | "no surfaces" => assert!(expected.is_ok(), "{name}"),
+            _ => {
+                let errors = expected.as_ref().unwrap_err();
+                let code = match name {
+                    "schema version" | "catalog schema version" => "schema_version",
+                    "duplicate surface" => "duplicate_surface",
+                    "missing concept" => "missing_concept",
+                    "divergent concept" => "divergent_concept",
+                    _ => unreachable!(),
+                };
+                let count = errors.iter().filter(|error| error.code == code).count();
+                assert!(count > 0, "{name} must report {code}");
+                if matches!(
+                    name,
+                    "schema version" | "catalog schema version" | "divergent concept"
+                ) {
+                    assert_eq!(count, base.surfaces.len(), "{name} diagnostics per surface");
+                }
+            }
         }
         assert_eq!(catalog.validate(), expected, "{name}");
     }
