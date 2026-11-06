@@ -46,8 +46,8 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use casa_logging::{CasaLoggingConfig, CasaLoggingError, CasaLoggingGuard};
 use casa_provider_contracts::{
     CasaValue, EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, ParameterValue,
-    SurfaceContractBundle, TaskFailureKind, TaskFrontEndSchemas, TaskProviderContract, TaskReply,
-    TaskRunRequest,
+    ProviderProtocolDescriptor, SurfaceContractBundle, TaskFailureKind, TaskFrontEndSchemas,
+    TaskProviderContract, TaskReply, TaskRunRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -289,6 +289,10 @@ enum ContractDocument {
         contract: Box<TaskProviderContract>,
         value: OnceLock<Result<Value, String>>,
     },
+    Compiled {
+        document: &'static str,
+        value: OnceLock<Result<Value, String>>,
+    },
 }
 
 /// The one action a command line asks for.
@@ -348,6 +352,41 @@ where
                 contract: Box::new(contract),
                 value: OnceLock::new(),
             })
+        })
+    }
+
+    /// Construct a front end from a provider contract validated at build time.
+    ///
+    /// `document` must be the JSON projection of the validated provider after
+    /// its front-end schema is installed. `hosted` must contain the requested
+    /// surfaces from that same provider. Callers must use the ordinary
+    /// constructor when build and target metadata may differ. User-provided
+    /// parameters are still resolved and validated on every invocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no surface is hosted or the protocol cannot be
+    /// serialized.
+    #[doc(hidden)]
+    pub fn new_with_compiled_contract(
+        program: impl Into<String>,
+        protocol: ProviderProtocolDescriptor,
+        hosted: Vec<SurfaceContractBundle>,
+        document: &'static str,
+        execute: F,
+    ) -> Result<Self, String> {
+        if hosted.is_empty() {
+            return Err("a task front end hosts at least one surface".to_string());
+        }
+        Ok(Self {
+            program: program.into(),
+            contract: ContractDocument::Compiled {
+                document,
+                value: OnceLock::new(),
+            },
+            protocol: serde_json::to_value(protocol).map_err(|error| error.to_string())?,
+            surfaces: hosted,
+            execute,
         })
     }
 
@@ -558,6 +597,17 @@ where
                         Err(error) => FrontEndOutput::error(
                             EXIT_EXECUTION_FAILED,
                             format!("failed to serialize the task schema: {error}"),
+                        ),
+                    }
+                }
+                ContractDocument::Compiled { document, value } => {
+                    match value.get_or_init(|| {
+                        serde_json::from_str(document).map_err(|error| error.to_string())
+                    }) {
+                        Ok(value) => pretty(value),
+                        Err(error) => FrontEndOutput::error(
+                            EXIT_EXECUTION_FAILED,
+                            format!("failed to deserialize the task schema: {error}"),
                         ),
                     }
                 }

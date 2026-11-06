@@ -9,7 +9,6 @@ mod application;
 mod build_catalog;
 mod builtin;
 mod casa_value;
-#[cfg(any(test, casa_generated_surfaces))]
 mod catalog_number_probe;
 mod catalog_parse;
 mod components;
@@ -56,4 +55,9 @@ pub use application::{
     ApplicationLaunchDescriptor, builtin_application_catalog,
 };
 pub use builtin::{builtin_surface_bundle, builtin_surface_catalog};
+#[doc(hidden)]
+pub use catalog_number_probe::{
+    JsonNumberFingerprint, builtin_provider_fingerprint, builtin_provider_parser_matches,
+    provider_document_roundtrips,
+};
 pub use executable::{SUITE_ROOT_ENV, installed_suite_root, resolve_task_executable};

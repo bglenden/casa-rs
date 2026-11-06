@@ -78,6 +78,59 @@ fn deferred_schema_matches_eager_discovery_and_validation() {
     assert_eq!(deferred_error, eager_error);
 }
 
+#[test]
+fn compiled_contract_matches_eager_discovery_and_user_validation() {
+    let eager = TaskFrontEnd::new("imexplore", contract(), &["imstat", "imhead"], |_| {
+        TaskSuccess::new(CasaValue::None, &())
+    })
+    .unwrap();
+    let mut source = contract();
+    source.validate().unwrap();
+    let hosted = ["imstat", "imhead"]
+        .into_iter()
+        .map(|id| {
+            source
+                .parameter_surfaces
+                .iter()
+                .find(|bundle| bundle.surface.id() == id)
+                .unwrap()
+                .clone()
+        })
+        .collect();
+    let protocol = source.protocol.clone();
+    source
+        .semantic
+        .front_end
+        .get_or_insert_with(Default::default);
+    let document = Box::leak(
+        serde_json::to_string(&serde_json::to_value(&source).unwrap())
+            .unwrap()
+            .into_boxed_str(),
+    );
+    let compiled =
+        TaskFrontEnd::new_with_compiled_contract("imexplore", protocol, hosted, document, |_| {
+            TaskSuccess::new(CasaValue::None, &())
+        })
+        .unwrap();
+    for action in ["--help", "--json-schema", "--protocol-info", "--show"] {
+        assert_eq!(
+            compiled.dispatch(&args(&[action])),
+            eager.dispatch(&args(&[action]))
+        );
+    }
+    let workspace = tempfile::tempdir().unwrap();
+    let request = workspace.path().join("invalid.json");
+    std::fs::write(
+        &request,
+        json!({"surface": "imhead", "values": {"imagename": 123}}).to_string(),
+    )
+    .unwrap();
+    let args = args(&["--json-run", request.to_str().unwrap()]);
+    let refused = compiled.dispatch(&args);
+    assert_ne!(refused.code, 0);
+    assert_eq!(refused, eager.dispatch(&args));
+}
+
 /// A provider contract carrying the builtin `surfaces`.
 fn contract_hosting(surfaces: &[&str]) -> TaskProviderContract {
     let request_schema = schemars::schema_for!(Request);

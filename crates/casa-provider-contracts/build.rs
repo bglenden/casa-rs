@@ -62,7 +62,7 @@ fn main() {
         return;
     }
     let mut probes = Vec::new();
-    for token in surface_codegen::number_tokens(&[&catalog, &surfaces]) {
+    for token in catalog_number_probe::number_tokens(&[&catalog, &surfaces]) {
         let Some((direct, value, casa)) = catalog_number_probe::number_bits(&token) else {
             return; // Retain target-side validation for unrepresentable probes.
         };

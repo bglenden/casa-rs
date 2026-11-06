@@ -110,44 +110,6 @@ fn compact_json(input: &str) -> String {
     String::from_utf8(bytes).expect("removing ASCII whitespace preserves UTF-8")
 }
 
-/// Collect JSON number tokens, ignoring quoted text and preserving spelling.
-pub(crate) fn number_tokens(inputs: &[&str]) -> BTreeSet<String> {
-    let mut numbers = BTreeSet::new();
-    for input in inputs {
-        let bytes = input.as_bytes();
-        let mut index = 0;
-        while index < bytes.len() {
-            match bytes[index] {
-                b'"' => {
-                    index += 1;
-                    while index < bytes.len() {
-                        match bytes[index] {
-                            b'\\' => index += 2,
-                            b'"' => {
-                                index += 1;
-                                break;
-                            }
-                            _ => index += 1,
-                        }
-                    }
-                }
-                b'-' | b'0'..=b'9' => {
-                    let start = index;
-                    index += 1;
-                    while index < bytes.len()
-                        && matches!(bytes[index], b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-')
-                    {
-                        index += 1;
-                    }
-                    numbers.insert(input[start..index].to_owned());
-                }
-                _ => index += 1,
-            }
-        }
-    }
-    numbers
-}
-
 /// Whether an error is independent of floating-point parser configuration.
 #[cfg(not(test))]
 pub(crate) fn definitely_invalid(errors: &[ContractValidationError]) -> bool {
@@ -178,8 +140,9 @@ pub(crate) fn definitely_invalid(errors: &[ContractValidationError]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{SurfaceSources, number_tokens};
+    use super::SurfaceSources;
     use crate::build_catalog;
+    use crate::catalog_number_probe::number_tokens;
 
     const CATALOG: &str = include_str!("../resources/parameter-catalog.json");
     const SURFACES: &str = include_str!("../resources/parameter-surfaces.json");
