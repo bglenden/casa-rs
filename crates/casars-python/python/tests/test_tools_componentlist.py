@@ -61,7 +61,7 @@ IMPLEMENTED = {
     "addcomponent", "close", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
     "getfluxerror", "getfluxpol", "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
     "indices", "getkeyword", "haskeyword", "getrefdir", "getrefdirra", "getrefdirdec", "getrefdirframe", "getshape", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
-    "select", "deselect", "selected", "setlabel", "setfreq", "setfreqframe", "remove", "recover", "purge", "sample", "convertfluxunit", "convertfrequnit", "torecord", "isphysical", "iscomponentlist",
+    "select", "deselect", "selected", "setlabel", "setfreq", "setfreqframe", "remove", "recover", "purge", "putkeyword", "sample", "convertfluxunit", "convertfrequnit", "torecord", "isphysical", "iscomponentlist",
 }
 NOT_YET_IMPLEMENTED = set(CASA["methods"]) - IMPLEMENTED
 

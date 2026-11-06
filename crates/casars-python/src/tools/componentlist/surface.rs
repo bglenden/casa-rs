@@ -190,12 +190,15 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method("purge", &[], R::Bool, Yes),
-    method(
-        "putkeyword",
-        &[KEYWORD, param("value", K::Any, Empty)],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "putkeyword",
+            &[KEYWORD, param("value", K::Any, Empty)],
+            R::Any,
+            Yes,
+        )
+    },
     method("recover", &[LOG], R::Bool, Yes),
     method("remove", &[WHICH_ALL, LOG], R::Bool, Yes),
     method(
