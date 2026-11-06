@@ -916,7 +916,7 @@ fn full_stokes_automatic_masks_measure_each_channel_and_polarization() {
         for polarization in 0..4 {
             let mut plane = residual(
                 inside,
-                0.001 * ((polarization + 1) * (channel * 4 + 1)) as f32,
+                0.001 * (polarization + 1) as f32 * if channel == 0 { 1.0 } else { 100.0 },
                 0.5,
             );
             let point = inside
@@ -992,7 +992,15 @@ fn full_stokes_automatic_masks_measure_each_channel_and_polarization() {
             );
         }
     }
-    assert_eq!(prepared.statistics.peak_no_mask, 8.0);
+    let expected_peak = residuals
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != 7)
+        .flat_map(|(index, plane)| plane.iter().zip(&supports[index / 4]))
+        .filter(|(_, inside)| **inside)
+        .map(|(value, _)| f64::from(*value).abs())
+        .fold(0.0_f64, f64::max);
+    assert_eq!(prepared.statistics.peak_no_mask, expected_peak);
 
     // Seed a later automatic boundary with an inherited nonempty mask and
     // a stopped second channel. Advance once so both the domain plan and
