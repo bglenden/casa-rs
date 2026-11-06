@@ -122,7 +122,7 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method("done", &[], R::Bool, Yes),
-    method("edit", &[WHICH, LOG], R::Bool, No),
+    method("edit", &[WHICH, LOG], R::Bool, Yes),
     method(
         "fromrecord",
         &[param("record", K::Record, EmptyRecord)],
