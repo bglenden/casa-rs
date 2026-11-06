@@ -329,6 +329,13 @@ mod model_channel_tests {
         };
         input.channel_pb = &[0.5];
         assert!(input.evaluate(&mut output).is_err());
+        input.channel_pb = &[0.5, 0.5];
+        input.mean_pb = &[0.5];
+        assert!(input.evaluate(&mut output).is_err());
+        input.mean_pb = &[0.5, 0.5];
+        input.terms = [&[1.0], &[1.0, 2.0]];
+        assert!(input.evaluate(&mut output).is_err());
+        input.terms = [&[1.0, 2.0], &[1.0, 2.0]];
         input.channel_pb = &[0.5, f32::NAN];
         assert!(input.evaluate(&mut output).is_err());
         input.channel_pb = &[0.5, 0.5];
