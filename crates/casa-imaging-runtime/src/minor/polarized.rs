@@ -107,6 +107,8 @@ pub(super) fn solve<const N: usize>(
         outcome,
         peak_no_mask,
         terms,
+        dense: None,
+        mem_alpha: None,
         trace,
         charge,
     })

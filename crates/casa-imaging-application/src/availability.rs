@@ -6,8 +6,9 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, FrequencyFrame, PolarizationCoordinate, ProductKind, ReconstructionBasis,
-    RequiredCapability, SpectralFrameAnchor, SpectralKernel,
+    CompiledProblem, FrequencyFrame, InstrumentResponse, PolarizationCoordinate, ProductKind,
+    ReconstructionAlgorithm, ReconstructionBasis, RequiredCapability, SpectralFrameAnchor,
+    SpectralKernel, WeightingScheme,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::HostResources;
@@ -18,6 +19,8 @@ use crate::BackendRequest;
 /// One reason the installed implementation cannot run a problem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Unsupported {
+    /// MEM is verified only for a single standard Stokes I continuum domain.
+    MemScope,
     /// The major-cycle pass has no implementation of a capability the
     /// problem requires.
     Capability(RequiredCapability),
@@ -58,6 +61,9 @@ pub enum Unsupported {
 impl fmt::Display for Unsupported {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MemScope => formatter.write_str(
+                "MEM currently supports one standard, natural-weighted Stokes I MFS domain (#1060)",
+            ),
             Self::Capability(capability) => write!(
                 formatter,
                 "the major-cycle pass has no implementation of {capability:?}"
@@ -191,6 +197,34 @@ pub fn check(
         .map(Unsupported::Capability)
         .collect::<Vec<_>>();
     if matches!(
+        problem.reconstruction().algorithm(),
+        ReconstructionAlgorithm::Mem
+    ) && (!matches!(
+        problem.reconstruction().basis(),
+        ReconstructionBasis::Constant
+    ) || problem.reconstruction().polarization().coordinates()
+        != [PolarizationCoordinate::StokesI]
+        || problem.geometry().domains().len() != 1
+        || problem
+            .required_capabilities()
+            .contains(&RequiredCapability::FacetedGeometry)
+        || !crate::imaging::standard_kernel_set(problem)
+        || problem
+            .science()
+            .measurement_equation()
+            .instrument_response()
+            != InstrumentResponse::Scalar
+        || !matches!(problem.weighting().scheme(), WeightingScheme::Natural)
+        || problem.observation().sources().len() != 1
+        || !problem
+            .observation_transaction()
+            .write_set()
+            .visibility_columns()
+            .is_empty())
+    {
+        unsupported.push(Unsupported::MemScope);
+    }
+    if matches!(
         problem.reconstruction().basis(),
         ReconstructionBasis::Taylor { .. }
     ) && problem.geometry().domains().len() != 1
@@ -301,6 +335,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::DirtyReconstruction
             | RequiredCapability::HogbomReconstruction
             | RequiredCapability::ClarkReconstruction
+            | RequiredCapability::MemReconstruction
             | RequiredCapability::MultiscaleReconstruction
             | RequiredCapability::MtmfsReconstruction
             | RequiredCapability::NaturalWeighting

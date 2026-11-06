@@ -4,7 +4,11 @@
 //! 0, with the band widened by twice its offset from the band's centre
 //! (CAS-9518), and an `mtmfs` Taylor expansion's reference frequency.
 
+use casa_provider_contracts::TaskReply;
+use casa_types::{ScalarValue, Value as CellValue};
 use serde_json::json;
+
+use super::casa_return::json_run;
 
 use super::fixture::{Component, Observation};
 
@@ -69,4 +73,47 @@ fn an_mtmfs_expansion_takes_reffreq_as_its_reference() {
             "{new} vs {expected}"
         );
     }
+}
+
+#[test]
+fn tclean_uses_the_measurement_frame_when_frequency_metadata_is_incomplete() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("incomplete-frequency-reference");
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut ms = casa_ms::MeasurementSet::open(observation.measurement_set()).unwrap();
+    let spw = ms
+        .subtable_mut(casa_ms::SubtableId::SpectralWindow)
+        .unwrap();
+    for row in 0..spw.row_count() {
+        spw.cell_accessor_mut(row, "MEAS_FREQ_REF")
+            .unwrap()
+            .set(CellValue::Scalar(ScalarValue::Int32(5)))
+            .unwrap();
+    }
+    for name in ["CHAN_FREQ", "REF_FREQUENCY"] {
+        let mut keywords = spw.column_keywords(name).unwrap().clone();
+        let Some(CellValue::Record(info)) = keywords.get_mut("MEASINFO") else {
+            panic!("frequency MEASINFO")
+        };
+        for key in ["Ref", "VarRefCol", "TabRefTypes", "TabRefCodes"] {
+            info.remove(key);
+        }
+        spw.set_column_keywords(name, keywords);
+    }
+    ms.save().unwrap();
+    drop(ms);
+    let geometry = observation.geometry();
+    let reply = json_run(
+        &directory,
+        json!({
+            "vis": observation.measurement_set(),
+            "imagename": directory.join("image"),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend": "cpu",
+            "niter": 0,
+        }),
+    );
+    assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+    assert!(directory.join("image.psf").is_dir());
 }

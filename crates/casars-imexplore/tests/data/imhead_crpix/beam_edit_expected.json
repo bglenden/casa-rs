@@ -1,0 +1,837 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 3.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 0.0
+        }
+      },
+      "history": [
+        "Added beam major: 3 arcsec, minor: 3 arcsec, pa: 0 deg",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"beammajor\", hdvalue=\"3arcsec\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "beammajor",
+      "mode": "put",
+      "return": null,
+      "value": "3arcsec"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 0.0
+        }
+      },
+      "history": [
+        "Added beam major: 2 arcsec, minor: 2 arcsec, pa: 0 deg",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"beamminor\", hdvalue=\"2arcsec\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "beamminor",
+      "mode": "put",
+      "return": null,
+      "value": "2arcsec"
+    },
+    {
+      "beam": {},
+      "error": "Exception: This image has no beam. This application cannot add a beam position angle to an image with no beam. Add the major or minor axis and then modify the other and the position angle with put..\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "image": "normal",
+      "key": "beampa",
+      "mode": "put",
+      "value": "30deg"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minor": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 0.0
+        }
+      },
+      "history": [
+        "Added beam major: 1 arcmin, minor: 1 arcmin, pa: 0 deg",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"bmaj\", hdvalue=\"1arcmin\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "bmaj",
+      "mode": "add",
+      "return": null,
+      "value": "1arcmin"
+    },
+    {
+      "beam": {},
+      "error": "Exception: Cannot add a beam position angle. Add the major or minor axis and then modify the other and the position angle..\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::add(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "image": "normal",
+      "key": "bpa",
+      "mode": "add",
+      "value": "30deg"
+    },
+    {
+      "beam": {},
+      "history": [],
+      "image": "normal",
+      "key": "bmaj",
+      "mode": "del",
+      "return": null,
+      "value": ""
+    },
+    {
+      "beam": {},
+      "error": "Exception: Beam is null and therefore invalid..\n... thrown by void casacore::ImageInfo::setRestoringBeam(const casacore::GaussianBeam&)",
+      "image": "normal",
+      "key": "bmaj",
+      "mode": "put",
+      "value": "0arcsec"
+    },
+    {
+      "beam": {},
+      "error": "Exception: Major axis cannot be less than zero..\n... thrown by void casacore::GaussianBeam::setMajorMinor(const casacore::Quantity&, const casacore::Quantity&)",
+      "image": "normal",
+      "key": "bmaj",
+      "mode": "put",
+      "value": "-1arcsec"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 2.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "history": [
+        "Modified bmaj from \"1 arcmin\n\" to \"2arcmin\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bmaj\", hdvalue=\"2arcmin\", verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bmaj",
+      "mode": "put",
+      "return": null,
+      "value": "2arcmin"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "error": "Exception: Major axis must be greater or equal to minor axis.\n... thrown by void casacore::GaussianBeam::setMajorMinor(const casacore::Quantity&, const casacore::Quantity&)",
+      "image": "beam",
+      "key": "bmaj",
+      "mode": "put",
+      "value": "15arcsec"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "error": "Exception: Major axis must be greater or equal to minor axis.\n... thrown by void casacore::GaussianBeam::setMajorMinor(const casacore::Quantity&, const casacore::Quantity&)",
+      "image": "beam",
+      "key": "bmin",
+      "mode": "put",
+      "value": "100arcsec"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 60.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "history": [
+        "Modified bmin from \"20 arcsec\n\" to \"60arcsec\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bmin\", hdvalue=\"60arcsec\", verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bmin",
+      "mode": "put",
+      "return": null,
+      "value": "60arcsec"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 190.0
+        }
+      },
+      "history": [
+        "Modified bpa from \"120 deg\" to \"190deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bpa\", hdvalue=\"190deg\", verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bpa",
+      "mode": "put",
+      "return": null,
+      "value": "190deg"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": -400.0
+        }
+      },
+      "history": [
+        "Modified bpa from \"120 deg\" to \"-400deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bpa\", hdvalue=\"-400deg\", verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bpa",
+      "mode": "put",
+      "return": null,
+      "value": "-400deg"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 2.0
+        }
+      },
+      "history": [
+        "Modified bpa from \"120 deg\" to \"2rad\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bpa\", hdvalue=\"2rad\", verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bpa",
+      "mode": "put",
+      "return": null,
+      "value": "2rad"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "error": "Exception: Major axis must have angular units ( is not)..\n... thrown by void casacore::GaussianBeam::setMajorMinor(const casacore::Quantity&, const casacore::Quantity&)",
+      "image": "beam",
+      "key": "beammajor",
+      "mode": "put",
+      "value": "3"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "error": "Exception: Major axis must be greater or equal to minor axis.\n... thrown by void casacore::GaussianBeam::setMajorMinor(const casacore::Quantity&, const casacore::Quantity&)",
+      "image": "beam",
+      "key": "bmaj",
+      "mode": "put",
+      "value": "0arcsec"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "error": "Exception: Position angle must have angular units (Hz is not)..\n... thrown by void casacore::GaussianBeam::setPA(const casacore::Quantity&, casacore::Bool)",
+      "image": "beam",
+      "key": "bpa",
+      "mode": "put",
+      "value": "1Hz"
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 40.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "history": [
+        "Modified bmaj from \"1 arcmin\n\" to   unit: String \"arcsec\"\n  value: Double 40",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bmaj\", hdvalue={'unit': 'arcsec', 'value': 40.0}, verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bmaj",
+      "mode": "put",
+      "return": null,
+      "value": {
+        "unit": "arcsec",
+        "value": 40.0
+      }
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcsec1",
+          "value": 40.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "history": [
+        "Modified bmaj from \"1 arcmin\n\" to   unit: String \"arcsec^1\"\n  value: Double 40",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bmaj\", hdvalue={'unit': 'arcsec^1', 'value': 40.0}, verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bmaj",
+      "mode": "put",
+      "return": null,
+      "value": {
+        "unit": "arcsec^1",
+        "value": 40.0
+      }
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcsec.1",
+          "value": 40.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "history": [
+        "Modified bmaj from \"1 arcmin\n\" to   unit: String \"arcsec*1\"\n  value: Double 40",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bmaj\", hdvalue={'unit': 'arcsec*1', 'value': 40.0}, verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bmaj",
+      "mode": "put",
+      "return": null,
+      "value": {
+        "unit": "arcsec*1",
+        "value": 40.0
+      }
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 40.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "history": [
+        "Modified bmaj from \"1 arcmin\n\" to   unit: String \" arcsec\"\n  value: Double 40",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bmaj\", hdvalue={'unit': ' arcsec', 'value': 40.0}, verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bmaj",
+      "mode": "put",
+      "return": null,
+      "value": {
+        "unit": " arcsec",
+        "value": 40.0
+      }
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "mas",
+          "value": 19999.999999999996
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "history": [
+        "Modified bmaj from \"1 arcmin\n\" to   unit: String \"mas\"\n  value: Double 20000",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bmaj\", hdvalue={'unit': 'mas', 'value': 19999.999999999996}, verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bmaj",
+      "mode": "put",
+      "return": null,
+      "value": {
+        "unit": "mas",
+        "value": 19999.999999999996
+      }
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "error": "Input ValueHolder is of type Int, but it must be either  a Record or a String",
+      "image": "beam",
+      "key": "bmaj",
+      "mode": "put",
+      "value": 3
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcmin",
+          "value": 1.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 120.0
+        }
+      },
+      "error": "Exception: This image already has a beam(s). Cannot add one..\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::add(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "image": "beam",
+      "key": "bmaj",
+      "mode": "add",
+      "value": "3arcsec"
+    },
+    {
+      "beam": {},
+      "history": [
+        "Removed image's single beam",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bmaj\", hdvalue=\"\", verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bmaj",
+      "mode": "del",
+      "return": null,
+      "value": ""
+    },
+    {
+      "beam": {},
+      "history": [
+        "Removed image's single beam",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bpa\", hdvalue=\"\", verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bpa",
+      "mode": "del",
+      "return": null,
+      "value": ""
+    },
+    {
+      "beam": {},
+      "history": [
+        "Removed image's single beam",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bpa\", hdvalue={'unit': 'deg', 'value': 1.0}, verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bpa",
+      "mode": "del",
+      "return": null,
+      "value": {
+        "unit": "deg",
+        "value": 1.0
+      }
+    },
+    {
+      "beam": {},
+      "history": [
+        "Removed image's single beam",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bpa\", hdvalue=[1, 2], verbose=False)"
+      ],
+      "image": "beam",
+      "key": "bpa",
+      "mode": "del",
+      "return": null,
+      "value": [
+        1,
+        2
+      ]
+    },
+    {
+      "beam": {
+        "beams": {
+          "*0": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 2.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 0.0
+              }
+            }
+          },
+          "*1": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 3.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 0.0
+              }
+            }
+          }
+        },
+        "nChannels": 2,
+        "nStokes": 1
+      },
+      "error": "Exception: This image has multiple beams. This application cannot modify beams in such an image..\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "image": "multi",
+      "key": "bmaj",
+      "mode": "put",
+      "value": "3arcsec"
+    },
+    {
+      "beam": {
+        "beams": {
+          "*0": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 2.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 0.0
+              }
+            }
+          },
+          "*1": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 3.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 0.0
+              }
+            }
+          }
+        },
+        "nChannels": 2,
+        "nStokes": 1
+      },
+      "error": "Exception: This image already has a beam(s). Cannot add one..\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::add(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "image": "multi",
+      "key": "bmaj",
+      "mode": "add",
+      "value": "3arcsec"
+    },
+    {
+      "beam": {},
+      "history": [
+        "Removed image's multiple beams",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bmaj\", hdvalue=\"\", verbose=False)"
+      ],
+      "image": "multi",
+      "key": "bmaj",
+      "mode": "del",
+      "return": null,
+      "value": ""
+    },
+    {
+      "beam": {},
+      "history": [
+        "Removed image's multiple beams",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bpa\", hdvalue=\"\", verbose=False)"
+      ],
+      "image": "multi",
+      "key": "bpa",
+      "mode": "del",
+      "return": null,
+      "value": ""
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 60.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 15.0
+        }
+      },
+      "history": [
+        "Modified bpa from \"120 deg\" to \"15deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bpa\", hdvalue=\"15deg\", verbose=False)"
+      ],
+      "image": "beam_singleton",
+      "key": "bpa",
+      "mode": "put",
+      "return": null,
+      "value": "15deg"
+    },
+    {
+      "beam": {},
+      "history": [
+        "Removed image's single beam",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bmaj\", hdvalue=\"\", verbose=False)"
+      ],
+      "image": "beam_singleton",
+      "key": "bmaj",
+      "mode": "del",
+      "return": null,
+      "value": ""
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcsec1",
+          "value": 60.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 20.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 15.0
+        }
+      },
+      "history": [
+        "Modified bpa from \"120 deg\" to \"15deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bpa\", hdvalue=\"15deg\", verbose=False)"
+      ],
+      "image": "beam_spelling",
+      "key": "bpa",
+      "mode": "put",
+      "return": null,
+      "value": "15deg"
+    },
+    {
+      "beam": {},
+      "history": [
+        "Removed image's single beam",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bmaj\", hdvalue=\"\", verbose=False)"
+      ],
+      "image": "beam_spelling",
+      "key": "bmaj",
+      "mode": "del",
+      "return": null,
+      "value": ""
+    },
+    {
+      "beam": {
+        "major": {
+          "unit": "arcsec",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 1.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 15.0
+        }
+      },
+      "history": [
+        "Modified bpa from \"0 deg\" to \"15deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"bpa\", hdvalue=\"15deg\", verbose=False)"
+      ],
+      "image": "single_dual",
+      "key": "bpa",
+      "mode": "put",
+      "return": null,
+      "value": "15deg"
+    },
+    {
+      "beam": {},
+      "history": [
+        "Removed image's single beam",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bmin\", hdvalue=\"\", verbose=False)"
+      ],
+      "image": "single_dual",
+      "key": "bmin",
+      "mode": "del",
+      "return": null,
+      "value": ""
+    }
+  ]
+}

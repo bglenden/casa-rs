@@ -1,0 +1,813 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {},
+      "result": 0,
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "",
+        ""
+      ],
+      "kwargs": {},
+      "result": 0,
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        {
+          "_bytes": [
+            255
+          ]
+        },
+        "in.txt"
+      ],
+      "kwargs": {},
+      "result": 0,
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "a\u0000b",
+        "in.txt"
+      ],
+      "kwargs": {},
+      "result": 0,
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "refer": "bad",
+        "format": "bad",
+        "direction": {
+          "x": 1
+        },
+        "spectrum": {},
+        "flux": {},
+        "log": false
+      },
+      "result": 0,
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        1,
+        "in.txt"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _filename must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        2
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _asciifile must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        null,
+        "in.txt"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _filename must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "refer": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _refer must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "refer": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _refer must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "format": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _format must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "format": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _format must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "direction": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "_direction is not a dictionary"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "direction": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "_direction is not a dictionary"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "spectrum": []
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "_spectrum is not a dictionary"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "flux": "bad"
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "_flux is not a dictionary"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "log": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_asciitocomponentlist', argument 9 of type 'bool'"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "log": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_asciitocomponentlist', argument 9 of type 'bool'"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "direction": {
+          "large": 1267650600228229401496703205376
+        }
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_asciitocomponentlist> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {},
+      "result": 0,
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "",
+        ""
+      ],
+      "kwargs": {},
+      "result": 0,
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        {
+          "_bytes": [
+            255
+          ]
+        },
+        "in.txt"
+      ],
+      "kwargs": {},
+      "result": 0,
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "a\u0000b",
+        "in.txt"
+      ],
+      "kwargs": {},
+      "result": 0,
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "refer": "bad",
+        "format": "bad",
+        "direction": {
+          "x": 1
+        },
+        "spectrum": {},
+        "flux": {},
+        "log": false
+      },
+      "result": 0,
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        1,
+        "in.txt"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _filename must be a string"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        2
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _asciifile must be a string"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        null,
+        "in.txt"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _filename must be a string"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "refer": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _refer must be a string"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "refer": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _refer must be a string"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "format": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _format must be a string"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "format": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _format must be a string"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "direction": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "_direction is not a dictionary"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "direction": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "_direction is not a dictionary"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "spectrum": []
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "_spectrum is not a dictionary"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "flux": "bad"
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "_flux is not a dictionary"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "log": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_asciitocomponentlist', argument 9 of type 'bool'"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "log": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_asciitocomponentlist', argument 9 of type 'bool'"
+      },
+      "length": 1
+    },
+    {
+      "state": "populated",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "direction": {
+          "large": 1267650600228229401496703205376
+        }
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_asciitocomponentlist> returned a result with an exception set"
+      },
+      "length": 1
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {},
+      "result": 0,
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "",
+        ""
+      ],
+      "kwargs": {},
+      "result": 0,
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        {
+          "_bytes": [
+            255
+          ]
+        },
+        "in.txt"
+      ],
+      "kwargs": {},
+      "result": 0,
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "a\u0000b",
+        "in.txt"
+      ],
+      "kwargs": {},
+      "result": 0,
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "refer": "bad",
+        "format": "bad",
+        "direction": {
+          "x": 1
+        },
+        "spectrum": {},
+        "flux": {},
+        "log": false
+      },
+      "result": 0,
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        1,
+        "in.txt"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _filename must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        2
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _asciifile must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        null,
+        "in.txt"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _filename must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "refer": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _refer must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "refer": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _refer must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "format": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _format must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "format": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _format must be a string"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "direction": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "_direction is not a dictionary"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "direction": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "_direction is not a dictionary"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "spectrum": []
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "_spectrum is not a dictionary"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "flux": "bad"
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "_flux is not a dictionary"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "log": 1
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_asciitocomponentlist', argument 9 of type 'bool'"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "log": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_asciitocomponentlist', argument 9 of type 'bool'"
+      },
+      "length": 0
+    },
+    {
+      "state": "closed",
+      "args": [
+        "in.cl",
+        "in.txt"
+      ],
+      "kwargs": {
+        "direction": {
+          "large": 1267650600228229401496703205376
+        }
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_asciitocomponentlist> returned a result with an exception set"
+      },
+      "length": 0
+    }
+  ],
+  "cycle_returncode": -11
+}

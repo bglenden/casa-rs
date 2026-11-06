@@ -14,7 +14,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use casa_imaging_deconvolution::{
     Clark, ClarkPolarized, CycleControls, Hogbom, MinorCycleView, Multiscale, PlaneShape,
-    PlaneStatistics, PsfSummary, Solver, Support, Taylor, run_plane, solve_bytes,
+    PlaneStatistics, PsfSummary, Solver, Support, Taylor, mem_plane_bytes, mem_step,
+    mem_step_bytes, run_mem_plane, run_plane, solve_bytes,
 };
 
 #[global_allocator]
@@ -235,4 +236,78 @@ fn a_plane_solve_holds_at_most_what_it_is_admitted() {
         }
     }
     assert!(breaches.is_empty(), "{breaches:#?}");
+}
+
+#[test]
+fn dense_mem_step_holds_at_most_what_it_is_admitted() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    for shape in [PlaneShape::new(97, 80), PlaneShape::new(256, 256)] {
+        let (dirty, psf) = sky(shape);
+        let residual = vec![dirty];
+        let psf = vec![psf];
+        let summary = PsfSummary::new(&psf[0], shape).unwrap();
+        let support = Support::full(shape);
+        let view = MinorCycleView {
+            shape,
+            residual: &residual,
+            psf: &psf,
+            summary: &summary,
+            support: &support,
+        };
+        PEAK.store(0, Ordering::Relaxed);
+        BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+        MEASURING.store(true, Ordering::Relaxed);
+        let result = mem_step(&view, 2, 0.1);
+        MEASURING.store(false, Ordering::Relaxed);
+        let result = result.expect("MEM step solves");
+        assert_eq!(result.iterations, 2);
+        let held = PEAK.load(Ordering::Relaxed);
+        let admitted = mem_step_bytes(shape);
+        assert!(
+            held <= admitted,
+            "MEM {}x{} holds {held} bytes, admits {admitted}",
+            shape.nx,
+            shape.ny
+        );
+    }
+}
+
+#[test]
+fn dense_mem_plane_holds_at_most_what_it_is_admitted() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let shape = PlaneShape::new(97, 80);
+    let (dirty, psf) = sky(shape);
+    let residual = vec![dirty];
+    let psf = vec![psf];
+    let summary = PsfSummary::new(&psf[0], shape).unwrap();
+    let support = Support::full(shape);
+    let statistics = PlaneStatistics::measure(&residual[0], &support, &support, 0.0, false);
+    let view = MinorCycleView {
+        shape,
+        residual: &residual,
+        psf: &psf,
+        summary: &summary,
+        support: &support,
+    };
+    let controls = CycleControls {
+        iterations: 2,
+        threshold: 0.1,
+        threshold_reached: false,
+        gain: 0.1,
+        nsigma: 0.0,
+    };
+    PEAK.store(0, Ordering::Relaxed);
+    BASELINE.store(LIVE.load(Ordering::Relaxed), Ordering::Relaxed);
+    MEASURING.store(true, Ordering::Relaxed);
+    let result = run_mem_plane(&view, &controls, &statistics);
+    MEASURING.store(false, Ordering::Relaxed);
+    let (result, model, _) = result.unwrap();
+    assert!(result.iterations > 0);
+    assert_eq!(model.len(), shape.len());
+    let held = PEAK.load(Ordering::Relaxed);
+    let admitted = mem_plane_bytes(shape);
+    assert!(
+        held <= admitted,
+        "MEM plane holds {held} bytes, admits {admitted}"
+    );
 }

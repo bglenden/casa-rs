@@ -146,6 +146,9 @@ fn parse_parameter_text_inner(
     domain: &ParameterType,
 ) -> Result<ParameterValue, String> {
     match domain {
+        // CLI values were historically strings. Typed variants are supplied
+        // through the JSON/Python interface rather than guessing from text.
+        ParameterType::Variant => Ok(ParameterValue::String(value.to_string())),
         ParameterType::Bool => match value {
             "true" => Ok(ParameterValue::Bool(true)),
             "false" => Ok(ParameterValue::Bool(false)),
@@ -216,6 +219,9 @@ fn parse_parameter_text_inner(
 
 fn parse_toml_value(value: &toml::Value, domain: &ParameterType) -> Result<ParameterValue, String> {
     match value {
+        toml::Value::String(value) if matches!(domain, ParameterType::Variant) => {
+            Ok(ParameterValue::String(value.clone()))
+        }
         toml::Value::String(value) => parse_parameter_text_inner(value, domain),
         toml::Value::Integer(value) => Ok(ParameterValue::Integer(*value)),
         toml::Value::Float(value) if value.is_finite() => Ok(ParameterValue::Float(*value)),
@@ -307,6 +313,27 @@ mod tests {
                 ParameterValue::Integer(2),
                 ParameterValue::Integer(3),
             ])
+        );
+    }
+
+    #[test]
+    fn variant_text_preserves_cli_and_profile_strings() {
+        assert_eq!(
+            parse_parameter_text("42", &ParameterType::Variant).unwrap(),
+            ParameterValue::String("42".into())
+        );
+        assert_eq!(
+            parse_parameter_text("\"42\"", &ParameterType::Variant).unwrap(),
+            ParameterValue::String("\"42\"".into())
+        );
+        assert_eq!(
+            parse_parameter_text("literal value", &ParameterType::Variant).unwrap(),
+            ParameterValue::String("literal value".into())
+        );
+        let string = toml::Value::String("42".into());
+        assert_eq!(
+            parse_toml_value(&string, &ParameterType::Variant).unwrap(),
+            ParameterValue::String("42".into())
         );
     }
 }

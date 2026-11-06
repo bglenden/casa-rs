@@ -225,12 +225,13 @@ fn image_frequencies(
     let Some(index) = coordinates.find_coordinate(CoordinateType::Spectral) else {
         return Err("the image has no spectral axis".into());
     };
-    let spectral = coordinates.coordinate(index);
+    let CoordinateModel::Spectral(spectral) = coordinates.coordinate(index) else {
+        unreachable!("the coordinate found is a spectral coordinate");
+    };
     (0..channels)
         .map(|channel| {
             spectral
-                .to_world(&[channel as f64])
-                .map(|world| world[0])
+                .world_frequency_hz(channel as f64)
                 .map_err(|error| error.to_string().into())
         })
         .collect()
@@ -261,8 +262,7 @@ fn first_buffer(
     let polarization = usize::try_from(descriptions.polarization_id(ddid)?)?;
     let windows = ms.spectral_window()?;
     let frequencies = windows.chan_freq(spw)?;
-    let frame = FrequencyRef::from_casacore_code(windows.meas_freq_ref(spw)?)
-        .ok_or("SPECTRAL_WINDOW names an unknown frequency frame")?;
+    let frame = windows.frequency_reference(spw)?;
     let channels = match plan.selection.channels.get(&spw) {
         Some(channels) => channels.clone(),
         None => (0..frequencies.len()).collect(),

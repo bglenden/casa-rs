@@ -21,6 +21,44 @@ fn read_fixture(name: &str, scratch: &std::path::Path) -> ComponentList {
 }
 
 #[test]
+fn rewriting_preserves_casa_table_keywords_including_later_updates() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let path = copy_table(&fixture_dir().join("keywords.cl"), scratch.path());
+    let list = ComponentList::read_table(&path).expect("read CASA component list");
+    let mut table = Table::open(TableOptions::new(&path)).expect("open table");
+    let marker = table
+        .keywords()
+        .get("marker")
+        .cloned()
+        .expect("CASA keyword");
+    let Value::Record(record) = &marker else {
+        panic!("CASA recorded a nested record")
+    };
+    assert!(matches!(
+        record.get("answer"),
+        Some(Value::Scalar(
+            ScalarValue::Int32(42) | ScalarValue::Int64(42)
+        ))
+    ));
+    table
+        .keywords_mut()
+        .upsert("later", Value::Scalar(ScalarValue::String("kept".into())));
+    table
+        .save(TableOptions::new(&path))
+        .expect("add a later keyword");
+    drop(table);
+
+    list.rewrite_table(&path).expect("rewrite");
+    let rewritten = Table::open_metadata_only(TableOptions::new(&path)).expect("read keywords");
+    assert_eq!(rewritten.keywords().get("marker"), Some(&marker));
+    assert_eq!(
+        rewritten.keywords().get("later"),
+        Some(&Value::Scalar(ScalarValue::String("kept".into())))
+    );
+    assert_eq!(ComponentList::read_table(&path).unwrap().len(), 1);
+}
+
+#[test]
 fn reads_casa_component_lists_as_casa_reads_them() {
     let scratch = tempfile::tempdir().expect("scratch");
     let list = read_fixture("components.cl", scratch.path());

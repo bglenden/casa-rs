@@ -23,7 +23,7 @@ use casa_imaging_model::{
 use casa_imaging_products::MinorCycleImageResponse;
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{
-    HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache, ResourcePolicy,
+    HostResources, MinorCycleOutcome, MinorCycleSetup, MinorLayout, PsfCache, ResourcePolicy,
     prepare_minor_cycle, run_minor_cycle,
 };
 use problems::{empty_final_model, model_lifecycle, reconstruction_problem, validity};
@@ -265,6 +265,49 @@ fn an_off_centre_plane_takes_its_domains_largest_beam_and_clarks_patch() {
     assert_eq!(off.clark().size, wide.clark().size);
     assert!(off.sidelobe() >= 1.0, "{}", off.sidelobe());
     assert!(off.clark().exterior_sidelobe >= 1.0);
+}
+
+/// When every PSF fit in a domain is refused, CASA 6.7.6.14 assigns the
+/// same 1e-6 arcsec circular beam to each plane (#1140). The minor cycle
+/// expresses that angular width in first-axis pixels.
+#[test]
+fn an_all_refused_domain_uses_casas_tiny_beam() {
+    const WIDTH: usize = 64;
+    let problem = problem(
+        WIDTH,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem);
+    let cells = WIDTH * WIDTH;
+    let completion = completion(&problem, &scene, |images| {
+        let psf = images.psf.as_mut().expect("the initial PSF");
+        psf.fill(0.0);
+        images.residual.fill(0.0);
+        for channel in 0..2 {
+            psf[channel * cells + 15 * WIDTH + 32] = 1.0;
+            images.residual[channel * cells + 32 * WIDTH + 32] = 1.0;
+        }
+    });
+    let mut cache = PsfCache::default();
+    prepare_minor_cycle(
+        &completion,
+        &full_plane(&problem),
+        &setup(&problem, None),
+        &mut cache,
+        &WorkerTeam::new(1).expect("team"),
+    )
+    .expect("prepare");
+    let cell_rad = problem.geometry().domains()[0].direction().increment_rad()[0].abs();
+    let expected = (1.0e-6_f64 / 3600.0).to_radians() / cell_rad;
+    for channel in 0..2 {
+        let summary = cache.summary(0, channel, 0).expect("a measured plane");
+        assert!(summary.off_centre() && !summary.needs_domain_beam());
+        let beam = summary.beam();
+        assert!((beam.major_fwhm_rad() / expected - 1.0).abs() < 1e-12);
+        assert!((beam.minor_fwhm_rad() / expected - 1.0).abs() < 1e-12);
+        assert_eq!(beam.position_angle_rad(), 0.0);
+    }
 }
 
 /// CASA 6.7.6.14 subtracts the domain's fitted beam at the image centre
@@ -1326,4 +1369,78 @@ fn joint_clark_counts_all_masks_but_uses_the_first_for_components() {
     assert_eq!(row.mask_sum, cells);
     assert!((row.start_peak - 3.0).abs() < 1e-6);
     assert_eq!(row.stop, PlaneStop::ZeroIterations);
+}
+
+#[test]
+fn mem_minor_cycle_carries_dense_casa_model_into_its_owner() {
+    const FIXTURE: &[u8] =
+        include_bytes!("../../casa-imaging-deconvolution/tests/fixtures/mem_casa_676.f32le");
+    let plane = |index: usize| {
+        FIXTURE[index * 4096..(index + 1) * 4096]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| f32::from_le_bytes(*bytes))
+            .collect::<Vec<_>>()
+    };
+    let problem = problem(
+        32,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Mem,
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        images.psf = Some(plane(0));
+        images.residual = plane(1);
+        images.sum_weights = vec![1.0];
+        images.published_sum_weights = vec![1.0];
+    });
+    let cycle = CycleControls {
+        iterations: 1,
+        threshold: 0.200_081_21,
+        threshold_reached: false,
+        gain: 0.1,
+        nsigma: 0.0,
+    };
+    let (_, outcome) = minor_cycle(&problem, &completion, &setup(&problem, None), &cycle, 1);
+    assert_eq!(outcome.summary.iterations, 1);
+    assert!((outcome.mem_alpha.unwrap() - 0.278_398_78).abs() < 1e-5);
+    assert!(outcome.terms.is_empty());
+    assert_eq!(outcome.dense.len(), 1);
+    let minimum = 1024
+        * (std::mem::size_of::<f64>() + std::mem::size_of::<casa_imaging_model::ModelSample>())
+            as u64
+        + (std::mem::size_of::<casa_imaging_deconvolution::DenseModelPlane>()
+            + std::mem::size_of::<([usize; 3], casa_imaging_deconvolution::DenseModelPlane)>())
+            as u64;
+    assert!(
+        outcome.results.memory() >= minimum,
+        "dense result and model window remain admitted"
+    );
+    let planned =
+        MinorLayout::of(completion.normal_state()).result_bytes(&setup(&problem, None), 1);
+    assert_eq!(
+        planned,
+        outcome.results.memory(),
+        "the planned dense result is the production-held reservation"
+    );
+    let (_, base) = completion.into_parts();
+    let lifecycle = model_lifecycle(&problem);
+    let updated = lifecycle
+        .prepare_final_dense_model(base, outcome.dense)
+        .unwrap();
+    let expected = plane(2);
+    let samples = updated.generation().read_samples(0..1024).unwrap();
+    let mut difference = 0.0;
+    let mut reference = 0.0;
+    for y in 0..32 {
+        for x in 0..32 {
+            let actual = samples[y * 32 + x].value().value();
+            let expected = f64::from(expected[x * 32 + y]);
+            difference += (actual - expected).powi(2);
+            reference += expected.powi(2);
+        }
+    }
+    let nrms = (difference / reference).sqrt();
+    assert!(nrms < 1e-5, "CASA MEM model NRMS {nrms}");
 }

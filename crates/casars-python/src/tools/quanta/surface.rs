@@ -104,7 +104,7 @@ const METHODS: &[Method] = &[
             param("v", K::Quantity, Empty),
         ],
         R::Bool,
-        No,
+        Yes,
     ),
     binary("div", R::Record, Yes),
     method("done", &[param("kill", K::Bool, Bool(false))], R::Bool, Yes),

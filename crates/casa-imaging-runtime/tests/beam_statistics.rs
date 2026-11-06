@@ -863,3 +863,216 @@ fn the_nsigma_noise_reads_above_pbmask_and_the_peak_above_pblimit() {
         }
     }
 }
+
+/// Each polarization of a cube uses its own residual statistics while
+/// sharing only its channel's analytic beam support (#1103).
+#[test]
+fn full_stokes_automatic_masks_measure_each_channel_and_polarization() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+    let channels = 2;
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [WIDTH, WIDTH],
+        channels,
+        1,
+        ReconstructionBasis::ChannelLocal { channels },
+        ReconstructionAlgorithm::Hogbom,
+        ReconstructionControls::new(100, 0.1, 0.0),
+        vec![StokesI, StokesQ, StokesU, StokesV],
+    );
+    // Place the centre where the narrower second-channel beam still
+    // covers at least a quarter of the image.
+    let (mut near, mut far) = (0.0_f64, -1.0e5_f64);
+    for _ in 0..80 {
+        let middle = (near + far) / 2.0;
+        let pointing = centres(middle);
+        let trial = AnalyticPrimaryBeam::new(
+            &problem,
+            AnalyticPrimaryBeamModel::CasaEvlaCommon,
+            Some(&pointing),
+        )
+        .unwrap()
+        .unwrap();
+        let count = pb(&trial, 1).iter().filter(|value| **value > 0.0).count();
+        if count >= WIDTH * WIDTH / 4 {
+            near = middle;
+        } else {
+            far = middle;
+        }
+    }
+    let centres = centres(near);
+    let beam = AnalyticPrimaryBeam::new(
+        &problem,
+        AnalyticPrimaryBeamModel::CasaEvlaCommon,
+        Some(&centres),
+    )
+    .expect("L band")
+    .expect("analytic beam");
+    let supports = (0..channels)
+        .map(|channel| above(&pb(&beam, channel), 0.0))
+        .collect::<Vec<_>>();
+    let mut residuals = Vec::new();
+    for (channel, inside) in supports.iter().enumerate() {
+        for polarization in 0..4 {
+            let mut plane = residual(
+                inside,
+                0.001 * (polarization + 1) as f32 * if channel == 0 { 1.0 } else { 100.0 },
+                0.5,
+            );
+            let point = inside
+                .iter()
+                .enumerate()
+                .filter(|(_, kept)| **kept)
+                .nth(12 + polarization)
+                .expect("beam covers point")
+                .0;
+            plane[point] = (2 + channel * 4 + polarization) as f32;
+            residuals.push(plane);
+        }
+    }
+    let scene = Scene::new(&problem);
+    let lifecycle = model_lifecycle(&problem);
+    let mut cycle = MajorCycle::initial(
+        &problem,
+        empty_final_model(&lifecycle),
+        scene.resident_storage(),
+    )
+    .expect("major cycle");
+    let (model, mut pass) = cycle.parts();
+    let mut images = scene.pass_images(model, true);
+    images.polarizations = 4;
+    images.psf = images.psf.take().map(|psf| {
+        psf.as_chunks::<{ WIDTH * WIDTH }>()
+            .0
+            .iter()
+            .flat_map(|plane| plane.repeat(4))
+            .collect()
+    });
+    images.residual = residuals.iter().flatten().copied().collect();
+    images.sum_weights = vec![1.0; channels * 4];
+    images.published_sum_weights = vec![1.0; channels * 4];
+    // One polarization has no data, despite a nonzero residual fixture.
+    images.sum_weights[7] = 0.0;
+    images.published_sum_weights[7] = 0.0;
+    pass.append(images).expect("images");
+    let completion = cycle.finish(SAMPLES, BLOCKS).expect("complete");
+    let mut setup = setup(Some(beam));
+    setup.automask = true;
+    setup.nsigma = 3.0;
+    let prepared = prepare(&completion, &automask(&problem), &setup);
+    let evidence = prepared.auto_masks()[0]
+        .as_ref()
+        .expect("automatic evidence");
+    let mask = prepared.masks().primary();
+    for (channel, inside) in supports.iter().enumerate() {
+        for polarization in 0..4 {
+            let row = evidence.plane(channel, polarization).expect("row");
+            if channel == 1 && polarization == 3 {
+                assert_eq!((row.median, row.robust_rms), (0.0, 0.0));
+                assert!(
+                    !mask
+                        .plane(channel, polarization)
+                        .unwrap()
+                        .iter()
+                        .any(|set| *set)
+                );
+                continue;
+            }
+            let (median, rms) = classical(&residuals[channel * 4 + polarization], inside);
+            assert!(
+                close(row.median, median) && close(row.robust_rms, rms),
+                "channel {channel}, polarization {polarization}: ({}, {}) expected ({median}, {rms})",
+                row.median,
+                row.robust_rms
+            );
+            assert!(
+                mask.plane(channel, polarization)
+                    .unwrap()
+                    .iter()
+                    .zip(inside)
+                    .all(|(masked, inside)| !masked || *inside)
+            );
+        }
+    }
+    let expected_peak = residuals
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| *index != 7)
+        .flat_map(|(index, plane)| plane.iter().zip(&supports[index / 4]))
+        .filter(|(_, inside)| **inside)
+        .map(|(value, _)| f64::from(*value).abs())
+        .fold(0.0_f64, f64::max);
+    assert_eq!(prepared.statistics.peak_no_mask, expected_peak);
+
+    // Seed a later automatic boundary with an inherited nonempty mask and
+    // a stopped second channel. Advance once so both the domain plan and
+    // its enclosing boundary agree on the major-cycle count.
+    let mut initial = automask(&problem).primary().clone();
+    if let ReconstructionMaskPlan::AutoMultithresh {
+        completed_major_cycles,
+        previous,
+        stopped_channels,
+        ..
+    } = &mut initial
+    {
+        *completed_major_cycles = 1;
+        *previous = Some(Box::new(mask.clone()));
+        *stopped_channels = vec![false, true].into_boxed_slice();
+    } else {
+        unreachable!("automatic plan");
+    }
+    let seeded = ImageDomainReconstructionMaskPlans::new([initial]).unwrap();
+    setup.noise = NoiseEstimate::Robust;
+    let inherited = prepare(&completion, &seeded, &setup);
+    assert!(
+        inherited
+            .masks()
+            .primary()
+            .plane(0, 0)
+            .unwrap()
+            .iter()
+            .any(|set| *set)
+    );
+    assert!(
+        inherited.auto_masks()[0]
+            .as_ref()
+            .unwrap()
+            .stopped_channels()
+            .nth(1)
+            .unwrap()
+    );
+    let next = seeded
+        .next_cycle(inherited.masks(), inherited.auto_masks(), 1, false)
+        .unwrap();
+    let next_prepared = prepare(&completion, &next, &setup);
+    let first_full = inherited
+        .masks()
+        .primary()
+        .plane(0, 0)
+        .unwrap()
+        .iter()
+        .all(|set| *set);
+    let expected = (0..4)
+        .map(|polarization| {
+            let values = residuals[polarization]
+                .iter()
+                .map(|value| f64::from(*value))
+                .collect::<Vec<_>>();
+            let exclusion = inherited.masks().primary().plane(0, polarization).unwrap();
+            let noise = casa_imaging_deconvolution::plane_noise(
+                &values,
+                &supports[0],
+                NoiseEstimate::Robust,
+                Some(exclusion),
+                first_full,
+            )
+            .unwrap();
+            noise.median + 3.0 * noise.rms
+        })
+        .fold(0.0_f64, f64::max);
+    assert!(
+        close(next_prepared.statistics.nsigma_threshold, expected),
+        "later boundary threshold {} expected {expected}",
+        next_prepared.statistics.nsigma_threshold
+    );
+}

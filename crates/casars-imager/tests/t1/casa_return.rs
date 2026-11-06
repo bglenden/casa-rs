@@ -308,7 +308,11 @@ fn tclean_returns_casas_summary_record() {
 fn values_casa_rs_cannot_honour_are_refused_at_their_parameter() {
     let directory = tempfile::tempdir().expect("run directory");
     for (values, parameter, issue) in [
-        (json!({ "deconvolver": "mem" }), "deconvolver", "#1060"),
+        (
+            json!({ "deconvolver": "mem", "stokes": "IQUV" }),
+            "deconvolver",
+            "#1060",
+        ),
         // tclean reads interactive whether it iterates or not: it checks for
         // its viewer first (Astra's #1015 F8).
         (
@@ -1013,6 +1017,78 @@ fn tclean_fresh_off_centre_psf_uses_its_domain_beam_for_sidelobes() {
     assert!((sidelobe - 0.39395368).abs() < 2e-5, "{sidelobe}");
 }
 
+/// A fresh cube whose PSF peaks off-centre in every channel uses CASA's
+/// tiny beam in automatic masking (#1140). The adjacent subthreshold pixel
+/// must not be pulled into the mask by a one-pixel fallback beam.
+#[test]
+fn tclean_all_refused_psfs_use_the_tiny_beam_in_automatic_masks() {
+    use casa_images::{ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("all-refused-psf-automask");
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": directory.join("image"),
+        "imsize": 64, "cell": ["0.012arcsec", "0.012arcsec"], "backend": "cpu",
+        "specmode": "cube", "nchan": 2, "start": 0, "width": 1,
+        "deconvolver": "clark", "niter": 0, "restoration": false,
+    });
+    let seed = json_run(&directory, values.clone());
+    assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
+    for product in ["psf", "residual"] {
+        let mut image =
+            PagedImage::<f32>::open(directory.join(format!("image.{product}"))).unwrap();
+        let mut info = image.image_info().unwrap();
+        info.beam_set = ImageBeamSet::empty();
+        image.set_image_info(&info).unwrap();
+        let mut data = image.get().unwrap();
+        data.fill(0.0);
+        for channel in 0..2 {
+            if product == "psf" {
+                data[[15, 32, 0, channel]] = 1.0;
+            } else {
+                for x in 0..64 {
+                    for y in 0..64 {
+                        data[[x, y, 0, channel]] =
+                            (((x * 73 + y * 29 + channel * 11) % 101) as f32 - 50.0) / 10_000.0;
+                    }
+                }
+                data[[32, 32, 0, channel]] = 1.0;
+                data[[31, 32, 0, channel]] = 0.3;
+            }
+        }
+        image.put_slice(&data, &[0; 4]).unwrap();
+        image.save().unwrap();
+    }
+    let mut sumwt = PagedImage::<f32>::open(directory.join("image.sumwt")).unwrap();
+    let mut weights = sumwt.get().unwrap();
+    weights.fill(1.0);
+    sumwt.put_slice(&weights, &[0; 4]).unwrap();
+    sumwt.save().unwrap();
+    drop(sumwt);
+    values["niter"] = json!(2);
+    values["calcpsf"] = json!(false);
+    values["calcres"] = json!(false);
+    values["usemask"] = json!("auto-multithresh");
+    values["sidelobethreshold"] = json!(0.8);
+    values["noisethreshold"] = json!(3.0);
+    values["lownoisethreshold"] = json!(1.5);
+    values["minbeamfrac"] = json!(0.3);
+    values["negativethreshold"] = json!(0.0);
+    let result = json_run(&directory, values);
+    assert!(matches!(result, TaskReply::Succeeded { .. }), "{result:?}");
+    let mask = PagedImage::<f32>::open(directory.join("image.mask"))
+        .unwrap()
+        .get()
+        .unwrap();
+    assert_eq!(
+        mask.iter().filter(|&&value| value != 0.0).count(),
+        2,
+        "{result:?}"
+    );
+    assert_eq!(mask[[32, 32, 0, 0]], 1.0);
+    assert_eq!(mask[[32, 32, 0, 1]], 1.0);
+}
+
 /// MFS retains an existing PSF beam through recomputation; cube gridding
 /// forms a temporary image without that metadata and fits a fresh beam.
 #[test]
@@ -1378,4 +1454,45 @@ fn mtmfs_restart_reuses_the_saved_psf_beam() {
         (after.position_angle - before.position_angle).abs() < 1e-7,
         "{before:?} -> {after:?}"
     );
+}
+
+#[test]
+fn mem_writes_its_last_entropy_multipliers_only_on_a_solved_model() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("mem-metadata");
+    std::fs::create_dir_all(&directory).unwrap();
+    let geometry = observation.geometry();
+    for (name, niter) in [("dirty", 0), ("clean", 2)] {
+        let values = json!({
+            "vis": observation.measurement_set(), "imagename": directory.join(name),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend":"cpu", "niter":niter, "deconvolver":"mem",
+            "cyclefactor":0.0001, "minpsffraction":0.0
+        });
+        let reply = json_run(&directory, values);
+        assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+        for suffix in [".model", ".psf", ".residual"] {
+            let image =
+                casa_images::PagedImage::<f32>::open(directory.join(format!("{name}{suffix}")))
+                    .unwrap();
+            let misc = image.misc_info();
+            if niter > 0 && suffix == ".model" {
+                let Some(CellValue::Scalar(ScalarValue::Float32(alpha))) = misc.get("ALPHA") else {
+                    panic!("MEM model has a float ALPHA")
+                };
+                assert!(
+                    alpha.is_finite() && *alpha > 0.0,
+                    "a solved MEM model retains its positive entropy multiplier: {alpha}"
+                );
+                assert_eq!(
+                    misc.get("BETA"),
+                    Some(&CellValue::Scalar(ScalarValue::Float32(0.0)))
+                );
+            } else {
+                assert!(misc.get("ALPHA").is_none(), "{name}{suffix}");
+                assert!(misc.get("BETA").is_none(), "{name}{suffix}");
+            }
+        }
+    }
 }

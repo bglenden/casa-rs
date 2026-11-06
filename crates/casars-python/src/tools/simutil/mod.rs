@@ -233,12 +233,18 @@ impl PySimutil {
         relmargin: f64,
         beam: f64,
     ) -> PyResult<Py<PyAny>> {
-        let sizes = ops::sizes(size)?;
+        let (size_values, initial_sizes, size_state) = ops::size_values(size)?;
         if let Some(direction) = direction {
             self.direction = direction;
         }
         let directions = ops::directions(self.direction.bind(py))?;
-        if py.detach(|| directions.split()).is_err() {
+        if py
+            .detach(|| {
+                casa_types::quanta::registry::global_registry()
+                    .with_stable_units(|| directions.split())
+            })
+            .is_err()
+        {
             return Err(PyRuntimeError::new_err(format!(
                 "can't interpret '{}' as a direction",
                 self.direction.bind(py).str()?
@@ -247,9 +253,16 @@ impl PySimutil {
         if matches!(&directions, Directions::List(listed) if listed.len() > 1) {
             return Ok(self.direction.clone_ref(py));
         }
-        let spacing = ops::quantity(&spacing)?;
-        let pointings = py
-            .detach(|| {
+        let pointings = py.detach(|| {
+            casa_types::quanta::registry::global_registry().with_locked_units(|| {
+                let registry = casa_types::quanta::registry::global_registry();
+                let refreshed = if registry.unit_state() == size_state {
+                    None
+                } else {
+                    Some(ops::size_quantities(&size_values)?)
+                };
+                let sizes = refreshed.as_ref().unwrap_or(&initial_sizes);
+                let spacing = ops::quantity(&spacing)?;
                 calc_pointings(
                     &spacing,
                     [&sizes[0], &sizes[1]],
@@ -258,8 +271,9 @@ impl PySimutil {
                     relmargin,
                     beam,
                 )
+                .map_err(ops::raised)
             })
-            .map_err(ops::raised)?;
+        })?;
         emit(
             py,
             LOGGER,
@@ -394,7 +408,10 @@ impl PySimutil {
                 "the direction measure's refer is not a string",
             ));
         };
-        let (longitude, latitude) = (ops::quantity(field("m0")?)?, ops::quantity(field("m1")?)?);
+        let (longitude, latitude) = casa_types::quanta::registry::global_registry()
+            .with_stable_units(|| {
+                Ok::<_, PyErr>((ops::quantity(field("m0")?)?, ops::quantity(field("m1")?)?))
+            })?;
         let text = format_direction(refer, &longitude, &latitude).map_err(ops::raised)?;
         CasaValue::Text(text).into_python(py)
     }
@@ -623,16 +640,29 @@ impl PySimutil {
         } else {
             vec![s.clone()]
         };
-        for item in items {
-            if !ops::is_quantity(&item) {
-                if halt {
-                    return Err(PyRuntimeError::new_err(format!(
-                        "can't interpret '{}' as a CASA quantity",
-                        item.str()?
-                    )));
+        let mut candidates = vec![None; items.len()];
+        let invalid = casa_types::quanta::registry::global_registry().with_stable_units(|| {
+            items.iter().enumerate().find_map(|(index, item)| {
+                let candidate =
+                    candidates[index].get_or_insert_with(|| ops::quantity_candidate(item));
+                if candidate
+                    .as_ref()
+                    .is_some_and(|value| ops::quantity(value).is_ok())
+                {
+                    None
+                } else {
+                    Some(index)
                 }
-                return Ok(false);
+            })
+        });
+        if let Some(index) = invalid {
+            if halt {
+                return Err(PyRuntimeError::new_err(format!(
+                    "can't interpret '{}' as a CASA quantity",
+                    items[index].str()?
+                )));
             }
+            return Ok(false);
         }
         Ok(true)
     }

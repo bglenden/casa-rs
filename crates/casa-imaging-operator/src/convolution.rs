@@ -653,6 +653,13 @@ pub trait ConvolutionFunctionSet: Send + Sync {
     /// the image centre as `e^{i(k·g)}` over the taps (mosaic, AW).
     fn pointing_ramp(&self) -> bool;
 
+    /// Whether CASA's pointing-gradient origin is one fine pixel after the
+    /// array centre for this cell. Weight includes PSF and sensitivity
+    /// taps; prediction uses imaging taps. Other sets centre the ramp.
+    fn pointing_origin_shift(&self, _key: CfKey, _weight: bool) -> bool {
+        false
+    }
+
     /// The taps of every cell the set can lend, imaging and weight: their
     /// bytes, the bytes of the norms a backend tabulates for each, and
     /// their count ([`TapFootprint`]). A device backend copies each cell it

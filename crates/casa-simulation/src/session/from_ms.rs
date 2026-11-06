@@ -40,7 +40,6 @@ use casa_tables::{
     RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table, TableOptions,
 };
 use casa_types::ArrayValue;
-use casa_types::measures::frequency::FrequencyRef;
 
 use super::array::Antenna;
 use super::error::{SimulatorError, SimulatorResult};
@@ -272,12 +271,13 @@ fn read_window(
             "openfromms: spectral window {row} has no channels"
         )));
     };
-    let code = windows.meas_freq_ref(row).map_err(&error)?;
-    let frame = FrequencyRef::from_casacore_code(code).ok_or_else(|| {
-        SimulatorError::raised(format!(
-            "openfromms: spectral window {row} has an unknown MEAS_FREQ_REF {code}"
-        ))
-    })?;
+    let frame = windows.frequency_reference(row).map_err(&error)?;
+    let reference_frame = windows.reference_frequency_reference(row).map_err(&error)?;
+    if reference_frame != frame {
+        return Err(SimulatorError::not_yet_implemented(format!(
+            "openfromms on spectral window {row} with different channel and reference frequency frames is not yet implemented in casa-rs (#1053)"
+        )));
+    }
     let window = SpectralWindow {
         name: windows.name(row).map_err(&error)?,
         channel_count: frequencies.len(),

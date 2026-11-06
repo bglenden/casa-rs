@@ -31,6 +31,16 @@
 
 use std::borrow::Cow;
 
+#[cfg(test)]
+std::thread_local! {
+    static DOMAIN_BEAM_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static CHANNEL_BEAM_FORMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+#[path = "pixels_tests.rs"]
+mod tests;
+
 use casa_imaging_deconvolution::{
     AutoMaskPlane, FinalNormalState, ModelGeneration, NoiseEstimate, NoiseMaskExclusion,
     RobustNoise, Support, plane_noise,
@@ -55,6 +65,7 @@ pub(super) fn pbmask(setup: &MinorCycleSetup<'_>) -> f32 {
 /// One plane's `.pb` inside its valid pixels, x-major: where it is
 /// positive, above the cutoff (`pb > |pblimit|`, the residual's pixel
 /// mask), and where it exceeds a `pbmask` above zero (`pb > pbmask`).
+#[derive(Clone)]
 pub(super) struct BeamPixels {
     support: Vec<bool>,
     /// `None` at a `pbmask` of 0, where it is `support`.
@@ -79,6 +90,43 @@ impl BeamPixels {
             }
         }
         Ok(Self { support, within })
+    }
+
+    /// A channel's analytic beam, independent of its polarizations' validity.
+    pub(super) fn analytic(
+        setup: &MinorCycleSetup<'_>,
+        (roles, key, taylor): (&[ImageDomainRole], PlaneKey, bool),
+    ) -> Result<Self, MinorCycleRunError> {
+        #[cfg(test)]
+        CHANNEL_BEAM_FORMS.with(|count| count.set(count.get() + 1));
+        let beam = setup.primary_beam.as_ref().expect("an analytic beam");
+        let channel = if taylor { 0 } else { key.channel };
+        let pb = beam.pb(&roles[key.domain], channel)?;
+        let level = pbmask(setup);
+        let mut support = Vec::with_capacity(pb.len());
+        let mut within = (level > 0.0).then(|| Vec::with_capacity(pb.len()));
+        for value in pb {
+            support.push(value > 0.0);
+            if let Some(within) = &mut within {
+                within.push(value > level);
+            }
+        }
+        Ok(Self { support, within })
+    }
+
+    /// Intersect this channel's support with one polarization's valid pixels.
+    pub(super) fn for_valid(&self, valid: &[bool]) -> Self {
+        let intersect = |support: &[bool]| {
+            support
+                .iter()
+                .zip(valid)
+                .map(|(beam, valid)| *beam && *valid)
+                .collect()
+        };
+        Self {
+            support: intersect(&self.support),
+            within: self.within.as_deref().map(intersect),
+        }
     }
 
     /// The pixels above the cutoff: the residual's pixel mask.
@@ -124,6 +172,8 @@ pub(super) fn beam_pixels(
     let Some(beam) = &setup.primary_beam else {
         return Ok(None);
     };
+    #[cfg(test)]
+    CHANNEL_BEAM_FORMS.with(|count| count.set(count.get() + 1));
     let channel = if taylor { 0 } else { key.channel };
     let pb = beam.pb(&roles[key.domain], channel)?;
     Ok(Some(BeamPixels::new(
@@ -281,7 +331,26 @@ pub(super) fn domain_beams(
         if beams[key.domain] || !super::holds_data(normal, taylor, *key) {
             continue;
         }
+        // Analytic beams do not depend on polarization. If an earlier
+        // polarization had data, this channel's beam was already tested.
+        if setup.response.is_none()
+            && setup.primary_beam.is_some()
+            && (0..key.polarization).any(|polarization| {
+                super::holds_data(
+                    normal,
+                    taylor,
+                    PlaneKey {
+                        polarization,
+                        ..*key
+                    },
+                )
+            })
+        {
+            continue;
+        }
         // A run without a beam never falls back.
+        #[cfg(test)]
+        DOMAIN_BEAM_PROBES.with(|count| count.set(count.get() + 1));
         beams[key.domain] = plane_beam(normal, setup, (roles, *key, taylor), pbmask(setup))?
             .is_none_or(|kept| kept.contains(&true));
     }

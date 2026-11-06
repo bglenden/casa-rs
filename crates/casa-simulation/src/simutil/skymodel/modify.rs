@@ -31,7 +31,8 @@ use casa_types::quanta::Quantity;
 use ndarray::{ArrayD, Axis, IxDyn, ShapeBuilder};
 
 use super::{
-    InputImage, SkyModelError, casacore_projection, pixel_axes, shape_obs_info, write_image,
+    InputImage, SkyModelError, casacore_projection, pixel_axes, require_native_direction_frame,
+    shape_obs_info, write_image,
 };
 use crate::simutil::{SimutilError, direction, python_float, qa};
 
@@ -322,6 +323,7 @@ fn image_direction(
     let CoordinateModel::Direction(coordinate) = coordinates.coordinate(index) else {
         unreachable!("the coordinate found is a direction coordinate");
     };
+    require_native_direction_frame(coordinate)?;
     axes.assign(0, pixel_axes[0]);
     axes.assign(1, pixel_axes[1]);
     let refpix = [
@@ -433,10 +435,7 @@ fn spectral_axis(
                 refval: ModelValue::Model(in_unit(coordinate.reference_value()[0])),
                 refpix: coordinate.reference_pixel()[0],
                 width: ModelValue::Model(in_unit(coordinate.increment()[0])),
-                rest_frequency: ModelValue::Model(Quantity::with_unit(
-                    coordinate.rest_frequency(),
-                    unit("Hz"),
-                )),
+                rest_frequency: ModelValue::Model(in_unit(coordinate.rest_frequency())),
             }
         }
         None => {

@@ -1,0 +1,128 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "get": "2020/01/02/12:34:56.000000",
+      "history": [
+        "Modified date-obs from \"Epoch: 58849::12:00:00.0000\n\" to \"2020/01/02/12:34:56\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"date-obs\", hdvalue=\"2020/01/02/12:34:56\", verbose=False)"
+      ],
+      "image": "noon",
+      "key": "date-obs",
+      "value": "2020/01/02/12:34:56"
+    },
+    {
+      "get": "2023/02/25/02:57:46.123456",
+      "history": [
+        "Modified epoch from \"Epoch: 51544::00:00:00.0001\n\" to \"2023/02/25/02:57:46.123456\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"epoch\", hdvalue=\"2023/02/25/02:57:46.123456\", verbose=False)"
+      ],
+      "image": "j2000",
+      "key": "epoch",
+      "value": "2023/02/25/02:57:46.123456"
+    },
+    {
+      "get": "2000/01/01/00:00:00.000000",
+      "history": [
+        "Modified EPOCH from \"Epoch: 60000::02:57:46.6666\n\" to \"2000/01/01\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"EPOCH\", hdvalue=\"2000/01/01\", verbose=False)"
+      ],
+      "image": "fraction",
+      "key": "EPOCH",
+      "value": "2000/01/01"
+    },
+    {
+      "get": "2020/05/31/06:00:00.000000",
+      "history": [
+        "Modified date-obs from \"Epoch: 0::00:00:00.0000\n\" to   unit: String \"d\"\n  value: Double 59000.2",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"date-obs\", hdvalue={'unit': 'd', 'value': 59000.25}, verbose=False)"
+      ],
+      "image": "missing",
+      "key": "date-obs",
+      "value": {
+        "unit": "d",
+        "value": 59000.25
+      }
+    },
+    {
+      "get": "1858/11/18/00:00:00.000000",
+      "history": [
+        "Modified epoch from \"Epoch: 60000::02:57:46.6666\n\" to   unit: String \"s\"\n  value: Double 86400",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"epoch\", hdvalue={'unit': 's', 'value': 86400.0}, verbose=False)"
+      ],
+      "image": "fraction",
+      "key": "epoch",
+      "value": {
+        "unit": "s",
+        "value": 86400.0
+      }
+    },
+    {
+      "get": "1858/11/17/00:00:01.000000",
+      "history": [
+        "Modified epoch from \"Epoch: 58849::12:00:00.0000\n\" to \"1s\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"epoch\", hdvalue=\"1s\", verbose=False)"
+      ],
+      "image": "noon",
+      "key": "epoch",
+      "value": "1s"
+    },
+    {
+      "error": "Exception: epoch value must have units of time or be in a supported time format.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": "2020/01/01/12:00:00.000000",
+      "history": [],
+      "image": "noon",
+      "key": "epoch",
+      "value": "59000d"
+    },
+    {
+      "error": "Exception: epoch value must have units of time or be in a supported time format.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": "2020/01/01/12:00:00.000000",
+      "history": [],
+      "image": "noon",
+      "key": "epoch",
+      "value": "59000"
+    },
+    {
+      "error": "Exception: epoch value not specified.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": "2020/01/01/12:00:00.000000",
+      "history": [],
+      "image": "noon",
+      "key": "epoch",
+      "value": ""
+    },
+    {
+      "error": "Exception: epoch value must have units of time or be in a supported time format.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": "2020/01/01/12:00:00.000000",
+      "history": [],
+      "image": "noon",
+      "key": "epoch",
+      "value": "1GHz"
+    },
+    {
+      "error": "Input ValueHolder is of type double, but it must be either  a Record or a String",
+      "get": "2020/01/01/12:00:00.000000",
+      "history": [],
+      "image": "noon",
+      "key": "epoch",
+      "value": 59000.0
+    },
+    {
+      "error": "Exception: date-obs value must have units of time or be in a supported time format.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": "2020/01/01/12:00:00.000000",
+      "history": [],
+      "image": "noon",
+      "key": "date-obs",
+      "value": {
+        "unit": "Hz",
+        "value": 59000.0
+      }
+    }
+  ]
+}

@@ -110,6 +110,8 @@ pub(crate) struct ImagingOutcome {
     pub(crate) major_cycle_count: usize,
     pub(crate) total_minor_iterations: usize,
     pub(crate) total_actual_minor_iterations: usize,
+    /// Last MEM entropy multiplier, if any step ran.
+    pub(crate) mem_alpha: Option<f32>,
     pub(crate) visibility_products: Option<VisibilityProductCompletion>,
     pub(crate) planes_per_wave: Option<u32>,
     /// Each faceted domain's facets' own sums of weights, which its
@@ -214,6 +216,7 @@ impl ImagingOutcome {
             major_cycle_count: usize::from(run.forms.residual),
             total_minor_iterations: 0,
             total_actual_minor_iterations: 0,
+            mem_alpha: None,
             visibility_products: major.visibility,
             planes_per_wave: run.planes_per_wave,
             facet_sum_weights: run.stitch.facet_sum_weights(),
@@ -440,7 +443,7 @@ pub(crate) fn run(
         let name = format!("major cycle {}", outcome.major_cycle_count + 1);
         let scientific = outcome.scientific;
         let major = run_phase(name, &cancel, diagnostics, summary, || {
-            run.refresh(scientific, (minor.terms, minor.results), last)
+            run.refresh(scientific, (minor.terms, minor.dense, minor.results), last)
         })?;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
@@ -503,6 +506,9 @@ fn account_minor_cycle(
     global_threshold: f64,
     started: Instant,
 ) -> usize {
+    if minor.mem_alpha.is_some() {
+        outcome.mem_alpha = minor.mem_alpha;
+    }
     let entering = (
         outcome.total_minor_iterations,
         outcome.total_actual_minor_iterations,
@@ -568,7 +574,11 @@ fn predict_final_model(
         outcome.visibility_products = Some(VisibilityProductCompletion::new(corrected + model));
         return Ok(outcome);
     }
-    let mut major = run.refresh(outcome.scientific, (Vec::new(), Reservation::none()), true)?;
+    let mut major = run.refresh(
+        outcome.scientific,
+        (Vec::new(), Vec::new(), Reservation::none()),
+        true,
+    )?;
     if outcome.major_cycle_count == 0 {
         let visibility = major.visibility.take();
         major = run.reread_residual(major.completion)?;
@@ -870,7 +880,11 @@ impl<'a> Run<'a> {
     fn refresh(
         &mut self,
         completion: MajorCycleCompletion,
-        (terms, results): (Vec<ModelDeltaTerm>, Reservation),
+        (terms, dense, results): (
+            Vec<ModelDeltaTerm>,
+            Vec<casa_imaging_deconvolution::DenseModelPlane>,
+            Reservation,
+        ),
         last: bool,
     ) -> Result<Major, ImagingError> {
         // The retained charge still covers the normal state and model the
@@ -887,7 +901,15 @@ impl<'a> Run<'a> {
             self.write_bytes(last),
             self.writes(last),
         )?;
-        let model = self.lifecycle.prepare_final_model(model, terms)?;
+        let model = if dense.is_empty() {
+            self.lifecycle.prepare_final_model(model, terms)?
+        } else {
+            assert!(
+                terms.is_empty(),
+                "a minor cycle uses one model update representation"
+            );
+            self.lifecycle.prepare_final_dense_model(model, dense)?
+        };
         let cycle = MajorCycle::refresh(
             self.problem,
             normal_state,

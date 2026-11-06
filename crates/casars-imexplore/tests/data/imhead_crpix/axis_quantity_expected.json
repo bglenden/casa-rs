@@ -1,0 +1,1834 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          0.033333333333333326,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": 0.033333333333333326
+      },
+      "history": [
+        "Modified cdelt1 from \"-1'\" to \"2arcsec\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cdelt1\", hdvalue=\"2arcsec\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cdelt1",
+      "return": null,
+      "value": "2arcsec"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          2.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": 2.0
+      },
+      "history": [
+        "Modified cdelt2 from \"1'\" to \"2\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cdelt2\", hdvalue=\"2\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cdelt2",
+      "return": null,
+      "value": "2"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          2000000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "Hz",
+        "value": 2000000.0
+      },
+      "history": [
+        "Modified cdelt4 from \"1000Hz\" to \"2MHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cdelt4\", hdvalue=\"2MHz\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cdelt4",
+      "return": null,
+      "value": "2MHz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          -2000000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "Hz",
+        "value": -2000000.0
+      },
+      "history": [
+        "Modified cdelt4 from \"1000Hz\" to \"-2MHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cdelt4\", hdvalue=\"-2MHz\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cdelt4",
+      "return": null,
+      "value": "-2MHz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          120.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": 120.0
+      },
+      "history": [
+        "Modified cdelt1 from \"-1'\" to   unit: String \"deg\"\n  value: Double 2",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cdelt1\", hdvalue={'unit': 'deg', 'value': 2.0}, verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cdelt1",
+      "return": null,
+      "value": {
+        "unit": "deg",
+        "value": 2.0
+      }
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          120.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": 120.0
+      },
+      "history": [
+        "Modified cdelt1 from \"-1'\" to   extra: Int 7\n  unit: String \"deg\"\n  value: Double 2",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cdelt1\", hdvalue={'unit': 'deg', 'value': 2.0, 'extra': 7}, verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cdelt1",
+      "return": null,
+      "value": {
+        "extra": 7,
+        "unit": "deg",
+        "value": 2.0
+      }
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1500000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "Hz",
+        "value": 1500000000.0
+      },
+      "history": [
+        "Modified crval4 from \"1.415e+09Hz\" to   error: Double 0.2\n  unit: String \"GHz\"\n  value: Double 1.5",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval4\", hdvalue={'unit': 'GHz', 'value': 1.5, 'error': 0.2}, verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crval4",
+      "return": null,
+      "value": {
+        "error": 0.2,
+        "unit": "GHz",
+        "value": 1.5
+      }
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          0.033333333333333326,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": 0.033333333333333326
+      },
+      "history": [
+        "Modified cdelt1 from \"-1'\" to   extra: {\n    note: String \"checked\"\n  }\n  unit: String \"arcsec\"\n  value: Double 2",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cdelt1\", hdvalue={'unit': 'arcsec', 'value': 2.0, 'extra': {'note': 'checked'}}, verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cdelt1",
+      "return": null,
+      "value": {
+        "extra": {
+          "note": "checked"
+        },
+        "unit": "arcsec",
+        "value": 2.0
+      }
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          60.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": 60.0
+      },
+      "history": [
+        "Modified crval1 from \"0'\" to \"1deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval1\", hdvalue=\"1deg\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crval1",
+      "return": null,
+      "value": "1deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          -1200.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": -1200.0
+      },
+      "history": [
+        "Modified crval2 from \"0'\" to \"-20deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval2\", hdvalue=\"-20deg\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crval2",
+      "return": null,
+      "value": "-20deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1419999999.9999998
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "Hz",
+        "value": 1419999999.9999998
+      },
+      "history": [
+        "Modified crval4 from \"1.415e+09Hz\" to \"1.42GHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval4\", hdvalue=\"1.42GHz\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crval4",
+      "return": null,
+      "value": "1.42GHz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          1.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": 1.0
+      },
+      "history": [
+        "Modified crval1 from \"0'\" to \"1\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval1\", hdvalue=\"1\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crval1",
+      "return": null,
+      "value": "1"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          6875.493541569879,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": 6875.493541569879
+      },
+      "history": [
+        "Modified cdelt1 from \"-1'\" to \"2Hz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cdelt1\", hdvalue=\"2Hz\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cdelt1",
+      "return": null,
+      "value": "2Hz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          4881600414514.614,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": 4881600414514.614
+      },
+      "history": [
+        "Modified crval1 from \"0'\" to \"1.42GHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval1\", hdvalue=\"1.42GHz\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crval1",
+      "return": null,
+      "value": "1.42GHz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "wcs wcsset_error: Linear transformation matrix is singular",
+      "image": "normal",
+      "key": "cdelt1",
+      "value": "0"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "wcs wcsset_error: Ill-conditioned coordinate transformation parameter",
+      "image": "normal",
+      "key": "crval2",
+      "value": "100deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          5400.000000006,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": 5400.000000006
+      },
+      "history": [
+        "Modified crval2 from \"0'\" to \"90.0000000001deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval2\", hdvalue=\"90.0000000001deg\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "crval2",
+      "return": null,
+      "value": "90.0000000001deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "wcs wcsset_error: Ill-conditioned coordinate transformation parameter",
+      "image": "normal",
+      "key": "crval2",
+      "value": "90.000000001deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: A polarization axis cannot have an increment.\n... thrown by void casa::ImageMetaDataRW<T>::_setCoordinateValue(const casacore::String&, const casacore::ValueHolder&) [with T = float]",
+      "image": "normal",
+      "key": "cdelt3",
+      "value": "1"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Input ValueHolder is of type Int, but it must be either  a Record or a String",
+      "image": "normal",
+      "key": "crval1",
+      "value": 100
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Input ValueHolder is of type Bool, but it must be either  a Record or a String",
+      "image": "normal",
+      "key": "cdelt1",
+      "value": true
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: Error converting bad to Quantity.\n... thrown by static casacore::Quantity casa::ImageMetaDataRW<T>::_getQuantity(const casacore::ValueHolder&) [with T = float; casacore::Quantity = casacore::Quantum<double>]",
+      "image": "normal",
+      "key": "crval1",
+      "value": "bad"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "Frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -1.0,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1500000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "get": {
+        "unit": "Hz",
+        "value": 1500000000.0
+      },
+      "history": [
+        "Modified crval2 from \"1.415e+09Hz\" to \"1.5GHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval2\", hdvalue=\"1.5GHz\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "crval2",
+      "return": null,
+      "value": "1.5GHz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "Frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          0.049999999999999996,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": 0.049999999999999996
+      },
+      "history": [
+        "Modified cdelt3 from \"-1'\" to \"3arcsec\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cdelt3\", hdvalue=\"3arcsec\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "cdelt3",
+      "return": null,
+      "value": "3arcsec"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "Frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -1.0,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          -180.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "get": {
+        "unit": "'",
+        "value": -180.0
+      },
+      "history": [
+        "Modified crval4 from \"0'\" to \"-3deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval4\", hdvalue=\"-3deg\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "crval4",
+      "return": null,
+      "value": "-3deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "Frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -1.0,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "error": "Exception: A polarization axis cannot have an increment.\n... thrown by void casa::ImageMetaDataRW<T>::_setCoordinateValue(const casacore::String&, const casacore::ValueHolder&) [with T = float]",
+      "image": "transposed",
+      "key": "cdelt1",
+      "value": "2"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "linear1",
+          "linear2"
+        ],
+        "axisunits": [
+          "km",
+          "km"
+        ],
+        "incr": [
+          149896.229,
+          1.0
+        ],
+        "refpix": [
+          2.0,
+          2.0
+        ],
+        "refval": [
+          0.0,
+          0.0
+        ],
+        "shape": [
+          4,
+          4
+        ]
+      },
+      "get": {
+        "unit": "km",
+        "value": 149896.229
+      },
+      "history": [
+        "Modified cdelt1 from \"1km\" to \"2Hz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cdelt1\", hdvalue=\"2Hz\", verbose=False)"
+      ],
+      "image": "linear",
+      "key": "cdelt1",
+      "return": null,
+      "value": "2Hz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "linear1",
+          "linear2"
+        ],
+        "axisunits": [
+          "km",
+          "km"
+        ],
+        "incr": [
+          1.0,
+          1.0
+        ],
+        "refpix": [
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.7453292519943296e-05,
+          0.0
+        ],
+        "shape": [
+          4,
+          4
+        ]
+      },
+      "get": {
+        "unit": "km",
+        "value": 1.7453292519943296e-05
+      },
+      "history": [
+        "Modified crval1 from \"0km\" to \"1deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval1\", hdvalue=\"1deg\", verbose=False)"
+      ],
+      "image": "linear",
+      "key": "crval1",
+      "return": null,
+      "value": "1deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "GHz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1.0000000000000002e-06
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1.5000000000000002
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "GHz",
+        "value": 1.5000000000000002
+      },
+      "history": [
+        "Modified crval4 from \"1.415GHz\" to \"1.5GHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval4\", hdvalue=\"1.5GHz\", verbose=False)"
+      ],
+      "image": "ghz",
+      "key": "crval4",
+      "return": null,
+      "value": "1.5GHz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "GHz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          0.002
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1.415000000000001
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "GHz",
+        "value": 0.002
+      },
+      "history": [
+        "Modified cdelt4 from \"1e-06GHz\" to \"2MHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cdelt4\", hdvalue=\"2MHz\", verbose=False)"
+      ],
+      "image": "ghz",
+      "key": "cdelt4",
+      "return": null,
+      "value": "2MHz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "GHz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1.0000000000000002e-06
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          2.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "GHz",
+        "value": 2.0
+      },
+      "history": [
+        "Modified crval4 from \"1.415GHz\" to \"2\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval4\", hdvalue=\"2\", verbose=False)"
+      ],
+      "image": "ghz",
+      "key": "crval4",
+      "return": null,
+      "value": "2"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "GHz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          2.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1.415000000000001
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "GHz",
+        "value": 2.0
+      },
+      "history": [
+        "Modified cdelt4 from \"1e-06GHz\" to \"2\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cdelt4\", hdvalue=\"2\", verbose=False)"
+      ],
+      "image": "ghz",
+      "key": "cdelt4",
+      "return": null,
+      "value": "2"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1500000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "Hz",
+        "value": 1500000000.0
+      },
+      "history": [
+        "Modified crval4 from \"1.415e+09Hz\" to \"1.5GHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval4\", hdvalue=\"1.5GHz\", verbose=False)"
+      ],
+      "image": "car",
+      "key": "crval4",
+      "return": null,
+      "value": "1.5GHz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1500000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "Hz",
+        "value": 1500000000.0
+      },
+      "history": [
+        "Modified crval4 from \"1.415e+09Hz\" to \"1.5GHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval4\", hdvalue=\"1.5GHz\", verbose=False)"
+      ],
+      "image": "sfl",
+      "key": "crval4",
+      "return": null,
+      "value": "1.5GHz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1500000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "Hz",
+        "value": 1500000000.0
+      },
+      "history": [
+        "Modified crval4 from \"1.415e+09Hz\" to \"1.5GHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval4\", hdvalue=\"1.5GHz\", verbose=False)"
+      ],
+      "image": "mer",
+      "key": "crval4",
+      "return": null,
+      "value": "1.5GHz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1500000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "get": {
+        "unit": "Hz",
+        "value": 1500000000.0
+      },
+      "history": [
+        "Modified crval4 from \"1.415e+09Hz\" to \"1.5GHz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"crval4\", hdvalue=\"1.5GHz\", verbose=False)"
+      ],
+      "image": "ait",
+      "key": "crval4",
+      "return": null,
+      "value": "1.5GHz"
+    }
+  ]
+}

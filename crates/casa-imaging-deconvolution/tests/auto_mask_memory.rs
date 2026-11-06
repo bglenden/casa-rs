@@ -260,6 +260,7 @@ fn materializing_every_channel_holds_at_most_its_charge() {
             .build()
             .expect("a pool");
         let source = AutoMaskSource {
+            channel: None,
             read: &read,
             psf: &psf,
             workers,
@@ -343,6 +344,7 @@ fn a_block_with_many_blank_planes_holds_its_beam_workspace_charge() {
         _ => None,
     };
     let source = AutoMaskSource {
+        channel: None,
         read: &read,
         psf: &psf,
         workers: 1,

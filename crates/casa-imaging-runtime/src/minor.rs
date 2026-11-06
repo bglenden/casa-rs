@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use casa_imaging_deconvolution::{
-    AutoMaskEvidence, AutoMaskPlane, AutoMaskSource, FinalNormalState,
+    AutoMaskEvidence, AutoMaskPlane, AutoMaskSource, DenseModelPlane, FinalNormalState,
     ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MajorCycleCompletion,
     MaskError, MaskPlaneKey, MaskSources, ModelGeneration, ModelLifecycle, ModelLifecycleError,
     NoiseEstimate, NormalBasis, NormalStateError, SpectralChannelValidity, robust_noise,
@@ -41,7 +41,9 @@ use crate::pass::WorkerTeam;
 use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit};
 
 mod beams;
+mod channel;
 mod layout;
+mod mem;
 mod pixels;
 mod polarized;
 mod psfs;
@@ -50,6 +52,7 @@ pub use layout::{
     MinorLayout, mask_bytes, prepare_bytes, prepare_bytes_for, psf_cache_bytes, run_bytes,
     run_bytes_for,
 };
+use mem::{dense_result_bytes, dense_result_slots, solve_mem};
 use psfs::{measure_psfs, saved_beam, saved_psf_beam, summarize_psf};
 pub use rows::PlaneCycleRow;
 
@@ -307,6 +310,10 @@ pub struct MinorCycleOutcome {
     /// The model update in strictly increasing model order; empty when no
     /// component was cleaned.
     pub terms: Vec<ModelDeltaTerm>,
+    /// Dense updates in canonical plane order.
+    pub dense: Vec<DenseModelPlane>,
+    /// The last MEM alpha when this cycle ran its entropy solver.
+    pub mem_alpha: Option<f32>,
     /// The charge of `terms` ([`result_bytes`]), which covers queuing them
     /// on the model too: keep it until the model holds them under its own.
     pub results: Reservation,
@@ -355,6 +362,15 @@ pub fn prepare_minor_cycle(
         }
     }
     let keys = plane_keys(normal, taylor);
+    let share_beam = pixels::reads_beam(setup)
+        && setup.primary_beam.is_some()
+        && setup.response.is_none()
+        && mask_plans.automatic();
+    let measurements = std::sync::Mutex::new(
+        (0..if share_beam { keys.len() } else { 0 })
+            .map(|_| None::<Measured>)
+            .collect::<Vec<_>>(),
+    );
     if pixels::reads_beam(setup) && setup.nsigma > 0.0 && cache.beams.is_none() {
         cache.beams = Some(pixels::domain_beams(normal, base, setup, taylor, &keys)?);
     }
@@ -373,39 +389,18 @@ pub fn prepare_minor_cycle(
         // thresholds by the image's sidelobe level, so every plane's PSF is
         // measured first.
         measure_psfs(normal, base, taylor, cache, &keys, setup, team)?;
-        let shared = &*cache;
-        let reading = Reading {
+        channel::Automatic {
             normal,
             base,
             setup,
             taylor,
-            summaries: &shared.summaries,
-            first: mask_plans.completed_major_cycles() == 0,
-            beams: shared.beams.as_deref(),
-        };
-        let read = |key: MaskPlaneKey| automask_plane(&reading, absolute(normal, taylor, key));
-        let psf = |key: MaskPlaneKey| {
-            let key = absolute(normal, taylor, key);
-            let summary = shared.summaries.get(&key).copied().or_else(|| {
-                saved_psf_beam(normal, setup, key).map(PsfSummary::blank_with_saved_beam)
-            });
-            let beam = saved_beam(normal, &setup.mask_beams, key);
-            match (summary, beam) {
-                (Some(summary), Some(beam)) => Some(summary.with_mask_beam(beam)),
-                (None, Some(beam)) => Some(PsfSummary::blank_with_saved_beam(beam)),
-                (summary, None) => summary,
-            }
-        };
-        let source = AutoMaskSource {
-            read: &read,
-            psf: &psf,
-            workers: team.workers(),
-        };
-        let sources = MaskSources {
-            auto: Some(&source),
-            beam: Some(&beam),
-        };
-        team.install(|| mask_plans.materialize(base, normal, &sources))?
+            cache,
+            plans: mask_plans,
+            team,
+            measurements: &measurements,
+            share_beam,
+        }
+        .materialize()?
     } else {
         let sources = MaskSources {
             auto: None,
@@ -421,9 +416,17 @@ pub fn prepare_minor_cycle(
         setup,
         taylor,
     };
+    let mut measured = measurements.into_inner().expect("measurements lock");
     let mut slots = keys
         .iter()
-        .map(|key| (*key, None::<Measured>, None::<RetainedPlane>))
+        .enumerate()
+        .map(|(index, key)| {
+            (
+                *key,
+                measured.get_mut(index).and_then(Option::take),
+                None::<RetainedPlane>,
+            )
+        })
         .collect::<Vec<_>>();
     let missing = keys
         .iter()
@@ -434,9 +437,22 @@ pub fn prepare_minor_cycle(
     let retain = keys.len() == 1 && setup.response.is_none();
     let shared = &*cache;
     team.for_each_mut(&mut slots, |_, (key, out, kept)| {
+        if out.is_some() && !retain {
+            return Ok(());
+        }
         let Some(plane) = load(&inputs, *key)? else {
             return Ok(());
         };
+        if out.is_some() {
+            *kept = Some(RetainedPlane {
+                key: *key,
+                residual: plane.residual,
+                psf: plane.psf,
+                support: plane.support,
+                valid: plane.valid,
+            });
+            return Ok(());
+        }
         let summary = match shared.summaries.get(key) {
             Some(summary) => *summary,
             None => summarize_psf(normal, base, setup, *key, &plane.psf[0], plane.shape)?,
@@ -682,6 +698,8 @@ pub fn run_minor_cycle(
             .sum(),
     );
     let mut charge = Reservation::none();
+    let mut dense = dense_result_slots(&setup.algorithm, results.len());
+    let mut mem_alpha = None;
     for (key, statistics, solved) in results {
         charge.join(solved.charge);
         let outcome = &solved.outcome;
@@ -708,6 +726,12 @@ pub fn run_minor_cycle(
         let room = TRACE - summary.trace.len();
         summary.trace.extend(solved.trace.into_iter().take(room));
         terms.extend(solved.terms);
+        if solved.mem_alpha.is_some() {
+            mem_alpha = solved.mem_alpha;
+        }
+        if let Some(plane) = solved.dense {
+            dense.push((key, plane));
+        }
     }
     summary.planes.extend(blank.iter().map(|(key, statistics)| {
         let mut row = rows::blank_row(*key, statistics, controls);
@@ -718,10 +742,16 @@ pub fn run_minor_cycle(
         .planes
         .sort_unstable_by_key(|row| (row.domain, row.channel, row.polarization));
     terms.sort_unstable_by_key(|(index, _)| *index);
+    dense.sort_unstable_by_key(|(key, _)| *key);
+    let mut ordered_dense = Vec::with_capacity(dense.len());
+    ordered_dense.extend(dense.into_iter().map(|(_, plane)| plane));
+    let dense = ordered_dense;
     let mut ordered = Vec::with_capacity(terms.len());
     ordered.extend(terms.into_iter().map(|(_, term)| term));
     Ok(MinorCycleOutcome {
         terms: ordered,
+        dense,
+        mem_alpha,
         results: charge,
         masks,
         auto_masks,
@@ -816,77 +846,6 @@ fn absolute(normal: &FinalNormalState, taylor: bool, key: MaskPlaneKey) -> Plane
         channel: if taylor { first } else { first + key.channel },
         polarization: key.polarization,
     }
-}
-
-/// What an automatic mask reads its planes from, with each plane's PSF
-/// measurements, and whether it masks the run's first boundary.
-struct Reading<'a> {
-    normal: &'a FinalNormalState,
-    base: &'a ModelGeneration,
-    setup: &'a MinorCycleSetup<'a>,
-    taylor: bool,
-    summaries: &'a BTreeMap<PlaneKey, PsfSummary>,
-    first: bool,
-    /// [`PsfCache`]'s beams, when the cycle reads them.
-    beams: Option<&'a [bool]>,
-}
-
-/// The plane `key` as its automatic mask reads it: the residual the minor
-/// cycle cleans (term 0 of a Taylor family) and the pixels it reads
-/// ([`pixels::automask_plane`]); `None` for a plane with no data.
-fn automask_plane(
-    reading: &Reading<'_>,
-    key: PlaneKey,
-) -> Result<Option<AutoMaskPlane>, MinorCycleRunError> {
-    let Reading {
-        normal,
-        base,
-        setup,
-        taylor,
-        summaries,
-        first,
-        beams,
-    } = *reading;
-    if !holds_data(normal, taylor, key) {
-        return Ok(None);
-    }
-    let shape = plane_shape(normal, key);
-    let valid = valid_support(normal, base, taylor, key, shape)?;
-    let (residual, response) = if taylor {
-        let peak = summaries
-            .get(&key)
-            .ok_or(casa_imaging_deconvolution::Error::PsfPeak)?
-            .peak();
-        taylor_principal_residual(normal, setup, key.polarization, peak)?
-    } else {
-        let plane = normal.read_plane(key.domain, key.channel, key.polarization)?;
-        let raw = plane.read_residual()?;
-        single_residual(
-            normal,
-            setup,
-            key,
-            raw.iter().map(|value| value.re),
-            plane.sum_weight(),
-        )?
-    };
-    let beam = if pixels::reads_beam(setup) {
-        pixels::beam_pixels(
-            setup,
-            (base.shape().domain_roles(), key, taylor),
-            &valid,
-            response.as_ref(),
-        )?
-    } else {
-        None
-    };
-    let domain_beam = beams.is_none_or(|beams| beams[key.domain]);
-    Ok(Some(pixels::automask_plane(
-        setup,
-        (first, domain_beam),
-        residual,
-        valid,
-        beam,
-    )))
 }
 
 /// Which pixels of the plane `key` the model holds valid, every Taylor
@@ -1308,6 +1267,8 @@ struct Solved {
     /// The residual's peak over the plane's pixels once the plane is done.
     peak_no_mask: f64,
     terms: Vec<(usize, ModelDeltaTerm)>,
+    dense: Option<DenseModelPlane>,
+    mem_alpha: Option<f32>,
     trace: Vec<TracedComponent>,
     charge: Reservation,
 }
@@ -1346,6 +1307,17 @@ fn solve(
         summary,
         support: &plane.support,
     };
+    if matches!(setup.algorithm, ReconstructionAlgorithm::Mem) {
+        return solve_mem(
+            inputs,
+            (host, policy),
+            key,
+            &plane,
+            &view,
+            statistics,
+            controls,
+        );
+    }
     let outcome = match &setup.algorithm {
         ReconstructionAlgorithm::Hogbom => clean(
             &Hogbom::new(setup.accounting == HogbomIterationAccounting::CasaInclusive),
@@ -1411,6 +1383,8 @@ fn solve(
         outcome,
         peak_no_mask,
         terms,
+        dense: None,
+        mem_alpha: None,
         trace,
         charge,
     })

@@ -534,7 +534,15 @@ impl<'a> FinalNormalPlaneReader<'a> {
         }
     }
 
-    pub(crate) fn read_residual_real(&self) -> Result<Option<Cow<'a, [f32]>>, NormalStateError> {
+    /// Read only the selected unnormalized dirty or residual plane as Float values.
+    ///
+    /// Values use the x-major plane layout. `None` means the backing is not
+    /// real Float and the complex reader must be used instead.
+    ///
+    /// # Errors
+    ///
+    /// The backing cannot read the plane or returns an invalid window.
+    pub fn read_residual_real(&self) -> Result<Option<Cow<'a, [f32]>>, NormalStateError> {
         let offset = self.plane * self.cells;
         match self.backing {
             NormalPlaneBacking::Stored(d) => d.read_real(&d.fields.dirty, offset, self.cells),
@@ -554,7 +562,15 @@ impl<'a> FinalNormalPlaneReader<'a> {
         }
     }
 
-    pub(crate) fn read_psf_real(&self) -> Result<Option<Cow<'a, [f32]>>, NormalStateError> {
+    /// Read only the selected unnormalized point-spread-function plane as Float values.
+    ///
+    /// Values use the x-major plane layout. `None` means the backing is not
+    /// real Float and the complex reader must be used instead.
+    ///
+    /// # Errors
+    ///
+    /// The backing cannot read the plane or returns an invalid window.
+    pub fn read_psf_real(&self) -> Result<Option<Cow<'a, [f32]>>, NormalStateError> {
         let offset = self.plane * self.cells;
         match self.backing {
             NormalPlaneBacking::Stored(d) => d.read_real(&d.fields.psf, offset, self.cells),

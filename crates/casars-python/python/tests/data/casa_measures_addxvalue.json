@@ -1,0 +1,576 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "case": "J200010deg20deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          0.9254165783983234,
+          0.16317591116653482,
+          0.3420201433256687
+        ]
+      }
+    },
+    {
+      "case": "J2000-120deg-45deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": -2.0943951023931953
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.7853981633974482
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          -0.35355339059327373,
+          -0.6123724356957947,
+          -0.7071067811865475
+        ]
+      }
+    },
+    {
+      "case": "J20000deg90deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 1.5707963267948966
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          6.123233995736766e-17,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": "B195010deg20deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "B1950",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          0.9254165783983234,
+          0.16317591116653482,
+          0.3420201433256687
+        ]
+      }
+    },
+    {
+      "case": "B1950-120deg-45deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": -2.0943951023931953
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.7853981633974482
+        },
+        "refer": "B1950",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          -0.35355339059327373,
+          -0.6123724356957947,
+          -0.7071067811865475
+        ]
+      }
+    },
+    {
+      "case": "B19500deg90deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 1.5707963267948966
+        },
+        "refer": "B1950",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          6.123233995736766e-17,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": "GALACTIC10deg20deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "GALACTIC",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          0.9254165783983234,
+          0.16317591116653482,
+          0.3420201433256687
+        ]
+      }
+    },
+    {
+      "case": "GALACTIC-120deg-45deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": -2.0943951023931953
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.7853981633974482
+        },
+        "refer": "GALACTIC",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          -0.35355339059327373,
+          -0.6123724356957947,
+          -0.7071067811865475
+        ]
+      }
+    },
+    {
+      "case": "GALACTIC0deg90deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 1.5707963267948966
+        },
+        "refer": "GALACTIC",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          6.123233995736766e-17,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": "AZEL10deg20deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "AZEL",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          0.9254165783983234,
+          0.16317591116653482,
+          0.3420201433256687
+        ]
+      }
+    },
+    {
+      "case": "AZEL-120deg-45deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": -2.0943951023931953
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.7853981633974482
+        },
+        "refer": "AZEL",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          -0.35355339059327373,
+          -0.6123724356957947,
+          -0.7071067811865475
+        ]
+      }
+    },
+    {
+      "case": "AZEL0deg90deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 1.5707963267948966
+        },
+        "refer": "AZEL",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          6.123233995736766e-17,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": "SUN10deg20deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "SUN",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          0.9254165783983234,
+          0.16317591116653482,
+          0.3420201433256687
+        ]
+      }
+    },
+    {
+      "case": "SUN-120deg-45deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": -2.0943951023931953
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.7853981633974482
+        },
+        "refer": "SUN",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          -0.35355339059327373,
+          -0.6123724356957947,
+          -0.7071067811865475
+        ]
+      }
+    },
+    {
+      "case": "SUN0deg90deg",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 1.5707963267948966
+        },
+        "refer": "SUN",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          6.123233995736766e-17,
+          0.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "case": "ITRF('100m', '200m', '300m')",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 1.1071487177940904
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.9302740141154722
+        },
+        "m2": {
+          "unit": "m",
+          "value": 374.16573867739413
+        },
+        "refer": "ITRF",
+        "type": "position"
+      },
+      "result": {
+        "unit": "m",
+        "value": [
+          100.0,
+          199.99999999999991,
+          300.0
+        ]
+      }
+    },
+    {
+      "case": "ITRF('0m', '0m', '0m')",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "m2": {
+          "unit": "m",
+          "value": 0.0
+        },
+        "refer": "ITRF",
+        "type": "position"
+      },
+      "result": {
+        "unit": "m",
+        "value": [
+          1e-06,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "case": "WGS84('10deg', '20deg', '100m')",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.34906585039886584
+        },
+        "m2": {
+          "unit": "m",
+          "value": 100.0
+        },
+        "refer": "WGS84",
+        "type": "position"
+      },
+      "result": {
+        "unit": "m",
+        "value": [
+          92.54165783983234,
+          16.31759111665348,
+          34.20201433256687
+        ]
+      }
+    },
+    {
+      "case": "WGS84('-100deg', '40deg', '0m')",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": -1.7453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.6981317007977317
+        },
+        "m2": {
+          "unit": "m",
+          "value": 1e-06
+        },
+        "refer": "WGS84",
+        "type": "position"
+      },
+      "result": {
+        "unit": "m",
+        "value": [
+          -1.33022221559489e-07,
+          -7.54406506735489e-07,
+          6.427876096865392e-07
+        ]
+      }
+    },
+    {
+      "case": "one-element quantity",
+      "input": {
+        "m0": {
+          "value": [
+            0.1
+          ],
+          "unit": "rad"
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          0.9349980717630033,
+          0.09381272493086949,
+          0.3420201433256687
+        ]
+      }
+    },
+    {
+      "case": "unknown reference",
+      "input": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "bad",
+        "type": "direction"
+      },
+      "result": {
+        "unit": "",
+        "value": [
+          0.9254165783983234,
+          0.16317591116653482,
+          0.3420201433256687
+        ]
+      }
+    },
+    {
+      "case": "bad unit",
+      "input": {
+        "m0": {
+          "value": 3,
+          "unit": "m"
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "result": {}
+    },
+    {
+      "case": "epoch",
+      "input": {
+        "m0": {
+          "unit": "d",
+          "value": 58849.0
+        },
+        "refer": "UTC",
+        "type": "epoch"
+      },
+      "result": {}
+    },
+    {
+      "case": "frequency",
+      "input": {
+        "m0": {
+          "unit": "Hz",
+          "value": 1000000000.0
+        },
+        "refer": "LSRK",
+        "type": "frequency"
+      },
+      "result": {}
+    },
+    {
+      "case": "empty",
+      "input": {},
+      "result": {}
+    },
+    {
+      "case": "unknown type",
+      "input": {
+        "type": "unknown",
+        "refer": "J2000"
+      },
+      "result": {}
+    },
+    {
+      "case": "not a record",
+      "input": 4,
+      "error": {
+        "type": "TypeError",
+        "message": "_a is not a dictionary"
+      }
+    },
+    {
+      "case": "none",
+      "input": null,
+      "error": {
+        "type": "TypeError",
+        "message": "_a is not a dictionary"
+      }
+    }
+  ],
+  "cycle_returncode": -11
+}

@@ -41,13 +41,13 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use casa_logging::{CasaLoggingConfig, CasaLoggingError, CasaLoggingGuard};
 use casa_provider_contracts::{
     CasaValue, EXIT_EXECUTION_FAILED, EXIT_SUCCEEDED, EXIT_VALIDATION_FAILED, ParameterValue,
-    SurfaceContractBundle, TaskFailureKind, TaskFrontEndSchemas, TaskProviderContract, TaskReply,
-    TaskRunRequest,
+    ProviderProtocolDescriptor, SurfaceContractBundle, TaskFailureKind, TaskFrontEndSchemas,
+    TaskProviderContract, TaskReply, TaskRunRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -78,6 +78,7 @@ pub struct TaskSuccess {
     result: Value,
     text: Option<String>,
     notes: Vec<String>,
+    output_lines: Vec<String>,
 }
 
 impl TaskSuccess {
@@ -94,6 +95,7 @@ impl TaskSuccess {
             result: to_json(result)?,
             text: None,
             notes: Vec::new(),
+            output_lines: Vec::new(),
         })
     }
 
@@ -110,6 +112,37 @@ impl TaskSuccess {
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
+    }
+
+    /// Add a task output line to stderr, including for JSON-run requests.
+    /// This is for tasks whose result is deliberately displayed as text
+    /// while their CASA return value remains `None`.
+    #[must_use]
+    pub fn with_output_line(mut self, line: impl Into<String>) -> Self {
+        self.output_lines.push(line.into());
+        self
+    }
+
+    /// Replay an INFO message with its original time through the log sinks.
+    /// If `fallback_to_text` is true and no INFO sink is enabled, display a
+    /// timestamped line on stderr instead. The CASA return value is unchanged.
+    #[must_use]
+    pub fn with_replayed_info(
+        self,
+        time_mjd_seconds: f64,
+        location: &str,
+        message: &str,
+        fallback_to_text: bool,
+    ) -> Self {
+        match casa_logging::replay_info_record(
+            time_mjd_seconds,
+            location,
+            message,
+            fallback_to_text,
+        ) {
+            Some(line) => self.with_output_line(line),
+            None => self,
+        }
     }
 }
 
@@ -244,10 +277,22 @@ impl FrontEndOutput {
 /// The front end of one task binary.
 pub struct TaskFrontEnd<F> {
     program: String,
-    contract: Value,
+    contract: ContractDocument,
     protocol: Value,
     surfaces: Vec<SurfaceContractBundle>,
     execute: F,
+}
+
+enum ContractDocument {
+    Eager(Value),
+    Deferred {
+        contract: Box<TaskProviderContract>,
+        value: OnceLock<Result<Value, String>>,
+    },
+    Compiled {
+        document: &'static str,
+        value: OnceLock<Result<Value, String>>,
+    },
 }
 
 /// The one action a command line asks for.
@@ -272,9 +317,85 @@ where
     /// first runs when the command line's first word names none.
     pub fn new<E: Serialize>(
         program: impl Into<String>,
+        contract: TaskProviderContract<E>,
+        surfaces: &[&str],
+        execute: F,
+    ) -> Result<Self, String> {
+        Self::construct(program, contract, surfaces, execute, |contract| {
+            serde_json::to_value(&contract)
+                .map(ContractDocument::Eager)
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    /// Construct a front end for a standard task contract, deferring its
+    /// machine-readable schema document until it is requested.
+    ///
+    /// Contract validation and a serialization check still run immediately;
+    /// task parameter validation is unchanged. The concrete standard contract
+    /// contains only owned, deterministic values, so later schema rendering
+    /// preserves the output of [`Self::new`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the same contract, surface or serialization errors as
+    /// [`Self::new`].
+    pub fn new_with_deferred_schema(
+        program: impl Into<String>,
+        contract: TaskProviderContract,
+        surfaces: &[&str],
+        execute: F,
+    ) -> Result<Self, String> {
+        Self::construct(program, contract, surfaces, execute, |contract| {
+            serde_json::to_writer(std::io::sink(), &contract).map_err(|error| error.to_string())?;
+            Ok(ContractDocument::Deferred {
+                contract: Box::new(contract),
+                value: OnceLock::new(),
+            })
+        })
+    }
+
+    /// Construct a front end from a provider contract validated at build time.
+    ///
+    /// `document` must be the JSON projection of the validated provider after
+    /// its front-end schema is installed. `hosted` must contain the requested
+    /// surfaces from that same provider. Callers must use the ordinary
+    /// constructor when build and target metadata may differ. User-provided
+    /// parameters are still resolved and validated on every invocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no surface is hosted or the protocol cannot be
+    /// serialized.
+    #[doc(hidden)]
+    pub fn new_with_compiled_contract(
+        program: impl Into<String>,
+        protocol: ProviderProtocolDescriptor,
+        hosted: Vec<SurfaceContractBundle>,
+        document: &'static str,
+        execute: F,
+    ) -> Result<Self, String> {
+        if hosted.is_empty() {
+            return Err("a task front end hosts at least one surface".to_string());
+        }
+        Ok(Self {
+            program: program.into(),
+            contract: ContractDocument::Compiled {
+                document,
+                value: OnceLock::new(),
+            },
+            protocol: serde_json::to_value(protocol).map_err(|error| error.to_string())?,
+            surfaces: hosted,
+            execute,
+        })
+    }
+
+    fn construct<E: Serialize>(
+        program: impl Into<String>,
         mut contract: TaskProviderContract<E>,
         surfaces: &[&str],
         execute: F,
+        document: impl FnOnce(TaskProviderContract<E>) -> Result<ContractDocument, String>,
     ) -> Result<Self, String> {
         contract.validate().map_err(|errors| {
             errors
@@ -302,7 +423,7 @@ where
             .front_end
             .get_or_insert_with(TaskFrontEndSchemas::default);
         let protocol = serde_json::to_value(&contract.protocol).map_err(|e| e.to_string())?;
-        let contract = serde_json::to_value(&contract).map_err(|e| e.to_string())?;
+        let contract = document(contract)?;
         Ok(Self {
             program: program.into(),
             contract,
@@ -466,7 +587,31 @@ where
             Action::Help => {
                 FrontEndOutput::print(help::render_help(&self.program, &self.surfaces, bundle))
             }
-            Action::JsonSchema => pretty(&self.contract),
+            Action::JsonSchema => match &self.contract {
+                ContractDocument::Eager(value) => pretty(value),
+                ContractDocument::Deferred { contract, value } => {
+                    match value.get_or_init(|| {
+                        serde_json::to_value(contract.as_ref()).map_err(|error| error.to_string())
+                    }) {
+                        Ok(value) => pretty(value),
+                        Err(error) => FrontEndOutput::error(
+                            EXIT_EXECUTION_FAILED,
+                            format!("failed to serialize the task schema: {error}"),
+                        ),
+                    }
+                }
+                ContractDocument::Compiled { document, value } => {
+                    match value.get_or_init(|| {
+                        serde_json::from_str(document).map_err(|error| error.to_string())
+                    }) {
+                        Ok(value) => pretty(value),
+                        Err(error) => FrontEndOutput::error(
+                            EXIT_EXECUTION_FAILED,
+                            format!("failed to deserialize the task schema: {error}"),
+                        ),
+                    }
+                }
+            },
             Action::ProtocolInfo => pretty(&self.protocol),
             Action::JsonRun(source) => self.run_json(bundle, &source),
             Action::Template => match render_documented_template(bundle) {
@@ -588,6 +733,7 @@ where
         match outcome {
             Ok(success) => {
                 stderr.extend(success.notes);
+                stderr.extend(success.output_lines);
                 let stdout = match success.text {
                     Some(text) => text,
                     None if success.value == CasaValue::None => String::new(),
@@ -611,10 +757,19 @@ where
     }
 
     fn run_json(&self, default: &SurfaceContractBundle, source: &str) -> FrontEndOutput {
-        reply_output(&self.json_reply(default, source))
+        let mut lines = Vec::new();
+        let reply = self.json_reply(default, source, &mut lines);
+        let mut output = reply_output(&reply);
+        output.stderr.extend(lines);
+        output
     }
 
-    fn json_reply(&self, default: &SurfaceContractBundle, source: &str) -> TaskReply {
+    fn json_reply(
+        &self,
+        default: &SurfaceContractBundle,
+        source: &str,
+        output_lines: &mut Vec<String>,
+    ) -> TaskReply {
         let refuse =
             |surface: &str, message: String, parameter: Option<String>| TaskReply::Failed {
                 surface: surface.to_string(),
@@ -653,6 +808,60 @@ where
         };
         let mut overrides = ResolutionPatch::default();
         for (name, value) in &request.values {
+            let Some(binding) = bundle
+                .surface
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == *name)
+            else {
+                return refuse(
+                    &request.surface,
+                    format!("unknown {} parameter {name:?}", request.surface),
+                    Some(name.clone()),
+                );
+            };
+            let is_variant = bundle
+                .catalog
+                .concept(&binding.concept)
+                .is_some_and(|concept| {
+                    matches!(
+                        concept.value_domain,
+                        casa_provider_contracts::ParameterType::Variant
+                    )
+                });
+            let variant_value = if is_variant {
+                #[derive(Deserialize)]
+                struct RawValues<'a> {
+                    #[serde(borrow, default)]
+                    values: BTreeMap<String, &'a RawValue>,
+                }
+                let parsed = serde_json::from_str::<RawValues<'_>>(&text)
+                    .ok()
+                    .and_then(|raw| {
+                        raw.values
+                            .get(name)
+                            .map(|raw| crate::casa_type_diagnostics::parse_variant_json(raw.get()))
+                    });
+                match parsed {
+                    Some(Ok(value)) => Some(value),
+                    Some(Err(error)) => {
+                        return refuse(
+                            &request.surface,
+                            format!("parameter {name:?}: {error}"),
+                            Some(name.clone()),
+                        );
+                    }
+                    None => {
+                        return refuse(
+                            &request.surface,
+                            format!("parameter {name:?} is missing from the request"),
+                            Some(name.clone()),
+                        );
+                    }
+                }
+            } else {
+                None
+            };
             // serde_json represents an out-of-range JSON integer as a float.
             // Inspect its original spelling only on this error path: CASA
             // accepts the integer, so it must not get a CASA cInt type error.
@@ -680,7 +889,8 @@ where
                     );
                 }
             }
-            let Some(value) = ParameterValue::from_plain_json(value) else {
+            let Some(value) = variant_value.or_else(|| ParameterValue::from_plain_json(value))
+            else {
                 return refuse(
                     &request.surface,
                     format!("parameter {name:?} is null; leave it out to take its default"),
@@ -688,22 +898,13 @@ where
                 );
             };
             // Checked here, so that a value the surface refuses is named.
-            let Some(binding) = bundle
-                .surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == *name)
-            else {
-                return refuse(
-                    &request.surface,
-                    format!("unknown {} parameter {name:?}", request.surface),
-                    Some(name.clone()),
-                );
-            };
             if let Err(error) = crate::cli::checked_value(bundle, binding, &value) {
                 return refuse(&request.surface, error, Some(name.clone()));
             }
             overrides.values.insert(name.clone(), value);
+        }
+        if let Err((name, message)) = apply_typed_values(bundle, &request, &mut overrides) {
+            return refuse(&request.surface, message, Some(name));
         }
         drop(text);
         let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -727,11 +928,14 @@ where
             );
         }
         match self.execute(&session, &workspace) {
-            Ok(success) => TaskReply::Succeeded {
-                surface: request.surface,
-                value: success.value,
-                result: success.result,
-            },
+            Ok(success) => {
+                output_lines.extend(success.output_lines);
+                TaskReply::Succeeded {
+                    surface: request.surface,
+                    value: success.value,
+                    result: success.result,
+                }
+            }
             Err(failure) => TaskReply::Failed {
                 surface: request.surface,
                 kind: failure.kind,
@@ -855,6 +1059,44 @@ fn open_session(request: OpenSessionRequest) -> Result<ParameterSession, String>
 
 /// The session `request` opens, or its refusal and the parameter the
 /// refusal names, if any.
+fn apply_typed_values(
+    bundle: &SurfaceContractBundle,
+    request: &TaskRunRequest,
+    overrides: &mut ResolutionPatch,
+) -> Result<(), (String, String)> {
+    for (name, value) in &request.typed_values {
+        let error = |message| (name.clone(), message);
+        if request.values.contains_key(name) {
+            return Err(error(format!(
+                "parameter {name:?} occurs in both value maps"
+            )));
+        }
+        let binding = bundle
+            .surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == *name)
+            .ok_or_else(|| error(format!("unknown {} parameter {name:?}", request.surface)))?;
+        if !bundle
+            .catalog
+            .concept(&binding.concept)
+            .is_some_and(|concept| {
+                matches!(
+                    concept.value_domain,
+                    casa_provider_contracts::ParameterType::Variant
+                )
+            })
+        {
+            return Err(error(format!(
+                "typed parameter {name:?} must use a variant domain"
+            )));
+        }
+        crate::cli::checked_value(bundle, binding, value).map_err(error)?;
+        overrides.values.insert(name.clone(), value.clone());
+    }
+    Ok(())
+}
+
 fn open_named_session(
     request: OpenSessionRequest,
 ) -> Result<ParameterSession, (String, Option<String>)> {

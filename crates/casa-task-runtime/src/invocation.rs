@@ -65,14 +65,29 @@ pub fn project_provider_invocation_with_originals(
             });
             let sent = given
                 .filter(|_| is_quantity(session, name))
+                .map(|given| match given {
+                    ParameterValue::ScalarArray(value)
+                    | ParameterValue::NumpyScalar { value, .. } => value.as_ref(),
+                    other => other,
+                })
                 .or(path_original)
                 .unwrap_or(value);
-            Some((name.clone(), sent.to_plain_json()))
+            Some((name.clone(), sent.clone()))
         })
-        .collect();
+        .collect::<BTreeMap<_, _>>();
+    let mut plain = serde_json::Map::new();
+    let mut typed_values = BTreeMap::new();
+    for (name, value) in values {
+        if value.requires_typed_transport() {
+            typed_values.insert(name, value);
+        } else {
+            plain.insert(name, value.to_plain_json());
+        }
+    }
     let request = TaskRunRequest {
         surface: session.bundle().surface.id().to_string(),
-        values,
+        values: plain,
+        typed_values,
     };
     let stdin = serde_json::to_string(&request)
         .map_err(|error| ProviderInvocationError::Request(error.to_string()))?;
@@ -134,6 +149,143 @@ mod tests {
     fn request(session: &ParameterSession) -> TaskRunRequest {
         let invocation = project_provider_invocation(session).unwrap();
         serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn zero_dimensional_values_preserve_variant_and_unwrap_quantity() {
+        let scalar = ParameterValue::ScalarArray(Box::new(ParameterValue::Float(0.001)));
+        let mut imhead =
+            ParameterSession::defaults(builtin_surface_bundle("imhead").unwrap()).unwrap();
+        imhead
+            .set("imagename", ParameterValue::String("image.im".into()))
+            .unwrap();
+        imhead.set("hdvalue", scalar.clone()).unwrap();
+        assert_eq!(request(&imhead).typed_values.get("hdvalue"), Some(&scalar));
+        let profile = imhead.render_sparse().unwrap();
+        assert_eq!(
+            crate::parse_profile(&profile)
+                .unwrap()
+                .parameters
+                .get("hdvalue"),
+            Some(&scalar)
+        );
+
+        let mut tclean =
+            ParameterSession::defaults(builtin_surface_bundle("tclean").unwrap()).unwrap();
+        tclean.set("threshold", scalar).unwrap();
+        let projected = request(&tclean);
+        assert_eq!(projected.values["threshold"], serde_json::json!(0.001));
+        assert!(!projected.typed_values.contains_key("threshold"));
+    }
+
+    #[test]
+    fn numpy_scalars_preserve_dtype_in_variant_and_unwrap_other_domains() {
+        use casa_provider_contracts::NumpyScalarType;
+        let scalar = ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Float32,
+            value: Box::new(ParameterValue::Float(0.5)),
+        };
+        let mut imhead =
+            ParameterSession::defaults(builtin_surface_bundle("imhead").unwrap()).unwrap();
+        imhead
+            .set("imagename", ParameterValue::String("image.im".into()))
+            .unwrap();
+        imhead.set("hdvalue", scalar.clone()).unwrap();
+        assert_eq!(request(&imhead).typed_values.get("hdvalue"), Some(&scalar));
+        assert_eq!(
+            crate::parse_profile(&imhead.render_sparse().unwrap())
+                .unwrap()
+                .parameters
+                .get("hdvalue"),
+            Some(&scalar)
+        );
+        let mut tclean =
+            ParameterSession::defaults(builtin_surface_bundle("tclean").unwrap()).unwrap();
+        tclean.set("threshold", scalar).unwrap();
+        assert_eq!(request(&tclean).values["threshold"], serde_json::json!(0.5));
+    }
+
+    #[test]
+    fn complex_record_uses_typed_transport_and_roundtrips_profile() {
+        use casa_provider_contracts::CasaFloat;
+        let mut session =
+            ParameterSession::defaults(builtin_surface_bundle("imhead").unwrap()).unwrap();
+        session
+            .set("imagename", ParameterValue::String("image.im".into()))
+            .unwrap();
+        session
+            .set("mode", ParameterValue::String("add".into()))
+            .unwrap();
+        session
+            .set("hdkey", ParameterValue::String("custom".into()))
+            .unwrap();
+        let record = ParameterValue::Table(BTreeMap::from([
+            (
+                "value".into(),
+                ParameterValue::Complex([CasaFloat(1.0), CasaFloat(f64::INFINITY)]),
+            ),
+            (
+                "ordinary".into(),
+                ParameterValue::Table(BTreeMap::from([(
+                    "kind".into(),
+                    ParameterValue::String("complex".into()),
+                )])),
+            ),
+        ]));
+        session.set("hdvalue", record.clone()).unwrap();
+        let request = request(&session);
+        assert!(!request.values.contains_key("hdvalue"));
+        assert_eq!(request.typed_values.get("hdvalue"), Some(&record));
+        let profile = session.render_sparse().unwrap();
+        assert!(profile.contains("[typed_parameters]"));
+        let parsed = crate::parse_profile(&profile).unwrap();
+        assert_eq!(parsed.parameters.get("hdvalue"), Some(&record));
+    }
+
+    #[test]
+    fn empty_array_uses_typed_transport_and_roundtrips_profile() {
+        use casa_provider_contracts::EmptyArrayType;
+        let mut session =
+            ParameterSession::defaults(builtin_surface_bundle("imhead").unwrap()).unwrap();
+        session
+            .set("imagename", ParameterValue::String("image.im".into()))
+            .unwrap();
+        let value = ParameterValue::Table(BTreeMap::from([(
+            "value".into(),
+            ParameterValue::EmptyArray {
+                dtype: EmptyArrayType::Float,
+                shape: vec![0, 2],
+            },
+        )]));
+        session.set("hdvalue", value.clone()).unwrap();
+        let request = request(&session);
+        assert!(!request.values.contains_key("hdvalue"));
+        assert_eq!(request.typed_values.get("hdvalue"), Some(&value));
+        let profile = session.render_sparse().unwrap();
+        let parsed = crate::parse_profile(&profile).unwrap();
+        assert_eq!(parsed.parameters.get("hdvalue"), Some(&value));
+        assert!(
+            session
+                .set(
+                    "hdvalue",
+                    ParameterValue::EmptyArray {
+                        dtype: EmptyArrayType::Float,
+                        shape: vec![2, 3]
+                    }
+                )
+                .is_err()
+        );
+        assert!(
+            session
+                .set(
+                    "hdvalue",
+                    ParameterValue::EmptyArray {
+                        dtype: EmptyArrayType::Float,
+                        shape: vec![0, i32::MAX as usize + 1],
+                    }
+                )
+                .is_err()
+        );
     }
 
     #[test]

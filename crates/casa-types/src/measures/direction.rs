@@ -168,6 +168,53 @@ pub enum DirectionRef {
 /// Total number of DirectionRef variants.
 const NUM_DIR_REFS: usize = 19;
 
+/// Resolve a CASA direction-frame name or unique prefix to its canonical name.
+///
+/// The returned name can be a CASA frame that [`DirectionRef`] does not yet
+/// represent; aliases such as `AZELNE` resolve to their canonical spelling.
+#[must_use]
+pub fn casa_direction_frame_name(input: &str) -> Option<&'static str> {
+    const NAMES: [(&str, &str); 35] = [
+        ("J2000", "J2000"),
+        ("JMEAN", "JMEAN"),
+        ("JTRUE", "JTRUE"),
+        ("APP", "APP"),
+        ("B1950", "B1950"),
+        ("B1950_VLA", "B1950_VLA"),
+        ("BMEAN", "BMEAN"),
+        ("BTRUE", "BTRUE"),
+        ("GALACTIC", "GALACTIC"),
+        ("HADEC", "HADEC"),
+        ("AZEL", "AZEL"),
+        ("AZELSW", "AZELSW"),
+        ("AZELNE", "AZEL"),
+        ("AZELGEO", "AZELGEO"),
+        ("AZELSWGEO", "AZELSWGEO"),
+        ("AZELNEGEO", "AZELGEO"),
+        ("JNAT", "JNAT"),
+        ("ECLIPTIC", "ECLIPTIC"),
+        ("MECLIPTIC", "MECLIPTIC"),
+        ("TECLIPTIC", "TECLIPTIC"),
+        ("SUPERGAL", "SUPERGAL"),
+        ("ITRF", "ITRF"),
+        ("TOPO", "TOPO"),
+        ("ICRS", "ICRS"),
+        ("MERCURY", "MERCURY"),
+        ("VENUS", "VENUS"),
+        ("MARS", "MARS"),
+        ("JUPITER", "JUPITER"),
+        ("SATURN", "SATURN"),
+        ("URANUS", "URANUS"),
+        ("NEPTUNE", "NEPTUNE"),
+        ("PLUTO", "PLUTO"),
+        ("SUN", "SUN"),
+        ("MOON", "MOON"),
+        ("COMET", "COMET"),
+    ];
+    crate::quanta::unique_prefix_position(input, &NAMES, |(name, _)| name)
+        .map(|index| NAMES[index].1)
+}
+
 impl DirectionRef {
     /// Returns the C++ casacore integer code for this reference type.
     ///
@@ -394,6 +441,15 @@ impl MDirection {
     /// Returns the reference frame.
     pub fn refer(&self) -> DirectionRef {
         self.refer
+    }
+
+    /// Relabel this direction's reference frame without converting its value.
+    ///
+    /// The direction cosines are preserved exactly. This is the operation
+    /// casacore's `MDirection::set(Ref)` performs; it is distinct from a
+    /// physical frame conversion.
+    pub fn set_reference(&mut self, refer: DirectionRef) {
+        self.refer = refer;
     }
 
     /// Returns the direction as (longitude, latitude) in radians.
@@ -2023,9 +2079,28 @@ impl MDirection {
 mod tests {
     use super::*;
 
+    #[test]
+    fn casa_direction_frame_names_resolve_aliases_and_ambiguous_prefixes() {
+        assert_eq!(casa_direction_frame_name("GAL"), Some("GALACTIC"));
+        assert_eq!(casa_direction_frame_name("j2"), Some("J2000"));
+        assert_eq!(casa_direction_frame_name("AZELNE"), Some("AZEL"));
+        assert_eq!(casa_direction_frame_name("B1950_VLA"), Some("B1950_VLA"));
+        assert_eq!(casa_direction_frame_name("J"), None);
+        assert_eq!(casa_direction_frame_name("not-a-frame"), None);
+    }
+
     use crate::measures::epoch::MEpoch;
     use crate::measures::position::MPosition;
     use crate::measures::provider::test_measures;
+
+    #[test]
+    fn relabeling_a_direction_keeps_its_cosines_exactly() {
+        let mut direction = MDirection::from_angles(1.234, -0.321, DirectionRef::J2000);
+        let before = direction.cosines().map(f64::to_bits);
+        direction.set_reference(DirectionRef::GALACTIC);
+        assert_eq!(direction.cosines().map(f64::to_bits), before);
+        assert_eq!(direction.refer(), DirectionRef::GALACTIC);
+    }
 
     fn close(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() < tol

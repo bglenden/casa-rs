@@ -23,15 +23,20 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_components::{ComponentList, ComponentListError, SkyComponent};
+use casa_components::{
+    ComponentList, ComponentListError, Flux, Polarisation, PowerLogPolynomial, SkyComponent,
+    SpectralIndex, SpectralKind, SpectralModel, TabularSpectrum,
+};
 use casa_tables::{Table, TableOptions};
-use casa_types::measures::MeasuresProvider;
-use casa_types::quanta::Unit;
+use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+use casa_types::measures::{MeasFrame, MeasureError, MeasuresProvider};
+use casa_types::quanta::{Dimension, Unit, UnitDim};
 use casa_types::{RecordValue, Value};
 
 use super::add::AddComponent;
 use crate::convert::value::CasaValue;
-use crate::convert::{ConvertError, ConvertResult, quantity};
+use crate::convert::{ConvertError, ConvertResult, Variant, casacore_unit, quantity};
 use crate::tools::LogLine;
 
 /// The table a list is attached to.
@@ -49,12 +54,400 @@ struct Attached {
 pub(crate) struct State {
     list: ComponentList,
     selection: std::collections::BTreeSet<i64>,
-    shape_units: BTreeMap<usize, [Unit; 3]>,
+    shape_units: BTreeMap<usize, [Unit; 6]>,
+    /// Removed components in request order; recovery appends them in reverse.
+    removed: Vec<(SkyComponent, Option<[Unit; 6]>)>,
     table: Option<Attached>,
     measures: Option<Arc<dyn MeasuresProvider>>,
 }
 
 impl State {
+    /// Replace a spectrum only after preparing every supplied value.
+    pub(crate) fn setstokesspectrum(
+        &mut self,
+        which: i64,
+        request: &super::setstokesspectrum::Request,
+        pending: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let Some(plan) = super::setstokesspectrum::prepare(request)? else {
+            lines.push(LogLine::error(
+                "Could not translate or parse the spectral type; spectrum not changed",
+            ));
+            return Ok(false);
+        };
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        if plan.refused {
+            lines.push(LogLine::error(
+                "Could not parse the spectral parameters; spectrum not changed",
+            ));
+            return Ok(false);
+        }
+        if let SpectralKind::Tabular(table) = &plan.kind
+            && table
+                .reference_frequency_in_frame(component.spectrum().reference_frequency())
+                .is_err()
+        {
+            return Err(ConvertError::runtime(format!(
+                "Cannot transform frequency from {} to {}",
+                table.frame().as_str(),
+                component.spectrum().reference_frequency().refer().as_str()
+            )));
+        }
+        if pending {
+            return Ok(false);
+        }
+        let spectrum = component.spectrum_mut();
+        if let Some((hz, frame)) = plan.reference {
+            spectrum
+                .set_frequency_unit(Unit::new("GHz").expect("GHz is a unit"))
+                .map_err(|e| ConvertError::runtime(e.to_string()))?;
+            spectrum.set_reference_frequency(MFrequency::new(hz, frame));
+        }
+        *spectrum.kind_mut() = plan.kind;
+        Ok(true)
+    }
+
+    /// Convert one component's reference direction, preserving its errors.
+    pub(crate) fn convertrefdir(&mut self, which: i64, frame: DirectionRef) -> ConvertResult<bool> {
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        let shape = component.shape_mut();
+        let converted = shape
+            .reference_direction()
+            .convert_to(frame, &MeasFrame::new())
+            .map_err(|error| match error {
+                MeasureError::MissingFrameData { .. } => {
+                    ConvertError::runtime("Missing information in Frame specified for conversion")
+                }
+                MeasureError::NotYetImplemented { route } => ConvertError::runtime(format!(
+                    "direction conversion {route} is not implemented (#1053)"
+                )),
+                other => ConvertError::runtime(other.to_string()),
+            })?;
+        shape.set_reference_direction(converted);
+        Ok(true)
+    }
+
+    /// Append CASA's default point components, retaining existing selection.
+    pub(crate) fn simulate(&mut self, howmany: i64) -> ConvertResult<bool> {
+        if howmany > i64::from(i32::MAX) {
+            return Err(ConvertError::runtime(
+                "component count exceeds CASA's signed loop range (#1053)",
+            ));
+        }
+        let direction =
+            MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::J2000);
+        let component = SkyComponent::new(
+            Flux::stokes_jy(1.0, 0.0, 0.0, 0.0),
+            casa_components::ComponentShape::point(direction),
+            SpectralModel::constant(MFrequency::new(1e9, FrequencyRef::LSRK)),
+        );
+        for _ in 0..howmany {
+            self.list.push(component.clone());
+        }
+        Ok(true)
+    }
+
+    /// Prepare a spectral model before replacing a component's spectral kind.
+    pub(crate) fn setspectrum(
+        &mut self,
+        which: i64,
+        request: &super::setspectrum::Request,
+        pending: bool,
+    ) -> ConvertResult<bool> {
+        let kind = match request.name.to_ascii_uppercase().chars().next() {
+            Some('C') => SpectralKind::Constant,
+            Some('S') => {
+                let index = match &request.index {
+                    Variant::Number(value) => Some(*value),
+                    Variant::Numbers(values) | Variant::Array { values, .. } => {
+                        values.first().copied()
+                    }
+                    _ => None,
+                }
+                .ok_or_else(|| {
+                    ConvertError::runtime(
+                        "Unrecognized type for index, must be double or doubleArray",
+                    )
+                })?;
+                if !index.is_finite() {
+                    return Err(ConvertError::runtime(
+                        "non-finite spectral index refused (#1053)",
+                    ));
+                }
+                SpectralKind::SpectralIndex(SpectralIndex::new(index))
+            }
+            Some('P') => {
+                let coefficients = match &request.index {
+                    Variant::Numbers(values) | Variant::Array { values, .. }
+                        if !values.is_empty() =>
+                    {
+                        values.clone()
+                    }
+                    _ => {
+                        return Err(ConvertError::runtime(
+                            "for a spectrum='plp', index must be a list of numbers",
+                        ));
+                    }
+                };
+                if coefficients.iter().any(|value| !value.is_finite()) {
+                    return Err(ConvertError::runtime(
+                        "non-finite spectrum coefficient refused (#1053)",
+                    ));
+                }
+                SpectralKind::PowerLogPolynomial(PowerLogPolynomial::new(coefficients))
+            }
+            Some('T') => {
+                if request.frequencies.values.len() < 2 {
+                    return Err(ConvertError::runtime(
+                        "There need to be at least 2 points in a tabular spectrum",
+                    ));
+                }
+                if request.frequencies.values.len() != request.flux.values.len() {
+                    return Err(ConvertError::runtime(
+                        "lengths of tabular frequencies and values have to be the same",
+                    ));
+                }
+                let frame = frequency_frame(&request.frame).ok_or_else(|| {
+                    ConvertError::runtime(format!(
+                        "{} is an unsupported frequency frame",
+                        request.frame
+                    ))
+                })?;
+                if request.frequencies.invalid || request.flux.invalid {
+                    return Err(ConvertError::runtime(
+                        "unrepresentable tabular value refused (#1053)",
+                    ));
+                }
+                if request
+                    .frequencies
+                    .values
+                    .iter()
+                    .chain(&request.flux.values)
+                    .any(|v| !v.is_finite())
+                {
+                    return Err(ConvertError::runtime(
+                        "non-finite tabular spectrum refused (#1053)",
+                    ));
+                }
+                let flux = request
+                    .flux
+                    .values
+                    .iter()
+                    .map(|&value| [value, 0.0, 0.0, 0.0])
+                    .collect();
+                let table = TabularSpectrum::new(frame, request.frequencies.values.clone(), flux)
+                    .map_err(|error| ConvertError::runtime(error.to_string()))?;
+                SpectralKind::Tabular(table)
+            }
+            _ => {
+                return Err(ConvertError::runtime(format!(
+                    "Unkinown spectral type {}",
+                    request.name
+                )));
+            }
+        };
+        if matches!(kind, SpectralKind::Tabular(_)) && which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        if let SpectralKind::Tabular(table) = &kind
+            && table
+                .reference_frequency_in_frame(component.spectrum().reference_frequency())
+                .is_err()
+        {
+            return Err(ConvertError::runtime(format!(
+                "Cannot transform frequency from {} to {}",
+                table.frame().as_str(),
+                component.spectrum().reference_frequency().refer().as_str()
+            )));
+        }
+        if pending {
+            return Ok(false);
+        }
+        // Replacing just the kind keeps the existing frequency error and unit.
+        *component.spectrum_mut().kind_mut() = kind;
+        Ok(true)
+    }
+
+    pub(crate) fn setshape(
+        &mut self,
+        which: i64,
+        request: &super::setshape::Request,
+        pending: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let Some(mut prepared) = super::setshape::prepare(request, lines)? else {
+            return Ok(false);
+        };
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let index = which as usize;
+        let component = self
+            .list
+            .get_mut(index)
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        if pending {
+            return Ok(false);
+        }
+        // CASA preserves the coordinates but silently loses their errors.
+        prepared
+            .shape
+            .set_reference_direction(component.shape().reference_direction().clone());
+        prepared
+            .shape
+            .set_direction_error(component.shape().direction_error().clone());
+        *component.shape_mut() = prepared.shape;
+        if let Some(units) = prepared.units {
+            self.shape_units.insert(index, units);
+        } else {
+            self.shape_units.remove(&index);
+        }
+        Ok(true)
+    }
+
+    /// Return a component record using the in-memory shape units.
+    pub(crate) fn getcomponent(&self, which: i64) -> ConvertResult<CasaValue> {
+        let mut result = record(self.checked(which)?.to_record())?;
+        if !self.shape_units.contains_key(&(which as usize)) {
+            return Ok(result);
+        }
+        let CasaValue::Record(fields) = &mut result else {
+            return Ok(result);
+        };
+        let Some((_, CasaValue::Record(shape))) = fields.iter_mut().find(|(key, _)| key == "shape")
+        else {
+            return Ok(result);
+        };
+        if let CasaValue::Record(quantities) = self.getshape(which)? {
+            for (name, quantity) in quantities {
+                if let Some((_, value)) = shape.iter_mut().find(|(key, _)| key == &name) {
+                    *value = quantity;
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn setflux(
+        &mut self,
+        which: i64,
+        flux: Flux,
+        pending: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let indices = if which == -1 {
+            if self.list.is_empty() {
+                return Err(ConvertError::runtime(
+                    "componentlist.setflux on an empty list would crash CASA (#1053)",
+                ));
+            }
+            (0..self.list.len()).collect::<Vec<_>>()
+        } else if which < 0 || which >= self.length() {
+            let message = "Index out of range.\nA component number is less than one or greater than the list length\nFlux not changed on any components";
+            lines.push(LogLine::error(message));
+            return Err(ConvertError::runtime(message));
+        } else {
+            vec![which as usize]
+        };
+        if pending {
+            return Ok(false);
+        }
+        for index in indices {
+            *self
+                .list
+                .get_mut(index)
+                .expect("validated index")
+                .flux_mut() = flux.clone();
+        }
+        Ok(true)
+    }
+
+    /// Append selected components read from a component-list table.
+    pub(crate) fn concatenate(
+        &mut self,
+        source: &Variant,
+        indices: &[i64],
+        pending: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let filename = match source {
+            Variant::Text(value) => value.clone(),
+            Variant::Texts(_) => source.describe(),
+            _ => {
+                lines.push(LogLine::error(
+                    "Can concatenate only componentlists which are on disk or are a record for now",
+                ));
+                return Ok(false);
+            }
+        };
+        if filename.is_empty() || !Path::new(&filename).join("table.dat").is_file() {
+            return Err(ConvertError::runtime(format!(
+                "Cannot read componentlist {filename}"
+            )));
+        }
+        let source = ComponentList::read_table(&filename)
+            .map_err(|_| ConvertError::runtime(format!("Cannot read componentlist {filename}")))?;
+        if source.is_empty() {
+            lines.push(LogLine::warning("Empty componentlist"));
+            return Ok(false);
+        }
+        // CASA can report a failed Python conversion only after appending.
+        if pending {
+            return Ok(false);
+        }
+        let all = indices.is_empty() || indices[0] < 0;
+        let selected: Vec<usize> = if all {
+            (0..source.len()).collect()
+        } else {
+            indices
+                .iter()
+                .enumerate()
+                .filter_map(|(position, &index)| {
+                    if index >= 0 && (index as usize) < source.len() {
+                        Some(index as usize)
+                    } else {
+                        lines.push(LogLine::error(format!(
+                            "component {position}does not exist in this list "
+                        )));
+                        None
+                    }
+                })
+                .collect()
+        };
+        for index in selected {
+            self.list
+                .push(source.get(index).expect("validated index").clone());
+        }
+        Ok(true)
+    }
+
+    /// The attached table, required by CASA's keyword methods.
+    pub(crate) fn keyword_table_path(&self) -> ConvertResult<&Path> {
+        self.table
+            .as_ref()
+            .map(|table| table.path.as_path())
+            .ok_or_else(|| {
+                ConvertError::runtime("Exception: A table is not attached to this ComponentList.")
+            })
+    }
+
     /// The measures data, loaded on first use.
     fn measures(&mut self) -> ConvertResult<Arc<dyn MeasuresProvider>> {
         if let Some(measures) = &self.measures {
@@ -77,6 +470,7 @@ impl State {
         let list = std::mem::take(&mut self.list);
         self.selection.clear();
         self.shape_units.clear();
+        self.removed.clear();
         match self.table.take() {
             Some(Attached {
                 path,
@@ -243,6 +637,83 @@ impl State {
         }
     }
 
+    /// Remove components after validating all indices, keeping a recovery bin.
+    pub(crate) fn remove(
+        &mut self,
+        indices: &[i64],
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let requested: Vec<usize> = if indices == [-1] {
+            if self.list.is_empty() {
+                return Err(ConvertError::runtime(
+                    "componentlist.remove on an empty list would crash CASA (#1053)",
+                ));
+            }
+            (0..self.list.len()).collect()
+        } else {
+            if indices
+                .iter()
+                .any(|&index| index < 0 || index >= self.length())
+            {
+                let message = "Index out of range.\nA component number is less than one or greater than the list length\nNo components removed";
+                lines.push(LogLine::error(message));
+                return Err(ConvertError::runtime(message));
+            }
+            indices.iter().map(|&index| index as usize).collect()
+        };
+        let mut removed = std::collections::BTreeSet::new();
+        for index in requested {
+            // CASA loses a different component when the same index is repeated.
+            if removed.insert(index) {
+                self.removed.push((
+                    self.list.get(index).expect("validated index").clone(),
+                    self.shape_units.get(&index).cloned(),
+                ));
+            }
+        }
+        let sorted: Vec<usize> = removed.into_iter().collect();
+        let mut components = std::mem::take(&mut self.list).into_components();
+        let mut index = 0;
+        components.retain(|_| {
+            let keep = sorted.binary_search(&index).is_err();
+            index += 1;
+            keep
+        });
+        self.list = components.into();
+        let remap = |index: usize| -> Option<usize> {
+            match sorted.binary_search(&index) {
+                Ok(_) => None,
+                Err(before) => Some(index - before),
+            }
+        };
+        self.selection = std::mem::take(&mut self.selection)
+            .into_iter()
+            .filter_map(|index| remap(index as usize).map(|new| new as i64))
+            .collect();
+        self.shape_units = std::mem::take(&mut self.shape_units)
+            .into_iter()
+            .filter_map(|(index, units)| remap(index).map(|new| (new, units)))
+            .collect();
+        Ok(true)
+    }
+
+    /// Restore removed components in reverse removal order, without selecting them.
+    pub(crate) fn recover(&mut self) -> bool {
+        while let Some((component, units)) = self.removed.pop() {
+            if let Some(units) = units {
+                self.shape_units.insert(self.list.len(), units);
+            }
+            self.list.push(component);
+        }
+        false // CASA returns false even on success.
+    }
+
+    /// Forget the recovery bin; CASA returns false even on success.
+    pub(crate) fn purge(&mut self) -> bool {
+        self.removed.clear();
+        false
+    }
+
     /// `length()`.
     pub(crate) fn length(&self) -> i64 {
         i64::try_from(self.list.len()).unwrap_or(i64::MAX)
@@ -262,6 +733,9 @@ impl State {
                 quantity(&request.majoraxis)?.unit().clone(),
                 quantity(&request.minoraxis)?.unit().clone(),
                 quantity(&request.positionangle)?.unit().clone(),
+                Unit::new("rad").expect("rad is a unit"),
+                Unit::new("rad").expect("rad is a unit"),
+                Unit::new("rad").expect("rad is a unit"),
             ];
             self.shape_units.insert(self.list.len(), units);
         }
@@ -316,6 +790,275 @@ impl State {
             })
     }
 
+    /// Replace a label, using the index checks in casacore's `setLabel`.
+    pub(crate) fn setlabel(&mut self, which: i64, value: &str) -> ConvertResult<bool> {
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        component.set_label(value);
+        Ok(true)
+    }
+
+    /// Set direction coordinates while preserving each component's frame.
+    pub(crate) fn setrefdir(
+        &mut self,
+        which: i64,
+        ra: &Variant,
+        dec: &Variant,
+        pending: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let ra = quantity(ra)?;
+        let dec = quantity(dec)?;
+        for angle in [&dec, &ra] {
+            if angle.unit().val().dim != UnitDim::basis(Dimension::Angle) {
+                return Err(ConvertError::runtime(format!(
+                    "Quantum::cos illegal unit type '{}'",
+                    angle.unit().name()
+                )));
+            }
+        }
+        let (ra, dec) = (ra.get_si_value(), dec.get_si_value());
+        if !ra.is_finite() || !dec.is_finite() {
+            return Err(ConvertError::runtime(
+                "non-finite component direction refused (CASA writes NaN: #1053)",
+            ));
+        }
+        if pending {
+            return Ok(false);
+        }
+        if which == -1 && self.list.is_empty() {
+            return Err(ConvertError::runtime(
+                "Cannot set directions of an empty list (CASA crashes: #1053)",
+            ));
+        }
+        if which < -1 || which >= self.length() {
+            let message = "Index out of range.\nA component number is less than one or greater than the list length\nDirection not changed on any components";
+            lines.push(LogLine::error(message));
+            return Err(ConvertError::runtime(message));
+        }
+        let indices: Vec<usize> = if which == -1 {
+            (0..self.list.len()).collect()
+        } else {
+            vec![which as usize]
+        };
+        for index in indices {
+            let shape = self
+                .list
+                .get_mut(index)
+                .expect("validated index")
+                .shape_mut();
+            let direction = MDirection::from_angles(ra, dec, shape.reference_direction().refer());
+            shape.set_reference_direction(direction);
+        }
+        Ok(true)
+    }
+
+    /// Relabel one reference direction without converting its coordinates.
+    pub(crate) fn setrefdirframe(
+        &mut self,
+        which: i64,
+        frame: DirectionRef,
+    ) -> ConvertResult<bool> {
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        let shape = component.shape_mut();
+        let mut direction = shape.reference_direction().clone();
+        direction.set_reference(frame);
+        shape.set_reference_direction(direction);
+        Ok(true)
+    }
+
+    /// Change the unit used in one component's spectrum record.
+    pub(crate) fn convertfrequnit(&mut self, which: i64, name: &str) -> ConvertResult<bool> {
+        let unit = casacore_unit(name).map_err(ConvertError::runtime)?;
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        component
+            .spectrum_mut()
+            .set_frequency_unit(unit)
+            .map_err(|error| ConvertError::runtime(error.to_string()))?;
+        Ok(true)
+    }
+
+    /// Replace one reference frequency, its record unit and retain its frame.
+    pub(crate) fn setfreq(&mut self, which: i64, value: f64, name: &str) -> ConvertResult<bool> {
+        let unit = casacore_unit(name).map_err(ConvertError::runtime)?;
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        let hz = value * unit.val().factor;
+        let spectrum = component.spectrum_mut();
+        // Validate before either field changes; CASA corrupts its spectrum
+        // for non-frequency units during its subsequent unit conversion.
+        spectrum
+            .set_frequency_unit(unit)
+            .map_err(|error| ConvertError::runtime(error.to_string()))?;
+        spectrum
+            .set_reference_frequency(MFrequency::new(hz, spectrum.reference_frequency().refer()));
+        Ok(true)
+    }
+
+    /// Relabel a frequency without converting its physical value.
+    pub(crate) fn setfreqframe(
+        &mut self,
+        which: i64,
+        name: &str,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let Some(frame) = frequency_frame(name) else {
+            lines.push(LogLine::error(
+                "Could not parse the 'frame' string: Frequency frame not changed",
+            ));
+            return Ok(false);
+        };
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        let spectrum = component.spectrum_mut();
+        spectrum
+            .set_reference_frequency(MFrequency::new(spectrum.reference_frequency().hz(), frame));
+        Ok(true)
+    }
+
+    /// Convert selected component fluxes only after all source units conform.
+    pub(crate) fn convertfluxpol(
+        &mut self,
+        which: i64,
+        name: &str,
+        pending: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let indices = if which == -1 {
+            if self.list.is_empty() {
+                return Err(ConvertError::runtime(
+                    "componentlist.convertfluxpol on an empty list would crash CASA (#1053)",
+                ));
+            }
+            (0..self.list.len()).collect::<Vec<_>>()
+        } else if which < 0 || which >= self.length() {
+            let message = "Index out of range.\nA component number is less than one or greater than the list length\nFlux not changed on any components";
+            lines.push(LogLine::error(message));
+            return Err(ConvertError::runtime(message));
+        } else {
+            vec![which as usize]
+        };
+        let target = match Polarisation::parse_casa(name) {
+            Ok(target) => target,
+            Err(_) => {
+                let message =
+                    "Unknown polarization. Possible values are:\n 'Stokes'  'Linear'  'Circular' ";
+                lines.push(LogLine::error(message));
+                return Err(ConvertError::runtime(message));
+            }
+        };
+        // CASA can change all components before reporting a Python conversion error.
+        if pending {
+            return Ok(false);
+        }
+        for index in indices {
+            let flux = self
+                .list
+                .get_mut(index)
+                .expect("validated index")
+                .flux_mut();
+            if flux.polarisation() != target
+                && flux
+                    .errors()
+                    .iter()
+                    .any(|error| error.norm() > f64::EPSILON)
+            {
+                lines.push(LogLine::warning("The change in flux representation means the numerical values have changed\nBut the errors in the flux are not being changed and are probably now incorrect"));
+            }
+            flux.convert_polarisation(target);
+        }
+        Ok(true)
+    }
+
+    pub(crate) fn convertfluxunit(
+        &mut self,
+        which: i64,
+        name: &str,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let target = casacore_unit(name).map_err(ConvertError::runtime)?;
+        let jy = casacore_unit("Jy").map_err(ConvertError::runtime)?;
+        if !target.conformant(&jy) {
+            lines.push(LogLine::error(
+                "The flux units must have the same dimensions as the Jansky\nFlux not changed on any components",
+            ));
+            return Ok(false);
+        }
+        let indices = if which == -1 {
+            if self.list.is_empty() {
+                return Err(ConvertError::runtime(
+                    "componentlist.convertfluxunit on an empty list would crash CASA (#1053)",
+                ));
+            }
+            (0..self.list.len()).collect::<Vec<_>>()
+        } else if which < 0 || which >= self.length() {
+            let message = "Index out of range.\nA component number is less than one or greater than the list length\nFlux not changed on any components";
+            lines.push(LogLine::error(message));
+            return Err(ConvertError::runtime(message));
+        } else {
+            vec![which as usize]
+        };
+        let mut converted = Vec::with_capacity(indices.len());
+        for &index in &indices {
+            let flux = self.list.get(index).expect("validated index").flux();
+            // CASA does nothing when the unit names already match, even if
+            // the unit's scale is zero; avoid a spurious zero divided by zero.
+            if flux.unit().name() == target.name() {
+                converted.push(flux.clone());
+                continue;
+            }
+            if !flux.unit().conformant(&target) {
+                return Err(ConvertError::runtime(format!(
+                    "non-conforming flux unit '{}' cannot be converted to '{}'",
+                    flux.unit().name(),
+                    target.name()
+                )));
+            }
+            let factor = flux.unit().val().factor / target.val().factor;
+            let values = flux.values().map(|value| value * factor);
+            let errors = flux.errors().map(|error| error * factor);
+            let result = Flux::new(values, target.name(), flux.polarisation())
+                .map_err(|error| ConvertError::runtime(error.to_string()))?
+                .with_errors(errors);
+            converted.push(result);
+        }
+        for (index, flux) in indices.into_iter().zip(converted) {
+            *self
+                .list
+                .get_mut(index)
+                .expect("validated index")
+                .flux_mut() = flux;
+        }
+        Ok(true)
+    }
+
     /// The component `which`, for the methods CASA does not check: casacore's
     /// `ComponentList::component` asserts the index.
     pub(crate) fn unchecked(&self, which: i64) -> ConvertResult<&SkyComponent> {
@@ -335,6 +1078,9 @@ impl State {
             Unit::new("arcmin").expect("known unit"),
             Unit::new("arcmin").expect("known unit"),
             Unit::new("deg").expect("known unit"),
+            Unit::new("rad").expect("known unit"),
+            Unit::new("rad").expect("known unit"),
+            Unit::new("rad").expect("known unit"),
         ];
         let units = self.shape_units.get(&(which as usize)).unwrap_or(&defaults);
         let axis = |value: f64, unit: &Unit| {
@@ -343,14 +1089,13 @@ impl State {
                 ("value", CasaValue::Float(value / unit.val().factor)),
             ])
         };
-        let rad = Unit::new("rad").expect("known unit");
         Ok(CasaValue::record([
             ("majoraxis", axis(axes.major_axis(), &units[0])),
             ("minoraxis", axis(axes.minor_axis(), &units[1])),
             ("positionangle", axis(axes.position_angle(), &units[2])),
-            ("majoraxiserror", axis(errors.major_axis, &rad)),
-            ("minoraxiserror", axis(errors.minor_axis, &rad)),
-            ("positionangleerror", axis(errors.position_angle, &rad)),
+            ("majoraxiserror", axis(errors.major_axis, &units[3])),
+            ("minoraxiserror", axis(errors.minor_axis, &units[4])),
+            ("positionangleerror", axis(errors.position_angle, &units[5])),
         ]))
     }
 
@@ -377,6 +1122,26 @@ impl State {
 fn absolute(filename: &str) -> ConvertResult<PathBuf> {
     std::path::absolute(filename)
         .map_err(|error| ConvertError::runtime(format!("cannot resolve {filename}: {error}")))
+}
+
+/// CASA accepts an unambiguous prefix or a name beginning with a complete
+/// frame name, including the Undefined extra reference.
+pub(super) fn frequency_frame(name: &str) -> Option<FrequencyRef> {
+    if name.is_empty() {
+        return None;
+    }
+    let name = name.to_ascii_uppercase();
+    let choices = FrequencyRef::ALL
+        .into_iter()
+        .map(|frame| (frame.as_str(), frame))
+        .chain(std::iter::once(("UNDEFINED", FrequencyRef::Undefined)));
+    let mut matches = choices
+        .filter(|(candidate, _)| candidate.starts_with(&name) || name.starts_with(candidate));
+    let (_, matched) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(matched)
 }
 
 /// Whether `path` is a table with a `Shape_Parameters` column, the test

@@ -25,6 +25,112 @@ fn contract() -> TaskProviderContract {
     contract_hosting(&["imstat", "imhead"])
 }
 
+#[test]
+fn deferred_schema_matches_eager_discovery_and_validation() {
+    let eager = TaskFrontEnd::new("imexplore", contract(), &["imstat", "imhead"], |_| {
+        TaskSuccess::new(CasaValue::None, &())
+    })
+    .unwrap();
+    let deferred = TaskFrontEnd::new_with_deferred_schema(
+        "imexplore",
+        contract(),
+        &["imstat", "imhead"],
+        |_| TaskSuccess::new(CasaValue::None, &()),
+    )
+    .unwrap();
+    for action in ["--help", "--json-schema", "--protocol-info", "--show"] {
+        assert_eq!(
+            deferred.dispatch(&args(&[action])),
+            eager.dispatch(&args(&[action]))
+        );
+    }
+    // A reused front end returns the same cached schema on later requests.
+    assert_eq!(
+        deferred.dispatch(&args(&["--json-schema"])),
+        eager.dispatch(&args(&["--json-schema"]))
+    );
+
+    // Invalid user input still goes through the same parameter validation.
+    let workspace = tempfile::tempdir().unwrap();
+    let request = workspace.path().join("invalid.json");
+    std::fs::write(
+        &request,
+        json!({"surface": "imhead", "values": {"imagename": 123}}).to_string(),
+    )
+    .unwrap();
+    let args = args(&["--json-run", request.to_str().unwrap()]);
+    let refused = deferred.dispatch(&args);
+    assert_ne!(refused.code, 0);
+    assert_eq!(refused, eager.dispatch(&args));
+
+    let mut invalid = contract();
+    invalid.protocol.protocol_version = 0;
+    let eager_error = TaskFrontEnd::new("imexplore", invalid.clone(), &["imhead"], |_| {
+        TaskSuccess::new(CasaValue::None, &())
+    })
+    .err();
+    let deferred_error =
+        TaskFrontEnd::new_with_deferred_schema("imexplore", invalid, &["imhead"], |_| {
+            TaskSuccess::new(CasaValue::None, &())
+        })
+        .err();
+    assert!(eager_error.is_some());
+    assert_eq!(deferred_error, eager_error);
+}
+
+#[test]
+fn compiled_contract_matches_eager_discovery_and_user_validation() {
+    let eager = TaskFrontEnd::new("imexplore", contract(), &["imstat", "imhead"], |_| {
+        TaskSuccess::new(CasaValue::None, &())
+    })
+    .unwrap();
+    let mut source = contract();
+    source.validate().unwrap();
+    let hosted = ["imstat", "imhead"]
+        .into_iter()
+        .map(|id| {
+            source
+                .parameter_surfaces
+                .iter()
+                .find(|bundle| bundle.surface.id() == id)
+                .unwrap()
+                .clone()
+        })
+        .collect();
+    let protocol = source.protocol.clone();
+    source
+        .semantic
+        .front_end
+        .get_or_insert_with(Default::default);
+    let document = Box::leak(
+        serde_json::to_string(&serde_json::to_value(&source).unwrap())
+            .unwrap()
+            .into_boxed_str(),
+    );
+    let compiled =
+        TaskFrontEnd::new_with_compiled_contract("imexplore", protocol, hosted, document, |_| {
+            TaskSuccess::new(CasaValue::None, &())
+        })
+        .unwrap();
+    for action in ["--help", "--json-schema", "--protocol-info", "--show"] {
+        assert_eq!(
+            compiled.dispatch(&args(&[action])),
+            eager.dispatch(&args(&[action]))
+        );
+    }
+    let workspace = tempfile::tempdir().unwrap();
+    let request = workspace.path().join("invalid.json");
+    std::fs::write(
+        &request,
+        json!({"surface": "imhead", "values": {"imagename": 123}}).to_string(),
+    )
+    .unwrap();
+    let args = args(&["--json-run", request.to_str().unwrap()]);
+    let refused = compiled.dispatch(&args);
+    assert_ne!(refused.code, 0);
+    assert_eq!(refused, eager.dispatch(&args));
+}
+
 /// A provider contract carrying the builtin `surfaces`.
 fn contract_hosting(surfaces: &[&str]) -> TaskProviderContract {
     let request_schema = schemars::schema_for!(Request);
@@ -227,6 +333,44 @@ fn json_run_writes_one_typed_reply_and_no_last() {
             result: json!({"kind": "statistics"}),
         }
     );
+}
+
+#[test]
+fn task_output_lines_are_visible_for_cli_and_json_without_changing_the_reply() {
+    let task = TaskFrontEnd::new(
+        "imexplore",
+        contract_hosting(&["imhead"]),
+        &["imhead"],
+        |_| {
+            Ok(TaskSuccess::new(CasaValue::None, &())
+                .unwrap()
+                .with_output_line("INFO ::origin history"))
+        },
+    )
+    .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let cli = task.dispatch(&in_workspace(
+        workspace.path(),
+        &["example.im", "--no-save-last"],
+    ));
+    assert_eq!(cli.code, 0);
+    assert_eq!(cli.stderr, ["INFO ::origin history"]);
+    let request = workspace.path().join("request.json");
+    std::fs::write(
+        &request,
+        json!({"surface": "imhead", "values": {"imagename": "example.im"}}).to_string(),
+    )
+    .unwrap();
+    let output = task.dispatch(&args(&["--json-run", request.to_str().unwrap()]));
+    assert_eq!(output.stderr, ["INFO ::origin history"]);
+    let reply: TaskReply = serde_json::from_str(&output.stdout).unwrap();
+    assert!(matches!(
+        reply,
+        TaskReply::Succeeded {
+            value: CasaValue::None,
+            ..
+        }
+    ));
 }
 
 #[test]

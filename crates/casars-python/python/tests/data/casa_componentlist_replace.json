@@ -1,0 +1,2014 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {}
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        -1,
+        {}
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        1099511627776,
+        {}
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        true,
+        {}
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        null,
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        1267650600228229401496703205376,
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        1.5,
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        "0",
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        [
+          0
+        ],
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        []
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        1
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        "x"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {
+          "foo": 1
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {
+          "x": 1267650600228229401496703205376
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {
+          "x": [
+            1267650600228229401496703205376
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {
+          "x": [
+            {
+              "n": 1267650600228229401496703205376
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {}
+      ],
+      "kwargs": {
+        "whichones": null
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        []
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        [
+          -1
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        [
+          1.5
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        [
+          null
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        [
+          "1"
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        0
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        1.5
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        "a"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _whichones must not be a string"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__bytes__": [
+            97
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _whichones must not be a string"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        [
+          1267650600228229401496703205376
+        ]
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "x": 1267650600228229401496703205376
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        [
+          {
+            "x": 1267650600228229401496703205376
+          }
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        [
+          [
+            1,
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "int64",
+          "value": 2
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "uint64",
+          "value": 2
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "bool_",
+          "value": true
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "float16",
+          "value": 2.0
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "float32",
+          "value": 2.0
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "float64",
+          "value": 2.0
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__complex__": [
+            1,
+            2
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "complex64",
+          "value": {
+            "__complex__": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        [
+          {
+            "__numpy__": "complex64",
+            "value": {
+              "__complex__": [
+                1,
+                2
+              ]
+            }
+          }
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__object__": true
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        [
+          {
+            "__numpy__": "int64",
+            "value": 2
+          }
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "array",
+          "value": 2
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "array",
+          "value": [
+            1,
+            2
+          ]
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "array",
+          "value": [],
+          "dtype": "float64"
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "array",
+          "value": [
+            1267650600228229401496703205376
+          ],
+          "dtype": "object"
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        null,
+        null,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        1.5,
+        null,
+        "bad"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {}
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        -1,
+        {}
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        1099511627776,
+        {}
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        true,
+        {}
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        null,
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        1267650600228229401496703205376,
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        1.5,
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        "0",
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        [
+          0
+        ],
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        []
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        1
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "x"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {
+          "foo": 1
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {
+          "x": 1267650600228229401496703205376
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {
+          "x": [
+            1267650600228229401496703205376
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {
+          "x": [
+            {
+              "n": 1267650600228229401496703205376
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {}
+      ],
+      "kwargs": {
+        "whichones": null
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        []
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        [
+          -1
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        [
+          1.5
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        [
+          null
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        [
+          "1"
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        0
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        1.5
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        "a"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _whichones must not be a string"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__bytes__": [
+            97
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _whichones must not be a string"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        [
+          1267650600228229401496703205376
+        ]
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "x": 1267650600228229401496703205376
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        [
+          {
+            "x": 1267650600228229401496703205376
+          }
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        [
+          [
+            1,
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "int64",
+          "value": 2
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "uint64",
+          "value": 2
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "bool_",
+          "value": true
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "float16",
+          "value": 2.0
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "float32",
+          "value": 2.0
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "float64",
+          "value": 2.0
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__complex__": [
+            1,
+            2
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "complex64",
+          "value": {
+            "__complex__": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        [
+          {
+            "__numpy__": "complex64",
+            "value": {
+              "__complex__": [
+                1,
+                2
+              ]
+            }
+          }
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__object__": true
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        [
+          {
+            "__numpy__": "int64",
+            "value": 2
+          }
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "array",
+          "value": 2
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "array",
+          "value": [
+            1,
+            2
+          ]
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "array",
+          "value": [],
+          "dtype": "float64"
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "array",
+          "value": [
+            1267650600228229401496703205376
+          ],
+          "dtype": "object"
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        null,
+        null,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        1.5,
+        null,
+        "bad"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {}
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        -1,
+        {}
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        1099511627776,
+        {}
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        true,
+        {}
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        null,
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        1267650600228229401496703205376,
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        1.5,
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        "0",
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        [
+          0
+        ],
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        []
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        1
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        "x"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {
+          "foo": 1
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {
+          "x": 1267650600228229401496703205376
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {
+          "x": [
+            1267650600228229401496703205376
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {
+          "x": [
+            {
+              "n": 1267650600228229401496703205376
+            }
+          ]
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {}
+      ],
+      "kwargs": {
+        "whichones": null
+      },
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        []
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        [
+          -1
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        [
+          1.5
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        [
+          null
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        [
+          "1"
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        0
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        1.5
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        "a"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _whichones must not be a string"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__bytes__": [
+            97
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _whichones must not be a string"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        [
+          1267650600228229401496703205376
+        ]
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "x": 1267650600228229401496703205376
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {}
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        [
+          {
+            "x": 1267650600228229401496703205376
+          }
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        [
+          [
+            1,
+            2
+          ],
+          [
+            3
+          ]
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "int64",
+          "value": 2
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "uint64",
+          "value": 2
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "bool_",
+          "value": true
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "float16",
+          "value": 2.0
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "float32",
+          "value": 2.0
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "float64",
+          "value": 2.0
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__complex__": [
+            1,
+            2
+          ]
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "complex64",
+          "value": {
+            "__complex__": [
+              1,
+              2
+            ]
+          }
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        [
+          {
+            "__numpy__": "complex64",
+            "value": {
+              "__complex__": [
+                1,
+                2
+              ]
+            }
+          }
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__object__": true
+        }
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_replace> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        [
+          {
+            "__numpy__": "int64",
+            "value": 2
+          }
+        ]
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "array",
+          "value": 2
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "array",
+          "value": [
+            1,
+            2
+          ]
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "array",
+          "value": [],
+          "dtype": "float64"
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {},
+        {
+          "__numpy__": "array",
+          "value": [
+            1267650600228229401496703205376
+          ],
+          "dtype": "object"
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        null,
+        null,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "_list is not a dictionary"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        1.5,
+        null,
+        "bad"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    }
+  ],
+  "index_once": {
+    "result": false,
+    "calls": 1
+  },
+  "index_whichones": {
+    "error": {
+      "type": "SystemError",
+      "message": "<built-in function componentlist_replace> returned a result with an exception set"
+    },
+    "calls": 0
+  }
+}

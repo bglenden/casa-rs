@@ -9,7 +9,7 @@
 //!
 //! | model | fields |
 //! |---|---|
-//! | every model | `type` (the model's name), `frequency` (a `MeasureHolder` frequency record whose `m0` is in GHz) |
+//! | every model | `type` (the model's name), `frequency` (a `MeasureHolder` frequency record whose `m0` uses the model's frequency unit) |
 //! | spectral index | `index`, `stokesindex` (1 or 4 values), `error` |
 //! | tabular | `freqRef` (a frequency record of 0 Hz in the tabulation frame), `tabFreqVal` (Hz), `ival`, `qval`, `uval`, `vval`, `referenceFreq` (Hz, in the tabulation frame), `maxFreq`, `minFreq` |
 //! | power-log-polynomial | `coeffs`, `error` |
@@ -27,7 +27,7 @@ use casa_types::quanta::{Dimension, Unit, UnitDim};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::error::ComponentError;
-use crate::spectrum::{SpectralKind, SpectralModel, TabularSpectrum};
+use crate::spectrum::{FREQUENCY_DIM, SpectralKind, SpectralModel, TabularSpectrum};
 
 /// The record CASA's `toRecord` writes for `model`.
 ///
@@ -37,15 +37,39 @@ use crate::spectrum::{SpectralKind, SpectralModel, TabularSpectrum};
 /// frequency CASA could not express in its tabulation frame.
 pub(crate) fn spectral_record(model: &SpectralModel) -> Result<RecordValue, ComponentError> {
     let reference = model.reference_frequency();
+    let registry = casa_types::quanta::registry::global_registry();
+    let unit = model.frequency_unit();
+    if unit.val().dim != FREQUENCY_DIM {
+        return Err(ComponentError::Spectrum {
+            spectrum: "frequency unit",
+            reason: format!("unit '{}' is not a frequency", unit.name()),
+        });
+    }
+    // A user can redefine Hz to an unrelated dimension. The stored measure
+    // is still in coherent Hz; use that scale to preserve the record.
+    let hz_factor = if registry.has_user_builtin_overrides() {
+        let hz = registry.lookup_unit("Hz").expect("Hz is a unit");
+        if hz.dim == FREQUENCY_DIM {
+            hz.factor
+        } else {
+            1.0
+        }
+    } else {
+        1.0
+    };
     let mut fields = vec![
         field("type", string(model.spectral_type().casa_name())),
         field(
             "frequency",
             Value::Record(frequency_record(
                 reference.refer(),
-                // casacore's `Quantum::convert` from Hz to GHz.
-                RecordField::new("unit", string("GHz")),
-                RecordField::new("value", real(reference.hz() * (1.0 / 1.0e9))),
+                // casacore's `Quantum::convert` from the current Hz unit to
+                // the unit captured by the model when it was set.
+                RecordField::new("unit", string(unit.name())),
+                RecordField::new(
+                    "value",
+                    real(reference.hz() * (hz_factor / unit.val().factor)),
+                ),
             )),
         ),
     ];

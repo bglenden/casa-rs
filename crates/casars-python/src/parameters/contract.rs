@@ -37,12 +37,39 @@ pub(crate) fn snake_case_debug(value: impl std::fmt::Debug) -> String {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum TaggedValue {
-    Bool { value: bool },
-    Integer { value: i64 },
-    Float { value: f64 },
-    String { value: String },
-    Array { values: Vec<TaggedValue> },
-    Table { entries: Vec<TaggedEntry> },
+    Bool {
+        value: bool,
+    },
+    Integer {
+        value: i64,
+    },
+    Float {
+        value: f64,
+    },
+    Complex {
+        real: casa_provider_contracts::CasaFloat,
+        imag: casa_provider_contracts::CasaFloat,
+    },
+    EmptyArray {
+        dtype: casa_provider_contracts::EmptyArrayType,
+        shape: Vec<usize>,
+    },
+    ScalarArray {
+        value: Box<TaggedValue>,
+    },
+    NumpyScalar {
+        dtype: casa_provider_contracts::NumpyScalarType,
+        value: Box<TaggedValue>,
+    },
+    String {
+        value: String,
+    },
+    Array {
+        values: Vec<TaggedValue>,
+    },
+    Table {
+        entries: Vec<TaggedEntry>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -57,6 +84,21 @@ impl From<&ParameterValue> for TaggedValue {
             ParameterValue::Bool(value) => Self::Bool { value: *value },
             ParameterValue::Integer(value) => Self::Integer { value: *value },
             ParameterValue::Float(value) => Self::Float { value: *value },
+            ParameterValue::Complex([real, imag]) => Self::Complex {
+                real: *real,
+                imag: *imag,
+            },
+            ParameterValue::EmptyArray { dtype, shape } => Self::EmptyArray {
+                dtype: *dtype,
+                shape: shape.clone(),
+            },
+            ParameterValue::ScalarArray(value) => Self::ScalarArray {
+                value: Box::new(Self::from(value.as_ref())),
+            },
+            ParameterValue::NumpyScalar { dtype, value } => Self::NumpyScalar {
+                dtype: *dtype,
+                value: Box::new(Self::from(value.as_ref())),
+            },
             ParameterValue::String(value) => Self::String {
                 value: value.clone(),
             },
@@ -80,6 +122,7 @@ impl From<&ParameterValue> for TaggedValue {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum TypeView {
+    Variant,
     Bool,
     Integer,
     Float,
@@ -119,6 +162,7 @@ pub(crate) struct TypeFieldView {
 impl From<&ParameterType> for TypeView {
     fn from(value: &ParameterType) -> Self {
         match value {
+            ParameterType::Variant => Self::Variant,
             ParameterType::Bool => Self::Bool,
             ParameterType::Integer => Self::Integer,
             ParameterType::Float => Self::Float,

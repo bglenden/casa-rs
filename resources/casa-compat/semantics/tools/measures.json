@@ -5,12 +5,12 @@
  "audit_revision": "49c810c57210127fc4bc4f66289cadec90f49947",
  "methods": {
   "addxvalue": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns direction cosines or the position vector for scalar supported records, and an empty record for epoch and frequency. Measure offsets, multivalued records and unsupported measure kinds are refused explicitly; cyclic or excessively deep records are rejected safely.",
    "evidence": [
     "signature",
-    "refusals"
+    "addxvalue-casa"
    ]
   },
   "asbaseline": {
@@ -32,48 +32,48 @@
    ]
   },
   "cometangdiam": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns CASA's -1 rad sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
-    "refusals"
+    "no-comet-casa"
    ]
   },
   "cometdist": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns CASA's -1 AU sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
-    "refusals"
+    "no-comet-casa"
    ]
   },
   "cometname": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns the empty name and CASA warning when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
-    "refusals"
+    "no-comet-casa"
    ]
   },
   "comettopo": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns CASA's dimensionless zero vector and warning when no topocentric comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
-    "refusals"
+    "no-comet-casa"
    ]
   },
   "comettype": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns CASA's none type when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented.",
    "evidence": [
     "signature",
-    "refusals"
+    "no-comet-casa"
    ]
   },
   "direction": {
@@ -162,19 +162,20 @@
   },
   "frequency": {
    "status": "Implemented",
-   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame).",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "undefined-frequency-casa"
    ]
   },
   "getoffset": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Returns scalar offsets for direction, epoch, position and frequency records, preserving scalar metadata and integer values. Array-valued and nested offsets and unsupported measure kinds are explicitly refused; cyclic and excessively deep records are rejected safely.",
    "evidence": [
     "signature",
-    "refusals"
+    "getoffset-casa"
    ]
   },
   "getref": {
@@ -227,10 +228,11 @@
   },
   "measure": {
    "status": "Implemented",
-   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame).",
+   "scope": "Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA.",
    "evidence": [
     "signature",
-    "casa-values"
+    "casa-values",
+    "undefined-frequency-casa"
    ]
   },
   "observatory": {
@@ -557,6 +559,65 @@
    "links": [
     "crates/casars-python/python/tests/test_tools_measures.py"
    ]
+  },
+  "undefined-frequency-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "CASA 6.7.6-14 records Undefined frequency identity and refusal of cross-frame conversions, component tables with string, explicit, remapped and inferred integer references, invalid table-reference aliases, and MS mappings in which code 64 means LSRK and 9 means Undefined; type-only MS frequency metadata defaults to REST, while an integer reference column with no mapping arrays uses standard codes.",
+   "scope": "Undefined frequency measures, component-list frame updates and table reference mappings.",
+   "links": [
+    "tools/casa-compat/undefined_frequency_oracle.py",
+    "tools/casa-compat/undefined_frequency_ms_oracle.py",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency.json",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz",
+    "crates/casars-python/python/tests/test_undefined_frequency.py",
+    "crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs",
+    "crates/casars-imager/tests/t1/virtual_model.rs"
+   ],
+   "source_revision": "3d64b4397df26f904ab94e7b477acdd5ab2e55e0"
+  },
+  "no-comet-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "25 CASA 6.7.6-14 calls cover all five comet getters on a fresh frame, after epoch, direction and position settings, and after done; the no-table warnings are checked as well.",
+   "scope": "measures comet getters without a loaded comet table.",
+   "links": [
+    "tools/simulation/measures_no_comet_oracle.py",
+    "crates/casars-python/python/tests/data/casa_measures_no_comet.json",
+    "crates/casars-python/python/tests/test_measures_no_comet.py"
+   ],
+   "source_revision": "485ce77c1633a120b82b1f795e5fc0affaf69424"
+  },
+  "getoffset-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "16 CASA 6.7.6-14 cases cover scalar offset presence, malformed inputs and four measure types; a separate isolated probe records a cyclic input crash, and an additional case records large integer truncation. casa-rs preserves the integer and refuses cyclic input.",
+   "scope": "measures.getoffset for supported scalar direction, epoch, position and frequency records.",
+   "links": [
+    "tools/simulation/measures_getoffset_oracle.py",
+    "crates/casars-python/python/tests/data/casa_measures_getoffset.json",
+    "crates/casars-python/python/tests/test_measures_getoffset.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "7848842f91fc5eba9fab6c621ae5abd3f062644a"
+  },
+  "addxvalue-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "28 CASA 6.7.6-14 calls cover directions, ITRF and WGS84 positions, empty, malformed and other supported measures; an isolated cyclic-record probe crashes CASA, while casa-rs rejects it safely.",
+   "scope": "measures.addxvalue for scalar directions, positions, epoch and frequency records.",
+   "links": [
+    "tools/simulation/measures_addxvalue_oracle.py",
+    "crates/casars-python/python/tests/data/casa_measures_addxvalue.json",
+    "crates/casars-python/python/tests/test_measures_addxvalue.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "a960cd5c5fea86dea9badc358b58397374b11c2a"
   }
  }
 }
