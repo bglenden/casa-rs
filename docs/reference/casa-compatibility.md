@@ -1596,7 +1596,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 46 | 0 | 15 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 46 | 1 | 14 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1613,7 +1613,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 46, Partial: 0, Not implemented: 15, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 46, Partial: 1, Not implemented: 14, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1668,7 +1668,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `setfreqframe` | `which, frame='LSRK', log=True` | Implemented (#1053) | Relabels one component frequency in any of the nine physical frames or Undefined without converting the value; accepts CASA frame prefixes and preserves the record unit and error. | [signature](#componentlist-evidence-signature), [setfreqframe-casa](#componentlist-evidence-setfreqframe-casa), [undefined-frequency-casa](#componentlist-evidence-undefined-frequency-casa) |
 | `setlabel` | `which, value, log=True` | Implemented | Replaces one component label and preserves the change on writable table release; read-only changes remain in memory. Rejects invalid UTF-8 byte strings to avoid an unreadable label. | [signature](#componentlist-evidence-signature), [setlabel-casa](#componentlist-evidence-setlabel-casa) |
 | `setrefdir` | `which=1, ra=[], dec=[], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `setrefdirframe` | `which, frame, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setrefdirframe` | `which, frame, log=True` | Partial (#1053) | Relabels one component reference direction without converting its coordinates; accepts CASA frame prefixes and preserves component values and table metadata. Recognized frames absent from the shared direction model (B1950_VLA, BMEAN, BTRUE and planetary or comet references) raise NotImplementedError. Invalid names are rejected before mutation. | [signature](#componentlist-evidence-signature), [setrefdirframe-casa](#componentlist-evidence-setrefdirframe-casa) |
 | `setshape` | `which, type='Point', majoraxis=[], minoraxis=[], positionangle=[], majoraxiserror=[], minoraxiserror=[], positionangleerror=[], optionalparms=[0.0], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `setspectrum` | `which, type='spectral index', index=[], tabularfreqs=[100000000000.0], tabularflux=[1.0], tabularframe='LSRK'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `setstokesspectrum` | `which, type='spectral index', index=[0.0], tabularfreqs=[100000000000.0], tabulari=[1.0], tabularq=[0.0], tabularu=[0.0], tabularv=[0.0], reffreq=[], frame='LSRK'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
@@ -2050,6 +2050,19 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json)
 - [crates/casars-python/python/tests/test_componentlist_replace.py](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/crates/casars-python/python/tests/test_componentlist_replace.py)
 - [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-setrefdirframe-casa"></a>
+##### setrefdirframe-casa
+
+**CASA-recorded values — measured.** 47 CASA 6.7.6-14 cases cover frame names, prefixes, indices, argument errors and unaffected components. A CASA-created table records writable and read-only persistence; five isolated invalid-name cases record CASA assertions. componentlist.setrefdirframe for shared direction frames.
+
+- [tools/simulation/componentlist_setrefdirframe_oracle.py](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/tools/simulation/componentlist_setrefdirframe_oracle.py)
+- [tools/simulation/componentlist_setrefdirframe_invalid_oracle.py](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/tools/simulation/componentlist_setrefdirframe_invalid_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe.json](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe.cl.tgz](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_setrefdirframe.py](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/crates/casars-python/python/tests/test_componentlist_setrefdirframe.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 ### measures
 
