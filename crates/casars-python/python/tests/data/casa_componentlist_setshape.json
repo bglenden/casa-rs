@@ -1,0 +1,6967 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        1
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        1
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Disk",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Disk",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg",
+        "majoraxiserror": "6arcsec",
+        "minoraxiserror": "3arcsec",
+        "positionangleerror": "2deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "arcsec",
+              "value": 6.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "arcsec",
+              "value": 3.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "deg",
+              "value": 2.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Disk",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg",
+        "majoraxiserror": "6arcsec",
+        "minoraxiserror": "3arcsec",
+        "positionangleerror": "2deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Disk",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "arcsec",
+              "value": 6.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "arcsec",
+              "value": 3.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "deg",
+              "value": 2.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg",
+        "majoraxiserror": "bad"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg",
+        "majoraxiserror": "bad",
+        "minoraxiserror": "3arcsec",
+        "positionangleerror": "2deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg",
+        "majoraxiserror": "6arcsec",
+        "minoraxiserror": "2Jy",
+        "positionangleerror": "2deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": false,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg",
+        "majoraxiserror": "6arcsec",
+        "minoraxiserror": "3arcsec",
+        "positionangleerror": "-2deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "The errors must be non-negative angular quantities."
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": false,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "bad",
+        "majoraxis": "bad"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": false,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "limbdarkeneddisk"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": false,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Point",
+        "majoraxis": "bad"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Point",
+        "majoraxis": 5
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "2Jy",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": false,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "4arcmin",
+        "minoraxis": "bad",
+        "positionangle": "30deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error in QuantumHolder::fromString with input string \"bad\": Illegal input units or format\n in converting quantity"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "0arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Gaussian2DParam<T>::setMinorAxis"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "1arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Gaussian2DParam<T>::setMinorAxis"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "400deg"
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Gaussian2DParam<T>::setPA"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        -1
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        2
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        null
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        1267650600228229401496703205376
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        4294967296
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0.5
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": null
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _type must be a string"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "log": null
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_setshape', argument 11 of type 'bool'"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "log": false
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg",
+        "optionalparms": []
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg",
+        "optionalparms": null
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_setshape> returned a result with an exception set"
+      },
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "type": "Gaussian",
+        "majoraxis": "4arcmin",
+        "minoraxis": "2arcmin",
+        "positionangle": "30deg",
+        "optionalparms": [
+          "bad"
+        ]
+      },
+      "before": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Point",
+          "shape": {},
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "flux": [
+            3.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.17453292519943295
+            },
+            "m1": {
+              "unit": "rad",
+              "value": 0.3490658503988659
+            },
+            "refer": "J2000",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "label": "second",
+          "flux": [
+            5.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "type": "Gaussian",
+          "shape": {
+            "majoraxis": {
+              "unit": "arcmin",
+              "value": 4.0
+            },
+            "majoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "minoraxis": {
+              "unit": "arcmin",
+              "value": 2.0
+            },
+            "minoraxiserror": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 29.999999999999996
+            },
+            "positionangleerror": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          },
+          "direction": {
+            "m0": {
+              "unit": "rad",
+              "value": 0.5235987755982988
+            },
+            "m1": {
+              "unit": "rad",
+              "value": -0.2617993877991494
+            },
+            "refer": "GALACTIC",
+            "type": "direction"
+          },
+          "direction_error": {
+            "latitude": {
+              "unit": "rad",
+              "value": 0.0
+            },
+            "longitude": {
+              "unit": "rad",
+              "value": 0.0
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "memory": [
+    {
+      "label": "first",
+      "flux": [
+        3.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "type": "Gaussian",
+      "shape": {
+        "majoraxis": {
+          "unit": "arcmin",
+          "value": 4.0
+        },
+        "majoraxiserror": {
+          "unit": "arcsec",
+          "value": 6.0
+        },
+        "minoraxis": {
+          "unit": "arcmin",
+          "value": 2.0
+        },
+        "minoraxiserror": {
+          "unit": "arcsec",
+          "value": 3.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 29.999999999999996
+        },
+        "positionangleerror": {
+          "unit": "deg",
+          "value": 2.0
+        }
+      },
+      "direction": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "direction_error": {
+        "latitude": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "longitude": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    },
+    {
+      "label": "second",
+      "flux": [
+        5.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "type": "Gaussian",
+      "shape": {
+        "majoraxis": {
+          "unit": "arcmin",
+          "value": 4.0
+        },
+        "majoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "minoraxis": {
+          "unit": "arcmin",
+          "value": 2.0
+        },
+        "minoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 29.999999999999996
+        },
+        "positionangleerror": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      },
+      "direction": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.5235987755982988
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.2617993877991494
+        },
+        "refer": "GALACTIC",
+        "type": "direction"
+      },
+      "direction_error": {
+        "latitude": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "longitude": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    }
+  ],
+  "persisted": [
+    {
+      "label": "first",
+      "flux": [
+        3.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "type": "Gaussian",
+      "shape": {
+        "majoraxis": {
+          "unit": "arcmin",
+          "value": 4.0
+        },
+        "majoraxiserror": {
+          "unit": "rad",
+          "value": 2.908882086657216e-05
+        },
+        "minoraxis": {
+          "unit": "arcmin",
+          "value": 2.0
+        },
+        "minoraxiserror": {
+          "unit": "rad",
+          "value": 1.454441043328608e-05
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 29.999999999999996
+        },
+        "positionangleerror": {
+          "unit": "rad",
+          "value": 0.03490658503988659
+        }
+      },
+      "direction": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.17453292519943295
+        },
+        "m1": {
+          "unit": "rad",
+          "value": 0.3490658503988659
+        },
+        "refer": "J2000",
+        "type": "direction"
+      },
+      "direction_error": {
+        "latitude": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "longitude": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    },
+    {
+      "label": "second",
+      "flux": [
+        5.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "type": "Gaussian",
+      "shape": {
+        "majoraxis": {
+          "unit": "arcmin",
+          "value": 4.0
+        },
+        "majoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "minoraxis": {
+          "unit": "arcmin",
+          "value": 2.0
+        },
+        "minoraxiserror": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 29.999999999999996
+        },
+        "positionangleerror": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      },
+      "direction": {
+        "m0": {
+          "unit": "rad",
+          "value": 0.5235987755982988
+        },
+        "m1": {
+          "unit": "rad",
+          "value": -0.2617993877991494
+        },
+        "refer": "GALACTIC",
+        "type": "direction"
+      },
+      "direction_error": {
+        "latitude": {
+          "unit": "rad",
+          "value": 0.0
+        },
+        "longitude": {
+          "unit": "rad",
+          "value": 0.0
+        }
+      }
+    }
+  ],
+  "nonfinite": [
+    {
+      "case": "angle",
+      "result": true,
+      "stored_nan": true
+    },
+    {
+      "case": "error",
+      "result": true,
+      "stored_nan": true
+    }
+  ]
+}

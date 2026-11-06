@@ -51,14 +51,74 @@ struct Attached {
 pub(crate) struct State {
     list: ComponentList,
     selection: std::collections::BTreeSet<i64>,
-    shape_units: BTreeMap<usize, [Unit; 3]>,
+    shape_units: BTreeMap<usize, [Unit; 6]>,
     /// Removed components in request order; recovery appends them in reverse.
-    removed: Vec<(SkyComponent, Option<[Unit; 3]>)>,
+    removed: Vec<(SkyComponent, Option<[Unit; 6]>)>,
     table: Option<Attached>,
     measures: Option<Arc<dyn MeasuresProvider>>,
 }
 
 impl State {
+    pub(crate) fn setshape(
+        &mut self,
+        which: i64,
+        request: &super::setshape::Request,
+        pending: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let Some(mut prepared) = super::setshape::prepare(request, lines)? else {
+            return Ok(false);
+        };
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let index = which as usize;
+        let component = self
+            .list
+            .get_mut(index)
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        if pending {
+            return Ok(false);
+        }
+        // CASA preserves the coordinates but silently loses their errors.
+        prepared
+            .shape
+            .set_reference_direction(component.shape().reference_direction().clone());
+        prepared
+            .shape
+            .set_direction_error(component.shape().direction_error().clone());
+        *component.shape_mut() = prepared.shape;
+        if let Some(units) = prepared.units {
+            self.shape_units.insert(index, units);
+        } else {
+            self.shape_units.remove(&index);
+        }
+        Ok(true)
+    }
+
+    /// Return a component record using the in-memory shape units.
+    pub(crate) fn getcomponent(&self, which: i64) -> ConvertResult<CasaValue> {
+        let mut result = record(self.checked(which)?.to_record())?;
+        if !self.shape_units.contains_key(&(which as usize)) {
+            return Ok(result);
+        }
+        let CasaValue::Record(fields) = &mut result else {
+            return Ok(result);
+        };
+        let Some((_, CasaValue::Record(shape))) = fields.iter_mut().find(|(key, _)| key == "shape")
+        else {
+            return Ok(result);
+        };
+        if let CasaValue::Record(quantities) = self.getshape(which)? {
+            for (name, quantity) in quantities {
+                if let Some((_, value)) = shape.iter_mut().find(|(key, _)| key == &name) {
+                    *value = quantity;
+                }
+            }
+        }
+        Ok(result)
+    }
+
     pub(crate) fn setflux(
         &mut self,
         which: i64,
@@ -447,6 +507,9 @@ impl State {
                 quantity(&request.majoraxis)?.unit().clone(),
                 quantity(&request.minoraxis)?.unit().clone(),
                 quantity(&request.positionangle)?.unit().clone(),
+                Unit::new("rad").expect("rad is a unit"),
+                Unit::new("rad").expect("rad is a unit"),
+                Unit::new("rad").expect("rad is a unit"),
             ];
             self.shape_units.insert(self.list.len(), units);
         }
@@ -789,6 +852,9 @@ impl State {
             Unit::new("arcmin").expect("known unit"),
             Unit::new("arcmin").expect("known unit"),
             Unit::new("deg").expect("known unit"),
+            Unit::new("rad").expect("known unit"),
+            Unit::new("rad").expect("known unit"),
+            Unit::new("rad").expect("known unit"),
         ];
         let units = self.shape_units.get(&(which as usize)).unwrap_or(&defaults);
         let axis = |value: f64, unit: &Unit| {
@@ -797,14 +863,13 @@ impl State {
                 ("value", CasaValue::Float(value / unit.val().factor)),
             ])
         };
-        let rad = Unit::new("rad").expect("known unit");
         Ok(CasaValue::record([
             ("majoraxis", axis(axes.major_axis(), &units[0])),
             ("minoraxis", axis(axes.minor_axis(), &units[1])),
             ("positionangle", axis(axes.position_angle(), &units[2])),
-            ("majoraxiserror", axis(errors.major_axis, &rad)),
-            ("minoraxiserror", axis(errors.minor_axis, &rad)),
-            ("positionangleerror", axis(errors.position_angle, &rad)),
+            ("majoraxiserror", axis(errors.major_axis, &units[3])),
+            ("minoraxiserror", axis(errors.minor_axis, &units[4])),
+            ("positionangleerror", axis(errors.position_angle, &units[5])),
         ]))
     }
 

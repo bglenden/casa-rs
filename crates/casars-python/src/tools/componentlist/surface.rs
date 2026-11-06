@@ -294,23 +294,26 @@ const METHODS: &[Method] = &[
             Yes,
         )
     },
-    method(
-        "setshape",
-        &[
-            WHICH,
-            param("type", K::Text, Text("Point")),
-            param("majoraxis", K::Any, Empty),
-            param("minoraxis", K::Any, Empty),
-            param("positionangle", K::Any, Empty),
-            param("majoraxiserror", K::Any, Empty),
-            param("minoraxiserror", K::Any, Empty),
-            param("positionangleerror", K::Any, Empty),
-            param("optionalparms", K::Floats, Floats(&[0.0])),
-            LOG,
-        ],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "setshape",
+            &[
+                WHICH,
+                param("type", K::Text, Text("Point")),
+                param("majoraxis", K::Any, Empty),
+                param("minoraxis", K::Any, Empty),
+                param("positionangle", K::Any, Empty),
+                param("majoraxiserror", K::Any, Empty),
+                param("minoraxiserror", K::Any, Empty),
+                param("positionangleerror", K::Any, Empty),
+                param("optionalparms", K::Floats, Floats(&[0.0])),
+                LOG,
+            ],
+            R::Bool,
+            Yes,
+        )
+    },
     method(
         "setspectrum",
         &[
