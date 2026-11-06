@@ -17,7 +17,7 @@ use casa_provider_contracts::{
     builtin_surface_bundle, merged_components,
 };
 use casa_tables::{Table, TableOptions};
-use casa_types::{ArrayD, Value};
+use casa_types::{ArrayD, RecordValue, ScalarValue, Value};
 use fitsio::{
     FitsFile,
     images::{ImageDescription, ImageType as FitsImageType},
@@ -28,17 +28,21 @@ use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
 mod axes;
+mod extrema;
 mod planes;
+mod projection_header;
+mod world_header;
 
 use self::axes::{
     direction_plane_axes, legacy_subimage_coordinates, other_axes, subimage_coordinates,
 };
+pub use self::extrema::{ImageExtrema, imhead_extrema};
 use self::planes::{PlaneAt, pv_samples, unravel_index};
 use crate::fits_read::{PrimaryHdu, image_info_from_fits_header};
 use crate::regrid::{RegridMethod, RegridTemplate, Regridded, regrid};
 use crate::{
     AnyPagedImage, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, ImageInterface, ImagePixel,
-    ImagePixelType, PagedImage, TempImage,
+    ImagePixelType, ImageType, PagedImage, TempImage,
 };
 
 /// Stable protocol name advertised by the image-analysis task binaries.
@@ -620,8 +624,14 @@ pub struct ImageHeaderSummary {
     pub observer: String,
     /// Telescope name stored in the coordinate system.
     pub telescope: String,
+    /// Observation date in CASA's YMD format.
+    pub observation_date: String,
     /// Direction reference frame, if the image has a direction coordinate.
     pub direction_reference: Option<String>,
+    /// CASA's direction projection description, if there is a direction axis.
+    pub direction_projection: Option<String>,
+    /// Frequency frame and rest frequencies when a spectral axis exists.
+    pub spectral: Option<Box<SpectralHeaderSummary>>,
     /// Image quantity classification.
     pub image_type: String,
     /// Stored default pixel mask name.
@@ -631,7 +641,11 @@ pub struct ImageHeaderSummary {
     /// Stored regions.
     pub regions: Vec<String>,
     /// Restoring beam if a single global beam is present.
-    pub restoring_beam: Option<RestoringBeamSummary>,
+    pub restoring_beam: Option<Box<RestoringBeamSummary>>,
+    /// Whether the image holds several per-plane beams.
+    pub has_multiple_beams: bool,
+    /// Pixel extrema when the task requested them.
+    pub extrema: Option<Box<ImageExtrema>>,
     /// Axis metadata.
     pub axes: Vec<ImageAxisSummary>,
 }
@@ -645,6 +659,36 @@ pub struct RestoringBeamSummary {
     pub minor_arcsec: f64,
     /// Position angle in degrees.
     pub position_angle_deg: f64,
+    /// Major-axis quantity in its stored unit.
+    pub major: BeamQuantity,
+    /// Minor-axis quantity in its stored unit.
+    pub minor: BeamQuantity,
+    /// Position-angle quantity in its stored unit and range.
+    pub position_angle: BeamQuantity,
+    /// Position angle wrapped to CASA's (-90, 90] degree range.
+    pub wrapped_position_angle: BeamQuantity,
+}
+
+/// A stored beam quantity, preserving its original unit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BeamQuantity {
+    /// Numerical value in `unit`.
+    pub value: f64,
+    /// Unit stored in the image.
+    pub unit: String,
+}
+
+/// Spectral metadata in the image's stored world-axis unit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SpectralHeaderSummary {
+    /// Native frequency reference frame.
+    pub reference_frame: String,
+    /// Unit used for the rest frequencies.
+    pub unit: String,
+    /// Active rest frequency.
+    pub rest_frequency: f64,
+    /// Rest-frequency list in the same unit.
+    pub rest_frequencies: Vec<f64>,
 }
 
 /// CASA `imstat`-style global image statistics.
@@ -1117,30 +1161,144 @@ impl PixelTypeLabel for PagedImage<f64> {
     }
 }
 
-/// Apply the CASA tutorial-supported `imhead(..., mode="put")` metadata update.
+/// Apply a supported string-valued CASA `imhead(..., mode="put")` update.
 pub fn imhead_put(
     path: impl AsRef<Path>,
     hdkey: &str,
     hdvalue: impl Into<String>,
 ) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
-    let hdkey = hdkey.trim();
     let hdvalue = hdvalue.into();
-    if !hdkey.eq_ignore_ascii_case("bunit") {
+    let key = hdkey.to_ascii_lowercase();
+    if !["bunit", "object", "imtype", "observer", "telescope"].contains(&key.as_str()) {
         return Err(ImageError::InvalidMetadata(format!(
-            "imhead mode='put' only supports hdkey='bunit' for this tutorial slice, got {hdkey:?}"
+            "imhead mode='put' does not yet support hdkey={hdkey:?} (#977)"
         )));
     }
-
+    let unit = (key == "bunit").then(|| normalize_casa_unit(&hdvalue));
+    if let Some(unit) = &unit {
+        casa_types::quanta::Unit::new(unit)
+            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+    }
+    let value = if let Some(unit) = unit {
+        unit
+    } else if key == "imtype" {
+        hdvalue
+            .parse::<ImageType>()
+            .ok()
+            .filter(|kind| kind.to_string().eq_ignore_ascii_case(&hdvalue))
+            .unwrap_or(ImageType::Intensity)
+            .to_string()
+    } else {
+        hdvalue.clone()
+    };
     let mut image = AnyPagedImage::open(path)?;
+    let old = match &image {
+        AnyPagedImage::Float32(image) => header_string(image, &key)?,
+        AnyPagedImage::Float64(image) => header_string(image, &key)?,
+        AnyPagedImage::Complex32(image) => header_string(image, &key)?,
+        AnyPagedImage::Complex64(image) => header_string(image, &key)?,
+    };
     match &mut image {
-        AnyPagedImage::Float32(image) => image.set_units(hdvalue)?,
-        AnyPagedImage::Float64(image) => image.set_units(hdvalue)?,
-        AnyPagedImage::Complex32(image) => image.set_units(hdvalue)?,
-        AnyPagedImage::Complex64(image) => image.set_units(hdvalue)?,
+        AnyPagedImage::Float32(image) => put_header_string(image, &key, &value)?,
+        AnyPagedImage::Float64(image) => put_header_string(image, &key, &value)?,
+        AnyPagedImage::Complex32(image) => put_header_string(image, &key, &value)?,
+        AnyPagedImage::Complex64(image) => put_header_string(image, &key, &value)?,
     }
     image.save()?;
+    drop(image);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::set",
+        &[format!("Modified {hdkey} from \"{old}\" to \"{hdvalue}\"")],
+    )?;
     imhead(path)
+}
+
+// Mirrors the two spelling-normalization passes in casacore Unit::check.
+fn normalize_casa_unit(input: &str) -> String {
+    let mut chars = input.chars().peekable();
+    let mut first = String::new();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '^' => {}
+            '*' if chars.peek() == Some(&'*') => {
+                chars.next();
+            }
+            '*' => first.push('.'),
+            ' ' => {
+                let mut separator = '.';
+                while matches!(chars.peek(), Some(' ' | '/')) {
+                    if chars.next() == Some('/') {
+                        separator = '/';
+                    }
+                }
+                first.push(separator);
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                chars.next();
+                first.push('.');
+            }
+            _ => first.push(ch),
+        }
+    }
+    let first = first.trim_matches('.');
+    let mut chars = first.chars().peekable();
+    let mut output = String::new();
+    while let Some(ch) = chars.next() {
+        if ch == '.' {
+            let mut separator = '.';
+            while matches!(chars.peek(), Some('.' | '/')) {
+                if chars.next() == Some('/') {
+                    separator = '/';
+                }
+            }
+            output.push(separator);
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
+fn header_string<T: ImagePixel>(image: &PagedImage<T>, key: &str) -> Result<String, ImageError> {
+    Ok(match key {
+        "bunit" => image.units().to_string(),
+        "object" => image.image_info()?.object_name,
+        "imtype" => header_image_type(image)?.to_string(),
+        "observer" => image.coordinates().obs_info().observer.clone(),
+        "telescope" => image.coordinates().obs_info().telescope.clone(),
+        _ => unreachable!("the caller checked the key"),
+    })
+}
+
+// casacore defaults ImageInfo to Intensity when its record or type is absent.
+fn header_image_type<T: ImagePixel>(image: &PagedImage<T>) -> Result<ImageType, ImageError> {
+    if image.has_image_type_record() {
+        Ok(image.image_info()?.image_type)
+    } else {
+        Ok(ImageType::Intensity)
+    }
+}
+
+fn put_header_string<T: ImagePixel>(
+    image: &mut PagedImage<T>,
+    key: &str,
+    value: &str,
+) -> Result<(), ImageError> {
+    match key {
+        "bunit" => image.set_units(value),
+        "object" => {
+            image.set_image_info_string("objectname", value);
+            Ok(())
+        }
+        "imtype" => {
+            image.set_image_info_string("imagetype", value);
+            Ok(())
+        }
+        "observer" | "telescope" => image.set_observation_string(key, value),
+        _ => unreachable!("the caller checked the key"),
+    }
 }
 
 fn imhead_typed<T>(
@@ -1161,6 +1319,16 @@ where
         object_name: info.object_name.clone(),
         observer: image.coordinates().obs_info().observer.clone(),
         telescope: image.coordinates().obs_info().telescope.clone(),
+        observation_date: casa_types::quanta::format::format_time(
+            image
+                .coordinates()
+                .obs_info()
+                .date
+                .as_ref()
+                .map_or(0.0, |epoch| epoch.value().as_mjd()),
+            casa_types::quanta::format::YMD,
+            12,
+        ),
         direction_reference: (0..image.coordinates().n_coordinates()).find_map(|index| match image
             .coordinates()
             .coordinate(index)
@@ -1170,23 +1338,115 @@ where
             }
             _ => None,
         }),
-        image_type: info.image_type.to_string(),
+        direction_projection: (0..image.coordinates().n_coordinates()).find_map(
+            |index| match image.coordinates().coordinate(index) {
+                casa_coordinates::CoordinateModel::Direction(direction) => {
+                    Some(projection_header::projection_header(direction))
+                }
+                _ => None,
+            },
+        ),
+        spectral: spectral_header(image).map(Box::new),
+        image_type: header_image_type(image)?.to_string(),
         default_mask: image.default_mask_name(),
         masks: image.mask_names(),
         regions: image.region_names(),
-        restoring_beam: info.beam_set.single_beam().and_then(format_beam),
+        restoring_beam: info
+            .beam_set
+            .single_beam()
+            .and_then(|beam| format_beam(beam, image.restoring_beam_record()))
+            .map(Box::new),
+        has_multiple_beams: info.beam_set.is_multi(),
+        extrema: None,
         axes: axis_summaries(image),
     })
 }
 
-fn format_beam(beam: GaussianBeam) -> Option<RestoringBeamSummary> {
+fn spectral_header<T: ImagePixel>(image: &PagedImage<T>) -> Option<SpectralHeaderSummary> {
+    for index in 0..image.coordinates().n_coordinates() {
+        let coordinate = image.coordinates().coordinate(index);
+        if let casa_coordinates::CoordinateModel::Spectral(spectral) = coordinate {
+            let unit = coordinate
+                .axis_units()
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| "Hz".into());
+            // PagedImage opens its coordinate system from the stored record;
+            // that record's rest frequencies are already in its axis unit.
+            return Some(SpectralHeaderSummary {
+                reference_frame: if spectral.has_undefined_frame() {
+                    "Undefined".into()
+                } else {
+                    spectral.frequency_ref().as_str().into()
+                },
+                unit,
+                rest_frequency: spectral.rest_frequency(),
+                rest_frequencies: spectral.rest_frequencies().to_vec(),
+            });
+        }
+    }
+    None
+}
+
+fn format_beam(beam: GaussianBeam, record: Option<&RecordValue>) -> Option<RestoringBeamSummary> {
     if beam.is_null() {
         return None;
     }
+    let major_arcsec = beam.major_in("arcsec").ok()?;
+    let minor_arcsec = beam.minor_in("arcsec").ok()?;
+    let position_angle_deg = beam.position_angle_in("deg").ok()?;
+    let fallback = |value, unit: &str| BeamQuantity {
+        value,
+        unit: unit.into(),
+    };
+    let major = record
+        .and_then(|r| beam_quantity(r, "major"))
+        .unwrap_or_else(|| fallback(major_arcsec, "arcsec"));
+    let minor = record
+        .and_then(|r| beam_quantity(r, "minor"))
+        .unwrap_or_else(|| fallback(minor_arcsec, "arcsec"));
+    let position_angle = record
+        .and_then(|r| beam_quantity(r, "positionangle"))
+        .unwrap_or_else(|| fallback(position_angle_deg, "deg"));
+    let mut wrapped_position_angle = position_angle.clone();
+    if position_angle_deg > 90.0 || position_angle_deg <= -90.0 {
+        let mut degrees = position_angle_deg % 180.0;
+        if degrees > 90.0 {
+            degrees -= 180.0;
+        } else if degrees <= -90.0 {
+            degrees += 180.0;
+        }
+        let quantity = casa_types::quanta::Quantity::new(degrees, "deg").ok()?;
+        let unit = casa_types::quanta::Unit::new(&position_angle.unit).ok()?;
+        wrapped_position_angle.value = quantity.get_value_in(&unit).ok()?;
+    }
     Some(RestoringBeamSummary {
-        major_arcsec: beam.major_in("arcsec").ok()?,
-        minor_arcsec: beam.minor_in("arcsec").ok()?,
-        position_angle_deg: beam.position_angle_in("deg").ok()?,
+        major_arcsec,
+        minor_arcsec,
+        position_angle_deg,
+        major,
+        minor,
+        position_angle,
+        wrapped_position_angle,
+    })
+}
+
+fn beam_quantity(record: &RecordValue, key: &str) -> Option<BeamQuantity> {
+    let Value::Record(quantity) = record.get(key)? else {
+        return None;
+    };
+    let value = match quantity.get("value")? {
+        Value::Scalar(ScalarValue::Float64(value)) => *value,
+        Value::Scalar(ScalarValue::Float32(value)) => f64::from(*value),
+        Value::Scalar(ScalarValue::Int32(value)) => f64::from(*value),
+        _ => return None,
+    };
+    let Value::Scalar(ScalarValue::String(unit)) = quantity.get("unit")? else {
+        return None;
+    };
+    Some(BeamQuantity {
+        value,
+        unit: unit.clone(),
     })
 }
 

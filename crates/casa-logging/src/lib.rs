@@ -904,7 +904,9 @@ where
             )
         });
         let record = CasaLogRecord {
-            time_mjd_seconds: system_time_to_mjd_seconds(SystemTime::now()),
+            time_mjd_seconds: visitor
+                .time_mjd_seconds
+                .unwrap_or_else(|| system_time_to_mjd_seconds(SystemTime::now())),
             priority,
             message: trim_message(message),
             location,
@@ -946,6 +948,7 @@ struct EventVisitor {
     priority: Option<String>,
     location: Option<String>,
     object_id: Option<String>,
+    time_mjd_seconds: Option<f64>,
     fields: String,
 }
 
@@ -959,6 +962,13 @@ impl EventVisitor {
 }
 
 impl Visit for EventVisitor {
+    fn record_f64(&mut self, field: &Field, value: f64) {
+        if field.name() == "casa.time_mjd_seconds" {
+            self.time_mjd_seconds = Some(value);
+        } else {
+            self.push_field(field.name(), format_args!("{value:?}"));
+        }
+    }
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
         let rendered = format!("{value:?}");
         match field.name() {
@@ -1337,6 +1347,7 @@ mod tests {
             tracing::info!("plain\n");
             tracing::info!(phase = ?"major cycle 1", seconds = 0.5, "imaging phase\n");
             tracing::info!(bytes = 7_u64);
+            tracing::info!(elapsed = 2.0_f64, "elapsed time");
             tracing::info!(path = "/My Data/x.ms", empty = "", name = "x.ms", "opened");
         });
         let messages = sink
@@ -1351,9 +1362,28 @@ mod tests {
                 "plain",
                 "imaging phase phase=\"major cycle 1\" seconds=0.5",
                 "bytes=7",
+                "elapsed time elapsed=2.0",
                 "opened path=\"/My Data/x.ms\" empty=\"\" name=x.ms"
             ]
         );
+    }
+
+    #[test]
+    fn an_event_can_replay_a_casa_history_timestamp() {
+        use tracing_subscriber::layer::SubscriberExt;
+        let sink = Arc::new(MemorySink::new(CasaPriority::Info));
+        let subscriber = tracing_subscriber::registry().with(CasaLogLayer::filtered(sink.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(
+                casa.time_mjd_seconds = 42.25_f64,
+                casa.location = "::origin",
+                "original"
+            );
+        });
+        let records = sink.records().unwrap();
+        assert_eq!(records[0].time_mjd_seconds, 42.25);
+        assert_eq!(records[0].location, "::origin");
+        assert_eq!(records[0].message, "original");
     }
 
     /// Counts the events it receives, as an independent collector would.

@@ -42,6 +42,56 @@ const MASKS_KEYWORD: &str = "masks";
 const DEFAULT_MASK_KEYWORD: &str = "Image_defaultmask";
 const LOGTABLE_KEYWORD: &str = "logtable";
 const LOGTABLE_NAME: &str = "logtable";
+
+/// One image history entry, retaining its original CASA log time and origin.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImageHistoryEntry {
+    /// Time in seconds since MJD zero.
+    pub time_mjd_seconds: f64,
+    /// Original CASA log location.
+    pub location: String,
+    /// History message.
+    pub message: String,
+}
+
+/// Read the persistent image log for replay by `imhead(mode="history")`.
+pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryEntry>, ImageError> {
+    let image = path.as_ref();
+    let path = image.join(LOGTABLE_NAME);
+    if !path.exists() {
+        let table = Table::open(TableOptions::new(image))?;
+        if table.keywords().get(LOGTABLE_KEYWORD).is_some() {
+            return Err(ImageError::InvalidMetadata(
+                "image history table is missing".into(),
+            ));
+        }
+        return Ok(Vec::new());
+    }
+    let table = Table::open(TableOptions::new(path))?;
+    let mut entries = Vec::new();
+    for row in 0..table.row_count() {
+        let time = table.cell_accessor(row, "TIME")?.value()?;
+        let location = table.cell_accessor(row, "LOCATION")?.value()?;
+        let message = table.cell_accessor(row, "MESSAGE")?.value()?;
+        match (time, location, message) {
+            (
+                Some(Value::Scalar(ScalarValue::Float64(time))),
+                Some(Value::Scalar(ScalarValue::String(location))),
+                Some(Value::Scalar(ScalarValue::String(message))),
+            ) => entries.push(ImageHistoryEntry {
+                time_mjd_seconds: *time,
+                location: location.clone(),
+                message: message.clone(),
+            }),
+            _ => {
+                return Err(ImageError::InvalidMetadata(format!(
+                    "invalid history entry at row {row}"
+                )));
+            }
+        }
+    }
+    Ok(entries)
+}
 const REGION_TYPE_FIELD: &str = "isRegion";
 const REGION_NAME_FIELD: &str = "name";
 const REGION_COMMENT_FIELD: &str = "comment";
@@ -1297,6 +1347,61 @@ impl<T: ImagePixel> PagedImage<T> {
             Some(Value::Record(rec)) => ImageInfo::from_record(rec),
             _ => Ok(ImageInfo::default()),
         }
+    }
+
+    pub(crate) fn has_image_type_record(&self) -> bool {
+        matches!(self.table.keywords().get("imageinfo"), Some(Value::Record(record)) if matches!(record.get("imagetype"), Some(Value::Scalar(ScalarValue::String(value))) if !value.is_empty()))
+    }
+
+    /// The original single-beam record, including the units used on disk.
+    pub(crate) fn restoring_beam_record(&self) -> Option<&RecordValue> {
+        let Value::Record(info) = self.table.keywords().get("imageinfo")? else {
+            return None;
+        };
+        let Value::Record(beam) = info.get("restoringbeam")? else {
+            return None;
+        };
+        Some(beam)
+    }
+
+    /// Update one image-info string without rewriting unrelated beam records.
+    pub(crate) fn set_image_info_string(&mut self, key: &str, value: &str) {
+        let mut info = match self.table.keywords().get("imageinfo") {
+            Some(Value::Record(record)) => record.clone(),
+            _ => RecordValue::default(),
+        };
+        info.upsert(key, Value::Scalar(ScalarValue::String(value.into())));
+        self.table
+            .keywords_mut()
+            .upsert("imageinfo", Value::Record(info));
+    }
+
+    /// Update observation information while preserving the stored coordinate
+    /// records and their pixel/world axis maps.
+    pub(crate) fn set_observation_string(
+        &mut self,
+        key: &str,
+        value: &str,
+    ) -> Result<(), ImageError> {
+        let Some(Value::Record(mut coords)) = self.table.keywords().get("coords").cloned() else {
+            return Err(ImageError::InvalidMetadata(
+                "image has no coordinate record".into(),
+            ));
+        };
+        if let Some(Value::Record(obs)) = coords.get_mut("obsinfo") {
+            obs.upsert(key, Value::Scalar(ScalarValue::String(value.into())));
+        } else {
+            coords.upsert(key, Value::Scalar(ScalarValue::String(value.into())));
+        }
+        self.table
+            .keywords_mut()
+            .upsert("coords", Value::Record(coords));
+        match key {
+            "observer" => self.coords.obs_info_mut().observer = value.into(),
+            "telescope" => self.coords.obs_info_mut().telescope = value.into(),
+            _ => unreachable!("only observation strings are supported"),
+        }
+        Ok(())
     }
 
     /// Replaces the image info record.

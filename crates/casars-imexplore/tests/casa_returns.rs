@@ -447,22 +447,7 @@ fn imhead_returns_casas_summary_and_list_records_and_none_for_put() {
         "imhead",
         json!({"imagename": image, "mode": "list"}),
     );
-    assert_casa_dict(
-        &list,
-        "imhead list",
-        &[
-            "datamax",
-            "datamin",
-            "date-obs",
-            "maxpixpos",
-            "maxpos",
-            "minpixpos",
-            "minpos",
-            "projection",
-            "reffreqtype",
-            "restfreq",
-        ],
-    );
+    assert_casa_dict(&list, "imhead list", &[]);
     let put = returned(
         workspace.path(),
         "imhead",
@@ -544,7 +529,7 @@ fn imhead_get_returns_casa_header_values() {
     let (_, reply) = json_run(
         workspace.path(),
         "imhead",
-        json!({"imagename": image, "mode": "get", "hdkey": "date-obs"}),
+        json!({"imagename": image, "mode": "get", "hdkey": "unimplemented-user-key"}),
     );
     let Some(TaskReply::Failed { message, .. }) = reply else {
         panic!("expected a refusal: {reply:?}");
@@ -619,6 +604,492 @@ fn imhead_get_stokes_returns_all_plane_labels() {
     let fixture: Value = serde_json::from_str(include_str!("data/imhead_casa.json")).unwrap();
     assert_eq!(value, CasaValue::str_vector(["I", "Q", "U", "V"]));
     assert_eq!(value.to_plain_json(), fixture["stokes_get"]);
+}
+
+/// CASA-created images retain each beam quantity's own unit, including an
+/// unwrapped position angle in `summary` and a wrapped angle in `get`/`list`.
+#[test]
+fn imhead_beam_records_preserve_casas_units_and_angle_convention() {
+    fn compare_quantity(actual: &Value, expected: &Value, label: &str) {
+        assert_eq!(actual["unit"], expected["unit"], "{label}");
+        let a = actual["value"].as_f64().unwrap();
+        let b = expected["value"].as_f64().unwrap();
+        assert!((a - b).abs() < 1e-11, "{label}: {a} != {b}");
+    }
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_beams");
+    let expected: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture.join("expected.json")).unwrap())
+            .unwrap();
+    assert_eq!(expected["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for name in ["degrees", "radians", "radian_wrap", "negative"] {
+        let filename = format!("{name}.im");
+        let path = workspace.path().join(&filename);
+        copy_tree(&fixture.join(filename), &path);
+        let wanted = &expected["cases"][name];
+        for key in ["beammajor", "beamminor", "beampa", "bmaj", "bmin", "bpa"] {
+            let value = returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "get", "hdkey": key}),
+            );
+            compare_quantity(&value.to_plain_json(), &wanted["get"][key], key);
+        }
+        let list = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "list"}),
+        )
+        .to_plain_json();
+        for key in ["beammajor", "beamminor", "beampa"] {
+            compare_quantity(&list[key], &wanted["list"][key], key);
+        }
+        let summary =
+            returned(workspace.path(), "imhead", json!({"imagename": path})).to_plain_json();
+        for key in ["major", "minor", "positionangle"] {
+            compare_quantity(&summary["restoringbeam"][key], &wanted["summary"][key], key);
+        }
+    }
+    for name in ["none", "multiple"] {
+        let filename = format!("{name}.im");
+        let path = workspace.path().join(&filename);
+        copy_tree(&fixture.join(filename), &path);
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "get", "hdkey": "beammajor"
+            }),
+        );
+        let Some(TaskReply::Failed { message, .. }) = reply else {
+            panic!("{name}: expected a CASA error, got {reply:?}");
+        };
+        assert!(
+            message.contains(expected["errors"][name].as_str().unwrap()),
+            "{name}: {message}"
+        );
+    }
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for item in std::fs::read_dir(from).unwrap() {
+        let item = item.unwrap();
+        let dest = to.join(item.file_name());
+        if item.file_type().unwrap().is_dir() {
+            copy_tree(&item.path(), &dest);
+        } else {
+            std::fs::copy(item.path(), dest).unwrap();
+        }
+    }
+}
+
+#[test]
+fn imhead_spectral_metadata_uses_casas_stored_world_units() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_spectral");
+    let expected: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture.join("expected.json")).unwrap())
+            .unwrap();
+    assert_eq!(expected["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for unit in ["Hz", "GHz", "MHz"] {
+        let filename = format!("{unit}.im");
+        let path = workspace.path().join(&filename);
+        copy_tree(&fixture.join(filename), &path);
+        let wanted = &expected["cases"][unit];
+        let get = |key| {
+            returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "get", "hdkey": key}),
+            )
+            .to_plain_json()
+        };
+        let reference = get("restfreq");
+        assert_eq!(reference["unit"], wanted["get_restfreq"]["unit"]);
+        let actual = reference["value"].as_f64().unwrap();
+        let target = wanted["get_restfreq"]["value"].as_f64().unwrap();
+        assert!(
+            (actual - target).abs() <= target.abs() * 1e-12,
+            "{unit}: {actual} != {target}"
+        );
+        assert_eq!(get("reffreqtype"), wanted["get_reffreqtype"]);
+        let list = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "list"}),
+        )
+        .to_plain_json();
+        assert_eq!(list["reffreqtype"], wanted["list_reffreqtype"]);
+        let listed = list["restfreq"][0].as_f64().unwrap();
+        let listed_target = wanted["list_restfreq"][0].as_f64().unwrap();
+        assert!((listed - listed_target).abs() <= listed_target.abs() * 1e-12);
+    }
+}
+
+#[test]
+fn imhead_projection_matches_casa_for_standard_slant_and_ncp() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_projection");
+    let expected: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture.join("expected.json")).unwrap())
+            .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    for name in ["sin", "tan", "slant", "ncp"] {
+        let filename = format!("{name}.im");
+        let path = workspace.path().join(&filename);
+        copy_tree(&fixture.join(filename), &path);
+        let result = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "get", "hdkey": "projection"}),
+        );
+        assert_eq!(result.to_plain_json(), expected["cases"][name], "{name}");
+        let list = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "list"}),
+        );
+        assert_eq!(
+            entry(&list, "projection").to_plain_json(),
+            expected["cases"][name],
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn imhead_observation_date_matches_casas_epoch_format() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_dates");
+    let expected: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture.join("expected.json")).unwrap())
+            .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    for name in ["missing", "j2000", "noon", "fraction"] {
+        let filename = format!("{name}.im");
+        let path = workspace.path().join(&filename);
+        copy_tree(&fixture.join(filename), &path);
+        for key in ["date-obs", "epoch"] {
+            let result = returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "get", "hdkey": key}),
+            );
+            assert_eq!(
+                result.to_plain_json(),
+                expected["cases"][name][key],
+                "{name} {key}"
+            );
+        }
+        let list = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "list"}),
+        );
+        assert_eq!(
+            entry(&list, "date-obs").to_plain_json(),
+            expected["cases"][name]["list"],
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn imhead_extrema_match_casa_with_masks_ties_and_complex_pixels() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_extrema");
+    let expected: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture.join("expected.json")).unwrap())
+            .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    for name in [
+        "ordinary",
+        "partial",
+        "masked",
+        "complex",
+        "ties",
+        "nanfirst",
+        "nanlater",
+        "infinities",
+        "four",
+        "linear",
+        "galactic",
+        "tiled",
+        "hadec180",
+        "ecliptic180",
+    ] {
+        let filename = format!("{name}.im");
+        let path = workspace.path().join(&filename);
+        copy_tree(&fixture.join(filename), &path);
+        let listed = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "list"}),
+        )
+        .to_plain_json();
+        for key in [
+            "datamin",
+            "datamax",
+            "minpixpos",
+            "maxpixpos",
+            "minpos",
+            "maxpos",
+        ] {
+            let wanted = &expected["cases"][name][key];
+            if let Some(error) = wanted.get("error") {
+                let (_, reply) = json_run(
+                    workspace.path(),
+                    "imhead",
+                    json!({"imagename": path, "mode": "get", "hdkey": key}),
+                );
+                let Some(TaskReply::Failed { message, .. }) = reply else {
+                    panic!("{name} {key}: {reply:?}")
+                };
+                assert!(
+                    message.contains(error.as_str().unwrap()),
+                    "{name} {key}: {message}"
+                );
+                assert!(
+                    listed.get(key).is_none(),
+                    "{name}: unexpectedly listed {key}"
+                );
+            } else {
+                let value = returned(
+                    workspace.path(),
+                    "imhead",
+                    json!({"imagename": path, "mode": "get", "hdkey": key}),
+                );
+                if key.ends_with("pixpos") {
+                    assert!(
+                        matches!(
+                            value,
+                            CasaValue::IntArray {
+                                dtype: IntDtype::Int64,
+                                ..
+                            }
+                        ),
+                        "{name} {key}"
+                    );
+                }
+                assert_eq!(value.to_plain_json(), *wanted, "{name} {key}");
+                assert_eq!(listed[key], *wanted, "{name} list {key}");
+            }
+        }
+    }
+}
+
+#[test]
+fn imhead_put_history_keeps_the_given_relative_image_path() {
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("relative.im");
+    write_ramp(&path, false);
+    returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": "./relative.im", "mode": "put", "hdkey": "object", "hdvalue": "M31"}),
+    );
+    let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    let history = image.history().unwrap();
+    assert_eq!(
+        history.last().unwrap(),
+        "imhead(imagename=\"./relative.im\", mode=\"put\", hdkey=\"object\", hdvalue=\"M31\", verbose=False)"
+    );
+}
+
+#[test]
+fn imhead_uses_casas_default_type_when_imageinfo_is_missing() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_put");
+    let expected: Value =
+        serde_json::from_slice(&std::fs::read(fixture.join("expected.json")).unwrap()).unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("missing.im");
+    copy_tree(&fixture.join("without_imageinfo.im"), &path);
+    assert_eq!(
+        returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "get", "hdkey": "imtype"})
+        )
+        .to_plain_json(),
+        expected["missing_imageinfo"]["initial_imtype"]
+    );
+    returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": path, "mode": "put", "hdkey": "imtype", "hdvalue": "Beam"}),
+    );
+    let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+    let history = image.history().unwrap();
+    assert_eq!(
+        history[history.len() - 3],
+        expected["missing_imageinfo"]["history"]
+    );
+}
+
+#[test]
+fn imhead_history_replays_casa_log_messages_with_original_times_and_origins() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_put/base.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("history.im");
+    copy_tree(&fixture, &path);
+    let mut expected = casa_images::image::image_history_entries(&path).unwrap();
+    assert!(!expected.is_empty());
+    assert!(expected[0].location.is_empty());
+    expected[0].location = "ImageHistory::get".into();
+    let output_root = workspace.path().join("replayed");
+    std::fs::create_dir(&output_root).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_imexplore"))
+        .args(["imhead", "--json-run", "-"])
+        .env("CASA_RS_LOG_TABLE", output_root.join("logtable"))
+        .current_dir(workspace.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    write!(
+        child.stdin.take().unwrap(),
+        "{}",
+        json!({"surface": "imhead", "values": {"imagename": path, "mode": "history"}})
+    )
+    .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reply: TaskReply = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(matches!(
+        reply,
+        TaskReply::Succeeded {
+            value: CasaValue::None,
+            ..
+        }
+    ));
+    let replayed = casa_images::image::image_history_entries(&output_root).unwrap();
+    assert!(
+        replayed
+            .windows(expected.len())
+            .any(|window| window == expected),
+        "{replayed:?}"
+    );
+}
+
+#[test]
+fn imhead_history_does_not_require_summary_metadata_to_be_understood() {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_put/unusual_imtype.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("history.im");
+    copy_tree(&fixture, &path);
+    let output = Command::new(env!("CARGO_BIN_EXE_imexplore"))
+        .args([
+            "imhead",
+            path.to_str().unwrap(),
+            "--mode",
+            "history",
+            "--log-stderr-priority",
+            "INFO",
+            "--no-save-last",
+        ])
+        .current_dir(workspace.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Created Paged image"));
+}
+
+#[test]
+fn imhead_history_refuses_when_no_info_sink_can_show_it() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_put/base.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("history.im");
+    copy_tree(&fixture, &path);
+    let (_, reply) = json_run(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": path, "mode": "history"}),
+    );
+    assert!(
+        matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("INFO log sink"))
+    );
+}
+
+#[test]
+fn imhead_history_refuses_an_advertised_missing_logtable() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_put/base.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("history.im");
+    copy_tree(&fixture, &path);
+    std::fs::remove_dir_all(path.join("logtable")).unwrap();
+    assert!(casa_images::image::image_history_entries(&path).is_err());
+}
+
+#[test]
+fn imhead_put_preserves_literal_strings_and_unrelated_beam_metadata() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_put");
+    let expected: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture.join("expected.json")).unwrap())
+            .unwrap();
+    assert_eq!(expected["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for (index, case) in expected["cases"].as_array().unwrap().iter().enumerate() {
+        let path = workspace.path().join(format!("case-{index}.im"));
+        copy_tree(&fixture.join("base.im"), &path);
+        let key = case["key"].as_str().unwrap();
+        let value = case["value"].as_str().unwrap();
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "put", "hdkey": key, "hdvalue": value
+            }),
+        );
+        if case.get("error").is_some() {
+            assert!(
+                matches!(reply, Some(TaskReply::Failed { .. })),
+                "{index}: {reply:?}"
+            );
+        } else {
+            let Some(TaskReply::Succeeded { value: result, .. }) = reply else {
+                panic!("{index}: {reply:?}")
+            };
+            assert_eq!(result, CasaValue::None, "{index}");
+            let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+            let history = image.history().unwrap();
+            let tail = &history[history.len() - 3..];
+            assert_eq!(tail[0], case["history"][0], "{index}: metadata history");
+            assert!(
+                tail[1].starts_with("version: casa-rs "),
+                "{index}: {}",
+                tail[1]
+            );
+            let command = case["history"][2]
+                .as_str()
+                .unwrap()
+                .replace("<IMAGE>", &path.display().to_string());
+            assert_eq!(tail[2], command, "{index}: task history");
+        }
+        let actual = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "get", "hdkey": key}),
+        );
+        assert_eq!(
+            actual.to_plain_json(),
+            case["readback"],
+            "{index}: {key} {value:?}"
+        );
+        let summary =
+            returned(workspace.path(), "imhead", json!({"imagename": path})).to_plain_json();
+        assert_eq!(
+            summary["restoringbeam"], case["beam"],
+            "{index}: beam metadata"
+        );
+    }
 }
 
 /// CASA reads imhead's `verbose` only in summary mode, as its task XML
@@ -701,7 +1172,7 @@ fn imhead_put_of_an_empty_bunit_clears_it() {
     let (output, reply) = json_run(
         workspace.path(),
         "imhead",
-        json!({"imagename": image, "mode": "put", "hdkey": "object", "hdvalue": "M31"}),
+        json!({"imagename": image, "mode": "put", "hdkey": "crval1", "hdvalue": "M31"}),
     );
     assert_eq!(output.status.code(), Some(2));
     let Some(TaskReply::Failed {

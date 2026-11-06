@@ -9,8 +9,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use casa_images::{
-    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_list_record,
-    imhead_put, imhead_summary_record, imstat, imstat_record,
+    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_extrema,
+    imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_record,
 };
 use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
 
@@ -36,7 +36,31 @@ fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
 fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let path = task.input_path("imagename")?;
     let mode = task.required_text("mode")?.to_ascii_lowercase();
-    let summary = match mode.as_str() {
+    if mode == "history" {
+        // Open the image first, just as CASA does, even if there is no logtable.
+        casa_images::AnyPagedImage::open(&path)
+            .map_err(|error| image_error("imhead", &path, error))?;
+        if !tracing::enabled!(tracing::Level::INFO) {
+            return Err(TaskFailure::validation("imhead history requires an INFO log sink; set CASA_RS_LOG_STDERR_PRIORITY=INFO or CASA_RS_LOG_TABLE (#977)").at("mode"));
+        }
+        let entries = casa_images::image::image_history_entries(&path)
+            .map_err(|error| image_error("imhead", &path, error))?;
+        for entry in entries {
+            let location = if entry.location.is_empty() {
+                "ImageHistory::get"
+            } else {
+                &entry.location
+            };
+            tracing::info!(
+                casa.time_mjd_seconds = entry.time_mjd_seconds,
+                casa.location = location,
+                "{}",
+                entry.message
+            );
+        }
+        return TaskSuccess::new(CasaValue::None, &());
+    }
+    let mut summary = match mode.as_str() {
         "summary" | "list" | "get" => {
             imhead(&path).map_err(|error| image_error("imhead", &path, error))?
         }
@@ -44,35 +68,87 @@ fn run_imhead(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
             let hdkey = task.text("hdkey")?.ok_or_else(|| {
                 TaskFailure::validation("imhead mode put requires hdkey").at("hdkey")
             })?;
-            if !hdkey.eq_ignore_ascii_case("bunit") {
+            if !["bunit", "object", "imtype", "observer", "telescope"]
+                .contains(&hdkey.to_ascii_lowercase().as_str())
+            {
                 return Err(TaskFailure::validation(format!(
-                    "imhead put of hdkey {hdkey:?} is not implemented by casa-rs yet (#977); \
-                     it puts bunit"
+                    "imhead put of hdkey {hdkey:?} is not implemented by casa-rs yet (#977)"
                 ))
                 .at("hdkey"));
             }
             // CASA's default '' is a value here: it clears the key, as
             // `hdkey='bunit', hdvalue=''` clears the brightness unit.
             let hdvalue = task.text("hdvalue")?.unwrap_or_default();
-            imhead_put(&path, &hdkey, &hdvalue)
-                .map_err(|error| image_error("imhead", &path, error))?
+            let summary = imhead_put(&path, &hdkey, &hdvalue)
+                .map_err(|error| image_error("imhead", &path, error))?;
+            let verbose = if task.flag("verbose")? {
+                "True"
+            } else {
+                "False"
+            };
+            let given_path = task
+                .session()
+                .given("imagename")
+                .map(|value| value.to_plain_json());
+            let imagename = given_path
+                .as_ref()
+                .and_then(|value| value.as_str())
+                .unwrap_or_else(|| path.to_str().unwrap_or(""));
+            let history = [
+                format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
+                format!(
+                    "imhead(imagename={}, mode=\"put\", hdkey={}, hdvalue={}, verbose={verbose})",
+                    history_string(imagename),
+                    history_string(&hdkey),
+                    history_string(&hdvalue)
+                ),
+            ];
+            if let Err(error) = casa_images::image::add_image_history(&path, "imhead", &history) {
+                tracing::warn!("imhead could not write task history: {error}");
+            }
+            summary
         }
         other => {
             return Err(TaskFailure::validation(format!(
-                "unsupported imhead mode {other:?}; expected summary, list, get, or put"
+                "unsupported imhead mode {other:?}; expected summary, list, get, put, or history"
             ))
             .at("mode"));
         }
     };
+    let hdkey = task.text("hdkey")?.unwrap_or_default();
+    if mode == "list"
+        || (mode == "get"
+            && [
+                "datamin",
+                "datamax",
+                "minpixpos",
+                "maxpixpos",
+                "minpos",
+                "maxpos",
+            ]
+            .contains(&hdkey.to_ascii_lowercase().as_str()))
+    {
+        summary.extrema = imhead_extrema(&path)
+            .map_err(|error| image_error("imhead", &path, error))?
+            .map(Box::new);
+    }
     let value = match mode.as_str() {
         "summary" => imhead_summary_record(&summary),
         "list" => imhead_list_record(&summary),
-        "get" => header_value(&summary, &task.text("hdkey")?.unwrap_or_default())?,
+        "get" => header_value(&summary, &hdkey)?,
         // CASA's put returns None.
         _ => CasaValue::None,
     };
     let text = header_text(&summary);
     Ok(TaskSuccess::new(value, &summary)?.with_text(text))
+}
+
+fn history_string(value: &str) -> String {
+    if value.chars().count() > 300 {
+        "...".to_string()
+    } else {
+        format!("\"{value}\"")
+    }
 }
 
 /// The header fields already represented by `ImageHeaderSummary`.
@@ -83,11 +159,60 @@ fn header_value(summary: &ImageHeaderSummary, key: &str) -> Result<CasaValue, Ta
         "bunit" => CasaValue::string(&summary.units),
         "imtype" => CasaValue::string(&summary.image_type),
         "object" => CasaValue::string(&summary.object_name),
+        "date-obs" | "epoch" => CasaValue::string(&summary.observation_date),
         "observer" => CasaValue::string(&summary.observer),
         "telescope" => CasaValue::string(&summary.telescope),
         "equinox" => CasaValue::string(summary.direction_reference.as_deref().unwrap_or("")),
+        "projection" => CasaValue::string(summary.direction_projection.as_deref().unwrap_or("")),
+        "reffreqtype" => {
+            CasaValue::string(summary.spectral.as_ref().map_or("", |s| &s.reference_frame))
+        }
+        "restfreq" => {
+            let spectral = summary.spectral.as_ref().ok_or_else(|| {
+                TaskFailure::execution("Image has no spectral axis so there is no rest frequency")
+            })?;
+            CasaValue::dict([
+                ("unit", CasaValue::string(&spectral.unit)),
+                ("value", CasaValue::float(spectral.rest_frequency)),
+            ])
+        }
         "masks" => CasaValue::str_vector(summary.masks.clone()),
         "shape" => CasaValue::int64_vector(summary.shape.iter().map(|&n| n as i64)),
+        "datamin" | "datamax" | "minpixpos" | "maxpixpos" | "minpos" | "maxpos" => {
+            let extrema = summary.extrema.as_ref().ok_or_else(|| {
+                TaskFailure::execution(format!("RecordInterface: field {lower} is unknown"))
+            })?;
+            match lower.as_str() {
+                "datamin" => CasaValue::float(extrema.min),
+                "datamax" => CasaValue::float(extrema.max),
+                "minpixpos" => {
+                    CasaValue::int64_vector(extrema.min_position.iter().map(|&n| n as i64))
+                }
+                "maxpixpos" => {
+                    CasaValue::int64_vector(extrema.max_position.iter().map(|&n| n as i64))
+                }
+                "minpos" => CasaValue::string(&extrema.min_world),
+                _ => CasaValue::string(&extrema.max_world),
+            }
+        }
+        "beammajor" | "beamminor" | "beampa" | "bmaj" | "bmin" | "bpa" => {
+            let beam = summary.restoring_beam.as_ref().ok_or_else(|| {
+                TaskFailure::execution(if summary.has_multiple_beams {
+                    "This image has multiple beams."
+                } else {
+                    "This image has no beam(s)."
+                })
+            })?;
+            let value = match lower.as_str() {
+                "beammajor" | "bmaj" => &beam.major,
+                "beamminor" | "bmin" => &beam.minor,
+                _ => &beam.wrapped_position_angle,
+            };
+            CasaValue::dict([
+                ("unit", CasaValue::string(&value.unit)),
+                ("value", CasaValue::float(value.value)),
+            ])
+        }
         _ => return axis_header_value(summary, key, &lower),
     };
     Ok(value)

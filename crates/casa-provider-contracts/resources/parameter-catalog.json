@@ -535,12 +535,13 @@
     },
     {
       "id": "imhead.mode",
-      "semantic_revision": 2,
+      "semantic_revision": 3,
       "casa_name": "mode",
       "value_domain": {
         "kind": "choice",
         "values": [
           "get",
+          "history",
           "list",
           "put",
           "summary"
@@ -554,7 +555,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Header operation mode.",
-        "details": "get supports brightness unit, image type, object, observer, telescope, masks, shape, and coordinate-axis values. Other get keys remain unimplemented (#977).",
+        "details": "get supports standard image, coordinate, spectral, beam, date and extrema metadata. put supports string-valued brightness unit, image type, object, observer and telescope. history replays the image log when an INFO log sink is configured; otherwise it is refused. User-defined keys and the remaining modes and values are unimplemented (#977).",
         "examples": [
           "summary"
         ]
@@ -3691,13 +3692,13 @@
     },
     {
       "id": "parameter.hdkey",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "hdkey",
       "value_domain": {
         "kind": "string"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,
@@ -3711,13 +3712,13 @@
     },
     {
       "id": "parameter.hdvalue",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "hdvalue",
       "value_domain": {
         "kind": "string"
       },
       "normalization": {
-        "kind": "trim"
+        "kind": "identity"
       },
       "base_constraints": [],
       "unit_dimension": null,

@@ -88,8 +88,8 @@ pub use analysis::{
     ImmomentsRequest, ImpbcorRequest, ImportFitsRequest, ImpvRequest, ImregridRequest,
     ImstatRequest, ImsubimageRequest, MomentMapSummary, PbcorSummary, PvImageSummary, export_fits,
     feather, image_analysis_protocol_descriptor, image_analysis_task_schema_bundle, imhead,
-    imhead_put, immath, immoments, impbcor, import_fits, impv, imregrid, imstat, imsubimage,
-    parse_image_channel_selection, run_image_analysis_task,
+    imhead_extrema, imhead_put, immath, immoments, impbcor, import_fits, impv, imregrid, imstat,
+    imsubimage, parse_image_channel_selection, run_image_analysis_task,
 };
 pub use beam::{GaussianBeam, ImageBeamSet};
 pub use casa_lattices::{ScratchSpace, TempStoragePlan, TempStoragePolicy};

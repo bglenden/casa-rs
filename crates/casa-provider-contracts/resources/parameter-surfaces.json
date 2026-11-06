@@ -11856,7 +11856,7 @@
     {
       "kind": "task",
       "id": "imhead",
-      "contract_version": 6,
+      "contract_version": 8,
       "display_name": "Image Header",
       "category": "Images",
       "summary": "Inspect or update CASA image header metadata.",
@@ -11943,7 +11943,7 @@
           "name": "mode",
           "concept": {
             "id": "imhead.mode",
-            "semantic_revision": 2
+            "semantic_revision": 3
           },
           "order": 1,
           "default": {
@@ -11996,7 +11996,7 @@
           "name": "hdkey",
           "concept": {
             "id": "parameter.hdkey",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 2,
           "default": {
@@ -12026,7 +12026,7 @@
             },
             "provider": {
               "field": "hdkey",
-              "adapter": "omit_none"
+              "adapter": "identity"
             },
             "python": {
               "name": "hdkey",
@@ -12046,7 +12046,7 @@
           "name": "hdvalue",
           "concept": {
             "id": "parameter.hdvalue",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 3,
           "default": {
@@ -12076,7 +12076,7 @@
             },
             "provider": {
               "field": "hdvalue",
-              "adapter": "omit_none"
+              "adapter": "identity"
             },
             "python": {
               "name": "hdvalue",
@@ -12121,6 +12121,18 @@
         {
           "from_contract": 5,
           "to_contract": 6,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 6,
+          "to_contract": 7,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 7,
+          "to_contract": 8,
           "steps": [],
           "changed_defaults": []
         }

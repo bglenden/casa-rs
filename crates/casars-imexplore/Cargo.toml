@@ -18,6 +18,7 @@ path = "src/main.rs"
 [dependencies]
 casa-images = { path = "../casa-images" }
 casa-task-runtime = { path = "../casa-task-runtime" }
+tracing.workspace = true
 
 [dev-dependencies]
 casa-coordinates = { path = "../casa-coordinates" }

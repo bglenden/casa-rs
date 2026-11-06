@@ -117,14 +117,15 @@ pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
 /// `cdelt`, `ctype` and `cunit` per axis, numbered from 1 as FITS numbers
 /// them.
 ///
-/// Not computed yet (#977): `datamax`, `datamin`, `date-obs`,
-/// `maxpixpos`, `maxpos`, `minpixpos`, `minpos`, `projection`,
-/// `reffreqtype` and `restfreq`.
 pub fn imhead_list_record(summary: &ImageHeaderSummary) -> CasaValue {
     let mut entries = vec![
         (
             "bunit".to_string(),
             CasaValue::string(summary.units.clone()),
+        ),
+        (
+            "date-obs".to_string(),
+            CasaValue::string(&summary.observation_date),
         ),
         (
             "imtype".to_string(),
@@ -147,6 +148,29 @@ pub fn imhead_list_record(summary: &ImageHeaderSummary) -> CasaValue {
     ];
     if let Some(frame) = &summary.direction_reference {
         entries.push(("equinox".to_string(), CasaValue::string(frame)));
+    }
+    if let Some(projection) = &summary.direction_projection {
+        entries.push(("projection".to_string(), CasaValue::string(projection)));
+    }
+    if let Some(spectral) = &summary.spectral {
+        entries.push((
+            "reffreqtype".to_string(),
+            CasaValue::string(&spectral.reference_frame),
+        ));
+        entries.push((
+            "restfreq".to_string(),
+            CasaValue::float64_vector(spectral.rest_frequencies.iter().copied()),
+        ));
+    }
+    if let Some(extrema) = &summary.extrema {
+        entries.extend([
+            ("datamin".to_string(), CasaValue::float(extrema.min)),
+            ("datamax".to_string(), CasaValue::float(extrema.max)),
+            ("minpixpos".to_string(), pixels(&extrema.min_position)),
+            ("maxpixpos".to_string(), pixels(&extrema.max_position)),
+            ("minpos".to_string(), CasaValue::string(&extrema.min_world)),
+            ("maxpos".to_string(), CasaValue::string(&extrema.max_world)),
+        ]);
     }
     for (index, axis) in summary.axes.iter().enumerate() {
         let number = index + 1;
@@ -174,15 +198,18 @@ pub fn imhead_list_record(summary: &ImageHeaderSummary) -> CasaValue {
         entries.extend([
             (
                 "beammajor".to_string(),
-                quantity(beam.major_arcsec, "arcsec"),
+                quantity(beam.major.value, &beam.major.unit),
             ),
             (
                 "beamminor".to_string(),
-                quantity(beam.minor_arcsec, "arcsec"),
+                quantity(beam.minor.value, &beam.minor.unit),
             ),
             (
                 "beampa".to_string(),
-                quantity(beam.position_angle_deg, "deg"),
+                quantity(
+                    beam.wrapped_position_angle.value,
+                    &beam.wrapped_position_angle.unit,
+                ),
             ),
         ]);
     }
@@ -204,9 +231,12 @@ fn quantity(value: f64, unit: &str) -> CasaValue {
 
 fn beam_record(beam: &RestoringBeamSummary) -> CasaValue {
     CasaValue::dict([
-        ("major", quantity(beam.major_arcsec, "arcsec")),
-        ("minor", quantity(beam.minor_arcsec, "arcsec")),
-        ("positionangle", quantity(beam.position_angle_deg, "deg")),
+        ("major", quantity(beam.major.value, &beam.major.unit)),
+        ("minor", quantity(beam.minor.value, &beam.minor.unit)),
+        (
+            "positionangle",
+            quantity(beam.position_angle.value, &beam.position_angle.unit),
+        ),
     ])
 }
 
@@ -231,7 +261,7 @@ fn sorted<K: Into<String>>(entries: Vec<(K, CasaValue)>) -> CasaValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::ImageAxisSummary;
+    use crate::analysis::{BeamQuantity, ImageAxisSummary};
 
     fn keys(value: &CasaValue) -> Vec<String> {
         let CasaValue::Dict { entries } = value else {
@@ -267,16 +297,37 @@ mod tests {
             object_name: String::new(),
             observer: String::new(),
             telescope: String::new(),
+            observation_date: "1858/11/17/00:00:00.000000".into(),
             direction_reference: None,
+            direction_projection: None,
+            spectral: None,
             image_type: "Intensity".into(),
             default_mask: None,
             masks: Vec::new(),
             regions: Vec::new(),
-            restoring_beam: Some(RestoringBeamSummary {
+            restoring_beam: Some(Box::new(RestoringBeamSummary {
                 major_arcsec: 3.0,
                 minor_arcsec: 2.0,
                 position_angle_deg: 10.0,
-            }),
+                major: BeamQuantity {
+                    value: 3.0,
+                    unit: "arcsec".into(),
+                },
+                minor: BeamQuantity {
+                    value: 2.0,
+                    unit: "arcsec".into(),
+                },
+                position_angle: BeamQuantity {
+                    value: 10.0,
+                    unit: "deg".into(),
+                },
+                wrapped_position_angle: BeamQuantity {
+                    value: 10.0,
+                    unit: "deg".into(),
+                },
+            })),
+            has_multiple_beams: false,
+            extrema: None,
             axes: vec![
                 axis(0, "Right Ascension", "rad"),
                 axis(1, "Declination", "rad"),
@@ -368,6 +419,7 @@ mod tests {
                 "ctype2",
                 "cunit1",
                 "cunit2",
+                "date-obs",
                 "imtype",
                 "masks",
                 "object",
