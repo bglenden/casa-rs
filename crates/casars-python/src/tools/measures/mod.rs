@@ -29,6 +29,7 @@
 mod define;
 mod frame;
 mod inspect;
+mod offset;
 pub(crate) mod surface;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -329,29 +330,42 @@ impl PyMeasures {
         stub("baseline")
     }
 
-    /// Not yet implemented in casa-rs.
-    fn cometangdiam(&self) -> PyResult<Py<PyAny>> {
-        stub("cometangdiam")
+    /// CASA's sentinel angular diameter when no comet table is loaded.
+    fn cometangdiam(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, _| Ok(CasaValue::quantity(-1.0, "rad")))
     }
 
-    /// Not yet implemented in casa-rs.
-    fn cometdist(&self) -> PyResult<Py<PyAny>> {
-        stub("cometdist")
+    /// CASA's sentinel distance when no comet table is loaded.
+    fn cometdist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, _| Ok(CasaValue::quantity(-1.0, "AU")))
     }
 
-    /// Not yet implemented in casa-rs.
-    fn cometname(&self) -> PyResult<Py<PyAny>> {
-        stub("cometname")
+    /// Return an empty name and warn when no comet table is loaded.
+    fn cometname(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, lines| {
+            lines.push(LogLine::warning(
+                "Method cometname fails! No Comet table present",
+            ));
+            Ok(CasaValue::Text(String::new()))
+        })
     }
 
-    /// Not yet implemented in casa-rs.
-    fn comettopo(&self) -> PyResult<Py<PyAny>> {
-        stub("comettopo")
+    /// Return CASA's sentinel when no topocentric comet table is loaded.
+    fn comettopo(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, lines| {
+            lines.push(LogLine::warning(
+                "Method comettopo fails!  No Topocentric Comet table present",
+            ));
+            Ok(CasaValue::record([
+                ("unit", CasaValue::Text(String::new())),
+                ("value", CasaValue::floats(vec![0.0])),
+            ]))
+        })
     }
 
-    /// Not yet implemented in casa-rs.
-    fn comettype(&self) -> PyResult<Py<PyAny>> {
-        stub("comettype")
+    /// CASA's comet type when no comet table is loaded.
+    fn comettype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, _| Ok(CasaValue::Text("none".to_string())))
     }
 
     /// Not yet implemented in casa-rs.
@@ -398,13 +412,6 @@ impl PyMeasures {
     #[pyo3(signature = (v = None), text_signature = "($self, v='')")]
     fn framecomet(&self, v: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("framecomet")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
-    #[pyo3(signature = (v), text_signature = "($self, v)")]
-    fn getoffset(&self, v: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("getoffset")
     }
 
     /// The rest lines of the measures data, their names joined by spaces

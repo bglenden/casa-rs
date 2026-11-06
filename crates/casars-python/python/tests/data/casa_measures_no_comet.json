@@ -1,0 +1,185 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "state": "fresh",
+      "method": "cometname",
+      "result": ""
+    },
+    {
+      "state": "fresh",
+      "method": "comettype",
+      "result": "none"
+    },
+    {
+      "state": "fresh",
+      "method": "comettopo",
+      "result": {
+        "unit": "",
+        "value": [
+          0.0
+        ]
+      }
+    },
+    {
+      "state": "fresh",
+      "method": "cometdist",
+      "result": {
+        "unit": "AU",
+        "value": -1.0
+      }
+    },
+    {
+      "state": "fresh",
+      "method": "cometangdiam",
+      "result": {
+        "unit": "rad",
+        "value": -1.0
+      }
+    },
+    {
+      "state": "epoch",
+      "method": "cometname",
+      "result": ""
+    },
+    {
+      "state": "epoch",
+      "method": "comettype",
+      "result": "none"
+    },
+    {
+      "state": "epoch",
+      "method": "comettopo",
+      "result": {
+        "unit": "",
+        "value": [
+          0.0
+        ]
+      }
+    },
+    {
+      "state": "epoch",
+      "method": "cometdist",
+      "result": {
+        "unit": "AU",
+        "value": -1.0
+      }
+    },
+    {
+      "state": "epoch",
+      "method": "cometangdiam",
+      "result": {
+        "unit": "rad",
+        "value": -1.0
+      }
+    },
+    {
+      "state": "direction",
+      "method": "cometname",
+      "result": ""
+    },
+    {
+      "state": "direction",
+      "method": "comettype",
+      "result": "none"
+    },
+    {
+      "state": "direction",
+      "method": "comettopo",
+      "result": {
+        "unit": "",
+        "value": [
+          0.0
+        ]
+      }
+    },
+    {
+      "state": "direction",
+      "method": "cometdist",
+      "result": {
+        "unit": "AU",
+        "value": -1.0
+      }
+    },
+    {
+      "state": "direction",
+      "method": "cometangdiam",
+      "result": {
+        "unit": "rad",
+        "value": -1.0
+      }
+    },
+    {
+      "state": "position",
+      "method": "cometname",
+      "result": ""
+    },
+    {
+      "state": "position",
+      "method": "comettype",
+      "result": "none"
+    },
+    {
+      "state": "position",
+      "method": "comettopo",
+      "result": {
+        "unit": "",
+        "value": [
+          0.0
+        ]
+      }
+    },
+    {
+      "state": "position",
+      "method": "cometdist",
+      "result": {
+        "unit": "AU",
+        "value": -1.0
+      }
+    },
+    {
+      "state": "position",
+      "method": "cometangdiam",
+      "result": {
+        "unit": "rad",
+        "value": -1.0
+      }
+    },
+    {
+      "state": "done",
+      "method": "cometname",
+      "result": ""
+    },
+    {
+      "state": "done",
+      "method": "comettype",
+      "result": "none"
+    },
+    {
+      "state": "done",
+      "method": "comettopo",
+      "result": {
+        "unit": "",
+        "value": [
+          0.0
+        ]
+      }
+    },
+    {
+      "state": "done",
+      "method": "cometdist",
+      "result": {
+        "unit": "AU",
+        "value": -1.0
+      }
+    },
+    {
+      "state": "done",
+      "method": "cometangdiam",
+      "result": {
+        "unit": "rad",
+        "value": -1.0
+      }
+    }
+  ]
+}
