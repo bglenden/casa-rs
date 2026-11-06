@@ -8538,7 +8538,7 @@
           "default": {"kind": "literal", "value": {"kind": "integer", "value": 1}},
           "required_when": {"kind": "never"},
           "active_when": {"kind": "always"},
-          "surface_note": "The standard gridder supports facets with a constant-basis MFS image. W projection also supports facets for Stokes I dirty or Hogbom MFS with natural or uniform weighting, explicit W-plane counts, and one image domain; other W-facet modes fail closed.",
+          "surface_note": "The standard gridder supports facets with a constant-basis MFS image. W projection also supports facets for Stokes I dirty or Hogbom MFS with natural or uniform weighting, non-box density cells, explicit W-plane counts of at least two, and one image domain; other W-facet modes fail closed.",
           "projections": {
             "cli": {"flags": ["--facets"], "metavar": "N"},
             "provider": {"field": "facets", "adapter": "identity"},
