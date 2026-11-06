@@ -554,6 +554,35 @@ fn mvc_clean_refreshes_the_cube_from_the_taylor_model() {
     }
 }
 
+/// CASA does not create a cube model when the initial threshold check
+/// stops before any minor cycle, but does publish the Taylor models (#1069).
+#[test]
+fn mvc_clean_stopping_before_minor_does_not_publish_cube_model() {
+    let observation = weighted_observation();
+    let (summary, products) = observation.image(
+        "mvc-clean-stopped",
+        json!({
+            "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+            "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+            "niter": 3, "cycleniter": 1, "threshold": "100Jy",
+            "write_pb": true, "pblimit": -0.1,
+        }),
+    );
+    assert_eq!(summary.actual_minor_iterations, 0);
+    assert_eq!(summary.major_cycles, 1);
+    assert!(!products.suffixes().contains(".model"));
+    for suffix in [".model.tt0", ".model.tt1"] {
+        assert!(
+            products
+                .get(suffix)
+                .pixels
+                .iter()
+                .all(|value| *value == 0.0)
+        );
+    }
+    let _ = products.get(".mask");
+}
+
 /// CASA publishes the Taylor deconvolver's user mask for cleaned MVC,
 /// including the box edges, rather than a full-plane mask (#1069).
 #[test]

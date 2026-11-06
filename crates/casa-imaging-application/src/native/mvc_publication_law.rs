@@ -97,6 +97,7 @@ fn mvc_native_staging_uses_the_admitted_beam_for_both_families() {
     let result = publish_mvc_products(
         MvcProductSource {
             cube_problem: &cube,
+            cube_model_created: true,
             cube: ProductSource {
                 scientific: cube_science,
                 masks: None,
@@ -231,6 +232,7 @@ fn mvc_native_publication_honours_precancel_before_admission() {
     let result = publish_mvc_products(
         MvcProductSource {
             cube_problem: &cube,
+            cube_model_created: true,
             cube: ProductSource {
                 scientific: cube_science,
                 masks: None,
@@ -305,6 +307,7 @@ fn mvc_native_publication_discards_cube_when_taylor_staging_fails() {
         publish_mvc_products(
             MvcProductSource {
                 cube_problem: &cube,
+                cube_model_created: true,
                 cube: ProductSource {
                     scientific: cube_science,
                     masks: None,
@@ -446,6 +449,7 @@ fn mvc_native_publication_discards_staging_when_inventory_admission_fails() {
     let result = publish_mvc_products(
         MvcProductSource {
             cube_problem: &cube,
+            cube_model_created: true,
             cube: ProductSource {
                 scientific: cube_science,
                 masks: None,

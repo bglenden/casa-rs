@@ -438,6 +438,8 @@ pub(crate) fn run(
     let mut published = Vec::new();
     let mut lanes = (0, None);
     let mvc_run = mvc_taylor.is_some();
+    // CASA creates the cube model when it invokes its first minor cycle.
+    let cube_model_created = outcome.mvc_taylor.is_none() || !outcome.minor_cycles.is_empty();
     let products: Result<_, NativeError> = run_phase(
         "products",
         &runtime.cancel,
@@ -457,6 +459,7 @@ pub(crate) fn run(
                     },
                     taylor_view: mvc_taylor,
                     taylor_completion: outcome.mvc_taylor,
+                    cube_model_created,
                 },
                 &runtime,
                 publication,
@@ -517,6 +520,7 @@ struct RunProductInputs<'a> {
     source: ProductSource<'a>,
     taylor_view: Option<crate::compile::CompiledTaylorView>,
     taylor_completion: Option<Admitted<crate::mvc::TaylorCompletion>>,
+    cube_model_created: bool,
 }
 
 /// Reduce MVC's cube before staging both families, or publish an ordinary run.
@@ -533,6 +537,7 @@ fn publish_run_products(
         source,
         taylor_view,
         taylor_completion,
+        cube_model_created,
     } = inputs;
     if let Some(view) = taylor_view {
         let crate::compile::CompiledTaylorView {
@@ -559,6 +564,7 @@ fn publish_run_products(
         let products = publish_mvc_products(
             MvcProductSource {
                 cube_problem: problem,
+                cube_model_created,
                 cube: source,
                 taylor_problem: &taylor_problem,
                 taylor,
@@ -647,7 +653,8 @@ fn publish_products(
     published: &mut Vec<String>,
     lanes: &mut (usize, Option<String>),
 ) -> Result<Products, NativeError> {
-    let (products, held) = stage_products(problem, source, runtime, &publication, team, lanes)?;
+    let (products, held) =
+        stage_products(problem, source, runtime, &publication, team, lanes, false)?;
     if runtime.cancel.is_cancelled() {
         // The staged members are removed when the writer drops.
         return Err(Cancelled.into());
@@ -667,6 +674,7 @@ fn publish_products(
 )]
 struct MvcProductSource<'a> {
     cube_problem: &'a CompiledProblem,
+    cube_model_created: bool,
     cube: ProductSource<'a>,
     taylor_problem: &'a CompiledProblem,
     taylor: Admitted<crate::mvc::TaylorCompletion>,
@@ -707,6 +715,7 @@ fn publish_mvc_products(
     }
     let MvcProductSource {
         cube_problem,
+        cube_model_created,
         cube,
         taylor_problem,
         taylor,
@@ -748,6 +757,7 @@ fn publish_mvc_products(
         &publication,
         team,
         lanes,
+        !cube_model_created,
     )?;
     let (taylor, taylor_charge) = stage_products(
         taylor_problem,
@@ -763,6 +773,7 @@ fn publish_mvc_products(
         &taylor_publication,
         team,
         lanes,
+        false,
     )?;
     let count = taylor.planned.members().len();
     let overflow = || ProductsError::ResourceDemandOverflow("MVC product names");
@@ -814,6 +825,7 @@ fn stage_products(
     publication: &ApplicationPublication,
     team: &WorkerTeam,
     lanes: &mut (usize, Option<String>),
+    omit_uncreated_mvc_cube_model: bool,
 ) -> Result<(Products, casa_imaging_runtime::Reservation), NativeError> {
     let ProductSource {
         scientific,
@@ -850,7 +862,10 @@ fn stage_products(
     if !facet_sum_weights.is_empty() {
         inputs = inputs.with_facet_sum_weights(&facet_sum_weights);
     }
-    let planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
+    let mut planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
+    if omit_uncreated_mvc_cube_model {
+        planned = planned.without_uncreated_mvc_cube_model();
+    }
     // The products' scratch grows with their lanes, and the gridding's
     // workers were chosen without it: the products take the most lanes, up
     // to the team's, whose demand fits what the policy leaves free (#763
