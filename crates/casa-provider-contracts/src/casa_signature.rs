@@ -27,11 +27,14 @@
 
 use std::collections::BTreeSet;
 
+#[cfg(test)]
+use super::SurfaceContractBundle;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ContractValidationError, DefaultSpec, ParameterValue, Predicate, SurfaceContractBundle,
+    ContractValidationError, DefaultSpec, ParameterValue, Predicate, SurfaceContractRef,
     SurfaceDefinition,
 };
 
@@ -231,7 +234,7 @@ pub(super) fn validate_casa_signature(
 /// defaults of its concept's type and an `applies_when` over the surface's
 /// parameters (`known`).
 pub(super) fn validate_unimplemented(
-    bundle: &SurfaceContractBundle,
+    bundle: &SurfaceContractRef<'_>,
     known: &BTreeSet<String>,
     errors: &mut Vec<ContractValidationError>,
 ) {
@@ -475,7 +478,7 @@ mod tests {
         .unwrap();
         let known = ["mode", "sigma"].map(String::from).into();
         let mut errors = Vec::new();
-        validate_unimplemented(&bundle, &known, &mut errors);
+        validate_unimplemented(&SurfaceContractRef::from(&bundle), &known, &mut errors);
         let codes = errors
             .iter()
             .map(|error| error.code.as_str())
