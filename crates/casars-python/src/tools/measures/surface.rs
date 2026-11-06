@@ -74,11 +74,11 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("baseline", &BASELINE, R::Record, No),
-    method("cometangdiam", &[], R::Record, No),
-    method("cometdist", &[], R::Record, No),
-    method("cometname", &[], R::Text, No),
-    method("comettopo", &[], R::Record, No),
-    method("comettype", &[], R::Text, No),
+    method("cometangdiam", &[], R::Record, Yes),
+    method("cometdist", &[], R::Record, Yes),
+    method("cometname", &[], R::Text, Yes),
+    method("comettopo", &[], R::Record, Yes),
+    method("comettype", &[], R::Text, Yes),
     method(
         "direction",
         &[

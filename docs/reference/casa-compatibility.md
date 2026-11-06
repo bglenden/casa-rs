@@ -1598,7 +1598,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [componentlist](#componentlist) | `casars.tools` | 61 | yes | 53 | 3 | 5 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
-| [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
+| [measures](#measures) | `casars.tools` | 48 | yes | 24 | 5 | 19 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
 | [quanta](#quanta) | `casars.tools` | 57 | yes | 55 | 0 | 2 | 0 | 0 | 0 |
@@ -2169,18 +2169,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 24, Partial: 0, Not implemented: 24, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 24, Partial: 5, Not implemented: 19, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
 | `addxvalue` | `a` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `asbaseline` | `pos` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `baseline` | `rf='ITRF', v0=[], v1=[], v2=[], off={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
-| `cometangdiam` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
-| `cometdist` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
-| `cometname` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
-| `comettopo` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
-| `comettype` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
+| `cometangdiam` |  | Partial (#1053) | Returns CASA's -1 rad sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented. | [signature](#measures-evidence-signature), [no-comet-casa](#measures-evidence-no-comet-casa) |
+| `cometdist` |  | Partial (#1053) | Returns CASA's -1 AU sentinel when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented. | [signature](#measures-evidence-signature), [no-comet-casa](#measures-evidence-no-comet-casa) |
+| `cometname` |  | Partial (#1053) | Returns the empty name and CASA warning when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented. | [signature](#measures-evidence-signature), [no-comet-casa](#measures-evidence-no-comet-casa) |
+| `comettopo` |  | Partial (#1053) | Returns CASA's dimensionless zero vector and warning when no topocentric comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented. | [signature](#measures-evidence-signature), [no-comet-casa](#measures-evidence-no-comet-casa) |
+| `comettype` |  | Partial (#1053) | Returns CASA's none type when no comet table is loaded. Loading comet ephemeris tables via framecomet remains unimplemented. | [signature](#measures-evidence-signature), [no-comet-casa](#measures-evidence-no-comet-casa) |
 | `direction` | `rf='J2000', v0=[], v1=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `dirshow` | `v` | Implemented | Shows measures as CASA shows them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `doframe` | `v` | Implemented | Sets the frame's epoch, position and direction. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
@@ -2357,6 +2357,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/test_undefined_frequency.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/test_undefined_frequency.py)
 - [crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs)
 - [crates/casars-imager/tests/t1/virtual_model.rs](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-imager/tests/t1/virtual_model.rs)
+
+<a id="measures-evidence-no-comet-casa"></a>
+##### no-comet-casa
+
+**CASA-recorded values — measured.** 25 CASA 6.7.6-14 calls cover all five comet getters on a fresh frame, after epoch, direction and position settings, and after done; the no-table warnings are checked as well. measures comet getters without a loaded comet table.
+
+- [tools/simulation/measures_no_comet_oracle.py](https://github.com/bglenden/casa-rs/blob/485ce77c1633a120b82b1f795e5fc0affaf69424/tools/simulation/measures_no_comet_oracle.py)
+- [crates/casars-python/python/tests/data/casa_measures_no_comet.json](https://github.com/bglenden/casa-rs/blob/485ce77c1633a120b82b1f795e5fc0affaf69424/crates/casars-python/python/tests/data/casa_measures_no_comet.json)
+- [crates/casars-python/python/tests/test_measures_no_comet.py](https://github.com/bglenden/casa-rs/blob/485ce77c1633a120b82b1f795e5fc0affaf69424/crates/casars-python/python/tests/test_measures_no_comet.py)
 
 ### quanta
 
