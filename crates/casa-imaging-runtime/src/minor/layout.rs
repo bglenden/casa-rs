@@ -229,7 +229,7 @@ impl MinorLayout {
 /// the cutoff and above a `pbmask` above zero, and, for an analytic beam,
 /// the beam it forms them from, which a mask of `mask_plans` cut to the
 /// primary beam also forms ([`super::pixels::plane_beam`]).
-fn beam_bytes_per_cell(
+pub(super) fn beam_bytes_per_cell(
     setup: &MinorCycleSetup<'_>,
     mask_plans: &ImageDomainReconstructionMaskPlans,
 ) -> u64 {

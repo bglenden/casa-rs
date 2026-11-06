@@ -914,7 +914,11 @@ fn full_stokes_automatic_masks_measure_each_channel_and_polarization() {
     let mut residuals = Vec::new();
     for (channel, inside) in supports.iter().enumerate() {
         for polarization in 0..4 {
-            let mut plane = residual(inside, 0.001 * (polarization + 1) as f32, 0.5);
+            let mut plane = residual(
+                inside,
+                0.001 * ((polarization + 1) * (channel * 4 + 1)) as f32,
+                0.5,
+            );
             let point = inside
                 .iter()
                 .enumerate()

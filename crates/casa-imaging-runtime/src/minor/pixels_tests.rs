@@ -130,6 +130,40 @@ fn analytic_domain_probe_visits_only_the_first_valid_polarization() {
             .unwrap();
             let mut setup = setup.clone();
             setup.nsigma = 0.0;
+            // The exact simultaneous buffers at Shared::masked: the
+            // channel's two supports, a plane's saved validity and mask,
+            // the automask's output, cleanable support, and the two
+            // intersections measured with them. Count their real vector
+            // capacities against the worker's beam charge.
+            let key = PlaneKey {
+                domain: 0,
+                channel: 0,
+                polarization: 1,
+            };
+            let channel = BeamPixels::analytic(
+                &setup,
+                (completion.final_model().shape().domain_roles(), key, false),
+            )
+            .unwrap();
+            let valid = vec![true; width * width];
+            let plane_mask = channel.for_valid(&valid).within();
+            let made = vec![true; width * width];
+            let cleanable = vec![true; width * width];
+            let measured = channel.for_valid(&valid);
+            let held = channel.support.capacity()
+                + channel.within.as_ref().unwrap().capacity()
+                + valid.capacity()
+                + plane_mask.capacity()
+                + made.capacity()
+                + cleanable.capacity()
+                + measured.support.capacity()
+                + measured.within.as_ref().unwrap().capacity();
+            let charged =
+                crate::minor::layout::beam_bytes_per_cell(&setup, &plans) as usize * width * width;
+            assert!(
+                held <= charged,
+                "channel buffers hold {held} bytes, charge {charged}"
+            );
             CHANNEL_BEAM_FORMS.with(|count| count.set(0));
             prepare_minor_cycle(
                 &completion,
