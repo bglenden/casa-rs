@@ -59,7 +59,7 @@ pub(super) fn array(array: &ArrayValue) -> CasaValue {
 
 /// A cell or keyword value; `owner` is the table directory a table keyword
 /// is relative to.
-pub(super) fn value(value: &Value, owner: &Path) -> CasaValue {
+pub(crate) fn value(value: &Value, owner: &Path) -> CasaValue {
     match value {
         Value::Scalar(scalar) => CasaValue::from_scalar(scalar),
         Value::Array(cells) => array(cells),

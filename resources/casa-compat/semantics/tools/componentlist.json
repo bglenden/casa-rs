@@ -205,12 +205,12 @@
    ]
   },
   "getkeyword": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Reads a table keyword from the attached component list, including dotted paths through nested records; preserves CASA scalar and array result types.",
    "evidence": [
     "signature",
-    "refusals"
+    "keyword-reads-casa"
    ]
   },
   "getlabel": {
@@ -276,12 +276,12 @@
    ]
   },
   "haskeyword": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Tests whether the attached component list has a literal top-level table keyword; dotted names are not traversed.",
    "evidence": [
     "signature",
-    "refusals"
+    "keyword-reads-casa"
    ]
   },
   "indices": {
@@ -336,12 +336,12 @@
    ]
   },
   "putkeyword": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Writes typed table keywords immediately, including dotted paths through existing records and read-only reopen; preserves other table data and published concurrent writes. Oversized integer values are preserved or refused instead of silently truncated.",
    "evidence": [
     "signature",
-    "refusals"
+    "keyword-writes-casa"
    ]
   },
   "recover": {
@@ -941,6 +941,32 @@
     "crates/casars-imager/tests/t1/virtual_model.rs"
    ],
    "source_revision": "3d64b4397df26f904ab94e7b477acdd5ab2e55e0"
+  },
+  "keyword-reads-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "32 CASA 6.7.6-14 keyword read cases cover defaults, detached tools, missing and dotted names, nested records, typed arrays, read-only tables and argument errors; a CASA-created table exercises persistence and cross-tool updates.",
+   "scope": "componentlist.getkeyword and haskeyword.",
+   "links": [
+    "tools/casa-compat/componentlist_keyword_read_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_keyword_read.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_keyword_read.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_keyword_read.py"
+   ],
+   "source_revision": "5d69a948650dd925073d14348b2790c67ca470d5"
+  },
+  "keyword-writes-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "25 CASA 6.7.6-14 cases cover defaults, detached tools, types and errors, nested records, read-only reopen and persisted keywords; independent tests check concurrent writers, already-open readers and integer overflow.",
+   "scope": "componentlist.putkeyword.",
+   "links": [
+    "tools/casa-compat/componentlist_putkeyword_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_putkeyword.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_putkeyword.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_putkeyword.py"
+   ],
+   "source_revision": "c4dc397131e12e480778b02b42f182c828e8a1e2"
   }
  }
 }

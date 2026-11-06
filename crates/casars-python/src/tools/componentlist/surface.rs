@@ -143,7 +143,7 @@ const METHODS: &[Method] = &[
     of_one("getfreqframe", R::Text, Yes),
     of_one("getfrequnit", R::Text, Yes),
     of_one("getfreqvalue", R::Float, Yes),
-    method("getkeyword", &[KEYWORD], R::Record, No),
+    method("getkeyword", &[KEYWORD], R::Any, Yes),
     of_one("getlabel", R::Text, Yes),
     of_one("getrefdir", R::Record, Yes),
     method(
@@ -169,7 +169,7 @@ const METHODS: &[Method] = &[
     ),
     of_one("getshape", R::Record, Yes),
     of_one("getspectrum", R::Record, Yes),
-    method("haskeyword", &[KEYWORD], R::Bool, No),
+    method("haskeyword", &[KEYWORD], R::Bool, Yes),
     method("indices", &[], R::Ints, Yes),
     method(
         "iscomponentlist",
@@ -190,12 +190,15 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method("purge", &[], R::Bool, Yes),
-    method(
-        "putkeyword",
-        &[KEYWORD, param("value", K::Any, Empty)],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "putkeyword",
+            &[KEYWORD, param("value", K::Any, Empty)],
+            R::Any,
+            Yes,
+        )
+    },
     method("recover", &[LOG], R::Bool, Yes),
     method("remove", &[WHICH_ALL, LOG], R::Bool, Yes),
     method(

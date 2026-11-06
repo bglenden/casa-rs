@@ -29,7 +29,7 @@ mod slices;
 mod state;
 mod stubs;
 pub(crate) mod surface;
-mod values;
+pub(crate) mod values;
 mod write;
 mod write_cells;
 mod write_structure;
@@ -48,6 +48,75 @@ use read::KeywordRef;
 use slices::Corners;
 use state::{Fail, LockRequest, State};
 use write::InfoUpdate;
+
+/// A table keyword value prepared while Python's GIL is held.
+pub(crate) struct ComponentKeywordValue(Incoming);
+
+/// Notify already-open table tools of a component-list metadata write.
+pub(crate) fn component_keyword_published(path: &std::path::Path) {
+    registry::keyword_published(path);
+}
+
+/// Convert a component-list keyword value. CASA's empty variant is a bool
+/// array; typed empty NumPy arrays retain their own element type.
+pub(crate) fn component_keyword_value(
+    py: Python<'_>,
+    value: Option<&Bound<'_, PyAny>>,
+) -> PyResult<ComponentKeywordValue> {
+    Ok(ComponentKeywordValue(component_keyword_incoming(
+        py, value,
+    )?))
+}
+
+fn component_keyword_incoming(
+    py: Python<'_>,
+    value: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Incoming> {
+    use pyo3::types::PyTuple;
+    if let Some(record) = value.and_then(|v| v.cast::<PyDict>().ok()) {
+        let mut fields = Vec::with_capacity(record.len());
+        for (name, item) in record.iter() {
+            // CASA drops a None-valued record field; at top level None is
+            // instead the empty variant below.
+            if !item.is_none() {
+                fields.push((
+                    name.extract::<String>()?,
+                    component_keyword_incoming(py, Some(&item))?,
+                ));
+            }
+        }
+        return Ok(Incoming::Record(fields));
+    }
+    let empty = value.is_none_or(|v| {
+        v.is_none()
+            || v.cast::<PyList>().is_ok_and(|list| list.is_empty())
+            || v.cast::<PyTuple>().is_ok_and(|tuple| tuple.is_empty())
+    });
+    if empty {
+        let options = PyDict::new(py);
+        options.set_item("dtype", "bool")?;
+        let array = py
+            .import("numpy")?
+            .call_method("empty", (0,), Some(&options))?;
+        Incoming::from_python(&array)
+    } else {
+        Incoming::from_python(value.expect("nonempty value"))
+    }
+}
+
+/// Apply the same typed keyword conversion and replacement rules as `tb`.
+pub(crate) fn define_component_keyword(
+    record: &mut casa_types::RecordValue,
+    name: String,
+    value: ComponentKeywordValue,
+) -> crate::convert::ConvertResult<()> {
+    write::put(record, &KeywordRef::Name(name), value.0, false).map_err(|fail| match fail {
+        Fail::Runtime(message) | Fail::Unsupported(message) => {
+            crate::convert::ConvertError::Runtime(message)
+        }
+        Fail::Type(message) => crate::convert::ConvertError::Type(message),
+    })
+}
 
 /// The issue that records the methods casa-rs refuses.
 const ISSUE: u32 = 1028;
