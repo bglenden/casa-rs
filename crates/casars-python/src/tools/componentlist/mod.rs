@@ -8,7 +8,7 @@
 //! `rename`, `close`, `done`, `length`, `torecord`, `getspectrum`,
 //! `getrefdir`), with the accessors `getcomponent`, `getfluxvalue`,
 //! `getfluxunit`, `getlabel`, `shapetype`, `spectrumtype`, table keyword
-//! reads, and CASA's `iscomponentlist` placeholder. The surface records
+//! reads and writes, and CASA's `iscomponentlist` placeholder. The surface records
 //! the other implemented methods and refusals naming #1053.
 //!
 //! CASA's outcomes are kept ([`ops`] for the table, `add` for
@@ -735,14 +735,21 @@ impl PyComponentList {
         self.call(py, |state, _| Ok(CasaValue::Bool(state.purge())))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Write a keyword to the attached table, as CASA's `putkeyword` does.
     #[pyo3(signature = (keyword = None, value = None), text_signature = "($self, keyword='metadata', value=[])")]
     fn putkeyword(
         &self,
-        keyword: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] keyword: Option<Bound<'_, PyAny>>,
         value: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("putkeyword")
+        let name = keywords::argument(py, keyword.as_ref())?;
+        let value = crate::tools::table::component_keyword_value(py, value)?;
+        self.call(py, move |state, _| {
+            keywords::put(state.keyword_table_path()?, &name, value)?;
+            Ok(CasaValue::Bool(true))
+        })?;
+        Ok(py.None())
     }
 
     /// Append removed components in reverse removal order.

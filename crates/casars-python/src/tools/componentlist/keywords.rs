@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use casa_tables::{Table, TableOptions};
+use casa_tables::{Table, TableOptions, TableWriteLock};
 use casa_types::{RecordValue, Value};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -11,7 +11,9 @@ use pyo3::types::{PyBytes, PyString};
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertError, ConvertResult};
-use crate::tools::table::values;
+use crate::tools::table::{
+    ComponentKeywordValue, component_keyword_published, define_component_keyword, values,
+};
 
 /// CASA defaults an omitted name to `metadata` and accepts UTF-8 bytes.
 pub(super) fn argument(py: Python<'_>, value: Option<&Bound<'_, PyAny>>) -> PyResult<String> {
@@ -58,6 +60,63 @@ pub(super) fn get(path: &Path, name: &str) -> ConvertResult<CasaValue> {
     let table = open(path)?;
     let value = lookup(table.keywords(), name)?;
     Ok(values::value(value, path))
+}
+
+/// Write only table metadata, reading the latest generation under the lock.
+pub(super) fn put(path: &Path, name: &str, value: ComponentKeywordValue) -> ConvertResult<()> {
+    let table_error = |error: casa_tables::TableError| ConvertError::runtime(error.to_string());
+    let mut lock = TableWriteLock::acquire_to_reread(path, 0).map_err(table_error)?;
+    let mut table = Table::open_metadata_only(TableOptions::new(path)).map_err(table_error)?;
+    let mut keywords = table.keywords().clone();
+    let target = target_name(&keywords, name)?;
+    define_component_keyword(&mut keywords, target, value)?;
+    *table.keywords_mut() = keywords;
+    // Announce even a partially completed metadata write on release.
+    lock.record_write();
+    let saved = table
+        .save_metadata_only(TableOptions::new(path))
+        .map_err(table_error);
+    let released = lock.release().map_err(table_error);
+    // The table may have changed even if saving or publishing failed.
+    component_keyword_published(path);
+    saved.and(released)
+}
+
+/// TableProxy uses a generated name for each empty-name write. A dotted
+/// path must already have record-valued parents; it does not create them.
+fn target_name(record: &RecordValue, name: &str) -> ConvertResult<String> {
+    if name.is_empty() {
+        let mut candidate = "*-1".to_string();
+        let mut index = 1_u64;
+        while record.get(&candidate).is_some() {
+            candidate = format!("*-1_{index}");
+            index += 1;
+        }
+        return Ok(candidate);
+    }
+    let mut current = record;
+    let parts: Vec<_> = name.split('.').collect();
+    for (index, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            return Err(ConvertError::runtime(format!(
+                "Part of keyword name {name} is empty"
+            )));
+        }
+        if index + 1 == parts.len() {
+            break;
+        }
+        let found = current.get(part).ok_or_else(|| {
+            ConvertError::runtime(format!("RecordInterface: field {part} is unknown"))
+        })?;
+        let Value::Record(inner) = found else {
+            return Err(ConvertError::runtime(format!(
+                "Table keyword {} does not have a record-value",
+                parts[..=index].join(".")
+            )));
+        };
+        current = inner;
+    }
+    Ok(name.to_string())
 }
 
 fn lookup<'a>(record: &'a RecordValue, name: &str) -> ConvertResult<&'a Value> {
