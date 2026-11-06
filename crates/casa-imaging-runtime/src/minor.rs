@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use casa_imaging_deconvolution::{
-    AutoMaskEvidence, AutoMaskPlane, AutoMaskSource, FinalNormalState,
+    AutoMaskEvidence, AutoMaskPlane, AutoMaskSource, DenseModelPlane, FinalNormalState,
     ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks, MajorCycleCompletion,
     MaskError, MaskPlaneKey, MaskSources, ModelGeneration, ModelLifecycle, ModelLifecycleError,
     NoiseEstimate, NormalBasis, NormalStateError, SpectralChannelValidity, robust_noise,
@@ -43,6 +43,7 @@ use crate::{Admission, Demand, HostResources, Reservation, ResourcePolicy, admit
 mod beams;
 mod channel;
 mod layout;
+mod mem;
 mod pixels;
 mod polarized;
 mod psfs;
@@ -51,6 +52,7 @@ pub use layout::{
     MinorLayout, mask_bytes, prepare_bytes, prepare_bytes_for, psf_cache_bytes, run_bytes,
     run_bytes_for,
 };
+use mem::{dense_result_bytes, dense_result_slots, solve_mem};
 use psfs::{measure_psfs, saved_beam, saved_psf_beam, summarize_psf};
 pub use rows::PlaneCycleRow;
 
@@ -308,6 +310,10 @@ pub struct MinorCycleOutcome {
     /// The model update in strictly increasing model order; empty when no
     /// component was cleaned.
     pub terms: Vec<ModelDeltaTerm>,
+    /// Dense updates in canonical plane order.
+    pub dense: Vec<DenseModelPlane>,
+    /// The last MEM alpha when this cycle ran its entropy solver.
+    pub mem_alpha: Option<f32>,
     /// The charge of `terms` ([`result_bytes`]), which covers queuing them
     /// on the model too: keep it until the model holds them under its own.
     pub results: Reservation,
@@ -692,6 +698,8 @@ pub fn run_minor_cycle(
             .sum(),
     );
     let mut charge = Reservation::none();
+    let mut dense = dense_result_slots(&setup.algorithm, results.len());
+    let mut mem_alpha = None;
     for (key, statistics, solved) in results {
         charge.join(solved.charge);
         let outcome = &solved.outcome;
@@ -718,6 +726,12 @@ pub fn run_minor_cycle(
         let room = TRACE - summary.trace.len();
         summary.trace.extend(solved.trace.into_iter().take(room));
         terms.extend(solved.terms);
+        if solved.mem_alpha.is_some() {
+            mem_alpha = solved.mem_alpha;
+        }
+        if let Some(plane) = solved.dense {
+            dense.push((key, plane));
+        }
     }
     summary.planes.extend(blank.iter().map(|(key, statistics)| {
         let mut row = rows::blank_row(*key, statistics, controls);
@@ -728,10 +742,16 @@ pub fn run_minor_cycle(
         .planes
         .sort_unstable_by_key(|row| (row.domain, row.channel, row.polarization));
     terms.sort_unstable_by_key(|(index, _)| *index);
+    dense.sort_unstable_by_key(|(key, _)| *key);
+    let mut ordered_dense = Vec::with_capacity(dense.len());
+    ordered_dense.extend(dense.into_iter().map(|(_, plane)| plane));
+    let dense = ordered_dense;
     let mut ordered = Vec::with_capacity(terms.len());
     ordered.extend(terms.into_iter().map(|(_, term)| term));
     Ok(MinorCycleOutcome {
         terms: ordered,
+        dense,
+        mem_alpha,
         results: charge,
         masks,
         auto_masks,
@@ -1247,6 +1267,8 @@ struct Solved {
     /// The residual's peak over the plane's pixels once the plane is done.
     peak_no_mask: f64,
     terms: Vec<(usize, ModelDeltaTerm)>,
+    dense: Option<DenseModelPlane>,
+    mem_alpha: Option<f32>,
     trace: Vec<TracedComponent>,
     charge: Reservation,
 }
@@ -1285,6 +1307,17 @@ fn solve(
         summary,
         support: &plane.support,
     };
+    if matches!(setup.algorithm, ReconstructionAlgorithm::Mem) {
+        return solve_mem(
+            inputs,
+            (host, policy),
+            key,
+            &plane,
+            &view,
+            statistics,
+            controls,
+        );
+    }
     let outcome = match &setup.algorithm {
         ReconstructionAlgorithm::Hogbom => clean(
             &Hogbom::new(setup.accounting == HogbomIterationAccounting::CasaInclusive),
@@ -1350,6 +1383,8 @@ fn solve(
         outcome,
         peak_no_mask,
         terms,
+        dense: None,
+        mem_alpha: None,
         trace,
         charge,
     })

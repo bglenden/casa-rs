@@ -93,7 +93,7 @@ impl ModelSampleUpdate {
 }
 
 /// `left + right`, rounded to the lifecycle's arithmetic precision.
-fn add_with_precision(precision: NumericPrecision, left: f64, right: f64) -> f64 {
+pub(crate) fn add_with_precision(precision: NumericPrecision, left: f64, right: f64) -> f64 {
     match precision {
         NumericPrecision::F32 => f64::from((left as f32) + (right as f32)),
         NumericPrecision::F64 => left + right,

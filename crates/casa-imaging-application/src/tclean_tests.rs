@@ -350,7 +350,6 @@ fn an_automatic_mask_of_a_cube_or_stokes_planes_is_read() {
 fn values_casa_rs_cannot_honour_are_refused() {
     for (overrides, parameter, issue) in [
         (json!({ "specmode": "mvc" }), "specmode", "#1069"),
-        (json!({ "deconvolver": "mem" }), "deconvolver", "#1060"),
         (json!({ "deconvolver": "asp" }), "deconvolver", "#223"),
         (
             json!({ "specmode": "cube", "outframe": "GALACTO" }),
@@ -991,4 +990,47 @@ fn a_crtf_range_limits_its_own_region() {
         assert_eq!(error.parameter, "mask", "{mask}");
         assert!(error.message.contains("#980"), "{mask}: {}", error.message);
     }
+}
+
+#[test]
+fn mem_accepts_its_tested_scope_and_refuses_other_modes() {
+    let accepted = request(json!({ "deconvolver": "mem", "niter": 1 }));
+    accepted.validate().expect("standard Stokes I MFS MEM");
+    request(json!({"deconvolver":"hogbom", "stokes":"IQUV", "niter":1}))
+        .validate()
+        .expect("other solvers retain their scope");
+    for overrides in [
+        json!({"stokes":"IQUV"}),
+        json!({"specmode":"cube", "nchan":2}),
+        json!({"gridder":"wproject", "wprojplanes":4}),
+        json!({"facets":2}),
+        json!({"weighting":"uniform"}),
+        json!({"usemask":"auto-multithresh"}),
+        json!({"pbmask":0.2}),
+        json!({"nsigma":2.0}),
+        json!({"calcpsf":false}),
+        json!({"calcres":false}),
+        json!({"savemodel":"modelcolumn"}),
+        json!({"vis":["a.ms","b.ms"]}),
+        json!({"outlierfile":"outliers.txt"}),
+        json!({"startmodel":"start.im"}),
+        json!({"mask":"mask.im"}),
+    ] {
+        let mut values = json!({"deconvolver":"mem", "niter":1});
+        values
+            .as_object_mut()
+            .unwrap()
+            .extend(overrides.as_object().unwrap().clone());
+        let refusal = refusal(values.clone());
+        assert_eq!(refusal.parameter, "deconvolver", "{values}: {refusal}");
+        assert!(refusal.message.contains("#1060"));
+    }
+    let mut typed = accepted;
+    typed
+        .stokes
+        .push(casa_imaging_model::PolarizationCoordinate::StokesQ);
+    assert_eq!(typed.validate().unwrap_err().parameters, "deconvolver");
+    typed.stokes.pop();
+    typed.tclean_restart = true;
+    assert_eq!(typed.validate().unwrap_err().parameters, "deconvolver");
 }

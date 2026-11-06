@@ -45,6 +45,7 @@ use crate::{PlannedContinuumGeneration, PlannedMember, ProductsError, RestoringB
 pub struct CasaImageWriter {
     domains: BTreeMap<ImageDomainRole, CasaImageDomainOutput>,
     staged: Mutex<Vec<StagedImage>>,
+    mem_alpha: Option<f32>,
 }
 
 /// Where one compiled image domain's members are written, and their
@@ -152,7 +153,22 @@ impl CasaImageWriter {
         Self {
             domains: outputs,
             staged: Mutex::new(Vec::new()),
+            mem_alpha: None,
         }
+    }
+
+    /// Save the last CASA MEM entropy multiplier in the model image's
+    /// existing misc-info record, alongside its zero flux multiplier.
+    ///
+    /// # Errors
+    ///
+    /// If `alpha` is not finite.
+    pub fn set_mem_alpha(&mut self, alpha: f32) -> Result<(), ProductsError> {
+        if !alpha.is_finite() {
+            return Err(ProductsError::InvalidControls);
+        }
+        self.mem_alpha = Some(alpha);
+        Ok(())
     }
 
     fn output(&self, role: &ImageDomainRole) -> &CasaImageDomainOutput {
@@ -346,6 +362,18 @@ impl CasaImageWriter {
             RecordField::new("mpiprocs", Value::Scalar(ScalarValue::Int32(1))),
             RecordField::new("chnchnks", Value::Scalar(ScalarValue::Int32(1))),
         ];
+        if matches!(member.role(), ProductRole::Model(_))
+            && let Some(alpha) = self.mem_alpha
+        {
+            miscinfo.push(RecordField::new(
+                "ALPHA",
+                Value::Scalar(ScalarValue::Float32(alpha)),
+            ));
+            miscinfo.push(RecordField::new(
+                "BETA",
+                Value::Scalar(ScalarValue::Float32(0.0)),
+            ));
+        }
         // CASA tools read `.sumwt`'s `useweightimage` to learn whether the
         // residual was divided by a weight image (`SIImageStore`
         // `getUseWeightImage`).

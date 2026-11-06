@@ -308,7 +308,11 @@ fn tclean_returns_casas_summary_record() {
 fn values_casa_rs_cannot_honour_are_refused_at_their_parameter() {
     let directory = tempfile::tempdir().expect("run directory");
     for (values, parameter, issue) in [
-        (json!({ "deconvolver": "mem" }), "deconvolver", "#1060"),
+        (
+            json!({ "deconvolver": "mem", "stokes": "IQUV" }),
+            "deconvolver",
+            "#1060",
+        ),
         // tclean reads interactive whether it iterates or not: it checks for
         // its viewer first (Astra's #1015 F8).
         (
@@ -1450,4 +1454,45 @@ fn mtmfs_restart_reuses_the_saved_psf_beam() {
         (after.position_angle - before.position_angle).abs() < 1e-7,
         "{before:?} -> {after:?}"
     );
+}
+
+#[test]
+fn mem_writes_its_last_entropy_multipliers_only_on_a_solved_model() {
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("mem-metadata");
+    std::fs::create_dir_all(&directory).unwrap();
+    let geometry = observation.geometry();
+    for (name, niter) in [("dirty", 0), ("clean", 2)] {
+        let values = json!({
+            "vis": observation.measurement_set(), "imagename": directory.join(name),
+            "imsize": geometry.image_size,
+            "cell": geometry.cell_arcsec.map(|cell| format!("{cell}arcsec")),
+            "backend":"cpu", "niter":niter, "deconvolver":"mem",
+            "cyclefactor":0.0001, "minpsffraction":0.0
+        });
+        let reply = json_run(&directory, values);
+        assert!(matches!(reply, TaskReply::Succeeded { .. }), "{reply:?}");
+        for suffix in [".model", ".psf", ".residual"] {
+            let image =
+                casa_images::PagedImage::<f32>::open(directory.join(format!("{name}{suffix}")))
+                    .unwrap();
+            let misc = image.misc_info();
+            if niter > 0 && suffix == ".model" {
+                let Some(CellValue::Scalar(ScalarValue::Float32(alpha))) = misc.get("ALPHA") else {
+                    panic!("MEM model has a float ALPHA")
+                };
+                assert!(
+                    alpha.is_finite() && *alpha > 0.0,
+                    "a solved MEM model retains its positive entropy multiplier: {alpha}"
+                );
+                assert_eq!(
+                    misc.get("BETA"),
+                    Some(&CellValue::Scalar(ScalarValue::Float32(0.0)))
+                );
+            } else {
+                assert!(misc.get("ALPHA").is_none(), "{name}{suffix}");
+                assert!(misc.get("BETA").is_none(), "{name}{suffix}");
+            }
+        }
+    }
 }

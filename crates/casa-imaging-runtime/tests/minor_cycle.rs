@@ -23,7 +23,7 @@ use casa_imaging_model::{
 use casa_imaging_products::MinorCycleImageResponse;
 use casa_imaging_runtime::pass::WorkerTeam;
 use casa_imaging_runtime::{
-    HostResources, MinorCycleOutcome, MinorCycleSetup, PsfCache, ResourcePolicy,
+    HostResources, MinorCycleOutcome, MinorCycleSetup, MinorLayout, PsfCache, ResourcePolicy,
     prepare_minor_cycle, run_minor_cycle,
 };
 use problems::{empty_final_model, model_lifecycle, reconstruction_problem, validity};
@@ -1369,4 +1369,78 @@ fn joint_clark_counts_all_masks_but_uses_the_first_for_components() {
     assert_eq!(row.mask_sum, cells);
     assert!((row.start_peak - 3.0).abs() < 1e-6);
     assert_eq!(row.stop, PlaneStop::ZeroIterations);
+}
+
+#[test]
+fn mem_minor_cycle_carries_dense_casa_model_into_its_owner() {
+    const FIXTURE: &[u8] =
+        include_bytes!("../../casa-imaging-deconvolution/tests/fixtures/mem_casa_676.f32le");
+    let plane = |index: usize| {
+        FIXTURE[index * 4096..(index + 1) * 4096]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| f32::from_le_bytes(*bytes))
+            .collect::<Vec<_>>()
+    };
+    let problem = problem(
+        32,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Mem,
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        images.psf = Some(plane(0));
+        images.residual = plane(1);
+        images.sum_weights = vec![1.0];
+        images.published_sum_weights = vec![1.0];
+    });
+    let cycle = CycleControls {
+        iterations: 1,
+        threshold: 0.200_081_21,
+        threshold_reached: false,
+        gain: 0.1,
+        nsigma: 0.0,
+    };
+    let (_, outcome) = minor_cycle(&problem, &completion, &setup(&problem, None), &cycle, 1);
+    assert_eq!(outcome.summary.iterations, 1);
+    assert!((outcome.mem_alpha.unwrap() - 0.278_398_78).abs() < 1e-5);
+    assert!(outcome.terms.is_empty());
+    assert_eq!(outcome.dense.len(), 1);
+    let minimum = 1024
+        * (std::mem::size_of::<f64>() + std::mem::size_of::<casa_imaging_model::ModelSample>())
+            as u64
+        + (std::mem::size_of::<casa_imaging_deconvolution::DenseModelPlane>()
+            + std::mem::size_of::<([usize; 3], casa_imaging_deconvolution::DenseModelPlane)>())
+            as u64;
+    assert!(
+        outcome.results.memory() >= minimum,
+        "dense result and model window remain admitted"
+    );
+    let planned =
+        MinorLayout::of(completion.normal_state()).result_bytes(&setup(&problem, None), 1);
+    assert_eq!(
+        planned,
+        outcome.results.memory(),
+        "the planned dense result is the production-held reservation"
+    );
+    let (_, base) = completion.into_parts();
+    let lifecycle = model_lifecycle(&problem);
+    let updated = lifecycle
+        .prepare_final_dense_model(base, outcome.dense)
+        .unwrap();
+    let expected = plane(2);
+    let samples = updated.generation().read_samples(0..1024).unwrap();
+    let mut difference = 0.0;
+    let mut reference = 0.0;
+    for y in 0..32 {
+        for x in 0..32 {
+            let actual = samples[y * 32 + x].value().value();
+            let expected = f64::from(expected[x * 32 + y]);
+            difference += (actual - expected).powi(2);
+            reference += expected.powi(2);
+        }
+    }
+    let nrms = (difference / reference).sqrt();
+    assert!(nrms < 1e-5, "CASA MEM model NRMS {nrms}");
 }

@@ -149,6 +149,9 @@ impl MinorLayout {
     /// review).
     #[must_use]
     pub fn result_bytes(&self, setup: &MinorCycleSetup, iterations: usize) -> u64 {
+        if matches!(setup.algorithm, ReconstructionAlgorithm::Mem) {
+            return self.planes as u64 * super::dense_result_bytes(self.shape);
+        }
         let (_, entries) = solve_bound(self, setup, iterations, 1);
         self.planes as u64 * super::result_bytes(entries)
     }
@@ -455,6 +458,10 @@ fn solve_bound(
     }
     let components = iterations + 1;
     match &setup.algorithm {
+        ReconstructionAlgorithm::Mem => (
+            casa_imaging_deconvolution::mem_plane_bytes(layout.shape),
+            layout.shape.len(),
+        ),
         ReconstructionAlgorithm::Hogbom => bound(&Hogbom::new(false), layout, components),
         ReconstructionAlgorithm::Clark | ReconstructionAlgorithm::ClarkStokes => {
             bound(&Clark::new(None), layout, components)
