@@ -320,6 +320,15 @@ fn mvc_taylor_completion_is_reduced_and_admitted() {
             }
         }
     }
+    assert_taylor_model_is_carried(
+        &cube,
+        &cube_completion,
+        &taylor,
+        view.expansion_reference_hz,
+        controls,
+        &context,
+        &pb,
+    );
     let live = admitted.value.scientific.resident_bytes().unwrap()
         + u64::try_from(admitted.value.primary_beam.capacity() * size_of::<f32>()).unwrap();
     let pass_planes = u64::try_from(5 * cells * size_of::<f32>()).unwrap();
@@ -327,6 +336,24 @@ fn mvc_taylor_completion_is_reduced_and_admitted() {
         admitted.reservation.memory() >= live + pass_planes,
         "the retained Taylor state, PB and input pass planes overlap under admission"
     );
+    assert_taylor_admission(
+        &cube,
+        &cube_completion,
+        &taylor,
+        view.expansion_reference_hz,
+        controls,
+        &context,
+    );
+}
+
+fn assert_taylor_admission(
+    cube: &casa_imaging_model::CompiledProblem,
+    cube_completion: &casa_imaging_deconvolution::MajorCycleCompletion,
+    taylor: &casa_imaging_model::CompiledProblem,
+    reference_hz: f64,
+    controls: casa_imaging_products::ContinuumProductControls,
+    context: &RunContext,
+) {
     let tight = casa_imaging_runtime::ResourcePolicy::Explicit {
         workers: 1,
         memory: 1,
@@ -334,10 +361,10 @@ fn mvc_taylor_completion_is_reduced_and_admitted() {
     assert!(matches!(
         crate::mvc::assemble_taylor_completion(
             crate::mvc::TaylorAssemblyInputs {
-                cube_problem: &cube,
-                cube: &cube_completion,
-                taylor_problem: &taylor,
-                expansion_reference_hz: view.expansion_reference_hz,
+                cube_problem: cube,
+                cube: cube_completion,
+                taylor_problem: taylor,
+                expansion_reference_hz: reference_hz,
                 controls,
                 centres: None
             },
@@ -351,10 +378,10 @@ fn mvc_taylor_completion_is_reduced_and_admitted() {
         matches!(
             crate::mvc::assemble_taylor_completion(
                 crate::mvc::TaylorAssemblyInputs {
-                    cube_problem: &cube,
-                    cube: &cube_completion,
-                    taylor_problem: &taylor,
-                    expansion_reference_hz: view.expansion_reference_hz,
+                    cube_problem: cube,
+                    cube: cube_completion,
+                    taylor_problem: taylor,
+                    expansion_reference_hz: reference_hz,
                     controls,
                     centres: None
                 },
@@ -367,16 +394,89 @@ fn mvc_taylor_completion_is_reduced_and_admitted() {
     assert!(matches!(
         crate::mvc::assemble_taylor_completion(
             crate::mvc::TaylorAssemblyInputs {
-                cube_problem: &cube,
-                cube: &cube_completion,
-                taylor_problem: &taylor,
-                expansion_reference_hz: view.expansion_reference_hz,
+                cube_problem: cube,
+                cube: cube_completion,
+                taylor_problem: taylor,
+                expansion_reference_hz: reference_hz,
                 controls,
                 centres: None
             },
             (&context.host, &context.policy, &cancelled)
         ),
         Err(crate::native::NativeError::Cancelled(_))
+    ));
+}
+
+fn assert_taylor_model_is_carried(
+    cube: &casa_imaging_model::CompiledProblem,
+    cube_completion: &casa_imaging_deconvolution::MajorCycleCompletion,
+    taylor: &casa_imaging_model::CompiledProblem,
+    reference_hz: f64,
+    controls: casa_imaging_products::ContinuumProductControls,
+    context: &RunContext,
+    expected_pb: &[f32],
+) {
+    use casa_imaging_deconvolution::{ModelLifecycle, ModelStoragePlan};
+    let cells = 64 * 64;
+    // A minor cycle's prepared Taylor model must survive reassembly around
+    // the refreshed normal state, including its pending update.
+    let taylor_lifecycle = ModelLifecycle::new(taylor, ModelStoragePlan::resident(cells).unwrap());
+    let mut initial = vec![0.0_f32; 2 * cells];
+    let point = 32 * 64 + 32;
+    initial[point] = 1.0;
+    initial[cells + point] = -0.75;
+    let prepared_model = taylor_lifecycle
+        .prepare_final_model(
+            taylor_lifecycle.initial_from_start_model(&initial).unwrap(),
+            [casa_imaging_model::ModelDeltaTerm::new(
+                casa_imaging_model::ModelCell::new(0, 0, 0, [32, 32]),
+                casa_imaging_model::ModelValue::new(0.5).unwrap(),
+            )],
+        )
+        .unwrap();
+    let carried = crate::mvc::assemble_taylor_with_model(
+        crate::mvc::TaylorAssemblyInputs {
+            cube_problem: cube,
+            cube: cube_completion,
+            taylor_problem: taylor,
+            expansion_reference_hz: reference_hz,
+            controls,
+            centres: None,
+        },
+        Some(prepared_model),
+        (&context.host, &context.policy, &context.cancel),
+    )
+    .unwrap();
+    let model = carried.value.scientific.final_model();
+    assert_eq!(
+        model.read_samples(point..point + 1).unwrap()[0]
+            .value()
+            .value(),
+        1.5
+    );
+    assert_eq!(
+        model
+            .read_samples(cells + point..cells + point + 1)
+            .unwrap()[0]
+            .value()
+            .value(),
+        -0.75
+    );
+    assert_eq!(carried.value.primary_beam, expected_pb);
+    let lifecycle = ModelLifecycle::new(cube, ModelStoragePlan::resident(1 << 16).unwrap());
+    let wrong_model = lifecycle
+        .prepare_final_model(lifecycle.initial_empty().unwrap(), [])
+        .unwrap();
+    assert!(matches!(
+        crate::mvc::assemble_taylor_with_model(
+            crate::mvc::TaylorAssemblyInputs {
+                cube_problem: cube, cube: cube_completion, taylor_problem: taylor,
+                expansion_reference_hz: reference_hz, controls, centres: None,
+            },
+            Some(wrong_model),
+            (&context.host, &context.policy, &context.cancel),
+        ),
+        Err(crate::native::NativeError::Other(error)) if error.to_string().contains("model does not match")
     ));
 }
 

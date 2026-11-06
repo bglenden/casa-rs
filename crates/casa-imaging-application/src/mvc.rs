@@ -39,6 +39,20 @@ pub(crate) struct TaylorCompletion {
 /// overlap of those planes, the widened Taylor state and its initial model.
 pub(crate) fn assemble_taylor_completion(
     inputs: TaylorAssemblyInputs<'_>,
+    resources: (&HostResources, &ResourcePolicy, &Cancel),
+) -> Result<Admitted<TaylorCompletion>, NativeError> {
+    assemble_taylor_with_model(inputs, None, resources)
+}
+
+/// Assemble the new Taylor normal state around a model prepared by its
+/// preceding minor cycle, or an empty initial model on the first pass.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "MVC cleaning handoff is in #1069")
+)]
+pub(crate) fn assemble_taylor_with_model(
+    inputs: TaylorAssemblyInputs<'_>,
+    model: Option<casa_imaging_deconvolution::PreparedFinalModel>,
     (host, policy, cancel): (&HostResources, &ResourcePolicy, &Cancel),
 ) -> Result<Admitted<TaylorCompletion>, NativeError> {
     if cancel.is_cancelled() {
@@ -77,6 +91,13 @@ pub(crate) fn assemble_taylor_completion(
         .checked_mul(shape[1])
         .ok_or(ProductsError::ResourceDemandOverflow("MVC cells"))?;
     let samples = taylor_problem.model_lifecycle().target().sample_count();
+    if model.as_ref().is_some_and(|model| {
+        model.generation().shape() != taylor_problem.model_lifecycle().target()
+    }) {
+        return Err(NativeError::Other(
+            std::io::Error::other("MVC Taylor model does not match its view").into(),
+        ));
+    }
     let memory = taylor_demand(shape, samples)?;
     let reservation = admit(
         host,
@@ -127,11 +148,15 @@ pub(crate) fn assemble_taylor_completion(
     };
     // Taylor product publication reads a whole coefficient plane at once.
     // Initialization itself remains chunked to at most 1 << 16 samples.
-    let model_storage = ModelStoragePlan::resident(cells).map_err(other)?;
-    let lifecycle = ModelLifecycle::new(taylor_problem, model_storage);
-    let model = lifecycle
-        .prepare_final_model(lifecycle.initial_empty().map_err(other)?, [])
-        .map_err(other)?;
+    let model = if let Some(model) = model {
+        model
+    } else {
+        let model_storage = ModelStoragePlan::resident(cells).map_err(other)?;
+        let lifecycle = ModelLifecycle::new(taylor_problem, model_storage);
+        lifecycle
+            .prepare_final_model(lifecycle.initial_empty().map_err(other)?, [])
+            .map_err(other)?
+    };
     let storage = NormalStoragePlan::resident(1).map_err(other)?;
     let mut cycle = MajorCycle::initial(taylor_problem, model, storage).map_err(other)?;
     cycle.parts().1.append(images).map_err(other)?;
