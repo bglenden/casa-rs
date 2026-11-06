@@ -113,7 +113,7 @@ const METHODS: &[Method] = &[
             param("positionangle", K::Text, Text("deg")),
         ],
         R::Bool,
-        No,
+        Yes,
     ),
     method(
         "deselect",

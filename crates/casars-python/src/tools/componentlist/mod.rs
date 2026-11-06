@@ -397,19 +397,52 @@ impl PyComponentList {
         stub("convertrefdir")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns false without changing
+    /// the component's shape or units.
     #[pyo3(
         signature = (which, majoraxis = None, minoraxis = None, positionangle = None),
         text_signature = "($self, which, majoraxis='arcmin', minoraxis='arcmin', positionangle='deg')"
     )]
     fn convertshape(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        majoraxis: Option<&Bound<'_, PyAny>>,
-        minoraxis: Option<&Bound<'_, PyAny>>,
-        positionangle: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] majoraxis: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] minoraxis: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] positionangle: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("convertshape")
+        let index = which.extract::<i64>();
+        let system_error = which.is_none()
+            || index
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.is_instance_of::<PyOverflowError>(py));
+        if index.is_err() && !system_error {
+            return Err(PyTypeError::new_err("argument _which must be an integer"));
+        }
+        for (name, value) in [
+            ("majoraxis", majoraxis),
+            ("minoraxis", minoraxis),
+            ("positionangle", positionangle),
+        ] {
+            if value.is_some_and(|value| {
+                !value.is_instance_of::<PyString>() && !value.is_instance_of::<PyBytes>()
+            }) {
+                return Err(PyTypeError::new_err(format!(
+                    "argument _{name} must be a string"
+                )));
+            }
+        }
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning("convertshape not implemented yet"));
+            Ok(CasaValue::Bool(false))
+        })?;
+        if system_error {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_convertshape> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Deselect component indices.
