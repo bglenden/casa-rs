@@ -2318,6 +2318,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#edit-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edit-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6250,6 +6261,17 @@
     <span class="md-ellipsis">
       
         convertshape-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#edit-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        edit-casa
       
     </span>
   </a>
@@ -10684,9 +10706,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">44</td>
+<td style="text-align: right;">45</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">17</td>
+<td style="text-align: right;">16</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10804,7 +10826,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 44, Partial: 0, Not implemented: 17, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 45, Partial: 0, Not implemented: 16, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -10903,9 +10925,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>edit</code></td>
 <td><code>which, log=True</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented (#1053)</td>
+<td>Matches CASA's placeholder: validates arguments, warns and returns False without editing components.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-edit-casa">edit-casa</a></td>
 </tr>
 <tr>
 <td><code>fromrecord</code></td>
@@ -11565,6 +11587,14 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/0f327126e2f5ba348c3faa5fb88225df7e5515bd/tools/simulation/componentlist_convertshape_oracle.py">tools/simulation/componentlist_convertshape_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/0f327126e2f5ba348c3faa5fb88225df7e5515bd/crates/casars-python/python/tests/data/casa_componentlist_convertshape.json">crates/casars-python/python/tests/data/casa_componentlist_convertshape.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/0f327126e2f5ba348c3faa5fb88225df7e5515bd/crates/casars-python/python/tests/test_componentlist_convertshape.py">crates/casars-python/python/tests/test_componentlist_convertshape.py</a></li>
+</ul>
+<p><a id="componentlist-evidence-edit-casa"></a></p>
+<h5 id="edit-casa">edit-casa<a class="headerlink" href="#edit-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 78 CASA 6.7.6-14 calls cover indices, strict boolean arguments, errors and empty, populated and released lists; an additional index conversion is called once. componentlist.edit placeholder.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cf9a4e6192aa75986b72835fb93080b49c499b0b/tools/simulation/componentlist_edit_oracle.py">tools/simulation/componentlist_edit_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cf9a4e6192aa75986b72835fb93080b49c499b0b/crates/casars-python/python/tests/data/casa_componentlist_edit.json">crates/casars-python/python/tests/data/casa_componentlist_edit.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/cf9a4e6192aa75986b72835fb93080b49c499b0b/crates/casars-python/python/tests/test_componentlist_edit.py">crates/casars-python/python/tests/test_componentlist_edit.py</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>
