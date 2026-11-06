@@ -97,6 +97,15 @@ pub struct UnitRegistry {
 }
 
 impl UnitRegistry {
+    /// Whether a user definition has ever overridden a built-in unit.
+    ///
+    /// This is conservative: it remains true after that definition is
+    /// removed. FITS aliases are tracked separately and may override `S`
+    /// even when this returns false.
+    pub fn has_user_builtin_overrides(&self) -> bool {
+        self.has_builtin_overrides.load(Ordering::Acquire)
+    }
+
     /// Builds a new registry from the built-in data tables.
     fn from_builtin() -> Self {
         let mut prefixes = HashMap::new();
@@ -382,6 +391,20 @@ pub fn global_registry() -> &'static UnitRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builtin_override_hint_is_conservative_and_excludes_fits_aliases() {
+        let reg = UnitRegistry::from_builtin();
+        assert!(!reg.has_user_builtin_overrides());
+        reg.put_user("novel", UnitVal::NODIM, "a user unit");
+        assert!(!reg.has_user_builtin_overrides());
+        reg.add_fits_units();
+        assert!(!reg.has_user_builtin_overrides());
+        reg.put_user("Hz", UnitVal::TIME, "override a built-in");
+        assert!(reg.has_user_builtin_overrides());
+        assert!(reg.remove_user("Hz"));
+        assert!(reg.has_user_builtin_overrides());
+    }
 
     #[test]
     fn fits_registration_preserves_user_values_and_invalidates_siemens_cache() {

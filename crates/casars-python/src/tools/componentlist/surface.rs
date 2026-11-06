@@ -96,7 +96,7 @@ const METHODS: &[Method] = &[
         "convertfrequnit",
         &[WHICH, param("unit", K::Text, Text("GHz"))],
         R::Bool,
-        No,
+        Yes,
     ),
     method(
         "convertrefdir",
