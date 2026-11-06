@@ -170,6 +170,7 @@ impl ComponentList {
                     + error.latitude().unit().name().len()
                     + error.longitude().unit().name().len()
                     + spectrum.reference_frequency_error().unit().name().len()
+                    + spectrum.frequency_unit_bytes()
                     + values
                     + component.label().len()
                     + size_of_val(component.optional_parameters())

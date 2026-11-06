@@ -409,6 +409,23 @@ impl State {
         Ok(true)
     }
 
+    /// Change the unit used in one component's spectrum record.
+    pub(crate) fn convertfrequnit(&mut self, which: i64, name: &str) -> ConvertResult<bool> {
+        let unit = casacore_unit(name).map_err(ConvertError::runtime)?;
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        component
+            .spectrum_mut()
+            .set_frequency_unit(unit)
+            .map_err(|error| ConvertError::runtime(error.to_string()))?;
+        Ok(true)
+    }
+
     /// Convert selected component fluxes only after all source units conform.
     pub(crate) fn convertfluxunit(
         &mut self,
