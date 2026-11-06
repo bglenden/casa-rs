@@ -205,6 +205,11 @@ fn w_projection_facets_keep_w_and_refresh_the_model() {
         "w-facets-flat",
         json!({"gridder": "standard", "facets": 2, "weighting": "natural", "niter": 0}),
     );
+    let (_, finer) = observation.image(
+        "w-facets-finer",
+        json!({"gridder": "wproject", "wprojplanes": 12, "facets": 2,
+               "weighting": "natural", "niter": 0}),
+    );
     assert_eq!(&projected.get(".sumwt").image.shape()[..2], &[2, 2]);
     assert!(summary.actual_minor_iterations > 0);
     assert!(
@@ -229,5 +234,15 @@ fn w_projection_facets_keep_w_and_refresh_the_model() {
     assert!(
         (difference / power).sqrt() > 1.0e-4,
         "the fixture must distinguish W projection"
+    );
+    let finer_psf = &finer.get(".psf").pixels;
+    let difference: f64 = w
+        .iter()
+        .zip(finer_psf)
+        .map(|(a, b)| f64::from(a - b).powi(2))
+        .sum();
+    assert!(
+        (difference / power).sqrt() > 1.0e-6,
+        "the fixture must distinguish four from twelve W planes"
     );
 }
