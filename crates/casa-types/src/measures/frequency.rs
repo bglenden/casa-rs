@@ -161,6 +161,58 @@ impl fmt::Display for FrequencyRef {
     }
 }
 
+/// A CASA spectral reference frame, including its undefined frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CasaFrequencyFrame {
+    /// A defined frequency reference frame.
+    Defined(FrequencyRef),
+    /// The CASA `Undefined` frame.
+    Undefined,
+}
+
+impl CasaFrequencyFrame {
+    /// CASA's canonical spelling for this frame.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Defined(frame) => frame.as_str(),
+            Self::Undefined => "Undefined",
+        }
+    }
+}
+
+impl FromStr for CasaFrequencyFrame {
+    type Err = MeasureError;
+
+    /// Parse as casacore's `MFrequency::getType`: exact case-insensitive
+    /// matches take precedence, then an unambiguous prefix in either direction.
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let input_upper = input.to_ascii_uppercase();
+        let candidates = FrequencyRef::ALL
+            .into_iter()
+            .map(Self::Defined)
+            .chain([Self::Undefined]);
+        let frames: Vec<_> = candidates.collect();
+        if let Some(frame) = frames
+            .iter()
+            .copied()
+            .find(|frame| frame.as_str().eq_ignore_ascii_case(input))
+        {
+            return Ok(frame);
+        }
+        let mut matches = frames.into_iter().filter(|frame| {
+            let name = frame.as_str().to_ascii_uppercase();
+            name.starts_with(&input_upper) || input_upper.starts_with(&name)
+        });
+        match (matches.next(), matches.next()) {
+            (Some(frame), None) => Ok(frame),
+            _ => Err(MeasureError::UnknownRefType {
+                input: input.to_owned(),
+            }),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // MFrequency
 // ---------------------------------------------------------------------------
@@ -790,6 +842,28 @@ mod tests {
         for r in FrequencyRef::ALL {
             let parsed: FrequencyRef = r.as_str().parse().unwrap();
             assert_eq!(parsed, r);
+        }
+    }
+
+    #[test]
+    fn casa_frequency_frame_accepts_only_unambiguous_prefixes() {
+        for (input, expected) in [
+            ("b", CasaFrequencyFrame::Defined(FrequencyRef::BARY)),
+            (
+                "BARYCENTER",
+                CasaFrequencyFrame::Defined(FrequencyRef::BARY),
+            ),
+            (
+                "LSRKanything",
+                CasaFrequencyFrame::Defined(FrequencyRef::LSRK),
+            ),
+            ("GEOCENTER", CasaFrequencyFrame::Defined(FrequencyRef::GEO)),
+            ("UNDEF", CasaFrequencyFrame::Undefined),
+        ] {
+            assert_eq!(input.parse::<CasaFrequencyFrame>().unwrap(), expected);
+        }
+        for input in ["", "L", "LSR", "G", " BAD"] {
+            assert!(input.parse::<CasaFrequencyFrame>().is_err(), "{input}");
         }
     }
 

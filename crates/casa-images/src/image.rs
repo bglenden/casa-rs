@@ -1333,6 +1333,24 @@ impl<T: ImagePixel> PagedImage<T> {
         &self.coords
     }
 
+    /// Return the first spectral coordinate in the stored creation order.
+    ///
+    /// This order can differ from pixel-axis order after transposition.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the coordinate metadata is malformed.
+    pub fn first_spectral_coordinate(
+        &self,
+    ) -> Result<Option<casa_coordinates::SpectralCoordinate>, ImageError> {
+        let Some(Value::Record(record)) = self.table.keywords().get("coords") else {
+            return Err(ImageError::InvalidMetadata(
+                "image has no coordinate record".into(),
+            ));
+        };
+        Ok(CoordinateSystem::first_spectral_in_record(record)?.map(|(_, coordinate)| coordinate))
+    }
+
     /// Replaces the coordinate system and updates the table keyword.
     pub fn set_coordinates(&mut self, coords: CoordinateSystem) -> Result<(), ImageError> {
         self.table
@@ -1496,6 +1514,21 @@ impl<T: ImagePixel> PagedImage<T> {
     pub fn set_rest_frequency(&mut self, value: f64) -> Result<f64, ImageError> {
         self.edit_coordinates(|record| {
             CoordinateSystem::set_rest_frequency_in_record(record, value)
+        })
+    }
+
+    /// Set the native spectral reference frame and return the old frame if
+    /// it changed. Call [`Self::save`] to persist the change.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown frame or invalid spectral metadata.
+    pub fn set_spectral_reference(
+        &mut self,
+        reference: &str,
+    ) -> Result<Option<String>, ImageError> {
+        self.edit_coordinates(|record| {
+            CoordinateSystem::set_spectral_reference_in_record(record, reference)
         })
     }
 

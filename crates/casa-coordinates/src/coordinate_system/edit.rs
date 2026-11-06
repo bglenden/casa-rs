@@ -85,6 +85,70 @@ fn scale_axis_field(
 }
 
 impl CoordinateSystem {
+    /// Set the native spectral reference frame and reset its conversion frame.
+    ///
+    /// Returns the previous frame when it changed, or `None` for a no-op.
+    /// Unrelated coordinate metadata and axis maps are retained.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid frame, missing spectral coordinate,
+    /// or malformed metadata.
+    pub fn set_spectral_reference_in_record(
+        record: &mut RecordValue,
+        reference: &str,
+    ) -> Result<(Self, Option<String>), CoordinateError> {
+        use casa_types::measures::frequency::CasaFrequencyFrame;
+        use std::str::FromStr;
+        let system = Self::from_record(record)?;
+        let (field, spectral) = Self::first_spectral_in_record(record)?
+            .ok_or_else(|| CoordinateError::InvalidRecord("no spectral coordinate".into()))?;
+        let old = if spectral.has_undefined_frame() {
+            "Undefined".to_string()
+        } else {
+            spectral.frequency_ref().as_str().to_string()
+        };
+        let canonical = CasaFrequencyFrame::from_str(reference)
+            .map_err(|_| {
+                CoordinateError::InvalidRecord(format!(
+                    "unknown spectral reference frame {reference:?}"
+                ))
+            })?
+            .as_str();
+        if old == canonical {
+            return Ok((system, None));
+        }
+        let mut updated = record.clone();
+        let Some(Value::Record(spectral)) = updated.get_mut(&field) else {
+            return Err(CoordinateError::InvalidRecord(
+                "missing spectral record".into(),
+            ));
+        };
+        if spectral.get("frequency_ref").is_some() {
+            spectral.upsert(
+                "frequency_ref",
+                Value::Scalar(ScalarValue::String(canonical.into())),
+            );
+        }
+        spectral.upsert(
+            "system",
+            Value::Scalar(ScalarValue::String(canonical.into())),
+        );
+        if let Some(conversion) = spectral.get_mut("conversion") {
+            let Value::Record(conversion) = conversion else {
+                return Err(CoordinateError::InvalidRecord(
+                    "invalid spectral conversion record".into(),
+                ));
+            };
+            conversion.upsert(
+                "system",
+                Value::Scalar(ScalarValue::String(canonical.into())),
+            );
+        }
+        let system = Self::from_record(&updated)?;
+        *record = updated;
+        Ok((system, Some(old)))
+    }
     /// Change an axis's world unit and rescale its stored coordinate values.
     ///
     /// Returns the updated system and old unit. Unrelated metadata and axis
@@ -242,13 +306,10 @@ impl CoordinateSystem {
                 "rest frequency must be positive and finite".into(),
             ));
         }
-        let coordinates = Self::record_coordinates(record)?;
-        let coordinate = coordinates
-            .iter()
-            .find(|entry| entry.field.starts_with("spectral"))
+        let (field, _) = Self::first_spectral_in_record(record)?
             .ok_or_else(|| CoordinateError::InvalidRecord("no spectral coordinate".into()))?;
         let mut updated = record.clone();
-        let Some(Value::Record(spectral)) = updated.get_mut(&coordinate.field) else {
+        let Some(Value::Record(spectral)) = updated.get_mut(&field) else {
             return Err(CoordinateError::InvalidRecord(
                 "missing spectral record".into(),
             ));

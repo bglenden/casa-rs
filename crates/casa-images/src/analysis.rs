@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
-    CoordinateSystem, CoordinateType, FitsHeader, FitsValue, fits::to_fits_header,
+    Coordinate, CoordinateSystem, CoordinateType, FitsHeader, FitsValue, fits::to_fits_header,
 };
 use casa_fft::Fft2;
 use casa_lattices::{LatticeStatistics, Statistic, StatsElement, TiledShape};
@@ -1384,6 +1384,52 @@ pub fn imhead_put_rest_frequency(
     imhead(path)
 }
 
+/// Set CASA's `reffreqtype`, resetting the spectral conversion frame.
+///
+/// # Errors
+///
+/// Returns an error for an invalid frame, absent or malformed spectral
+/// metadata, or image I/O failure. History I/O may fail after metadata is saved.
+pub fn imhead_put_spectral_reference(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let ParameterValue::String(reference) = hdvalue else {
+        return Err(ImageError::InvalidMetadata(
+            "reffreqtype value must be a string".into(),
+        ));
+    };
+    if reference.contains('\0') {
+        return Err(ImageError::InvalidMetadata(
+            "spectral frames containing NUL are unsupported (#977)".into(),
+        ));
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_spectral_reference(reference)?,
+        AnyPagedImage::Float64(image) => image.set_spectral_reference(reference)?,
+        AnyPagedImage::Complex32(image) => image.set_spectral_reference(reference)?,
+        AnyPagedImage::Complex64(image) => image.set_spectral_reference(reference)?,
+    };
+    if old.is_some() {
+        image.save()?;
+    }
+    drop(image);
+    if let Some(old) = old {
+        crate::image::add_image_history(
+            path,
+            "ImageMetaDataRW::set",
+            &[format!(
+                "Modified {hdkey} from \"{old}\" to \"{reference}\""
+            )],
+        )?;
+    }
+    imhead(path)
+}
+
 /// Set a CASA `ctypeN` axis name and record the image history.
 ///
 /// # Errors
@@ -1860,7 +1906,7 @@ where
                 _ => None,
             },
         ),
-        spectral: spectral_header(image).map(Box::new),
+        spectral: spectral_header(image)?.map(Box::new),
         image_type: header_image_type(image)?.to_string(),
         default_mask: image.default_mask_name(),
         masks: image.mask_names(),
@@ -1957,30 +2003,28 @@ fn per_plane_beam_summary<T: ImagePixel>(
     }))
 }
 
-fn spectral_header<T: ImagePixel>(image: &PagedImage<T>) -> Option<SpectralHeaderSummary> {
-    for index in 0..image.coordinates().n_coordinates() {
-        let coordinate = image.coordinates().coordinate(index);
-        if let casa_coordinates::CoordinateModel::Spectral(spectral) = coordinate {
-            let unit = coordinate
-                .axis_units()
-                .into_iter()
-                .next()
-                .unwrap_or_else(|| "Hz".into());
-            // PagedImage opens its coordinate system from the stored record;
-            // that record's rest frequencies are already in its axis unit.
-            return Some(SpectralHeaderSummary {
-                reference_frame: if spectral.has_undefined_frame() {
-                    "Undefined".into()
-                } else {
-                    spectral.frequency_ref().as_str().into()
-                },
-                unit,
-                rest_frequency: spectral.rest_frequency(),
-                rest_frequencies: spectral.rest_frequencies().to_vec(),
-            });
-        }
-    }
-    None
+fn spectral_header<T: ImagePixel>(
+    image: &PagedImage<T>,
+) -> Result<Option<SpectralHeaderSummary>, ImageError> {
+    let Some(spectral) = image.first_spectral_coordinate()? else {
+        return Ok(None);
+    };
+    let unit = spectral
+        .axis_units()
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "Hz".into());
+    // The stored record's rest frequencies are already in its axis unit.
+    Ok(Some(SpectralHeaderSummary {
+        reference_frame: if spectral.has_undefined_frame() {
+            "Undefined".into()
+        } else {
+            spectral.frequency_ref().as_str().into()
+        },
+        unit,
+        rest_frequency: spectral.rest_frequency(),
+        rest_frequencies: spectral.rest_frequencies().to_vec(),
+    }))
 }
 
 fn format_beam(beam: GaussianBeam, record: Option<&RecordValue>) -> Option<RestoringBeamSummary> {

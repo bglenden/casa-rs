@@ -235,14 +235,21 @@ fn emit_spectral(coord: &CoordinateModel, h: &mut FitsHeader, axis: usize) {
         FitsValue::String(units.first().cloned().unwrap_or_default()),
     );
 
-    let frequency_ref = spectral.frequency_ref();
-    let specsys = match frequency_ref.as_str() {
-        "LSRK" => "LSRK",
-        "BARY" => "BARYCENT",
-        "TOPO" => "TOPOCENT",
-        other => other,
-    };
-    h.set("SPECSYS", FitsValue::String(specsys.into()));
+    if !spectral.has_undefined_frame() {
+        let frequency_ref = spectral.frequency_ref();
+        let specsys = match frequency_ref.as_str() {
+            "LSRK" => "LSRK",
+            "BARY" => "BARYCENT",
+            "TOPO" => "TOPOCENT",
+            "GEO" => "GEOCENTR",
+            "GALACTO" => "GALACTOC",
+            "LGROUP" => "LOCALGRP",
+            "CMB" => "CMBDIPOL",
+            "REST" => "SOURCE",
+            other => other,
+        };
+        h.set("SPECSYS", FitsValue::String(specsys.into()));
+    }
     h.set("RESTFRQ", FitsValue::Float(spectral.rest_frequency()));
 }
 
@@ -652,6 +659,12 @@ fn parse_spectral(h: &FitsHeader, axis: usize) -> Result<SpectralCoordinate, Coo
             "LSRK" => FrequencyRef::LSRK,
             "BARYCENT" | "BARY" => FrequencyRef::BARY,
             "TOPOCENT" | "TOPO" => FrequencyRef::TOPO,
+            "LSRD" => FrequencyRef::LSRD,
+            "GEOCENTR" | "GEO" => FrequencyRef::GEO,
+            "GALACTOC" | "GALACTO" => FrequencyRef::GALACTO,
+            "LOCALGRP" | "LGROUP" => FrequencyRef::LGROUP,
+            "CMBDIPOL" | "CMB" => FrequencyRef::CMB,
+            "SOURCE" | "REST" => FrequencyRef::REST,
             _ => FrequencyRef::TOPO,
         }
     } else {
@@ -924,6 +937,43 @@ mod tests {
         assert!((spec2.reference_value()[0] - 1.5e9).abs() < 1.0,);
         assert!((spec2.increment()[0] - (-500e3)).abs() < 0.1,);
         assert!((spec2.reference_pixel()[0] - 64.0).abs() < 1e-10,);
+    }
+
+    #[test]
+    fn undefined_spectral_frame_does_not_claim_a_fits_reference_frame() {
+        let mut cs = CoordinateSystem::new();
+        cs.add_coordinate(
+            SpectralCoordinate::new(FrequencyRef::TOPO, 1.5e9, 1e6, 0., 1.4e9)
+                .with_undefined_frame(),
+        );
+        let header = to_fits_header(&cs, &[8]);
+        assert!(header.get("SPECSYS").is_none());
+        assert_eq!(header.get_float("RESTFRQ"), Some(1.4e9));
+    }
+
+    #[test]
+    fn spectral_reference_frames_use_casa_fits_names_and_roundtrip() {
+        for (reference, name) in [
+            (FrequencyRef::LSRK, "LSRK"),
+            (FrequencyRef::LSRD, "LSRD"),
+            (FrequencyRef::BARY, "BARYCENT"),
+            (FrequencyRef::TOPO, "TOPOCENT"),
+            (FrequencyRef::GEO, "GEOCENTR"),
+            (FrequencyRef::GALACTO, "GALACTOC"),
+            (FrequencyRef::LGROUP, "LOCALGRP"),
+            (FrequencyRef::CMB, "CMBDIPOL"),
+            (FrequencyRef::REST, "SOURCE"),
+        ] {
+            let mut cs = CoordinateSystem::new();
+            cs.add_coordinate(SpectralCoordinate::new(reference, 1.5e9, 1e6, 0., 1.4e9));
+            let header = to_fits_header(&cs, &[8]);
+            assert_eq!(header.get_string("SPECSYS"), Some(name));
+            let restored = from_fits_header(&header, &[8]).unwrap();
+            let CoordinateModel::Spectral(spectral) = restored.coordinate(0) else {
+                panic!("not spectral")
+            };
+            assert_eq!(spectral.frequency_ref(), reference);
+        }
     }
 
     #[test]

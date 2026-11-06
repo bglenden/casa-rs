@@ -5,6 +5,163 @@
 use super::*;
 
 #[test]
+fn imhead_edits_spectral_reference_frames() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let oracle: Value =
+        serde_json::from_slice(&std::fs::read(fixture.join("reffreq_expected.json")).unwrap())
+            .unwrap();
+    assert_eq!(oracle["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for (index, case) in oracle["cases"].as_array().unwrap().iter().enumerate() {
+        let path = workspace.path().join(format!("reffreq-{index}.im"));
+        copy_tree(
+            &fixture.join(format!("{}.im", case["image"].as_str().unwrap())),
+            &path,
+        );
+        let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+        let count = image.history().unwrap().len();
+        drop(image);
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "put", "hdkey": case["key"], "hdvalue": case["value"]
+            }),
+        );
+        if case.get("error").is_some() {
+            assert!(
+                matches!(reply, Some(TaskReply::Failed { .. })),
+                "{index}: {reply:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    reply,
+                    Some(TaskReply::Succeeded {
+                        value: CasaValue::None,
+                        ..
+                    })
+                ),
+                "{index}: {reply:?}"
+            );
+            let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+            let history = image.history().unwrap();
+            let expected = case["history"].as_array().unwrap();
+            let tail = &history[count..];
+            assert_eq!(tail.len(), expected.len(), "{index}: history count");
+            if expected.len() == 3 {
+                assert_eq!(tail[0], expected[0], "{index}: metadata history");
+            }
+            assert_eq!(
+                tail[tail.len() - 1],
+                expected[expected.len() - 1]
+                    .as_str()
+                    .unwrap()
+                    .replace("<IMAGE>", &path.display().to_string()),
+                "{index}: task history"
+            );
+        }
+        if let Some(expected) = case.get("get") {
+            let value = returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "get", "hdkey": "reffreqtype"}),
+            );
+            assert_eq!(value.to_plain_json(), *expected, "{index}: get");
+        }
+        let summary = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "summary"}),
+        )
+        .to_plain_json();
+        for key in [
+            "axisnames",
+            "axisunits",
+            "incr",
+            "refpix",
+            "refval",
+            "shape",
+        ] {
+            assert_header_value_near(&summary[key], &case["after"][key], index);
+        }
+    }
+    for (index, case) in oracle["restfreq_cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+    {
+        let path = workspace.path().join(format!("multi-restfreq-{index}.im"));
+        copy_tree(
+            &fixture.join(format!("{}.im", case["image"].as_str().unwrap())),
+            &path,
+        );
+        let before = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "get", "hdkey": "restfreq"}),
+        );
+        assert_eq!(before.to_plain_json(), json!({"value": 1e9, "unit": "Hz"}));
+        let result = returned(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "put", "hdkey": "restfreq", "hdvalue": "1.5GHz"
+            }),
+        );
+        assert_eq!(result, CasaValue::None);
+        let value = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "get", "hdkey": "restfreq"}),
+        );
+        assert_header_value_near(&value.to_plain_json(), &case["get"], index);
+        let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+        let system = image.coordinates();
+        let mut frequencies: Vec<_> = (0..system.n_coordinates())
+            .filter_map(|i| match system.coordinate(i) {
+                casa_coordinates::CoordinateModel::Spectral(spectral) => {
+                    Some(spectral.rest_frequency())
+                }
+                _ => None,
+            })
+            .collect();
+        frequencies.sort_by(f64::total_cmp);
+        let mut expected: Vec<_> = case["frequencies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect();
+        expected.sort_by(f64::total_cmp);
+        assert_header_value_near(&json!(frequencies), &json!(expected), index);
+    }
+}
+
+#[test]
+fn imhead_undefined_spectral_frame_is_not_mislabeled_by_fits_export() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let image = workspace.path().join("undefined.im");
+    let fits = workspace.path().join("undefined.fits");
+    copy_tree(&fixture, &image);
+    let value = returned(
+        workspace.path(),
+        "imhead",
+        json!({
+            "imagename": image, "mode": "put", "hdkey": "reffreqtype", "hdvalue": "UNDEFINED"
+        }),
+    );
+    assert_eq!(value, CasaValue::None);
+    casa_images::analysis::export_fits(&image, &fits, false, false).unwrap();
+    let bytes = std::fs::read(fits).unwrap();
+    let cards = bytes.as_chunks::<80>().0;
+    assert!(cards.iter().any(|card| card.starts_with(b"RESTFRQ ")));
+    assert!(!cards.iter().any(|card| card.starts_with(b"SPECSYS ")));
+}
+
+#[test]
 fn imhead_edits_axis_units_and_rescales_coordinate_values() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
     let oracle: Value =

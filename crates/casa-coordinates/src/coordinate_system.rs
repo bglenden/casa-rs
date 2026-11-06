@@ -304,6 +304,31 @@ impl CoordinateSystem {
             .map(|(placed, _)| placed)
             .collect())
     }
+
+    /// Return the first spectral coordinate in the record's creation order.
+    ///
+    /// The field name is returned with the coordinate so callers can update
+    /// the same record even when its axes have been transposed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a coordinate record is malformed or unsupported.
+    pub fn first_spectral_in_record(
+        rec: &RecordValue,
+    ) -> Result<Option<(String, SpectralCoordinate)>, CoordinateError> {
+        for (_, key) in coordinate_record_entries(rec) {
+            let Some(Value::Record(coordinate)) = rec.get(&key) else {
+                return Err(CoordinateError::InvalidRecord(format!(
+                    "coordinate field {key:?} is not a record"
+                )));
+            };
+            if let CoordinateModel::Spectral(spectral) = parse_coordinate_record(&key, coordinate)?
+            {
+                return Ok(Some((key, *spectral)));
+            }
+        }
+        Ok(None)
+    }
 }
 
 /// One coordinate of a casacore coordinate-system record, as
