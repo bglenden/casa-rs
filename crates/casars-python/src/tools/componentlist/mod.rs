@@ -733,19 +733,36 @@ impl PyComponentList {
         stub("replace")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder warns and returns an empty float array.
     #[pyo3(
         signature = (direction = None, pixellatsize = None, pixellongsize = None, frequency = None),
         text_signature = "($self, direction=[], pixellatsize=[], pixellongsize=[], frequency=[])"
     )]
     fn sample(
         &self,
+        py: Python<'_>,
         direction: Option<&Bound<'_, PyAny>>,
         pixellatsize: Option<&Bound<'_, PyAny>>,
         pixellongsize: Option<&Bound<'_, PyAny>>,
         frequency: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("sample")
+        let mut pending = false;
+        for value in [direction, pixellatsize, pixellongsize, frequency]
+            .into_iter()
+            .flatten()
+        {
+            pending |= placeholder::pending_integer_overflow(value)?;
+        }
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning("sample not implemented yet"));
+            Ok(CasaValue::floats(Vec::new()))
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_sample> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Select component indices.

@@ -3893,6 +3893,10 @@ placeholder can return. The method otherwise logs a warning and returns
 `False`. casa-rs detects cycles while inspecting the ignored argument and
 returns that same placeholder value without crashing.
 
+The same cyclic argument also crashes CASA's `componentlist.sample`
+placeholder. `tools/casa-compat/componentlist_sample_oracle.py` records the
+isolated crash. casa-rs returns the placeholder's empty float array instead.
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05

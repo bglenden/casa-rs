@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Argument handling for CASA's `iscomponentlist` placeholder.
+//! Argument handling for CASA's component-list placeholders.
 
 use std::collections::HashSet;
 
