@@ -491,3 +491,65 @@ fn mvc_taylor_rest_frequency_follows_the_cube_label() {
         );
     }
 }
+
+/// CASA 6.7.6 on this weighted, wide-field fixture makes a cube model from
+/// the Taylor model after each minor cycle, then grids that cube model to
+/// form the next Taylor residual (#1069). Three one-iteration minor cycles
+/// exercise more than one model handoff and an expansion reference that is
+/// different from the Taylor image's WCS center.
+#[test]
+fn mvc_clean_refreshes_the_cube_from_the_taylor_model() {
+    let observation = weighted_observation();
+    for (iterations, majors, model, residual, cube) in [
+        (
+            1,
+            2,
+            [0.481_774_9_f32, -0.441_601_57],
+            [4.416_162_f32, -0.089_114_144],
+            [0.491_723_6_f32, 0.490_279_85, 0.488_836_23],
+        ),
+        (
+            3,
+            4,
+            [1.305_975_3_f32, -1.178_515_7],
+            [3.577_092_2_f32, -0.072_181_99],
+            [1.332_531_3_f32, 1.328_670_6, 1.324_810_1],
+        ),
+    ] {
+        let (summary, products) = observation.image(
+            &format!("mvc-clean-{iterations}"),
+            json!({
+                "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+                "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+                "niter": iterations, "cycleniter": 1, "write_pb": true, "pblimit": -0.1,
+            }),
+        );
+        assert_eq!(summary.actual_minor_iterations, iterations);
+        assert_eq!(summary.major_cycles, majors);
+        let close = |label: &str, actual: f32, expected: f32| {
+            assert!(
+                (actual - expected).abs() <= 0.001 * expected.abs(),
+                "{label}: {actual} vs CASA {expected}"
+            );
+        };
+        for term in 0..2 {
+            close(
+                &format!("model.tt{term}"),
+                products.get(&format!(".model.tt{term}")).pixels[[152, 144]],
+                model[term],
+            );
+            close(
+                &format!("residual.tt{term}"),
+                products.get(&format!(".residual.tt{term}")).pixels[[152, 144]],
+                residual[term],
+            );
+        }
+        for (channel, expected) in cube.into_iter().enumerate() {
+            close(
+                &format!("cube model channel {channel}"),
+                products.get(".model").plane(channel)[[152, 144]],
+                expected,
+            );
+        }
+    }
+}
