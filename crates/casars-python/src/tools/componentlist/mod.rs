@@ -31,6 +31,7 @@ mod replace_args;
 mod selection;
 mod setflux;
 mod setrefdir_args;
+mod setshape;
 pub(crate) mod surface;
 
 use std::ffi::CString;
@@ -588,9 +589,7 @@ impl PyComponentList {
     /// Component `which`'s record.
     #[pyo3(signature = (which, iknow = false), text_signature = "($self, which, iknow=False)")]
     fn getcomponent(&self, py: Python<'_>, which: i64, iknow: bool) -> PyResult<Py<PyAny>> {
-        self.call(py, move |state, _| {
-            ops::record(state.checked(which)?.to_record())
-        })
+        self.call(py, move |state, _| state.getcomponent(which))
     }
 
     /// The real parts of component `which`'s four flux errors.
@@ -1352,28 +1351,6 @@ impl PyComponentList {
             ));
         }
         Ok(result)
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(
-        signature = (which, r#type = None, majoraxis = None, minoraxis = None, positionangle = None, majoraxiserror = None, minoraxiserror = None, positionangleerror = None, optionalparms = None, log = None),
-        text_signature = "($self, which, type='Point', majoraxis=[], minoraxis=[], positionangle=[], majoraxiserror=[], minoraxiserror=[], positionangleerror=[], optionalparms=[0.0], log=True)"
-    )]
-    #[allow(clippy::too_many_arguments)]
-    fn setshape(
-        &self,
-        which: &Bound<'_, PyAny>,
-        r#type: Option<&Bound<'_, PyAny>>,
-        majoraxis: Option<&Bound<'_, PyAny>>,
-        minoraxis: Option<&Bound<'_, PyAny>>,
-        positionangle: Option<&Bound<'_, PyAny>>,
-        majoraxiserror: Option<&Bound<'_, PyAny>>,
-        minoraxiserror: Option<&Bound<'_, PyAny>>,
-        positionangleerror: Option<&Bound<'_, PyAny>>,
-        optionalparms: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setshape")
     }
 
     /// Not yet implemented in casa-rs.
