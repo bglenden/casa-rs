@@ -2274,6 +2274,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#undefined-frequency-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        undefined-frequency-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2473,6 +2484,17 @@
     <span class="md-ellipsis">
       
         casa-names
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#undefined-frequency-casa_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        undefined-frequency-casa
       
     </span>
   </a>
@@ -6157,6 +6179,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#undefined-frequency-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        undefined-frequency-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6356,6 +6389,17 @@
     <span class="md-ellipsis">
       
         casa-names
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#undefined-frequency-casa_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        undefined-frequency-casa
       
     </span>
   </a>
@@ -10574,8 +10618,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">39</td>
-<td style="text-align: right;">1</td>
+<td style="text-align: right;">40</td>
+<td style="text-align: right;">0</td>
 <td style="text-align: right;">21</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10694,7 +10738,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 39, Partial: 1, Not implemented: 21, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 40, Partial: 0, Not implemented: 21, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -11045,9 +11089,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>setfreqframe</code></td>
 <td><code>which, frame='LSRK', log=True</code></td>
-<td>Partial (#1053)</td>
-<td>Relabels one component frequency in any of the nine supported frames without converting the frequency value; accepts CASA frame prefixes and preserves the record unit and error. Undefined is refused because the measure model cannot represent it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-setfreqframe-casa">setfreqframe-casa</a></td>
+<td>Implemented (#1053)</td>
+<td>Relabels one component frequency in any of the nine physical frames or Undefined without converting the value; accepts CASA frame prefixes and preserves the record unit and error.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-setfreqframe-casa">setfreqframe-casa</a>, <a href="#componentlist-evidence-undefined-frequency-casa">undefined-frequency-casa</a></td>
 </tr>
 <tr>
 <td><code>setlabel</code></td>
@@ -11406,12 +11450,29 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 </ul>
 <p><a id="componentlist-evidence-setfreqframe-casa"></a></p>
 <h5 id="setfreqframe-casa">setfreqframe-casa<a class="headerlink" href="#setfreqframe-casa" title="Permanent link">&para;</a></h5>
-<p><strong>CASA-recorded values — measured.</strong> 56 CASA 6.7.6-14 calls compare frame names, prefixes, indices and argument errors; a table case covers frame, frequency and error persistence. Undefined is not yet implemented. componentlist.setfreqframe.</p>
+<p><strong>CASA-recorded values — measured.</strong> 56 CASA 6.7.6-14 calls compare frame names, prefixes, indices and argument errors; a table case covers frame, frequency and error persistence. At that evidence revision, Undefined was not yet implemented. componentlist.setfreqframe.</p>
 <ul>
 <li><a href="https://github.com/bglenden/casa-rs/blob/b649c4559abd40c025f6ab7f004070a1f39d85a7/tools/casa-compat/componentlist_setfreqframe_oracle.py">tools/casa-compat/componentlist_setfreqframe_oracle.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/b649c4559abd40c025f6ab7f004070a1f39d85a7/crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.json">crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/b649c4559abd40c025f6ab7f004070a1f39d85a7/crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.cl.tgz">crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.cl.tgz</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/b649c4559abd40c025f6ab7f004070a1f39d85a7/crates/casars-python/python/tests/test_componentlist_setfreqframe.py">crates/casars-python/python/tests/test_componentlist_setfreqframe.py</a></li>
+</ul>
+<p><a id="componentlist-evidence-undefined-frequency-casa"></a></p>
+<h5 id="undefined-frequency-casa">undefined-frequency-casa<a class="headerlink" href="#undefined-frequency-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> CASA 6.7.6-14 records Undefined frequency identity and refusal of cross-frame conversions, component tables with string, explicit, remapped and inferred integer references, invalid table-reference aliases, and MS mappings in which code 64 means LSRK and 9 means Undefined; type-only MS frequency metadata defaults to REST, while an integer reference column with no mapping arrays uses standard codes. Undefined frequency measures, component-list frame updates and table reference mappings.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/tools/casa-compat/undefined_frequency_oracle.py">tools/casa-compat/undefined_frequency_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/tools/casa-compat/undefined_frequency_ms_oracle.py">tools/casa-compat/undefined_frequency_ms_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency.json">crates/casars-python/python/tests/data/casa_undefined_frequency.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json">crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz">crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz">crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz">crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz">crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz">crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/test_undefined_frequency.py">crates/casars-python/python/tests/test_undefined_frequency.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs">crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-imager/tests/t1/virtual_model.rs">crates/casars-imager/tests/t1/virtual_model.rs</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>
@@ -11558,8 +11619,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>frequency</code></td>
 <td><code>rf='LSRK', v0=[], off={}</code></td>
 <td>Implemented</td>
-<td>Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame).</td>
-<td><a href="#measures-evidence-signature">signature</a>, <a href="#measures-evidence-casa-values">casa-values</a></td>
+<td>Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA.</td>
+<td><a href="#measures-evidence-signature">signature</a>, <a href="#measures-evidence-casa-values">casa-values</a>, <a href="#measures-evidence-undefined-frequency-casa">undefined-frequency-casa</a></td>
 </tr>
 <tr>
 <td><code>getoffset</code></td>
@@ -11614,8 +11675,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>measure</code></td>
 <td><code>v, rf, off={}</code></td>
 <td>Implemented</td>
-<td>Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame).</td>
-<td><a href="#measures-evidence-signature">signature</a>, <a href="#measures-evidence-casa-values">casa-values</a></td>
+<td>Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA.</td>
+<td><a href="#measures-evidence-signature">signature</a>, <a href="#measures-evidence-casa-values">casa-values</a>, <a href="#measures-evidence-undefined-frequency-casa">undefined-frequency-casa</a></td>
 </tr>
 <tr>
 <td><code>observatory</code></td>
@@ -11872,6 +11933,23 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><strong>CASA-recorded values — measured.</strong> Recorded from CASA 6.7.6-14 by measures_names_oracle.py: me.observatory for 471 names and me.spectralline for 125 (every prefix of every entry's name, upper and lower case, and names longer than an entry or with spaces around them), and me.source for 10. casa-rs finds what CASA finds for each, by casacore's MUString::minimaxNC rule (#1110). Passes in the Python tests. How me.observatory, me.spectralline and me.source find an entry by name.</p>
 <ul>
 <li><a href="https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py">crates/casars-python/python/tests/test_tools_measures.py</a></li>
+</ul>
+<p><a id="measures-evidence-undefined-frequency-casa"></a></p>
+<h5 id="undefined-frequency-casa_1">undefined-frequency-casa<a class="headerlink" href="#undefined-frequency-casa_1" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> CASA 6.7.6-14 records Undefined frequency identity and refusal of cross-frame conversions, component tables with string, explicit, remapped and inferred integer references, invalid table-reference aliases, and MS mappings in which code 64 means LSRK and 9 means Undefined; type-only MS frequency metadata defaults to REST, while an integer reference column with no mapping arrays uses standard codes. Undefined frequency measures, component-list frame updates and table reference mappings.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/tools/casa-compat/undefined_frequency_oracle.py">tools/casa-compat/undefined_frequency_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/tools/casa-compat/undefined_frequency_ms_oracle.py">tools/casa-compat/undefined_frequency_ms_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency.json">crates/casars-python/python/tests/data/casa_undefined_frequency.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json">crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz">crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz">crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz">crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz">crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz">crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/test_undefined_frequency.py">crates/casars-python/python/tests/test_undefined_frequency.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs">crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-imager/tests/t1/virtual_model.rs">crates/casars-imager/tests/t1/virtual_model.rs</a></li>
 </ul>
 <h3 id="quanta">quanta<a class="headerlink" href="#quanta" title="Permanent link">&para;</a></h3>
 <h4 id="quanta-method-implementation">quanta method implementation<a class="headerlink" href="#quanta-method-implementation" title="Permanent link">&para;</a></h4>
