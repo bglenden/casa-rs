@@ -348,12 +348,15 @@ const METHODS: &[Method] = &[
         No,
     ),
     of_one("shapetype", R::Text, Yes),
-    method(
-        "simulate",
-        &[param("howmany", K::Int, Int(1)), LOG],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "simulate",
+            &[param("howmany", K::Int, Int(1)), LOG],
+            R::Bool,
+            Yes,
+        )
+    },
     method(
         "sort",
         &[param("criteria", K::Text, Text("Flux")), LOG],
