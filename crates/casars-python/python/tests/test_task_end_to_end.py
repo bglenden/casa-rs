@@ -299,6 +299,17 @@ def test_imhead_edits_and_removes_a_restoring_beam(tmp_path: Path) -> None:
     assert "restoringbeam" not in tasks.imhead(str(image), mode="summary")
 
 
+def test_imhead_edits_stokes_reference_values(tmp_path: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/stokes_four.im"
+    image = tmp_path / "stokes.im"
+    shutil.copytree(fixture, image)
+    assert tasks.imhead(str(image), mode="put", hdkey="crval3", hdvalue=["V", "U", "Q", "I"]) is None
+    np.testing.assert_array_equal(tasks.imhead(str(image), mode="get", hdkey="crval3"), ["V", "U", "Q", "I"])
+
+
 def test_msconvert_converts_both_ways_and_reports_its_losses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

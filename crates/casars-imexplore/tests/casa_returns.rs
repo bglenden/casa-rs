@@ -970,6 +970,9 @@ mod imhead_custom_records;
 #[path = "casa_returns/imhead_custom_matrices.rs"]
 mod imhead_custom_matrices;
 
+#[path = "casa_returns/imhead_stokes_edits.rs"]
+mod imhead_stokes_edits;
+
 #[path = "casa_returns/imhead_mutations.rs"]
 mod imhead_mutations;
 

@@ -1614,6 +1614,22 @@ impl<T: ImagePixel> PagedImage<T> {
         })
     }
 
+    /// Replace the Stokes types on a pixel axis, preserving coordinate maps.
+    /// Call [`Self::save`] to persist the change.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid Stokes values, axes, or coordinates.
+    pub fn set_stokes_types(
+        &mut self,
+        pixel_axis: usize,
+        names: &[String],
+    ) -> Result<Vec<String>, ImageError> {
+        self.edit_coordinates(|record| {
+            CoordinateSystem::set_stokes_types_in_record(record, pixel_axis, names)
+        })
+    }
+
     /// Set the active rest frequency in the spectral coordinate's stored unit.
     ///
     /// The change is persisted when [`Self::save`] is called.

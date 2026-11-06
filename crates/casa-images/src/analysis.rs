@@ -1269,7 +1269,7 @@ pub(crate) fn imhead_axis_index(suffix: &str) -> Option<usize> {
     suffix[..digits].parse::<usize>().ok()?.checked_sub(1)
 }
 
-/// Set a non-polarization `cdeltN` or `crvalN` from a CASA quantity.
+/// Set `cdeltN` or `crvalN` from a CASA quantity or Stokes names.
 ///
 /// # Errors
 ///
@@ -1296,11 +1296,12 @@ pub fn imhead_put_axis_quantity(
         .get(axis)
         .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
     if header.coordinate_type == "Stokes" {
-        return Err(ImageError::InvalidMetadata(if prefix == "cdelt" {
-            "A polarization axis cannot have an increment".into()
-        } else {
-            "Polarization reference-value edits are not implemented (#977)".into()
-        }));
+        if prefix == "cdelt" {
+            return Err(ImageError::InvalidMetadata(
+                "A polarization axis cannot have an increment".into(),
+            ));
+        }
+        return imhead_put_stokes_values(path, &key, axis, hdvalue);
     }
     let (quantity, rendered) = quantity_input::parse(hdvalue)?;
     let value = quantity_input::in_axis_unit(&quantity, &header.unit)?;
@@ -1331,6 +1332,71 @@ pub fn imhead_put_axis_quantity(
         path,
         "ImageMetaDataRW::_setCoordinateValue",
         &[format!("Modified {key} from \"{old}\" to {rendered}")],
+    )?;
+    imhead(path)
+}
+
+fn imhead_put_stokes_values(
+    path: &Path,
+    key: &str,
+    axis: usize,
+    value: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let (names, rendered) = match value {
+        ParameterValue::String(value) if !value.is_empty() => {
+            (vec![value.clone()], format!("\"{value}\""))
+        }
+        ParameterValue::Array(values) if !values.is_empty() => {
+            let mixed = values
+                .iter()
+                .any(|value| matches!(value, ParameterValue::String(_)))
+                && values
+                    .iter()
+                    .any(|value| !matches!(value, ParameterValue::String(_)));
+            if mixed {
+                return Err(ImageError::InvalidMetadata(
+                    "Mixed-type polarization arrays are unsupported (#977)".into(),
+                ));
+            }
+            let names = values
+                .iter()
+                .map(|value| match value {
+                    ParameterValue::String(value) => Ok(value.clone()),
+                    _ => Err(ImageError::InvalidMetadata(
+                        "Polarization values must be strings".into(),
+                    )),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let rendered = format!("[{}]", names.join(", "));
+            (names, rendered)
+        }
+        _ => {
+            return Err(ImageError::InvalidMetadata(
+                "Polarization values must be a string or string array".into(),
+            ));
+        }
+    };
+    if names.iter().any(|name| name.contains('\0')) {
+        return Err(ImageError::InvalidMetadata(
+            "Polarization values containing NUL are unsupported (#977)".into(),
+        ));
+    }
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_stokes_types(axis, &names)?,
+        AnyPagedImage::Float64(image) => image.set_stokes_types(axis, &names)?,
+        AnyPagedImage::Complex32(image) => image.set_stokes_types(axis, &names)?,
+        AnyPagedImage::Complex64(image) => image.set_stokes_types(axis, &names)?,
+    };
+    image.save()?;
+    drop(image);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::_setCoordinateValue",
+        &[format!(
+            "Modified {key} from [{}] to {rendered}",
+            old.join(", ")
+        )],
     )?;
     imhead(path)
 }

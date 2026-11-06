@@ -85,6 +85,85 @@ fn scale_axis_field(
 }
 
 impl CoordinateSystem {
+    /// Replace the Stokes coordinate on a pixel axis, preserving axis maps.
+    ///
+    /// Returns the previous Stokes names. Unsupported names and multiple
+    /// polarization coordinates are refused (#977).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid axis, count, Stokes name, or record.
+    pub fn set_stokes_types_in_record(
+        record: &mut RecordValue,
+        pixel_axis: usize,
+        names: &[String],
+    ) -> Result<(Self, Vec<String>), CoordinateError> {
+        let coordinates = Self::record_coordinates(record)?;
+        if coordinates
+            .iter()
+            .filter(|coordinate| coordinate.field.starts_with("stokes"))
+            .count()
+            > 1
+        {
+            return Err(CoordinateError::InvalidRecord(
+                "multiple polarization coordinates are unsupported (#977)".into(),
+            ));
+        }
+        let coordinate = coordinates
+            .iter()
+            .find(|coordinate| coordinate.pixel_axes.contains(&Some(pixel_axis)))
+            .ok_or_else(|| CoordinateError::InvalidRecord("invalid pixel axis".into()))?;
+        if !coordinate.field.starts_with("stokes") {
+            return Err(CoordinateError::InvalidRecord(
+                "axis is not a polarization coordinate".into(),
+            ));
+        }
+        let Some(Value::Record(stored)) = record.get(&coordinate.field) else {
+            return Err(CoordinateError::InvalidRecord(
+                "missing polarization record".into(),
+            ));
+        };
+        let old = crate::StokesCoordinate::from_record(stored)?;
+        if names.len() != old.n_stokes() {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "expected {} polarization values",
+                old.n_stokes()
+            )));
+        }
+        let types = names
+            .iter()
+            .map(|name| {
+                crate::StokesType::from_name(name).ok_or_else(|| {
+                    CoordinateError::InvalidRecord(format!(
+                        "unsupported polarization value {name:?} (#977)"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if types
+            .iter()
+            .enumerate()
+            .any(|(index, value)| types[..index].contains(value))
+        {
+            return Err(CoordinateError::InvalidRecord(
+                "polarization values must be unique".into(),
+            ));
+        }
+        let old_names = old
+            .stokes()
+            .iter()
+            .map(|value| value.name().to_string())
+            .collect();
+        let mut updated = record.clone();
+        updated.upsert(
+            &coordinate.field,
+            Value::Record(crate::StokesCoordinate::new(types).to_record()),
+        );
+        let system = Self::from_record(&updated)?;
+        *record = updated;
+        Ok((system, old_names))
+    }
+
     /// Change the first direction coordinate's projection, preserving axis maps.
     ///
     /// Returns the old projection when it changed. Zenithal projections with
