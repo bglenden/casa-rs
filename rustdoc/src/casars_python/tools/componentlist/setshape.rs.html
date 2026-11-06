@@ -156,7 +156,7 @@
 <a href=#156 id=156 data-nosnippet>156</a>}
 <a href=#157 id=157 data-nosnippet>157</a>
 <a href=#158 id=158 data-nosnippet>158</a><span class="doccomment">/// CASA converts, then ignores, this double vector; cycles crash the binding.
-<a href=#159 id=159 data-nosnippet>159</a></span><span class="kw">fn </span>optional_pending(value: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;) -&gt; PyResult&lt;bool&gt; {
+<a href=#159 id=159 data-nosnippet>159</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>optional_pending(value: <span class="kw-2">&amp;</span>Bound&lt;<span class="lifetime">'_</span>, PyAny&gt;) -&gt; PyResult&lt;bool&gt; {
 <a href=#160 id=160 data-nosnippet>160</a>    <span class="kw">let </span>ndarray = value.py().import(<span class="string">"numpy"</span>)<span class="question-mark">?</span>.getattr(<span class="string">"ndarray"</span>)<span class="question-mark">?</span>;
 <a href=#161 id=161 data-nosnippet>161</a>    <span class="kw">if </span>value.is_instance(<span class="kw-2">&amp;</span>ndarray)<span class="question-mark">? </span>{
 <a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
@@ -185,7 +185,7 @@
 <a href=#185 id=185 data-nosnippet>185</a>            <span class="kw">let </span>identity = object.as_ptr() <span class="kw">as </span>usize;
 <a href=#186 id=186 data-nosnippet>186</a>            <span class="kw">if </span>!active.insert(identity) {
 <a href=#187 id=187 data-nosnippet>187</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(PyValueError::new_err(
-<a href=#188 id=188 data-nosnippet>188</a>                    <span class="string">"cyclic optional shape parameters (CASA crash: #1053)"</span>,
+<a href=#188 id=188 data-nosnippet>188</a>                    <span class="string">"cyclic component double-vector argument (CASA crash: #1053)"</span>,
 <a href=#189 id=189 data-nosnippet>189</a>                ));
 <a href=#190 id=190 data-nosnippet>190</a>            }
 <a href=#191 id=191 data-nosnippet>191</a>            <span class="kw">let </span>items = object.try_iter()<span class="question-mark">?</span>.collect::&lt;PyResult&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?</span>;
