@@ -19,6 +19,8 @@ def main():
     spectral['restfreq'] = 0.0; spectral['restfreqs'] = np.array([0.0])
     tb.putkeyword('coords', coords); tb.close()
     for lock in zero.rglob('table.lock'): lock.unlink()
+    for info in zero.rglob('table.info'):
+        info.write_text('\n'.join(line.rstrip() for line in info.read_text().splitlines()).rstrip() + '\n')
     cases = [('restfreq_zero', 'restfreq', '1.2GHz'),
              ('restfreq_zero', 'RESTFREQ', {'unit': 'MHz', 'value': 1500.0}),
              ('restfreq_zero', 'restfreq', '0Hz'),
