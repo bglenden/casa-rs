@@ -467,14 +467,38 @@ impl PyComponentList {
         self.call(py, |state, _| state.done().map(CasaValue::Bool))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns false without editing.
     #[pyo3(signature = (which, log = None), text_signature = "($self, which, log=True)")]
     fn edit(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        log: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("edit")
+        let index = which.extract::<i64>();
+        let system_error = which.is_none()
+            || index
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.is_instance_of::<PyOverflowError>(py));
+        if index.is_err() && !system_error {
+            return Err(PyTypeError::new_err("argument _which must be an integer"));
+        }
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_edit', argument 3 of type 'bool'",
+            ));
+        }
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning("edit  not implemented yet"));
+            Ok(CasaValue::Bool(false))
+        })?;
+        if system_error {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_edit> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Not yet implemented in casa-rs.
