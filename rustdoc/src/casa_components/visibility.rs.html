@@ -68,7 +68,7 @@
 <a href=#68 id=68 data-nosnippet>68</a>
 <a href=#69 id=69 data-nosnippet>69</a><span class="doccomment">/// `values` in `from`'s representation, as complex Stokes I, Q, U and V
 <a href=#70 id=70 data-nosnippet>70</a>/// (`Flux::linearToStokes`, `Flux::circularToStokes`).
-<a href=#71 id=71 data-nosnippet>71</a></span><span class="kw">fn </span>to_stokes(values: [Complex64; <span class="number">4</span>], from: Polarisation) -&gt; [Complex64; <span class="number">4</span>] {
+<a href=#71 id=71 data-nosnippet>71</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>to_stokes(values: [Complex64; <span class="number">4</span>], from: Polarisation) -&gt; [Complex64; <span class="number">4</span>] {
 <a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">let </span>[a, b, c, d] = values;
 <a href=#73 id=73 data-nosnippet>73</a>    <span class="kw">match </span>from {
 <a href=#74 id=74 data-nosnippet>74</a>        Polarisation::Stokes =&gt; values,

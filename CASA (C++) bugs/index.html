@@ -4843,6 +4843,18 @@ after appending some wrong rows; casa-rs appends every valid requested row.
 CASA also appends components before raising <code>SystemError</code> when
 the index-vector conversion leaves a Python exception pending (for example
 <code>which=None</code>); casa-rs reports the error without modifying the destination.</p>
+<h2 id="unsafe-component-flux-polarisation-conversion">Unsafe component flux-polarisation conversion<a class="headerlink" href="#unsafe-component-flux-polarisation-conversion" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-06</li>
+<li>Status: CASA crashes on an empty list and mutates values before reporting failed index conversion; casa-rs rejects both inputs without mutation (#1053).</li>
+<li>Owner decision: Correct CASA crashes and data corruption as classes; see <code>docs/simulation/owner-decisions-20261105.md</code>.</li>
+<li>Evidence: <code>tools/simulation/componentlist_convertfluxpol_oracle.py</code> and its CASA 6.7.6-14 fixture; the crash probe runs in an isolated process with core dumps disabled.</li>
+</ul>
+<p><code>cl.convertfluxpol(-1, 'Linear')</code> on an empty list terminates CASA with
+SIGSEGV. With components present, passing <code>None</code> or an integer too large for
+the Python binding as the index raises <code>SystemError</code> after changing every
+component's flux representation. casa-rs raises catchable errors and leaves
+all component values unchanged.</p>
 
 
 
