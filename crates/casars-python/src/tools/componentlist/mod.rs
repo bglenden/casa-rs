@@ -29,6 +29,7 @@ mod ops;
 mod placeholder;
 mod replace_args;
 mod selection;
+mod setflux;
 mod setrefdir_args;
 pub(crate) mod surface;
 
@@ -1029,7 +1030,7 @@ impl PyComponentList {
         self.call(py, |state, _| Ok(state.selected()))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Set the flux and errors of one or all components.
     #[pyo3(
         signature = (which, value = None, unit = None, polarization = None, error = None, log = None),
         text_signature = "($self, which, value=[], unit='Jy', polarization='Stokes', error=[], log=True)"
@@ -1037,14 +1038,67 @@ impl PyComponentList {
     #[allow(clippy::too_many_arguments)]
     fn setflux(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        value: Option<&Bound<'_, PyAny>>,
-        unit: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-        error: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] value: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] unit: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] polarization: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] error: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("setflux")
+        let (which, index_pending) = match which.extract::<i64>() {
+            Ok(index) => (i64::from(index as i32), false),
+            Err(err) if which.is_none() || err.is_instance_of::<PyOverflowError>(py) => (-1, true),
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let (value, value_pending) = setflux::argument(value)?;
+        let string =
+            |arg: Option<Bound<'_, PyAny>>, default: &str, name: &str| -> PyResult<String> {
+                let text: String = match arg {
+                    None => default.to_string(),
+                    Some(v) if v.is_instance_of::<PyString>() => v.extract()?,
+                    Some(v) if v.is_instance_of::<PyBytes>() => {
+                        let bytes = v.cast::<PyBytes>()?.as_bytes();
+                        let end = bytes
+                            .iter()
+                            .position(|&byte| byte == 0)
+                            .unwrap_or(bytes.len());
+                        PyBytes::new(py, &bytes[..end])
+                            .call_method1("decode", ("utf-8",))?
+                            .extract()?
+                    }
+                    Some(_) => {
+                        return Err(PyTypeError::new_err(format!(
+                            "argument _{name} must be a string"
+                        )));
+                    }
+                };
+                Ok(text.split('\0').next().unwrap_or_default().to_string())
+            };
+        let unit = string(unit, "Jy", "unit")?;
+        let polarization = string(polarization, "Stokes", "polarization")?;
+        let (error, error_pending) = setflux::argument(error)?;
+        if log.is_some_and(|v| !v.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_setflux', argument 7 of type 'bool'",
+            ));
+        }
+        let pending = index_pending || value_pending || error_pending;
+        let result = self.call(py, move |state, lines| {
+            let flux =
+                setflux::prepare(&value, &unit, &polarization, &error).inspect_err(|err| {
+                    lines.push(LogLine::error(err.to_string()));
+                })?;
+            state
+                .setflux(which, flux, pending, lines)
+                .map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_setflux> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Change a component's reference frequency and its record unit.

@@ -1,0 +1,3041 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "args": [
+        0
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        2
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        [
+          1,
+          2,
+          3,
+          4
+        ]
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            1.0,
+            2.0,
+            3.0,
+            4.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        -1,
+        [
+          1,
+          2,
+          3,
+          4
+        ]
+      ],
+      "kwargs": {
+        "unit": "mJy",
+        "error": [
+          0.1,
+          0.2,
+          0.3,
+          0.4
+        ]
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            1.0,
+            2.0,
+            3.0,
+            4.0
+          ],
+          "error": [
+            0.1,
+            0.2,
+            0.3,
+            0.4
+          ],
+          "unit": "mJy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            1.0,
+            2.0,
+            3.0,
+            4.0
+          ],
+          "error": [
+            0.1,
+            0.2,
+            0.3,
+            0.4
+          ],
+          "unit": "mJy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        1,
+        [
+          5,
+          6,
+          7,
+          8
+        ]
+      ],
+      "kwargs": {
+        "polarization": "Linear"
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            5.0,
+            6.0,
+            7.0,
+            8.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        [
+          1,
+          2,
+          3,
+          4
+        ]
+      ],
+      "kwargs": {
+        "polarization": "Circular"
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            1.0,
+            2.0,
+            3.0,
+            4.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        [
+          0.1,
+          0.2,
+          0.3,
+          0.4
+        ]
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            0.10000000149011612,
+            0.20000000298023224,
+            0.30000001192092896,
+            0.4000000059604645
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        []
+      ],
+      "kwargs": {
+        "error": []
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        []
+      ],
+      "kwargs": {
+        "error": null
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        [
+          1,
+          2
+        ]
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "The flux must have one or four elements"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        [
+          1,
+          2
+        ]
+      ],
+      "kwargs": {
+        "error": [
+          1
+        ]
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error array must have same length as value array"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        2
+      ],
+      "kwargs": {
+        "polarization": "Linear"
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "The flux must have one or four elements"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        2
+      ],
+      "kwargs": {
+        "polarization": "bad"
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unknown polarization."
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        2
+      ],
+      "kwargs": {
+        "unit": "m"
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "The flux units must have the same dimensions"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        2
+      ],
+      "kwargs": {
+        "unit": "bad!!"
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "unit"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        "bad"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Could not understand the type"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        true
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Could not understand the type"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        {
+          "value": 1
+        }
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Could not understand the type"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        [
+          1,
+          2,
+          3,
+          4
+        ]
+      ],
+      "kwargs": {
+        "error": [
+          1
+        ]
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error array must have same length as value array"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        [
+          1,
+          2,
+          3,
+          4
+        ]
+      ],
+      "kwargs": {
+        "error": "ignored"
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            1.0,
+            2.0,
+            3.0,
+            4.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        [
+          1,
+          2,
+          3,
+          4
+        ]
+      ],
+      "kwargs": {
+        "error": true
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            1.0,
+            2.0,
+            3.0,
+            4.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        2,
+        2
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Index out of range."
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        -2,
+        2
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Index out of range."
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        2,
+        2
+      ],
+      "kwargs": {
+        "unit": "m"
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "The flux units must have the same dimensions"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        null,
+        2
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_setflux> returned a result with an exception set"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        1267650600228229401496703205376,
+        2
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_setflux> returned a result with an exception set"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        4294967296,
+        2
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        2
+      ],
+      "kwargs": {
+        "unit": null
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        2
+      ],
+      "kwargs": {
+        "polarization": null
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _polarization must be a string"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        2
+      ],
+      "kwargs": {
+        "log": null
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_setflux', argument 7 of type 'bool'"
+      },
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "args": [
+        0,
+        2
+      ],
+      "kwargs": {
+        "log": false
+      },
+      "before": [
+        {
+          "label": "first",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        },
+        {
+          "label": "second",
+          "value": [
+            8.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    }
+  ],
+  "array_cases": [
+    {
+      "case": "float32",
+      "result": true,
+      "after": [
+        {
+          "label": "",
+          "value": [
+            1.0,
+            2.0,
+            3.0,
+            4.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "int32",
+      "result": true,
+      "after": [
+        {
+          "label": "",
+          "value": [
+            1.0,
+            2.0,
+            3.0,
+            4.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "matrix",
+      "result": true,
+      "after": [
+        {
+          "label": "",
+          "value": [
+            1.0,
+            3.0,
+            2.0,
+            4.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "scalar_array",
+      "result": true,
+      "after": [
+        {
+          "label": "",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "float32_scalar",
+      "result": true,
+      "after": [
+        {
+          "label": "",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "empty",
+      "result": true,
+      "after": [
+        {
+          "label": "",
+          "value": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "complex64",
+      "result": true,
+      "after": [
+        {
+          "label": "",
+          "value": [
+            1.0,
+            2.0,
+            3.0,
+            4.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "matrix_error",
+      "result": true,
+      "after": [
+        {
+          "label": "",
+          "value": [
+            1.0,
+            3.0,
+            2.0,
+            4.0
+          ],
+          "error": [
+            0.1,
+            0.3,
+            0.2,
+            0.4
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "empty_error",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Error array must have same length as value array"
+      },
+      "after": [
+        {
+          "label": "",
+          "value": [
+            9.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "empty_matrix",
+      "result": true,
+      "after": [
+        {
+          "label": "",
+          "value": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "complex_matrix",
+      "result": true,
+      "after": [
+        {
+          "label": "",
+          "value": [
+            1.0,
+            3.0,
+            2.0,
+            4.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "complex_scalar_array",
+      "result": true,
+      "after": [
+        {
+          "label": "",
+          "value": [
+            2.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    }
+  ],
+  "complex_cases": [
+    {
+      "case": "{'value':1+2j}",
+      "after": [
+        {
+          "label": "",
+          "value": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "{'value':[1+2j,2,3,4]}",
+      "after": [
+        {
+          "label": "",
+          "value": [
+            1.0,
+            2.0,
+            3.0,
+            4.0
+          ],
+          "error": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    },
+    {
+      "case": "{'value':[1,2,3,4],'error':[1+2j,3+4j,5+6j,7+8j]}",
+      "after": [
+        {
+          "label": "",
+          "value": [
+            1.0,
+            2.0,
+            3.0,
+            4.0
+          ],
+          "error": [
+            1.0,
+            3.0,
+            5.0,
+            7.0
+          ],
+          "unit": "Jy",
+          "pol": "Stokes"
+        }
+      ]
+    }
+  ],
+  "special": [
+    {
+      "case": "nan",
+      "result": true,
+      "stored_nan": true,
+      "stored_inf": false
+    },
+    {
+      "case": "inf",
+      "result": true,
+      "stored_nan": false,
+      "stored_inf": true
+    },
+    {
+      "case": "large_finite",
+      "result": true,
+      "stored_nan": false,
+      "stored_inf": true
+    }
+  ],
+  "crashes": {
+    "scalar_error": -6,
+    "empty_all": -11
+  },
+  "persisted": [
+    {
+      "label": "first",
+      "value": [
+        9.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "error": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "unit": "Jy",
+      "pol": "Stokes"
+    },
+    {
+      "label": "second",
+      "value": [
+        1.0,
+        2.0,
+        3.0,
+        4.0
+      ],
+      "error": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ],
+      "unit": "mJy",
+      "pol": "Stokes"
+    }
+  ]
+}

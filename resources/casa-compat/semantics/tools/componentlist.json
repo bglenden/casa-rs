@@ -404,12 +404,12 @@
    ]
   },
   "setflux": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Sets scalar or four-component Stokes flux and errors for one or all components, including NumPy arrays in column-major order. Preserves finite double precision and a singleton error; rejects non-finite values, nonzero imaginary parts, and unsafe index conversions before mutation.",
    "evidence": [
     "signature",
-    "refusals"
+    "setflux-casa"
    ]
   },
   "setfreq": {
@@ -1066,6 +1066,20 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "a297aeb7133d596b7f7f7f60127d545f51329318"
+  },
+  "setflux-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "31 CASA 6.7.6-14 argument cases, 12 NumPy cases, three complex-loss cases, three non-finite/overflow cases and two isolated crash probes cover flux assignment. CASA reads a casa-rs-updated table with array values, errors, keyword and unrelated direction errors intact.",
+   "scope": "componentlist.setflux values, errors and table persistence.",
+   "links": [
+    "tools/simulation/componentlist_setflux_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setflux.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setflux.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_setflux.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "c7812db83679f9c49e5397540c331895da3aa89d"
   }
  }
 }

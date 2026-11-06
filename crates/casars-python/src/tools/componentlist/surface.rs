@@ -232,19 +232,22 @@ const METHODS: &[Method] = &[
     ),
     method("select", &[param("which", K::Ints, Required)], R::Bool, Yes),
     method("selected", &[], R::Ints, Yes),
-    method(
-        "setflux",
-        &[
-            WHICH,
-            param("value", K::Any, Empty),
-            param("unit", K::Text, Text("Jy")),
-            param("polarization", K::Text, Text("Stokes")),
-            param("error", K::Any, Empty),
-            LOG,
-        ],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "setflux",
+            &[
+                WHICH,
+                param("value", K::Any, Empty),
+                param("unit", K::Text, Text("Jy")),
+                param("polarization", K::Text, Text("Stokes")),
+                param("error", K::Any, Empty),
+                LOG,
+            ],
+            R::Bool,
+            Yes,
+        )
+    },
     method(
         "setfreq",
         &[
