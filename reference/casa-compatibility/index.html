@@ -2285,6 +2285,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#keyword-reads-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        keyword-reads-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6184,6 +6195,17 @@
     <span class="md-ellipsis">
       
         undefined-frequency-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keyword-reads-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        keyword-reads-casa
       
     </span>
   </a>
@@ -10618,9 +10640,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">40</td>
+<td style="text-align: right;">42</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">21</td>
+<td style="text-align: right;">19</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10738,7 +10760,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 40, Partial: 0, Not implemented: 21, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 42, Partial: 0, Not implemented: 19, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -10914,9 +10936,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>getkeyword</code></td>
 <td><code>keyword='metadata'</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented (#1053)</td>
+<td>Reads a table keyword from the attached component list, including dotted paths through nested records; preserves CASA scalar and array result types.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-keyword-reads-casa">keyword-reads-casa</a></td>
 </tr>
 <tr>
 <td><code>getlabel</code></td>
@@ -10970,9 +10992,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>haskeyword</code></td>
 <td><code>keyword='metadata'</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented (#1053)</td>
+<td>Tests whether the attached component list has a literal top-level table keyword; dotted names are not traversed.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-keyword-reads-casa">keyword-reads-casa</a></td>
 </tr>
 <tr>
 <td><code>indices</code></td>
@@ -11473,6 +11495,15 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/test_undefined_frequency.py">crates/casars-python/python/tests/test_undefined_frequency.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs">crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-imager/tests/t1/virtual_model.rs">crates/casars-imager/tests/t1/virtual_model.rs</a></li>
+</ul>
+<p><a id="componentlist-evidence-keyword-reads-casa"></a></p>
+<h5 id="keyword-reads-casa">keyword-reads-casa<a class="headerlink" href="#keyword-reads-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 32 CASA 6.7.6-14 keyword read cases cover defaults, detached tools, missing and dotted names, nested records, typed arrays, read-only tables and argument errors; a CASA-created table exercises persistence and cross-tool updates. componentlist.getkeyword and haskeyword.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/5d69a948650dd925073d14348b2790c67ca470d5/tools/casa-compat/componentlist_keyword_read_oracle.py">tools/casa-compat/componentlist_keyword_read_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/5d69a948650dd925073d14348b2790c67ca470d5/crates/casars-python/python/tests/data/casa_componentlist_keyword_read.json">crates/casars-python/python/tests/data/casa_componentlist_keyword_read.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/5d69a948650dd925073d14348b2790c67ca470d5/crates/casars-python/python/tests/data/casa_componentlist_keyword_read.cl.tgz">crates/casars-python/python/tests/data/casa_componentlist_keyword_read.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/5d69a948650dd925073d14348b2790c67ca470d5/crates/casars-python/python/tests/test_componentlist_keyword_read.py">crates/casars-python/python/tests/test_componentlist_keyword_read.py</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>

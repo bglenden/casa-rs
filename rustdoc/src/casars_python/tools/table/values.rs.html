@@ -59,7 +59,7 @@
 <a href=#59 id=59 data-nosnippet>59</a>
 <a href=#60 id=60 data-nosnippet>60</a><span class="doccomment">/// A cell or keyword value; `owner` is the table directory a table keyword
 <a href=#61 id=61 data-nosnippet>61</a>/// is relative to.
-<a href=#62 id=62 data-nosnippet>62</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>value(value: <span class="kw-2">&amp;</span>Value, owner: <span class="kw-2">&amp;</span>Path) -&gt; CasaValue {
+<a href=#62 id=62 data-nosnippet>62</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>value(value: <span class="kw-2">&amp;</span>Value, owner: <span class="kw-2">&amp;</span>Path) -&gt; CasaValue {
 <a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">match </span>value {
 <a href=#64 id=64 data-nosnippet>64</a>        Value::Scalar(scalar) =&gt; CasaValue::from_scalar(scalar),
 <a href=#65 id=65 data-nosnippet>65</a>        Value::Array(cells) =&gt; array(cells),
