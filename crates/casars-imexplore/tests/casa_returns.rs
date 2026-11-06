@@ -964,6 +964,9 @@ mod imhead_projection_edits;
 #[path = "casa_returns/imhead_custom_arrays.rs"]
 mod imhead_custom_arrays;
 
+#[path = "casa_returns/imhead_custom_records.rs"]
+mod imhead_custom_records;
+
 #[path = "casa_returns/imhead_mutations.rs"]
 mod imhead_mutations;
 

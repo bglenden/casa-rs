@@ -1864,6 +1864,8 @@ pub fn imhead_custom_value(
                 value: i64::from(*value),
             }),
             Value::Scalar(ScalarValue::Float64(value)) => Ok(CasaValue::float(*value)),
+            Value::Record(_) => casa_provider_contracts::casacore_value_to_casa(value)
+                .map_err(|error| ImageError::InvalidMetadata(error.into())),
             Value::Scalar(ScalarValue::Bool(_)) => Err(ImageError::InvalidMetadata(
                 "Unhandled data type Bool for user defined type. Send us a bug report".into(),
             )),
@@ -1915,7 +1917,7 @@ pub fn imhead_custom_scalar(
     imhead_custom_value_change(path, mode, key, value)
 }
 
-/// Write or remove user-defined scalar and one-dimensional array metadata.
+/// Write or remove user-defined scalar, record, and flat-array metadata.
 ///
 /// `mode` is `"add"`, `"put"`, or `"del"`. Adds refuse an existing field;
 /// puts preserve its existing type. Values may be strings, booleans, 32-bit
@@ -1973,6 +1975,15 @@ pub fn imhead_custom_value_change(
                 let rendered = custom_values::format_array(&array);
                 (Value::Array(array), rendered)
             }
+            ParameterValue::Table(_) => {
+                let stored = casa_provider_contracts::parameter_value_to_casacore(value)
+                    .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
+                let Value::Record(record) = &stored else {
+                    unreachable!()
+                };
+                let rendered = custom_values::format_record(record);
+                (stored, rendered)
+            }
             _ => {
                 return Err(ImageError::InvalidMetadata(
                     "This user-defined value type is not implemented (#977)".into(),
@@ -2011,7 +2022,7 @@ pub fn imhead_custom_value_change(
             }
             _ => {
                 if info.get(key).is_some_and(|old| {
-                    old.type_tag().is_none() || old.type_tag() != value.type_tag()
+                    old.kind() != value.kind() || old.type_tag() != value.type_tag()
                 }) {
                     return Err(ImageError::InvalidMetadata(format!(
                         "incorrect data type used for field {key}"

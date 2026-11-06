@@ -535,7 +535,7 @@
     },
     {
       "id": "imhead.mode",
-      "semantic_revision": 16,
+      "semantic_revision": 17,
       "casa_name": "mode",
       "value_domain": {
         "kind": "choice",
@@ -557,7 +557,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Header operation mode.",
-        "details": "get supports standard image, coordinate, spectral, beam, date and extrema metadata. put supports standard zenithal projection changes with one direction coordinate and no direction conversion, observation dates (except extreme or non-finite values), single restoring-beam components, spectral reference frames, rest-frequency quantities, non-polarization axis increments and reference values (except tabular and non-zenithal reference-value cases), reference pixels (except tabular coordinates), axis names and units (except tabular and non-Hz spectral units, and unsupported unit spellings), and string-valued brightness unit, image type, object, observer and telescope. add supports a missing beam axis or rest frequency and del removes all restoring beams; both also support brightness unit, object, observer and telescope. history replays the image log, using the configured logging sinks or the default task output. User-defined keys support string, boolean, 32-bit integer, floating-point, and flat homogeneous-string or numeric-array writes, and string, integer, and floating-point reads; other values and operations are unimplemented (#977).",
+        "details": "get supports standard image, coordinate, spectral, beam, date and extrema metadata. put supports standard zenithal projection changes with one direction coordinate and no direction conversion, observation dates (except extreme or non-finite values), single restoring-beam components, spectral reference frames, rest-frequency quantities, non-polarization axis increments and reference values (except tabular and non-zenithal reference-value cases), reference pixels (except tabular coordinates), axis names and units (except tabular and non-Hz spectral units, and unsupported unit spellings), and string-valued brightness unit, image type, object, observer and telescope. add supports a missing beam axis or rest frequency and del removes all restoring beams; both also support brightness unit, object, observer and telescope. history replays the image log, using the configured logging sinks or the default task output. User-defined keys support string, boolean, 32-bit integer, floating-point, flat homogeneous-string or numeric-array, and nested record writes with supported field types, and string, integer, floating-point, and supported record reads; other values and operations are unimplemented (#977).",
         "examples": [
           "summary"
         ]

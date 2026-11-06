@@ -38,7 +38,9 @@ pub use semantic::{
     ObjectSemanticContract, ObjectTypeContract, ProviderSurfaceKind, TaskOperationDescriptor,
     TaskSemanticContract,
 };
-pub use value_conversion::parameter_array_to_casa;
+pub use value_conversion::{
+    casacore_value_to_casa, parameter_array_to_casa, parameter_value_to_casacore,
+};
 
 #[cfg(test)]
 mod tests;

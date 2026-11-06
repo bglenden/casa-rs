@@ -248,6 +248,29 @@ def test_imhead_custom_array_from_python(image: Path) -> None:
     assert tasks.imhead(str(image), mode="del", hdkey="values", hdvalue=[1, 2]) is None
 
 
+def test_imhead_custom_records_from_python(image: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    value = {"nested": {"values": [1, 2], "label": "test"}}
+    assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue=value) is None
+    nested = tasks.imhead(str(image), mode="get", hdkey="custom")["nested"]
+    assert nested["label"] == "test"
+    np.testing.assert_array_equal(nested["values"], np.array([1, 2], dtype=np.int64))
+
+
+def test_imhead_casa_record_multidimensional_arrays(tmp_path: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/custom_record.im"
+    image = tmp_path / "record.im"
+    shutil.copytree(fixture, image)
+    record = tasks.imhead(str(image), mode="get", hdkey="custom")
+    np.testing.assert_array_equal(record["matrix"], [[1, 2, 3], [4, 5, 6]])
+    np.testing.assert_array_equal(record["complex"], [[1 + 2j, 3 + 4j], [5 + 6j, 7 + 8j]])
+
+
 def test_imhead_put_accepts_rest_frequency_quantity_record(tmp_path: Path) -> None:
     require_executables("imhead")
     fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"

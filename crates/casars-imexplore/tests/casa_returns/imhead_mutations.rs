@@ -863,7 +863,7 @@ fn imhead_refuses_unimplemented_variants_without_mutating_metadata() {
     for value in [
         json!(1_i64 << 40),
         json!([[1, 2], [3, 4]]),
-        json!({"unit": "Hz", "value": 1.5}),
+        json!({"nested": [[1, 2], [3, 4]]}),
     ] {
         let (_, reply) = json_run(
             workspace.path(),

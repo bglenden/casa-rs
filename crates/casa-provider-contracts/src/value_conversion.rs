@@ -1,9 +1,165 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Conversions between parameter values and casacore's typed values.
 
-use casa_types::ArrayValue;
+use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
-use crate::ParameterValue;
+use crate::{CasaFloat, CasaValue, ComplexDtype, FloatDtype, IntDtype, ParameterValue};
+
+/// Convert parameter data to casacore metadata values, including records.
+///
+/// Record keys use the parameter model's sorted order. Flat array conversion
+/// follows [`parameter_array_to_casa`].
+///
+/// # Errors
+///
+/// Returns an error for unsupported values, integer overflow, or nesting
+/// beyond 32 records (#977).
+pub fn parameter_value_to_casacore(value: &ParameterValue) -> Result<Value, &'static str> {
+    fn convert(value: &ParameterValue, depth: usize) -> Result<Value, &'static str> {
+        if depth > 32 {
+            return Err("record nesting is too deep (#977)");
+        }
+        Ok(match value {
+            ParameterValue::Bool(value) => Value::Scalar(ScalarValue::Bool(*value)),
+            ParameterValue::Integer(value) => Value::Scalar(ScalarValue::Int32(
+                i32::try_from(*value).map_err(|_| "record integer is out of range (#977)")?,
+            )),
+            ParameterValue::Float(value) if value.is_finite() => {
+                Value::Scalar(ScalarValue::Float64(*value))
+            }
+            ParameterValue::String(value) if !value.contains('\0') => {
+                Value::Scalar(ScalarValue::String(value.clone()))
+            }
+            ParameterValue::Array(values) => Value::Array(parameter_array_to_casa(values)?),
+            ParameterValue::Table(fields) => Value::Record(RecordValue::new(
+                fields
+                    .iter()
+                    .map(|(key, value)| {
+                        if key.contains('\0') {
+                            return Err("record field contains NUL (#977)");
+                        }
+                        Ok(RecordField::new(key, convert(value, depth + 1)?))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            _ => return Err("record value is unsupported (#977)"),
+        })
+    }
+    convert(value, 0)
+}
+
+/// Convert supported casacore metadata values to CASA task return values.
+///
+/// # Errors
+///
+/// Returns an error for unsupported stored types or nesting beyond 32 records.
+pub fn casacore_value_to_casa(value: &Value) -> Result<CasaValue, &'static str> {
+    fn convert(value: &Value, depth: usize) -> Result<CasaValue, &'static str> {
+        if depth > 32 {
+            return Err("record nesting is too deep (#977)");
+        }
+        Ok(match value {
+            Value::Scalar(ScalarValue::Bool(value)) => CasaValue::Bool { value: *value },
+            Value::Scalar(ScalarValue::UInt8(value)) => CasaValue::Int {
+                value: i64::from(*value),
+            },
+            Value::Scalar(ScalarValue::UInt32(value)) => CasaValue::Int {
+                value: i64::from(*value),
+            },
+            Value::Scalar(ScalarValue::Int16(value)) => CasaValue::Int {
+                value: i64::from(*value),
+            },
+            Value::Scalar(ScalarValue::Int32(value)) => CasaValue::Int {
+                value: i64::from(*value),
+            },
+            Value::Scalar(ScalarValue::Int64(value)) => CasaValue::Int { value: *value },
+            Value::Scalar(ScalarValue::Float32(value)) => CasaValue::float(f64::from(*value)),
+            Value::Scalar(ScalarValue::Float64(value)) => CasaValue::float(*value),
+            Value::Scalar(ScalarValue::String(value)) => CasaValue::string(value),
+            Value::Array(ArrayValue::Bool(values)) => CasaValue::BoolArray {
+                shape: values.shape().to_vec(),
+                data: values.view().reversed_axes().iter().copied().collect(),
+            },
+            Value::Array(ArrayValue::Int32(values)) => CasaValue::IntArray {
+                dtype: IntDtype::Int64,
+                shape: values.shape().to_vec(),
+                data: values
+                    .view()
+                    .reversed_axes()
+                    .iter()
+                    .copied()
+                    .map(i64::from)
+                    .collect(),
+            },
+            Value::Array(ArrayValue::Int64(values)) => CasaValue::IntArray {
+                dtype: IntDtype::Int64,
+                shape: values.shape().to_vec(),
+                data: values.view().reversed_axes().iter().copied().collect(),
+            },
+            Value::Array(ArrayValue::Float32(values)) => CasaValue::FloatArray {
+                dtype: FloatDtype::Float64,
+                shape: values.shape().to_vec(),
+                data: values
+                    .view()
+                    .reversed_axes()
+                    .iter()
+                    .copied()
+                    .map(f64::from)
+                    .map(CasaFloat)
+                    .collect(),
+            },
+            Value::Array(ArrayValue::Float64(values)) => CasaValue::FloatArray {
+                dtype: FloatDtype::Float64,
+                shape: values.shape().to_vec(),
+                data: values
+                    .view()
+                    .reversed_axes()
+                    .iter()
+                    .copied()
+                    .map(CasaFloat)
+                    .collect(),
+            },
+            Value::Array(ArrayValue::Complex32(values)) => CasaValue::ComplexArray {
+                dtype: ComplexDtype::Complex128,
+                shape: values.shape().to_vec(),
+                data: values
+                    .view()
+                    .reversed_axes()
+                    .iter()
+                    .map(|value| {
+                        [
+                            CasaFloat(f64::from(value.re)),
+                            CasaFloat(f64::from(value.im)),
+                        ]
+                    })
+                    .collect(),
+            },
+            Value::Array(ArrayValue::Complex64(values)) => CasaValue::ComplexArray {
+                dtype: ComplexDtype::Complex128,
+                shape: values.shape().to_vec(),
+                data: values
+                    .view()
+                    .reversed_axes()
+                    .iter()
+                    .map(|value| [CasaFloat(value.re), CasaFloat(value.im)])
+                    .collect(),
+            },
+            Value::Array(ArrayValue::String(values)) => CasaValue::StrArray {
+                shape: values.shape().to_vec(),
+                data: values.view().reversed_axes().iter().cloned().collect(),
+            },
+            Value::Record(record) => CasaValue::dict(
+                record
+                    .fields()
+                    .iter()
+                    .map(|field| Ok((field.name.clone(), convert(&field.value, depth + 1)?)))
+                    .collect::<Result<Vec<_>, &'static str>>()?,
+            ),
+            _ => return Err("stored record value is unsupported (#977)"),
+        })
+    }
+    convert(value, 0)
+}
 
 /// Convert a flat parameter array into a casacore array, using CASA's numeric
 /// promotion from booleans to 32-bit integers to doubles. Empty arrays have
@@ -98,5 +254,47 @@ mod tests {
         );
         assert!(parameter_array_to_casa(&[Integer(i64::MAX)]).is_err());
         assert!(parameter_array_to_casa(&[Integer(1), Text("x".into())]).is_err());
+    }
+
+    #[test]
+    fn record_arrays_use_fortran_order_and_casa_numeric_promotions() {
+        let array = casa_types::ArrayD::from_shape_vec(vec![2, 3], vec![1_i32, 2, 3, 4, 5, 6])
+            .unwrap()
+            .reversed_axes();
+        let value = casacore_value_to_casa(&Value::Array(ArrayValue::Int32(array))).unwrap();
+        assert_eq!(
+            value,
+            CasaValue::IntArray {
+                dtype: IntDtype::Int64,
+                shape: vec![3, 2],
+                data: vec![1, 2, 3, 4, 5, 6]
+            }
+        );
+        let floats = Value::Array(ArrayValue::from_f32_vec(vec![1.25, 2.5]));
+        assert_eq!(
+            casacore_value_to_casa(&floats).unwrap(),
+            CasaValue::FloatArray {
+                dtype: FloatDtype::Float64,
+                shape: vec![2],
+                data: vec![CasaFloat(1.25), CasaFloat(2.5)]
+            }
+        );
+        let complex = Value::Array(ArrayValue::from_complex32_vec(vec![
+            casa_types::Complex32::new(1.5, -2.0),
+        ]));
+        assert_eq!(
+            casacore_value_to_casa(&complex).unwrap(),
+            CasaValue::ComplexArray {
+                dtype: ComplexDtype::Complex128,
+                shape: vec![1],
+                data: vec![[CasaFloat(1.5), CasaFloat(-2.0)]]
+            }
+        );
+        let unsigned = Value::Array(ArrayValue::from_u32_vec(vec![1, 2]));
+        assert!(
+            casacore_value_to_casa(&unsigned)
+                .unwrap_err()
+                .contains("#977")
+        );
     }
 }
