@@ -38,7 +38,7 @@ LOGGER = "casars.tools.measures"
 CASA = casa_signatures("measures")
 
 IMPLEMENTED = {
-    "cometangdiam", "cometdist", "cometname", "comettopo", "comettype", "direction", "dirshow", "doframe", "done", "epoch", "framenow", "frequency", "getref",
+    "cometangdiam", "cometdist", "cometname", "comettopo", "comettype", "direction", "dirshow", "doframe", "done", "epoch", "framenow", "frequency", "getoffset", "getref",
     "gettype", "getvalue", "ismeasure", "linelist", "listcodes", "measure", "observatory", "obslist",
     "posangle", "position", "separation", "show", "source", "sourcelist", "spectralline", "type",
 }
