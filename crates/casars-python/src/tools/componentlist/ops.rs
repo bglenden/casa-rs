@@ -78,7 +78,9 @@ impl State {
             }
         };
         if filename.is_empty() || !Path::new(&filename).join("table.dat").is_file() {
-            return Err(ConvertError::runtime(format!("Cannot read componentlist {filename}")));
+            return Err(ConvertError::runtime(format!(
+                "Cannot read componentlist {filename}"
+            )));
         }
         let source = ComponentList::read_table(&filename)
             .map_err(|_| ConvertError::runtime(format!("Cannot read componentlist {filename}")))?;
