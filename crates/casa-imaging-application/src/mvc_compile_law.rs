@@ -489,10 +489,15 @@ fn mvc_native_run_publishes_both_families() {
 /// Comparing it with the real resident owner isolates the model's charge from
 /// the other projection workspace. It is not used for a live memory bound.
 #[derive(Debug)]
-struct UnchargedModelFactory;
+struct UnchargedModelFactory {
+    cancel_on_last_write: Option<Cancel>,
+}
 
 #[derive(Debug)]
-struct UnchargedModel(Vec<casa_imaging_model::ModelSample>);
+struct UnchargedModel {
+    samples: Vec<casa_imaging_model::ModelSample>,
+    cancel_on_last_write: Option<Cancel>,
+}
 
 impl casa_imaging_deconvolution::ModelStorageFactory for UnchargedModelFactory {
     fn create(
@@ -505,20 +510,23 @@ impl casa_imaging_deconvolution::ModelStorageFactory for UnchargedModelFactory {
         let zero = casa_imaging_model::ModelSample::valid(
             casa_imaging_model::ModelValue::new(0.0).unwrap(),
         );
-        Ok(Box::new(UnchargedModel(vec![zero; count])))
+        Ok(Box::new(UnchargedModel {
+            samples: vec![zero; count],
+            cancel_on_last_write: self.cancel_on_last_write.clone(),
+        }))
     }
 }
 
 impl casa_imaging_deconvolution::ModelSampleStorage for UnchargedModel {
     fn sample_count(&self) -> usize {
-        self.0.len()
+        self.samples.len()
     }
     fn read(
         &self,
         start: usize,
         out: &mut [casa_imaging_model::ModelSample],
     ) -> Result<(), casa_imaging_deconvolution::ModelLifecycleError> {
-        out.copy_from_slice(&self.0[start..start + out.len()]);
+        out.copy_from_slice(&self.samples[start..start + out.len()]);
         Ok(())
     }
     fn write(
@@ -526,7 +534,12 @@ impl casa_imaging_deconvolution::ModelSampleStorage for UnchargedModel {
         start: usize,
         samples: &[casa_imaging_model::ModelSample],
     ) -> Result<(), casa_imaging_deconvolution::ModelLifecycleError> {
-        self.0[start..start + samples.len()].copy_from_slice(samples);
+        self.samples[start..start + samples.len()].copy_from_slice(samples);
+        if start + samples.len() == self.samples.len()
+            && let Some(cancel) = &self.cancel_on_last_write
+        {
+            cancel.cancel();
+        }
         Ok(())
     }
     fn apply_updates(
@@ -637,7 +650,13 @@ fn mvc_projected_model_uses_each_cube_frequency_and_beam_under_admission() {
     assert!(projected.reservation.memory() >= projected.value.resident_bytes());
     let uncharged_lifecycle = ModelLifecycle::new(
         &cube,
-        ModelStoragePlan::new(std::sync::Arc::new(UnchargedModelFactory), 1 << 16).unwrap(),
+        ModelStoragePlan::new(
+            std::sync::Arc::new(UnchargedModelFactory {
+                cancel_on_last_write: None,
+            }),
+            1 << 16,
+        )
+        .unwrap(),
     );
     let mut uncharged_inputs = projection_inputs();
     uncharged_inputs.cube_lifecycle = &uncharged_lifecycle;
@@ -700,6 +719,23 @@ fn mvc_projected_model_uses_each_cube_frequency_and_beam_under_admission() {
             (&context.host, &tight, &context.cancel)
         ),
         Err(crate::native::NativeError::Admission(_))
+    ));
+    let late_cancel = Cancel::default();
+    let late_lifecycle = ModelLifecycle::new(
+        &cube,
+        ModelStoragePlan::new(
+            std::sync::Arc::new(UnchargedModelFactory {
+                cancel_on_last_write: Some(late_cancel.clone()),
+            }),
+            1 << 16,
+        )
+        .unwrap(),
+    );
+    let mut late_inputs = projection_inputs();
+    late_inputs.cube_lifecycle = &late_lifecycle;
+    assert!(matches!(
+        crate::mvc::project_mvc_model(late_inputs, (&context.host, &context.policy, &late_cancel)),
+        Err(crate::native::NativeError::Cancelled(_))
     ));
     let cancelled = Cancel::default();
     cancelled.cancel();

@@ -386,6 +386,9 @@ pub(crate) fn project_mvc_model(
         let (x, y) = (pixel % shape[0], pixel / shape[0]);
         Ok(output[x * shape[1] + y])
     })?;
+    if cancel.is_cancelled() {
+        return Err(Cancelled.into());
+    }
     Ok(Admitted {
         value: model,
         reservation,
