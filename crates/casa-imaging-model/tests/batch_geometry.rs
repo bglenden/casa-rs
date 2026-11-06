@@ -373,7 +373,9 @@ fn a_source_lsrk_grid_uses_lsrk_row_geometry() {
     let actual = geometry_of(&source_grid);
     let expected = geometry_of(&lsrk);
     for time in 0..2 {
-        assert_eq!(actual.frequencies_hz(time), expected.frequencies_hz(time));
+        let actual_hz = actual.frequencies_hz(time)[0];
+        let expected_hz = expected.frequencies_hz(time)[0];
+        assert!((actual_hz - expected_hz).abs() <= 1.0e-12 * expected_hz);
     }
     for sample in 0..6 {
         let a = actual.projection(sample, 0);

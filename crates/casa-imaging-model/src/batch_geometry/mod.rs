@@ -992,12 +992,13 @@ impl GeometryPlan {
                 .frames
                 .observatory_at(time_mjd_s, scale)
                 .with_direction(direction.clone());
-            return Ok(RowFrequencies::Direct(PreparedFrequencyConversion::new(
+            let lsrk = PreparedFrequencyConversion::new(
                 source,
                 FrequencyRef::LSRK,
                 Some(&frame),
                 Some(&frame),
-            )?));
+            )?;
+            return Ok(RowFrequencies::ThroughLsrk(lsrk.convert_hz(1.0)));
         }
         if let Some(output_in_lsrk) = self.output_in_lsrk
             && source != FrequencyRef::REST
@@ -1046,8 +1047,8 @@ impl GeometryPlan {
 enum RowFrequencies {
     /// Straight to the output frame, hop by hop.
     Direct(PreparedFrequencyConversion),
-    /// To LSRK at the time, then to the output frame by the factor at the
-    /// image's anchor: one factor.
+    /// To LSRK at the time, optionally divided by the output-frame factor
+    /// at the image's anchor: one factor.
     ThroughLsrk(f64),
 }
 
