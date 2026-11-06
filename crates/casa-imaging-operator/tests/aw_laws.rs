@@ -7,6 +7,8 @@
 //! normalisation; and the bounded cache that keeps a held cell alive.
 
 mod common;
+#[path = "aw_laws/pointing_origin.rs"]
+mod pointing_origin;
 
 use casa_imaging_model::{
     EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequestInput, NativeAwTerms,
