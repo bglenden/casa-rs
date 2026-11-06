@@ -957,14 +957,8 @@ impl PyComponentList {
         let result = self.call(py, move |state, lines| {
             state
                 .setfreqframe(which, &frame, lines)
-                .map(|result| match result {
-                    Some(result) => CasaValue::Bool(result),
-                    None => CasaValue::Text("Undefined".to_string()),
-                })
+                .map(CasaValue::Bool)
         })?;
-        if result.bind(py).is_instance_of::<PyString>() {
-            return not_yet_implemented_in("componentlist", "setfreqframe(Undefined)", 1053);
-        }
         if pending {
             return Err(PySystemError::new_err(
                 "<built-in function componentlist_setfreqframe> returned a result with an exception set",

@@ -59,8 +59,13 @@ pub(crate) fn rewrite_component_list(
     };
     // Built first, so that a component CASA could not write is refused
     // before the table is locked or touched.
-    let table = build_table(list, path)?;
+    let mut table = build_table(list, path)?;
     let mut lock = lock_existing(path).map_err(table_error)?;
+    // Read the current keyword record only after acquiring the write lock:
+    // another writer may have updated it since this list was opened. CASA's
+    // writeTable replaces the component rows without dropping those values.
+    let existing = Table::open_metadata_only(TableOptions::new(path)).map_err(table_error)?;
+    *table.keywords_mut() = existing.keywords().clone();
     lock.record_write();
     let saved = save(&table, path, has_limb_darkened_disk(list));
     let released = lock.release();

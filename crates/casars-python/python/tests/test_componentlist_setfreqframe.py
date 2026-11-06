@@ -25,7 +25,6 @@ def test_setfreqframe_matches_casa(case, caplog):
     assert cl.addcomponent(freq="1.4GHz", label="first")
     assert cl.addcomponent(freq="2.25GHz", label="second")
     assert cl.convertfrequnit(0, "MHz")
-    before = [cl.getspectrum(i)["frequency"] for i in range(2)]
     frame = case.get("frame")
     if isinstance(frame, dict):
         frame = frame["bytes"].encode()
@@ -34,13 +33,8 @@ def test_setfreqframe_matches_casa(case, caplog):
         args.append(frame)
     if "log" in case:
         args.append(case["log"])
-    unsupported = frame in ("Undefined", "u") and case["which"] == 0
     with caplog.at_level(logging.ERROR, logger="casars.tools.componentlist"):
-        if unsupported:
-            assert case["result"] is True
-            with pytest.raises(NotImplementedError, match="#1053"):
-                cl.setfreqframe(*args)
-        elif "error" in case:
+        if "error" in case:
             expected = case["error"]
             with pytest.raises({"TypeError": TypeError, "RuntimeError": RuntimeError,
                                 "SystemError": SystemError}[expected["type"]]) as error:
@@ -50,7 +44,7 @@ def test_setfreqframe_matches_casa(case, caplog):
             assert cl.setfreqframe(*args) is case["result"]
             if case["result"] is False:
                 assert "Could not parse the 'frame' string: Frequency frame not changed" in caplog.text
-    for i, expected in enumerate(before if unsupported else case["after"]):
+    for i, expected in enumerate(case["after"]):
         compare_frequency(cl.getspectrum(i)["frequency"], expected)
         compare_frequency(cl.getcomponent(i)["spectrum"]["frequency"], expected)
         compare_frequency(cl.torecord()[f"component{i}"]["spectrum"]["frequency"], expected)

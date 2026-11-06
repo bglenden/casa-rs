@@ -97,6 +97,9 @@ fn a_plan_over_one_input_writes_what_converting_writes() {
     assert_eq!(catalogue(&planned), catalogue(&converted));
 }
 
+#[path = "creation_undefined_frequency.rs"]
+mod undefined_frequency;
+
 /// An input's weight scale multiplies every `WEIGHT`, and `SIGMA` is derived
 /// from the scaled weight: `1/√(W·w)`.
 #[test]

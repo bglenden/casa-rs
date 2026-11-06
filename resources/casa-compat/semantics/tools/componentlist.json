@@ -422,12 +422,13 @@
    ]
   },
   "setfreqframe": {
-   "status": "Partial",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Relabels one component frequency in any of the nine supported frames without converting the frequency value; accepts CASA frame prefixes and preserves the record unit and error. Undefined is refused because the measure model cannot represent it.",
+   "scope": "Relabels one component frequency in any of the nine physical frames or Undefined without converting the value; accepts CASA frame prefixes and preserves the record unit and error.",
    "evidence": [
     "signature",
-    "setfreqframe-casa"
+    "setfreqframe-casa",
+    "undefined-frequency-casa"
    ]
   },
   "setlabel": {
@@ -910,7 +911,7 @@
   "setfreqframe-casa": {
    "kind": "CASA-recorded values",
    "state": "measured",
-   "result": "56 CASA 6.7.6-14 calls compare frame names, prefixes, indices and argument errors; a table case covers frame, frequency and error persistence. Undefined is not yet implemented.",
+   "result": "56 CASA 6.7.6-14 calls compare frame names, prefixes, indices and argument errors; a table case covers frame, frequency and error persistence. At that evidence revision, Undefined was not yet implemented.",
    "scope": "componentlist.setfreqframe.",
    "links": [
     "tools/casa-compat/componentlist_setfreqframe_oracle.py",
@@ -919,6 +920,27 @@
     "crates/casars-python/python/tests/test_componentlist_setfreqframe.py"
    ],
    "source_revision": "b649c4559abd40c025f6ab7f004070a1f39d85a7"
+  },
+  "undefined-frequency-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "CASA 6.7.6-14 records Undefined frequency identity and refusal of cross-frame conversions, component tables with string, explicit, remapped and inferred integer references, invalid table-reference aliases, and MS mappings in which code 64 means LSRK and 9 means Undefined; type-only MS frequency metadata defaults to REST, while an integer reference column with no mapping arrays uses standard codes.",
+   "scope": "Undefined frequency measures, component-list frame updates and table reference mappings.",
+   "links": [
+    "tools/casa-compat/undefined_frequency_oracle.py",
+    "tools/casa-compat/undefined_frequency_ms_oracle.py",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency.json",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz",
+    "crates/casars-python/python/tests/test_undefined_frequency.py",
+    "crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs",
+    "crates/casars-imager/tests/t1/virtual_model.rs"
+   ],
+   "source_revision": "3d64b4397df26f904ab94e7b477acdd5ab2e55e0"
   }
  }
 }

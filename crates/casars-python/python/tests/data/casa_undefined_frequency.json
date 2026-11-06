@@ -1,0 +1,153 @@
+{
+  "casatools": "6.7.6-14",
+  "measures": {
+    "undefined": {
+      "m0": {
+        "unit": "Hz",
+        "value": 1400000000.0
+      },
+      "refer": "Undefined",
+      "type": "frequency"
+    },
+    "same": {
+      "m0": {
+        "unit": "Hz",
+        "value": 1400000000.0
+      },
+      "refer": "Undefined",
+      "type": "frequency"
+    },
+    "to_lsrk": {},
+    "from_lsrk": {}
+  },
+  "table": {
+    "spectrum": {
+      "m0": {
+        "unit": "MHz",
+        "value": 1400.0
+      },
+      "refer": "Undefined",
+      "type": "frequency"
+    },
+    "saved": {
+      "hz": 1400000000.0,
+      "frame": "Undefined",
+      "error": 1.5,
+      "error_unit": "MHz",
+      "raw": {
+        "m0": {
+          "unit": "MHz",
+          "value": 1400.0
+        },
+        "refer": "Undefined",
+        "type": "frequency"
+      }
+    },
+    "reopened": {
+      "m0": {
+        "unit": "GHz",
+        "value": 1.4000000000000001
+      },
+      "refer": "Undefined",
+      "type": "frequency"
+    },
+    "relabeled": {
+      "m0": {
+        "unit": "GHz",
+        "value": 1.4000000000000001
+      },
+      "refer": "BARY",
+      "type": "frequency"
+    }
+  },
+  "integer_reference": {
+    "names": [
+      "REST",
+      "LSRK",
+      "LSRD",
+      "BARY",
+      "GEO",
+      "TOPO",
+      "GALACTO",
+      "LGROUP",
+      "CMB",
+      "Undefined"
+    ],
+    "codes": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      64
+    ],
+    "spectrum": {
+      "m0": {
+        "unit": "GHz",
+        "value": 1.4000000000000001
+      },
+      "refer": "Undefined",
+      "type": "frequency"
+    }
+  },
+  "remapped_reference": {
+    "names": [
+      "REST",
+      "LSRK",
+      "LSRD",
+      "BARY",
+      "GEO",
+      "TOPO",
+      "GALACTO",
+      "LGROUP",
+      "CMB",
+      "Undefined"
+    ],
+    "codes": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "spectrum": {
+      "m0": {
+        "unit": "GHz",
+        "value": 1.4000000000000001
+      },
+      "refer": "Undefined",
+      "type": "frequency"
+    }
+  },
+  "sparse_reference": {
+    "names": [
+      "LSRK"
+    ],
+    "codes": [
+      27
+    ],
+    "row_code": 36,
+    "spectrum": {
+      "m0": {
+        "unit": "GHz",
+        "value": 1.4000000000000001
+      },
+      "refer": "Undefined",
+      "type": "frequency"
+    }
+  },
+  "alias_reference": {
+    "name": "BARYCENTRIC",
+    "code": 40,
+    "stdout": "open=RuntimeError\n"
+  }
+}

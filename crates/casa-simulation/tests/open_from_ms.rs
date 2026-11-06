@@ -48,6 +48,71 @@ fn simple_noise(sigma_jy: f64) -> NoiseSpec {
     NoiseSpec::simple(sigma_jy)
 }
 
+#[test]
+fn openfromms_refuses_distinct_channel_and_reference_frequency_frames() {
+    use casa_ms::{MeasurementSet, SubtableId};
+    use casa_tables::table_measures::{MeasureType, TableMeasDesc};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("mixed-frames.ms");
+    observed(&path).close().unwrap();
+    let before = read_main(&path).0;
+    let mut ms = MeasurementSet::open(&path).unwrap();
+    let spw = ms.subtable_mut(SubtableId::SpectralWindow).unwrap();
+    TableMeasDesc::new_fixed("REF_FREQUENCY", MeasureType::Frequency, "BARY")
+        .write(spw)
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let error = Simulator::open_from_ms(&path, options())
+        .err()
+        .expect("mixed frames refused");
+    assert_eq!(error.outcome(), CasaOutcome::NotYetImplemented);
+    assert!(
+        error
+            .message()
+            .contains("different channel and reference frequency frames")
+    );
+    assert!(error.message().contains("#1053"));
+    assert_eq!(bits(&data(&read_main(&path).0)), bits(&data(&before)));
+}
+
+#[test]
+fn openfromms_uses_the_measurement_set_frequency_code_mapping() {
+    use casa_ms::{MeasurementSet, SubtableId};
+    use casa_tables::table_measures::{MeasureType, TableMeasDesc};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("remapped-frame.ms");
+    observed(&path).close().unwrap();
+    let before = read_main(&path).0;
+    let mut ms = MeasurementSet::open(&path).unwrap();
+    let spw = ms.subtable_mut(SubtableId::SpectralWindow).unwrap();
+    for row in 0..spw.row_count() {
+        spw.cell_accessor_mut(row, "MEAS_FREQ_REF")
+            .unwrap()
+            .set(Value::Scalar(ScalarValue::Int32(64)))
+            .unwrap();
+    }
+    for column in ["CHAN_FREQ", "REF_FREQUENCY"] {
+        TableMeasDesc::new_variable_int(
+            column,
+            MeasureType::Frequency,
+            "MEAS_FREQ_REF",
+            vec!["LSRK".to_string(), "Undefined".to_string()],
+            vec![64, 9],
+        )
+        .unwrap()
+        .write(spw)
+        .unwrap();
+    }
+    ms.save().unwrap();
+    drop(ms);
+    let reopened = Simulator::open_from_ms(&path, options()).expect("mapped LSRK");
+    reopened.close().unwrap();
+    assert_eq!(bits(&data(&read_main(&path).0)), bits(&data(&before)));
+}
+
 /// `sm.setnoise(simplenoise=…)` then `sm.corrupt()`.
 fn corrupt(sm: &mut Simulator) -> SimulatorResult<()> {
     sm.set_noise(&simple_noise(0.25))?;

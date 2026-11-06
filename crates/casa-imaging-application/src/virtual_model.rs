@@ -261,8 +261,7 @@ fn first_buffer(
     let polarization = usize::try_from(descriptions.polarization_id(ddid)?)?;
     let windows = ms.spectral_window()?;
     let frequencies = windows.chan_freq(spw)?;
-    let frame = FrequencyRef::from_casacore_code(windows.meas_freq_ref(spw)?)
-        .ok_or("SPECTRAL_WINDOW names an unknown frequency frame")?;
+    let frame = windows.frequency_reference(spw)?;
     let channels = match plan.selection.channels.get(&spw) {
         Some(channels) => channels.clone(),
         None => (0..frequencies.len()).collect(),

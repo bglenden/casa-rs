@@ -325,20 +325,12 @@ fn fields(table: &Table) -> Result<Vec<NamespaceField>, ObservationError> {
 fn windows(table: &Table) -> Result<Vec<NamespaceWindow>, ObservationError> {
     require_units(table, "CHAN_FREQ", "Hz")?;
     require_units(table, "CHAN_WIDTH", "Hz")?;
+    let frequency_refs = crate::columns::frequency_columns::ChanFreqColumn::new(table);
     (0..table.row_count())
         .map(|row| {
-            let code = match table
-                .cell_accessor(row, "MEAS_FREQ_REF")
-                .and_then(|cell| cell.scalar().cloned())
-                .map_err(|error| storage(MsError::from(error)))?
-            {
-                ScalarValue::Int32(code) => code,
-                _ => return Err(invalid("MEAS_FREQ_REF is not an Int32")),
-            };
             Ok(NamespaceWindow {
                 name: string(table, row, "NAME")?,
-                frame: FrequencyRef::from_casacore_code(code)
-                    .ok_or_else(|| invalid(format!("unknown MEAS_FREQ_REF {code}")))?,
+                frame: frequency_refs.frequency_reference(row).map_err(storage)?,
                 frequencies_hz: floats(table, row, "CHAN_FREQ")?,
                 widths_hz: floats(table, row, "CHAN_WIDTH")?,
             })
