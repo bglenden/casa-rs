@@ -77,12 +77,12 @@
    ]
   },
   "convertrefdir": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Converts one component direction using the shared measure model and preserves direction errors, selection and table metadata. Unsupported B1950_VLA, BMEAN, BTRUE and planetary or comet references are refused; conversions requiring a frame fail without CASA's epoch or position.",
    "evidence": [
     "signature",
-    "refusals"
+    "convertrefdir-casa"
    ]
   },
   "convertshape": {
@@ -1122,6 +1122,19 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "91a1067e692518a9280eb219df45e0219d1139f1"
+  },
+  "convertrefdir-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "24 CASA 6.7.6-14 cases cover direction frames, valid and invalid arguments, NumPy booleans, errors and unchanged components. CASA reopens a casa-rs-updated table and reads the converted direction with existing error columns and keyword intact.",
+   "scope": "componentlist.convertrefdir for shared direction frames.",
+   "links": [
+    "tools/simulation/componentlist_convertrefdir_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_convertrefdir.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setspectrum.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_convertrefdir.py"
+   ],
+   "source_revision": "d0261e30318a7f3084d110b262f9aa401827bf79"
   }
  }
 }
