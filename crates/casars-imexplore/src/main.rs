@@ -10,8 +10,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use casa_images::{
-    ImageHeaderSummary, ImageStatisticsSummary, image_task_front_end, imhead, imhead_add_delete,
-    imhead_extrema, imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_record,
+    ImageStatisticsSummary, image_task_front_end, imhead, imhead_add_delete, imhead_extrema,
+    imhead_list_record, imhead_put, imhead_summary_record, imstat, imstat_record,
 };
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{CasaValue, TaskFailure, TaskInvocation, TaskSuccess};
@@ -234,7 +234,7 @@ fn run_imhead(
         // CASA's put returns None.
         _ => CasaValue::None,
     };
-    let text = header_text(&summary);
+    let text = summary.format_text();
     Ok(TaskSuccess::new(value, &summary)?.with_text(text))
 }
 
@@ -277,37 +277,6 @@ fn image_error(operation: &str, path: &Path, error: impl Display) -> TaskFailure
         "{operation}: cannot open or read CASA image '{}': {error}",
         path.display()
     ))
-}
-
-fn header_text(summary: &ImageHeaderSummary) -> String {
-    let mut out = String::new();
-    let _ = writeln!(out, "Image name       : {}", summary.imagename);
-    let _ = writeln!(out, "Image type       : {}", summary.image_type);
-    let _ = writeln!(out, "Pixel type       : {}", summary.pixel_type);
-    let _ = writeln!(out, "Image units      : {}", summary.units);
-    let _ = writeln!(out, "Shape            : {:?}", summary.shape);
-    if let Some(beam) = &summary.restoring_beam {
-        let _ = writeln!(
-            out,
-            "Restoring Beam   : {:.6} arcsec, {:.6} arcsec, {:.6} deg",
-            beam.major_arcsec, beam.minor_arcsec, beam.position_angle_deg
-        );
-    }
-    for axis in &summary.axes {
-        let _ = writeln!(
-            out,
-            "Axis {} {:<12} {:<18} shape={} refpix={:.3} crval={:.12e} cdelt={:.12e} {}",
-            axis.axis,
-            axis.coordinate_type,
-            axis.name,
-            axis.shape,
-            axis.reference_pixel,
-            axis.reference_value,
-            axis.increment,
-            axis.unit
-        );
-    }
-    out
 }
 
 fn statistics_text(summary: &ImageStatisticsSummary) -> String {

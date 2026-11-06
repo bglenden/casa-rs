@@ -654,6 +654,45 @@ pub struct ImageHeaderSummary {
     pub axes: Vec<ImageAxisSummary>,
 }
 
+impl ImageHeaderSummary {
+    /// Render a compact, human-readable summary of the image header.
+    ///
+    /// This is the casa-rs text presentation, rather than the detailed CASA
+    /// coordinate-system log emitted by `imhead` summary mode.
+    pub fn format_text(&self) -> String {
+        use std::fmt::Write as _;
+
+        let mut out = String::new();
+        let _ = writeln!(out, "Image name       : {}", self.imagename);
+        let _ = writeln!(out, "Image type       : {}", self.image_type);
+        let _ = writeln!(out, "Pixel type       : {}", self.pixel_type);
+        let _ = writeln!(out, "Image units      : {}", self.units);
+        let _ = writeln!(out, "Shape            : {:?}", self.shape);
+        if let Some(beam) = &self.restoring_beam {
+            let _ = writeln!(
+                out,
+                "Restoring Beam   : {:.6} arcsec, {:.6} arcsec, {:.6} deg",
+                beam.major_arcsec, beam.minor_arcsec, beam.position_angle_deg
+            );
+        }
+        for axis in &self.axes {
+            let _ = writeln!(
+                out,
+                "Axis {} {:<12} {:<18} shape={} refpix={:.3} crval={:.12e} cdelt={:.12e} {}",
+                axis.axis,
+                axis.coordinate_type,
+                axis.name,
+                axis.shape,
+                axis.reference_pixel,
+                axis.reference_value,
+                axis.increment,
+                axis.unit
+            );
+        }
+        out
+    }
+}
+
 /// Restoring beam grid, retaining each quantity's stored unit.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PerPlaneBeamSummary {
