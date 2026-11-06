@@ -32,9 +32,13 @@ mod selection;
 pub(crate) mod surface;
 
 use std::ffi::CString;
+use std::str::FromStr;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use pyo3::exceptions::{PyOverflowError, PyRuntimeWarning, PySystemError, PyTypeError};
+use casa_types::measures::direction::DirectionRef;
+use pyo3::exceptions::{
+    PyNotImplementedError, PyOverflowError, PyRuntimeWarning, PySystemError, PyTypeError,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyString};
 
@@ -1131,15 +1135,68 @@ impl PyComponentList {
         stub("setrefdir")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Relabel one component's direction frame without converting its value.
     #[pyo3(signature = (which, frame, log = None), text_signature = "($self, which, frame, log=True)")]
     fn setrefdirframe(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
         frame: &Bound<'_, PyAny>,
-        log: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("setrefdirframe")
+        let (which, pending) = match which.extract::<i64>() {
+            Ok(index) => (i64::from(index as i32), false),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => {
+                (-1, true)
+            }
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let frame: String = if frame.is_instance_of::<PyString>() {
+            frame.extract()?
+        } else if frame.is_instance_of::<PyBytes>() {
+            let bytes = frame.cast::<PyBytes>()?.as_bytes();
+            let end = bytes
+                .iter()
+                .position(|&byte| byte == 0)
+                .unwrap_or(bytes.len());
+            // Frame names are ASCII. Lossy decoding retains an ASCII prefix
+            // followed by non-UTF-8 bytes, which casacore accepts when that
+            // complete prefix identifies a frame, and leaves an invalid
+            // prefix unmatched.
+            String::from_utf8_lossy(&bytes[..end]).into_owned()
+        } else {
+            return Err(PyTypeError::new_err("argument _frame must be a string"));
+        };
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_setrefdirframe', argument 4 of type 'bool'",
+            ));
+        }
+        let frame = frame.split('\0').next().unwrap_or_default();
+        let Some(name) = crate::convert::holder::DIRECTION_CODES.resolve(frame) else {
+            return self.call(py, |_, lines| {
+                lines.push(LogLine::error(
+                    "Could not parse the 'frame' string: Direction frame not changed",
+                ));
+                Err(crate::convert::ConvertError::runtime(
+                    "Could not parse the direction frame",
+                ))
+            });
+        };
+        let frame = DirectionRef::from_str(name).map_err(|_| {
+            PyNotImplementedError::new_err(format!(
+                "direction reference {name} is not supported by the shared measure model (#1053)"
+            ))
+        })?;
+        let result = self.call(py, move |state, _| {
+            state.setrefdirframe(which, frame).map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_setrefdirframe> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Not yet implemented in casa-rs.

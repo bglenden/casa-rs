@@ -26,6 +26,7 @@ use std::sync::Arc;
 use casa_components::{ComponentList, ComponentListError, Flux, SkyComponent};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
+use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::quanta::Unit;
 use casa_types::{RecordValue, Value};
@@ -417,6 +418,26 @@ impl State {
             .and_then(|index| self.list.get_mut(index))
             .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
         component.set_label(value);
+        Ok(true)
+    }
+
+    /// Relabel one reference direction without converting its coordinates.
+    pub(crate) fn setrefdirframe(
+        &mut self,
+        which: i64,
+        frame: DirectionRef,
+    ) -> ConvertResult<bool> {
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        let shape = component.shape_mut();
+        let mut direction = shape.reference_direction().clone();
+        direction.set_reference(frame);
+        shape.set_reference_direction(direction);
         Ok(true)
     }
 

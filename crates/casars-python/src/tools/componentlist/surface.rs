@@ -273,12 +273,15 @@ const METHODS: &[Method] = &[
         R::Bool,
         No,
     ),
-    method(
-        "setrefdirframe",
-        &[WHICH, param("frame", K::Text, Required), LOG],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "setrefdirframe",
+            &[WHICH, param("frame", K::Text, Required), LOG],
+            R::Bool,
+            Yes,
+        )
+    },
     method(
         "setshape",
         &[

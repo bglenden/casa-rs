@@ -1,0 +1,2916 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "J2000"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "j20"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "J2000suffix"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "JMEAN"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "JMEAN",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "JTRUE"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "JTRUE",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "APP"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "APP",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "JNAT"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "JNAT",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "B1950"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "B1950",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "B1950_VLA"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "B1950_VLA",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "BMEAN"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "BMEAN",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "BTRUE"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "BTRUE",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "GALACTIC"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "G"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "SUPERGAL"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "SUPERGAL",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "ICRS"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "ICRS",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "ECLIPTIC"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "ECLIPTIC",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "MECLIPTIC"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "MECLIPTIC",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "TECLIPTIC"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "TECLIPTIC",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "HADEC"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "HADEC",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "AZEL"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "AZEL",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "AZELNE"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "AZEL",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "AZELSW"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "AZELSW",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "AZELGEO"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "AZELGEO",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "AZELNEGEO"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "AZELGEO",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "AZELSWGEO"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "AZELSWGEO",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "ITRF"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "ITRF",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "TOPO"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "TOPO",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "MARS"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "MARS",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "SUN"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "SUN",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        1,
+        "ICRS"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "ICRS",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        -1,
+        "J2000"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        2,
+        "J2000"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        4294967296,
+        "GALACTIC"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        null,
+        "J2000"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        1267650600228229401496703205376,
+        "J2000"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        1.5,
+        "J2000"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        null
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _frame must be a string"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "ICRS"
+      ],
+      "kwargs": {
+        "log": false
+      },
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "ICRS",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "ICRS"
+      ],
+      "kwargs": {
+        "log": null
+      },
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_setrefdirframe', argument 4 of type 'bool'"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "ICRS"
+      ],
+      "kwargs": {
+        "log": 1
+      },
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_setrefdirframe', argument 4 of type 'bool'"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        true,
+        "J2000"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {
+          "bytes": [
+            71
+          ]
+        }
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {
+          "bytes": [
+            71,
+            65,
+            76,
+            65,
+            67,
+            84,
+            73,
+            67,
+            255
+          ]
+        }
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {
+          "bytes": [
+            74,
+            50,
+            48,
+            48,
+            48,
+            0,
+            255
+          ]
+        }
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "GALACTIC\u0000junk"
+      ],
+      "kwargs": {},
+      "before": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        },
+        {
+          "m0": {
+            "unit": "rad",
+            "value": 0.5235987755982988
+          },
+          "m1": {
+            "unit": "rad",
+            "value": -0.2617993877991494
+          },
+          "refer": "GALACTIC",
+          "type": "direction"
+        }
+      ]
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        "J2000"
+      ],
+      "kwargs": {},
+      "before": [],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "after": []
+    },
+    {
+      "state": "empty",
+      "args": [
+        -1,
+        "J2000"
+      ],
+      "kwargs": {},
+      "before": [],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": []
+    }
+  ],
+  "persisted": [
+    {
+      "m0": {
+        "unit": "rad",
+        "value": 0.17453292519943295
+      },
+      "m1": {
+        "unit": "rad",
+        "value": 0.3490658503988659
+      },
+      "refer": "GALACTIC",
+      "type": "direction"
+    },
+    {
+      "m0": {
+        "unit": "rad",
+        "value": 0.5235987755982988
+      },
+      "m1": {
+        "unit": "rad",
+        "value": -0.2617993877991494
+      },
+      "refer": "GALACTIC",
+      "type": "direction"
+    }
+  ],
+  "read_only_memory": [
+    {
+      "m0": {
+        "unit": "rad",
+        "value": 0.17453292519943295
+      },
+      "m1": {
+        "unit": "rad",
+        "value": 0.3490658503988659
+      },
+      "refer": "ICRS",
+      "type": "direction"
+    },
+    {
+      "m0": {
+        "unit": "rad",
+        "value": 0.5235987755982988
+      },
+      "m1": {
+        "unit": "rad",
+        "value": -0.2617993877991494
+      },
+      "refer": "GALACTIC",
+      "type": "direction"
+    }
+  ],
+  "read_only_disk": [
+    {
+      "m0": {
+        "unit": "rad",
+        "value": 0.17453292519943295
+      },
+      "m1": {
+        "unit": "rad",
+        "value": 0.3490658503988659
+      },
+      "refer": "GALACTIC",
+      "type": "direction"
+    },
+    {
+      "m0": {
+        "unit": "rad",
+        "value": 0.5235987755982988
+      },
+      "m1": {
+        "unit": "rad",
+        "value": -0.2617993877991494
+      },
+      "refer": "GALACTIC",
+      "type": "direction"
+    }
+  ],
+  "direction_error": [
+    0.001,
+    0.002
+  ]
+}

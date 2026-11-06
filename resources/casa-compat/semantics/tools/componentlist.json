@@ -449,12 +449,12 @@
    ]
   },
   "setrefdirframe": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Relabels one component reference direction without converting its coordinates; accepts CASA frame prefixes and preserves component values and table metadata. Recognized frames absent from the shared direction model (B1950_VLA, BMEAN, BTRUE and planetary or comet references) raise NotImplementedError. Invalid names are rejected before mutation.",
    "evidence": [
     "signature",
-    "refusals"
+    "setrefdirframe-casa"
    ]
   },
   "setshape": {
@@ -1006,6 +1006,22 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "a14325107afdadcc52a58e7312c7c43f6a20411b"
+  },
+  "setrefdirframe-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "47 CASA 6.7.6-14 cases cover frame names, prefixes, indices, argument errors and unaffected components. A CASA-created table records writable and read-only persistence; five isolated invalid-name cases record CASA assertions.",
+   "scope": "componentlist.setrefdirframe for shared direction frames.",
+   "links": [
+    "tools/simulation/componentlist_setrefdirframe_oracle.py",
+    "tools/simulation/componentlist_setrefdirframe_invalid_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_setrefdirframe.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "190e85bf30f31e18109abc39d8ff6c437c267306"
   }
  }
 }
