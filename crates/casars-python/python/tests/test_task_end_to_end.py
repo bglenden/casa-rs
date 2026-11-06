@@ -422,6 +422,25 @@ def test_imhead_reads_casa_created_nonfinite_record(tmp_path: Path) -> None:
     np.testing.assert_array_equal(actual["words"], expected["words"])
 
 
+@pytest.mark.parametrize("projection", ["car", "sfl", "mer", "ait"])
+def test_imhead_nonzenithal_spectral_reference_matches_casa(tmp_path: Path, projection: str) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    image = tmp_path / f"{projection}.im"
+    shutil.copytree(root / f"{projection}.im", image)
+    cases = json.loads((root / "axis_quantity_expected.json").read_text())["cases"]
+    expected = next(case for case in cases if case["image"] == projection and case["key"] == "crval4")
+    assert tasks.imhead(str(image), mode="put", hdkey="crval4", hdvalue="1.5GHz") is None
+    assert tasks.imhead(str(image), mode="get", hdkey="crval4") == expected["get"]
+    summary = tasks.imhead(str(image), mode="summary")
+    assert summary["refval"].dtype == np.dtype("float64")
+    np.testing.assert_array_equal(summary["refval"], expected["after"]["refval"])
+    np.testing.assert_array_equal(summary["refpix"], expected["after"]["refpix"])
+
+
 def test_imhead_large_integer_record_uses_casa_conversion(tmp_path: Path) -> None:
     import numpy as np
 

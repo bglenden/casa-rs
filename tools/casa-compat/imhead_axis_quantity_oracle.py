@@ -44,6 +44,8 @@ def main():
         ('linear', 'cdelt1', '2Hz'), ('linear', 'crval1', '1deg'),
         ('ghz', 'crval4', '1.5GHz'), ('ghz', 'cdelt4', '2MHz'),
         ('ghz', 'crval4', '2'), ('ghz', 'cdelt4', '2'),
+        ('car', 'crval4', '1.5GHz'), ('sfl', 'crval4', '1.5GHz'),
+        ('mer', 'crval4', '1.5GHz'), ('ait', 'crval4', '1.5GHz'),
     ]
     expected = {'casa_version': version_string(), 'cases': []}
     with tempfile.TemporaryDirectory(prefix='imhead-axis-quantity-') as temp:

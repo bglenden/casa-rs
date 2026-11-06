@@ -13,6 +13,8 @@ from casatools import image, version_string
 
 
 def plain(value):
+    if isinstance(value, dict):
+        return {key: plain(item) for key, item in value.items()}
     return value.tolist() if hasattr(value, 'tolist') else value
 
 
@@ -38,6 +40,10 @@ def main():
     with tempfile.TemporaryDirectory(prefix='imhead-axis-quantity-interop-') as temp:
         for index, case in enumerate(expected['cases']):
             path = Path(temp) / f'{index}.im'; shutil.copytree(root / f"{case['image']}.im", path)
+            check_direction = case['image'] in ('car', 'sfl', 'mer', 'ait')
+            if check_direction:
+                ia = image(); ia.open(str(path)); cs = ia.coordsys()
+                direction_before = plain(cs.torecord()['direction0']); cs.done(); ia.done()
             request = {'surface': 'imhead', 'values': {'imagename': str(path), 'mode': 'put', 'hdkey': case['key'], 'hdvalue': case['value']}}
             result = subprocess.run([str(args.binary), 'imhead', '--json-run', '-'], input=json.dumps(request), text=True, capture_output=True)
             assert (result.returncode != 0) == ('error' in case), (case, result.stderr)
@@ -48,6 +54,10 @@ def main():
                 assert history[-3] == case['history'][0], (case, history[-3:])
                 expected_task = case['history'][2].replace('<IMAGE>', str(path))
                 assert task_arguments(history[-1]) == task_arguments(expected_task), (case, history[-3:])
+                if check_direction:
+                    ia = image(); ia.open(str(path)); cs = ia.coordsys()
+                    direction_after = plain(cs.torecord()['direction0']); cs.done(); ia.done()
+                    assert direction_after == direction_before, (case, direction_before, direction_after)
     print(f"CASA {version_string()} reopened {len(expected['cases'])} axis-quantity results")
 
 

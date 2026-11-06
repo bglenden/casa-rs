@@ -637,7 +637,7 @@ fn imhead_edits_coordinate_values_as_casa_quantities() {
 }
 
 #[test]
-fn imhead_refuses_nonzenithal_reference_value_edits_without_mutation() {
+fn imhead_refuses_nonzenithal_direction_reference_edits_without_mutation() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
     let workspace = tempfile::tempdir().unwrap();
     for projection in ["car", "sfl", "mer", "ait"] {
@@ -648,7 +648,7 @@ fn imhead_refuses_nonzenithal_reference_value_edits_without_mutation() {
             "imhead",
             json!({"imagename": path, "mode": "summary"}),
         );
-        for key in ["crval1", "crval2", "crval4"] {
+        for key in ["crval1", "crval2"] {
             let (_, reply) = json_run(
                 workspace.path(),
                 "imhead",
@@ -665,6 +665,43 @@ fn imhead_refuses_nonzenithal_reference_value_edits_without_mutation() {
             workspace.path(),
             "imhead",
             json!({"imagename": path, "mode": "summary"}),
+        );
+        assert_eq!(before, after, "{projection}");
+    }
+}
+
+#[test]
+fn imhead_refuses_nonzenithal_spectral_edits_with_unverified_increments() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let workspace = tempfile::tempdir().unwrap();
+    for projection in ["car", "sfl", "mer", "ait"] {
+        let path = workspace.path().join(format!("tiny-{projection}.im"));
+        copy_tree(&fixture.join(format!("{projection}.im")), &path);
+        let mut image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+        image.set_increment(0, -1e-10).unwrap();
+        image.set_increment(1, 2e-10).unwrap();
+        image.save().unwrap();
+        drop(image);
+        let before = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename":path, "mode":"summary"}),
+        );
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename":path, "mode":"put", "hdkey":"crval4", "hdvalue":"1.5GHz"
+            }),
+        );
+        assert!(
+            matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("#977")),
+            "{projection}"
+        );
+        let after = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename":path, "mode":"summary"}),
         );
         assert_eq!(before, after, "{projection}");
     }
@@ -860,10 +897,7 @@ fn imhead_refuses_unimplemented_variants_without_mutating_metadata() {
         json!({"imagename": path, "mode": "put", "hdkey": "ctype1", "hdvalue": "a\0b"}),
     );
     assert!(matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("#977")));
-    for value in [
-        json!([[1], [2, 3]]),
-        json!({"nested": [[1], [2, 3]]}),
-    ] {
+    for value in [json!([[1], [2, 3]]), json!({"nested": [[1], [2, 3]]})] {
         let (_, reply) = json_run(
             workspace.path(),
             "imhead",

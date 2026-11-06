@@ -6,6 +6,31 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use super::CoordinateSystem;
 use crate::{Coordinate, CoordinateError, CoordinateType};
 
+// CASA rebuilds every direction coordinate when it sets any reference value.
+// In these tested canonical coordinates that rebuild leaves the direction
+// record unchanged; other non-zenithal cases can adjust its pole or pixels.
+fn stable_nonzenithal_reference(record: &RecordValue) -> bool {
+    let same_frame = matches!(
+        (record.get("system"), record.get("conversionSystem")),
+        (Some(Value::Scalar(ScalarValue::String(native))), Some(Value::Scalar(ScalarValue::String(converted))))
+            if native == converted
+    );
+    let zero_reference = matches!(record.get("crval"), Some(Value::Array(ArrayValue::Float64(values)))
+        if values.shape() == [2] && values.iter().all(|value| value.to_bits() == 0));
+    let pole = matches!(record.get("latpole"), Some(Value::Scalar(ScalarValue::Float64(value))) if *value == 90.0)
+        && matches!(record.get("longpole"), Some(Value::Scalar(ScalarValue::Float64(value))) if value.to_bits() == 0);
+    let identity = matches!(record.get("pc"), Some(Value::Array(ArrayValue::Float64(values)))
+        if values.shape() == [2, 2]
+            && values[[0, 0]] == 1.0 && values[[1, 1]] == 1.0
+            && values[[0, 1]].to_bits() == 0 && values[[1, 0]].to_bits() == 0);
+    let no_parameters = matches!(record.get("projection_parameters"), Some(Value::Array(ArrayValue::Float64(values))) if values.is_empty());
+    let increments = matches!(record.get("cdelt"), Some(Value::Array(ArrayValue::Float64(values)))
+        if values.shape() == [2] && values[[0]] == -1.0 && values[[1]] == 1.0);
+    let units = matches!(record.get("units"), Some(Value::Array(ArrayValue::String(values)))
+        if values.shape() == [2] && values.iter().all(|unit| unit == "'"));
+    same_frame && zero_reference && pole && identity && no_parameters && increments && units
+}
+
 /// Match casacore's restore: clamp the list and select the entry nearest to
 /// the stored selector. Keep that active value consistent with the list.
 fn select_active_rest_frequency(
@@ -715,15 +740,6 @@ impl CoordinateSystem {
             ));
         }
         let coordinates = Self::record_coordinates(record)?;
-        if field == "crval" && coordinates.iter().any(|coordinate| {
-            coordinate.field.starts_with("direction")
-                && matches!(record.get(&coordinate.field), Some(Value::Record(direction))
-                    if matches!(direction.get("projection"), Some(Value::Scalar(ScalarValue::String(name))) if ["CAR", "SFL", "MER", "AIT"].iter().any(|projection| name.eq_ignore_ascii_case(projection))))
-        }) {
-            return Err(CoordinateError::InvalidRecord(
-                "reference-value edits on non-zenithal projection images are not implemented (#977)".into(),
-            ));
-        }
         let naxes = coordinates
             .iter()
             .flat_map(|coordinate| coordinate.pixel_axes.iter().flatten())
@@ -742,6 +758,28 @@ impl CoordinateSystem {
                 index: pixel_axis,
                 naxes,
             })?;
+        if field == "crval" {
+            let directions = coordinates
+                .iter()
+                .filter(|entry| entry.field.starts_with("direction"))
+                .collect::<Vec<_>>();
+            for direction in &directions {
+                let Some(Value::Record(direction_record)) = record.get(&direction.field) else {
+                    continue;
+                };
+                let nonzenithal = matches!(direction_record.get("projection"), Some(Value::Scalar(ScalarValue::String(name)))
+                    if ["CAR", "SFL", "MER", "AIT"].iter().any(|projection| name.eq_ignore_ascii_case(projection)));
+                if nonzenithal
+                    && !(coordinate.field.starts_with("spectral")
+                        && directions.len() == 1
+                        && stable_nonzenithal_reference(direction_record))
+                {
+                    return Err(CoordinateError::InvalidRecord(
+                        "reference-value edits on non-zenithal projection images are not implemented (#977)".into(),
+                    ));
+                }
+            }
+        }
         if coordinate.field.starts_with("stokes") {
             let system = Self::from_record(record)?;
             let old = (0..system.n_coordinates())
@@ -852,6 +890,108 @@ mod tests {
     use crate::{
         LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType, TabularCoordinate,
     };
+
+    #[test]
+    fn nonzenithal_spectral_edit_requires_the_verified_direction_form() {
+        let mut direction = RecordValue::new(vec![]);
+        for field in ["system", "conversionSystem"] {
+            direction.upsert(field, Value::Scalar(ScalarValue::String("J2000".into())));
+        }
+        direction.upsert(
+            "crval",
+            Value::Array(ArrayValue::from_f64_vec(vec![0.0, 0.0])),
+        );
+        direction.upsert("latpole", Value::Scalar(ScalarValue::Float64(90.0)));
+        direction.upsert("longpole", Value::Scalar(ScalarValue::Float64(0.0)));
+        direction.upsert(
+            "cdelt",
+            Value::Array(ArrayValue::from_f64_vec(vec![-1.0, 1.0])),
+        );
+        direction.upsert(
+            "units",
+            Value::Array(ArrayValue::from_string_vec(vec!["'".into(), "'".into()])),
+        );
+        direction.upsert(
+            "projection_parameters",
+            Value::Array(ArrayValue::from_f64_vec(vec![])),
+        );
+        direction.upsert(
+            "pc",
+            Value::Array(ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[2, 2]), vec![1.0, 0.0, 0.0, 1.0])
+                    .unwrap(),
+            )),
+        );
+        assert!(stable_nonzenithal_reference(&direction));
+        for (field, changed) in [
+            (
+                "crval",
+                Value::Array(ArrayValue::from_f64_vec(vec![0.0, 1.0])),
+            ),
+            ("latpole", Value::Scalar(ScalarValue::Float64(60.0))),
+            ("longpole", Value::Scalar(ScalarValue::Float64(180.0))),
+            (
+                "cdelt",
+                Value::Array(ArrayValue::from_f64_vec(vec![-1e-10, 2e-10])),
+            ),
+            (
+                "units",
+                Value::Array(ArrayValue::from_string_vec(vec![
+                    "deg".into(),
+                    "deg".into(),
+                ])),
+            ),
+            (
+                "conversionSystem",
+                Value::Scalar(ScalarValue::String("GALACTIC".into())),
+            ),
+            (
+                "projection_parameters",
+                Value::Array(ArrayValue::from_f64_vec(vec![1.0])),
+            ),
+            (
+                "pc",
+                Value::Array(ArrayValue::Float64(
+                    ndarray::ArrayD::from_shape_vec(
+                        ndarray::IxDyn(&[2, 2]),
+                        vec![0.0, 1.0, -1.0, 0.0],
+                    )
+                    .unwrap(),
+                )),
+            ),
+        ] {
+            let mut altered = direction.clone();
+            altered.upsert(field, changed);
+            assert!(!stable_nonzenithal_reference(&altered), "{field}");
+        }
+    }
+
+    #[test]
+    fn noncanonical_nonzenithal_spectral_edit_does_not_mutate_record() {
+        use crate::{DirectionCoordinate, Projection, ProjectionType};
+        use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
+        let mut system = CoordinateSystem::new();
+        system.add_coordinate(DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::CAR),
+            [0.0, 30_f64.to_radians()],
+            [-0.01, 0.01],
+            [2.0, 2.0],
+        ));
+        system.add_coordinate(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            1.4e9,
+            1e3,
+            1.0,
+            1.4e9,
+        ));
+        let mut record = system.to_record();
+        let before = record.clone();
+        let error =
+            CoordinateSystem::set_reference_value_in_record(&mut record, 2, 1.5e9).unwrap_err();
+        assert!(error.to_string().contains("#977"));
+        assert_eq!(record, before);
+    }
 
     #[test]
     fn direction_frame_edit_preserves_an_implicit_conversion_frame() {
