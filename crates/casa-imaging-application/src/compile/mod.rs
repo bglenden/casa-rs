@@ -538,7 +538,7 @@ fn specification_inputs(
         instrument,
         primary_beam,
         w_projection: match &request.gridder {
-            Gridder::Wproject { wprojplanes } => {
+            Gridder::Wproject { wprojplanes, .. } => {
                 Some(specification::w_projection(*wprojplanes, &windows, w)?)
             }
             _ => None,

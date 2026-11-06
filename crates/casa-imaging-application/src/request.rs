@@ -523,6 +523,8 @@ pub enum Gridder {
     },
     /// W-projection.
     Wproject {
+        /// Facets along each image axis, each with its own W kernel set.
+        facets: NonZeroUsize,
         /// W planes; `None` derives the count from the selected W range.
         #[serde(deserialize_with = "optional")]
         wprojplanes: Option<NonZeroUsize>,
@@ -814,6 +816,26 @@ impl ImagingRequest {
             return invalid(
                 "outlierfile",
                 "outlier domains are imaged with natural weighting, dirty or Högbom",
+            );
+        }
+        // Only the measured scalar W-facet route is admitted while the
+        // per-channel and Taylor facet bookkeeping remains unfinished (#1063).
+        if let Gridder::Wproject {
+            facets,
+            wprojplanes,
+        } = self.gridder
+            && facets.get() > 1
+            && (self.specmode != SpecMode::Mfs
+                || self.deconvolver != Deconvolver::Hogbom
+                || !matches!(self.weighting, Weighting::Natural | Weighting::Uniform)
+                || self.stokes != [PolarizationCoordinate::StokesI]
+                || wprojplanes.is_none_or(|planes| planes.get() < 2)
+                || self.outlierfile.is_some())
+        {
+            return invalid(
+                "facets, gridder",
+                "W-projection facets currently require Stokes I, single-term MFS, Högbom, \
+                 natural or uniform weighting, explicit W planes and no outliers (#1063)",
             );
         }
         if let Gridder::Awproject(aw) = &self.gridder {

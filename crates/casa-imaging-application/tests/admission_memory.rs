@@ -49,6 +49,8 @@ mod synthetic_observation;
 
 #[path = "admission_memory/aw.rs"]
 mod aw;
+#[path = "admission_memory/w_facets.rs"]
+mod w_facets;
 use synthetic_observation::{CELL_ARCSEC, observation, observation_as};
 
 #[global_allocator]

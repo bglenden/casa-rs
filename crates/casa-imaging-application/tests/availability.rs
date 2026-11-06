@@ -404,9 +404,8 @@ fn auto_takes_the_gpu_where_it_runs_the_problem_and_the_cpu_otherwise() {
     check(&mosaic, asked, None, &host(true)).expect("mosaic on Metal");
 }
 
-/// Facets (#664) run with the standard kernel set and a constant basis, on
-/// the CPU and on Metal; a Taylor basis or a W, mosaic or AW set is refused,
-/// each with its own reason.
+/// Facets (#664, #1063) run with the standard or W kernel set and a
+/// constant basis; Taylor bases and AW kernel sets stay refused.
 #[test]
 fn facets_run_with_the_standard_set_and_a_constant_basis() {
     let faceted = || ProblemFixture {
@@ -438,7 +437,25 @@ fn facets_run_with_the_standard_set_and_a_constant_basis() {
     w.measurement_equation = w
         .measurement_equation
         .with_w_projection(WProjectionContract::new(100.0, None).expect("W contract"));
-    assert_exactly_unsupported(on_cpu(&w.compile()), [Unsupported::FacetedKernelSet]);
+    on_cpu(&w.compile()).expect("W-projection facets on CPU");
+    let mut aw = faceted().with_primary_beam(InstrumentModel::CasaEvlaWidebandAwV1);
+    aw.measurement_equation = aw.measurement_equation.with_aw_projection(
+        AwProjectionContract::new(
+            12_500.0,
+            std::num::NonZeroUsize::new(32).unwrap(),
+            true,
+            false,
+            true,
+            true,
+            false,
+            [300.0, 30.0],
+            5.0,
+            5.0,
+        )
+        .unwrap(),
+    );
+    aw.products.push(ProductKind::Weight);
+    assert_exactly_unsupported(on_cpu(&aw.compile()), [Unsupported::FacetedKernelSet]);
 }
 
 /// One compiled-problem fixture; [`ProblemFixture::standard`] is a dirty

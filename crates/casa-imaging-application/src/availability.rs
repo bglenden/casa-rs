@@ -217,7 +217,8 @@ pub fn check(
         ) {
             unsupported.push(Unsupported::FacetedBasis);
         }
-        if !crate::imaging::standard_kernel_set(problem) {
+        let equation = problem.science().measurement_equation();
+        if !crate::imaging::standard_kernel_set(problem) && equation.w_projection().is_none() {
             unsupported.push(Unsupported::FacetedKernelSet);
         }
     }
