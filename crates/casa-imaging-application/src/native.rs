@@ -738,7 +738,7 @@ fn publish_mvc_products(
         cube_problem,
         ProductSource {
             scientific,
-            masks,
+            masks: None,
             facet_sum_weights,
             saved_psf_beams,
             vla_selection_hz,
@@ -753,7 +753,7 @@ fn publish_mvc_products(
         taylor_problem,
         ProductSource {
             scientific: taylor_science,
-            masks: None,
+            masks,
             facet_sum_weights: Default::default(),
             saved_psf_beams: None,
             vla_selection_hz: None,

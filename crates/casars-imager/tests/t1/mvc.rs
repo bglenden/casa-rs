@@ -553,3 +553,44 @@ fn mvc_clean_refreshes_the_cube_from_the_taylor_model() {
         }
     }
 }
+
+/// CASA publishes the Taylor deconvolver's user mask for cleaned MVC,
+/// including the box edges, rather than a full-plane mask (#1069).
+#[test]
+fn mvc_clean_publishes_the_taylor_user_box_mask() {
+    let observation = weighted_observation();
+    let (_, products) = observation.image(
+        "mvc-clean-box",
+        json!({
+            "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+            "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+            "niter": 1, "cycleniter": 1, "write_pb": true, "pblimit": -0.1,
+            "mask": "140,130,160,150",
+        }),
+    );
+    let mask = &products.get(".mask").pixels;
+    for ((x, y), value) in mask.indexed_iter() {
+        let inside = (140..=160).contains(&x) && (130..=150).contains(&y);
+        assert_eq!(*value, f32::from(inside), "mask at [{x}, {y}]");
+    }
+}
+
+/// A spectral range is prepared on the cube, while MVC cleans one Taylor
+/// plane. Refuse it before imaging until that mask can be prepared for the
+/// Taylor view (#1069).
+#[test]
+fn mvc_clean_refuses_spectrally_ranged_user_masks() {
+    let observation = weighted_observation();
+    let result = observation.try_image(
+        "mvc-clean-ranged-mask",
+        json!({
+            "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+            "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+            "niter": 1, "write_pb": true, "pblimit": -0.1,
+            "mask": "box[[140pix,130pix],[160pix,150pix]],range=[1pix,1pix]",
+        }),
+    );
+    assert!(
+        matches!(result, Err(error) if error.contains("spatial-only") && error.contains("#1069"))
+    );
+}
