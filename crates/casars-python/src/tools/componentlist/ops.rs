@@ -59,6 +59,40 @@ pub(crate) struct State {
 }
 
 impl State {
+    pub(crate) fn setflux(
+        &mut self,
+        which: i64,
+        flux: Flux,
+        pending: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let indices = if which == -1 {
+            if self.list.is_empty() {
+                return Err(ConvertError::runtime(
+                    "componentlist.setflux on an empty list would crash CASA (#1053)",
+                ));
+            }
+            (0..self.list.len()).collect::<Vec<_>>()
+        } else if which < 0 || which >= self.length() {
+            let message = "Index out of range.\nA component number is less than one or greater than the list length\nFlux not changed on any components";
+            lines.push(LogLine::error(message));
+            return Err(ConvertError::runtime(message));
+        } else {
+            vec![which as usize]
+        };
+        if pending {
+            return Ok(false);
+        }
+        for index in indices {
+            *self
+                .list
+                .get_mut(index)
+                .expect("validated index")
+                .flux_mut() = flux.clone();
+        }
+        Ok(true)
+    }
+
     /// Append selected components read from a component-list table.
     pub(crate) fn concatenate(
         &mut self,
