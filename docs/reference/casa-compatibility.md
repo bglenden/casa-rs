@@ -1596,7 +1596,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 39 | 1 | 21 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 40 | 0 | 21 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1613,7 +1613,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 39, Partial: 1, Not implemented: 21, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 40, Partial: 0, Not implemented: 21, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1665,7 +1665,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `selected` |  | Implemented | Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
 | `setflux` | `which, value=[], unit='Jy', polarization='Stokes', error=[], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `setfreq` | `which, value, unit='GHz', log=True` | Implemented (#1053) | Changes one component reference frequency and record unit while preserving its frame and independent frequency error. Non-frequency units are rejected before mutation. | [signature](#componentlist-evidence-signature), [setfreq-casa](#componentlist-evidence-setfreq-casa) |
-| `setfreqframe` | `which, frame='LSRK', log=True` | Partial (#1053) | Relabels one component frequency in any of the nine supported frames without converting the frequency value; accepts CASA frame prefixes and preserves the record unit and error. Undefined is refused because the measure model cannot represent it. | [signature](#componentlist-evidence-signature), [setfreqframe-casa](#componentlist-evidence-setfreqframe-casa) |
+| `setfreqframe` | `which, frame='LSRK', log=True` | Implemented (#1053) | Relabels one component frequency in any of the nine physical frames or Undefined without converting the value; accepts CASA frame prefixes and preserves the record unit and error. | [signature](#componentlist-evidence-signature), [setfreqframe-casa](#componentlist-evidence-setfreqframe-casa), [undefined-frequency-casa](#componentlist-evidence-undefined-frequency-casa) |
 | `setlabel` | `which, value, log=True` | Implemented | Replaces one component label and preserves the change on writable table release; read-only changes remain in memory. Rejects invalid UTF-8 byte strings to avoid an unreadable label. | [signature](#componentlist-evidence-signature), [setlabel-casa](#componentlist-evidence-setlabel-casa) |
 | `setrefdir` | `which=1, ra=[], dec=[], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `setrefdirframe` | `which, frame, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
@@ -1976,12 +1976,30 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="componentlist-evidence-setfreqframe-casa"></a>
 ##### setfreqframe-casa
 
-**CASA-recorded values — measured.** 56 CASA 6.7.6-14 calls compare frame names, prefixes, indices and argument errors; a table case covers frame, frequency and error persistence. Undefined is not yet implemented. componentlist.setfreqframe.
+**CASA-recorded values — measured.** 56 CASA 6.7.6-14 calls compare frame names, prefixes, indices and argument errors; a table case covers frame, frequency and error persistence. At that evidence revision, Undefined was not yet implemented. componentlist.setfreqframe.
 
 - [tools/casa-compat/componentlist_setfreqframe_oracle.py](https://github.com/bglenden/casa-rs/blob/b649c4559abd40c025f6ab7f004070a1f39d85a7/tools/casa-compat/componentlist_setfreqframe_oracle.py)
 - [crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.json](https://github.com/bglenden/casa-rs/blob/b649c4559abd40c025f6ab7f004070a1f39d85a7/crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.json)
 - [crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.cl.tgz](https://github.com/bglenden/casa-rs/blob/b649c4559abd40c025f6ab7f004070a1f39d85a7/crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.cl.tgz)
 - [crates/casars-python/python/tests/test_componentlist_setfreqframe.py](https://github.com/bglenden/casa-rs/blob/b649c4559abd40c025f6ab7f004070a1f39d85a7/crates/casars-python/python/tests/test_componentlist_setfreqframe.py)
+
+<a id="componentlist-evidence-undefined-frequency-casa"></a>
+##### undefined-frequency-casa
+
+**CASA-recorded values — measured.** CASA 6.7.6-14 records Undefined frequency identity and refusal of cross-frame conversions, component tables with string, explicit, remapped and inferred integer references, invalid table-reference aliases, and MS mappings in which code 64 means LSRK and 9 means Undefined; type-only MS frequency metadata defaults to REST, while an integer reference column with no mapping arrays uses standard codes. Undefined frequency measures, component-list frame updates and table reference mappings.
+
+- [tools/casa-compat/undefined_frequency_oracle.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/tools/casa-compat/undefined_frequency_oracle.py)
+- [tools/casa-compat/undefined_frequency_ms_oracle.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/tools/casa-compat/undefined_frequency_ms_oracle.py)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency.json](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency.json)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz)
+- [crates/casars-python/python/tests/test_undefined_frequency.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/test_undefined_frequency.py)
+- [crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs)
+- [crates/casars-imager/tests/t1/virtual_model.rs](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-imager/tests/t1/virtual_model.rs)
 
 ### measures
 
@@ -2011,7 +2029,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `expand` | `v={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `framecomet` | `v=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `framenow` |  | Implemented | Sets the frame's epoch, position and direction. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `frequency` | `rf='LSRK', v0=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `frequency` | `rf='LSRK', v0=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [undefined-frequency-casa](#measures-evidence-undefined-frequency-casa) |
 | `getoffset` | `v` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `getref` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `gettype` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
@@ -2019,7 +2037,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `ismeasure` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `linelist` |  | Implemented | The rest lines of the measures data, their names joined by spaces in the table's order, with CASA's deprecation warning. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists) |
 | `listcodes` | `ms` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `measure` | `v, rf, off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `measure` | `v, rf, off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [undefined-frequency-casa](#measures-evidence-undefined-frequency-casa) |
 | `observatory` | `name='ALMA'` | Implemented | The measures data's observatories and sources, found by name as casacore's MeasTable finds them (ignoring case, or by a unique prefix), and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [casa-observatories](#measures-evidence-casa-observatories), [casa-names](#measures-evidence-casa-names) |
 | `obslist` |  | Implemented | The observatories of the measures data, by name in the table's order, as CASA lists them; CASA's readantenna, sensitivity and itrf2locname, and simobserve, call it. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists), [casa-values](#measures-evidence-casa-values) |
 | `posangle` | `m1, m2` | Implemented | Angular separation and position angle, as casacore computes them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
@@ -2159,6 +2177,24 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 **CASA-recorded values — measured.** Recorded from CASA 6.7.6-14 by measures_names_oracle.py: me.observatory for 471 names and me.spectralline for 125 (every prefix of every entry's name, upper and lower case, and names longer than an entry or with spaces around them), and me.source for 10. casa-rs finds what CASA finds for each, by casacore's MUString::minimaxNC rule (#1110). Passes in the Python tests. How me.observatory, me.spectralline and me.source find an entry by name.
 
 - [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py)
+
+<a id="measures-evidence-undefined-frequency-casa"></a>
+##### undefined-frequency-casa
+
+**CASA-recorded values — measured.** CASA 6.7.6-14 records Undefined frequency identity and refusal of cross-frame conversions, component tables with string, explicit, remapped and inferred integer references, invalid table-reference aliases, and MS mappings in which code 64 means LSRK and 9 means Undefined; type-only MS frequency metadata defaults to REST, while an integer reference column with no mapping arrays uses standard codes. Undefined frequency measures, component-list frame updates and table reference mappings.
+
+- [tools/casa-compat/undefined_frequency_oracle.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/tools/casa-compat/undefined_frequency_oracle.py)
+- [tools/casa-compat/undefined_frequency_ms_oracle.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/tools/casa-compat/undefined_frequency_ms_oracle.py)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency.json](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency.json)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz)
+- [crates/casars-python/python/tests/test_undefined_frequency.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/test_undefined_frequency.py)
+- [crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs)
+- [crates/casars-imager/tests/t1/virtual_model.rs](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-imager/tests/t1/virtual_model.rs)
 
 ### quanta
 
