@@ -83,12 +83,15 @@ const METHODS: &[Method] = &[
             Yes,
         )
     },
-    method(
-        "convertfluxpol",
-        &[WHICH, param("polarization", K::Text, Text("Stokes"))],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "convertfluxpol",
+            &[WHICH, param("polarization", K::Text, Text("Stokes"))],
+            R::Bool,
+            Yes,
+        )
+    },
     method(
         "convertfluxunit",
         &[WHICH, param("unit", K::Text, Text("Jy"))],

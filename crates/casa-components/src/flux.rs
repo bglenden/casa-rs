@@ -17,7 +17,7 @@ const ALLOWED_FLUX_UNITS: [&str; 3] = ["Jy", "Jy.km/s", "K.rad2"];
 ///
 /// | representation | values |
 /// |---|---|
-/// | [`Polarisation::Stokes`] | I, Q, U, V (real; the imaginary parts are zero) |
+/// | [`Polarisation::Stokes`] | I, Q, U, V (normally real) |
 /// | [`Polarisation::Linear`] | XX, XY, YX, YY |
 /// | [`Polarisation::Circular`] | RR, RL, LR, LL |
 ///
@@ -103,6 +103,45 @@ impl Flux {
     pub fn set_errors(&mut self, errors: [Complex64; 4]) {
         self.errors = errors;
     }
+
+    /// Convert the complex flux values to another polarisation basis.
+    ///
+    /// As in CASA's `FluxRep::convertPol`, this preserves the unit and the
+    /// numerical error values. Those errors may no longer describe the new
+    /// basis; callers should warn when nonzero errors are present.
+    pub fn convert_polarisation(&mut self, target: Polarisation) {
+        if self.polarisation == target {
+            return;
+        }
+        let [a, b, c, d] = self.values;
+        let times_i = |z: Complex64| Complex64::new(-z.im, z.re);
+        self.values = match (self.polarisation, target) {
+            (from, Polarisation::Stokes) => crate::visibility::to_stokes(self.values, from),
+            (Polarisation::Stokes, Polarisation::Linear) => {
+                [a + b, c + times_i(d), c - times_i(d), a - b]
+            }
+            (Polarisation::Stokes, Polarisation::Circular) => {
+                [a + d, b + times_i(c), b - times_i(c), a - d]
+            }
+            (Polarisation::Linear, Polarisation::Circular) => {
+                let (ib, ic) = (times_i(b), times_i(c));
+                [
+                    (a - ib + ic + d) / 2.0,
+                    (a + ib + ic - d) / 2.0,
+                    (a - ib - ic - d) / 2.0,
+                    (a + ib - ic + d) / 2.0,
+                ]
+            }
+            (Polarisation::Circular, Polarisation::Linear) => [
+                (a + b + c + d) / 2.0,
+                times_i(a - b + c - d) / 2.0,
+                times_i(-a - b + c + d) / 2.0,
+                (a - b - c + d) / 2.0,
+            ],
+            _ => unreachable!("equal representations return above"),
+        };
+        self.polarisation = target;
+    }
 }
 
 /// Parse a flux unit and check its dimensions as `FluxRep` does.
@@ -159,5 +198,35 @@ mod tests {
             ),
             Err(ComponentError::Unit { .. })
         ));
+    }
+
+    #[test]
+    fn complex_polarisation_conversion_matches_casa_and_round_trips() {
+        let original = [
+            Complex64::new(4.0, 2.0),
+            Complex64::new(3.0, 4.0),
+            Complex64::new(1.0, -2.0),
+            Complex64::new(2.0, -1.0),
+        ];
+        let errors = [Complex64::new(0.1, 0.2); 4];
+        let mut flux = Flux::new(original, "mJy", Polarisation::Linear)
+            .expect("valid unit")
+            .with_errors(errors);
+        flux.convert_polarisation(Polarisation::Circular);
+        assert_eq!(
+            flux.values(),
+            &[
+                Complex64::new(6.0, -0.5),
+                Complex64::new(0.0, 3.5),
+                Complex64::new(2.0, -0.5),
+                Complex64::new(0.0, 1.5),
+            ]
+        );
+        assert_eq!(flux.unit().name(), "mJy");
+        assert_eq!(flux.errors(), &errors);
+        flux.convert_polarisation(Polarisation::Stokes);
+        flux.convert_polarisation(Polarisation::Linear);
+        assert_eq!(flux.values(), &original);
+        assert_eq!(flux.errors(), &errors);
     }
 }

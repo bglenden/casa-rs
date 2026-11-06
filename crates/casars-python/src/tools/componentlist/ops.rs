@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_components::{ComponentList, ComponentListError, Flux, SkyComponent};
+use casa_components::{ComponentList, ComponentListError, Flux, Polarisation, SkyComponent};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -621,6 +621,59 @@ impl State {
     }
 
     /// Convert selected component fluxes only after all source units conform.
+    pub(crate) fn convertfluxpol(
+        &mut self,
+        which: i64,
+        name: &str,
+        pending: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let indices = if which == -1 {
+            if self.list.is_empty() {
+                return Err(ConvertError::runtime(
+                    "componentlist.convertfluxpol on an empty list would crash CASA (#1053)",
+                ));
+            }
+            (0..self.list.len()).collect::<Vec<_>>()
+        } else if which < 0 || which >= self.length() {
+            let message = "Index out of range.\nA component number is less than one or greater than the list length\nFlux not changed on any components";
+            lines.push(LogLine::error(message));
+            return Err(ConvertError::runtime(message));
+        } else {
+            vec![which as usize]
+        };
+        let target = match Polarisation::parse_casa(name) {
+            Ok(target) => target,
+            Err(_) => {
+                let message =
+                    "Unknown polarization. Possible values are:\n 'Stokes'  'Linear'  'Circular' ";
+                lines.push(LogLine::error(message));
+                return Err(ConvertError::runtime(message));
+            }
+        };
+        // CASA can change all components before reporting a Python conversion error.
+        if pending {
+            return Ok(false);
+        }
+        for index in indices {
+            let flux = self
+                .list
+                .get_mut(index)
+                .expect("validated index")
+                .flux_mut();
+            if flux.polarisation() != target
+                && flux
+                    .errors()
+                    .iter()
+                    .any(|error| error.norm() > f64::EPSILON)
+            {
+                lines.push(LogLine::warning("The change in flux representation means the numerical values have changed\nBut the errors in the flux are not being changed and are probably now incorrect"));
+            }
+            flux.convert_polarisation(target);
+        }
+        Ok(true)
+    }
+
     pub(crate) fn convertfluxunit(
         &mut self,
         which: i64,
