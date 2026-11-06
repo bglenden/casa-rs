@@ -26,6 +26,7 @@ use std::sync::Arc;
 use casa_components::{ComponentList, ComponentListError, Flux, SkyComponent};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
+use casa_types::measures::frequency::MFrequency;
 use casa_types::quanta::Unit;
 use casa_types::{RecordValue, Value};
 
@@ -423,6 +424,28 @@ impl State {
             .spectrum_mut()
             .set_frequency_unit(unit)
             .map_err(|error| ConvertError::runtime(error.to_string()))?;
+        Ok(true)
+    }
+
+    /// Replace one reference frequency, its record unit and retain its frame.
+    pub(crate) fn setfreq(&mut self, which: i64, value: f64, name: &str) -> ConvertResult<bool> {
+        let unit = casacore_unit(name).map_err(ConvertError::runtime)?;
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        let hz = value * unit.val().factor;
+        let spectrum = component.spectrum_mut();
+        // Validate before either field changes; CASA corrupts its spectrum
+        // for non-frequency units during its subsequent unit conversion.
+        spectrum
+            .set_frequency_unit(unit)
+            .map_err(|error| ConvertError::runtime(error.to_string()))?;
+        spectrum
+            .set_reference_frequency(MFrequency::new(hz, spectrum.reference_frequency().refer()));
         Ok(true)
     }
 

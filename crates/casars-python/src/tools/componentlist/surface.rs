@@ -245,7 +245,7 @@ const METHODS: &[Method] = &[
             LOG,
         ],
         R::Bool,
-        No,
+        Yes,
     ),
     method(
         "setfreqframe",

@@ -1,0 +1,674 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "which": 0,
+      "value": 1.5,
+      "omit_unit": true,
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.5
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": 1400,
+      "unit": "MHz",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1400.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 1,
+      "value": 125000,
+      "unit": "kHz",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "kHz",
+            "value": 125000.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": -2,
+      "unit": "GHz",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": -2.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": 0,
+      "unit": "Hz",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "Hz",
+            "value": 0.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": true,
+      "unit": "MHz",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": 1,
+      "unit": {
+        "bytes": "MHz"
+      },
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 4294967296,
+      "value": 1,
+      "unit": "MHz",
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": -1,
+      "value": 1,
+      "unit": "GHz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 2,
+      "value": 1,
+      "unit": "GHz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": null,
+      "value": 1,
+      "unit": "GHz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 9223372036854775808,
+      "value": 1,
+      "unit": "GHz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0.0,
+      "value": 1,
+      "unit": "GHz",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": "0",
+      "value": 1,
+      "unit": "GHz",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": null,
+      "unit": "GHz",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_setfreq> returned a result with an exception set"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": -1.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": "1",
+      "unit": "GHz",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_setfreq> returned a result with an exception set"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": -1.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": 1,
+      "unit": null,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": 1,
+      "unit": 2,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": 1,
+      "unit": "badunit!",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit!'"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": -1,
+      "value": null,
+      "unit": "badunit!",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit!'"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": -1,
+      "value": null,
+      "unit": "GHz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": 1,
+      "unit": "MHz",
+      "log": false,
+      "result": true,
+      "after": [
+        {
+          "m0": {
+            "unit": "MHz",
+            "value": 1.0
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": 1,
+      "unit": "MHz",
+      "log": null,
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_setfreq', argument 5 of type 'bool'"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "value": 1,
+      "unit": "MHz",
+      "log": 1,
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_setfreq', argument 5 of type 'bool'"
+      },
+      "after": [
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 1.4000000000000001
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        },
+        {
+          "m0": {
+            "unit": "GHz",
+            "value": 2.25
+          },
+          "refer": "LSRK",
+          "type": "frequency"
+        }
+      ]
+    }
+  ],
+  "redefined_hz": {
+    "m0": {
+      "unit": "MHz",
+      "value": 10.0
+    },
+    "refer": "LSRK",
+    "type": "frequency"
+  },
+  "nonconforming": {
+    "exit": -6,
+    "stdout": "set=RuntimeError\nread=RuntimeError\n"
+  },
+  "table": {
+    "spectrum": {
+      "m0": {
+        "unit": "MHz",
+        "value": 1500.0
+      },
+      "refer": "BARY",
+      "type": "frequency"
+    },
+    "saved": {
+      "hz": 1500000000.0,
+      "error": 1.5,
+      "error_unit": "MHz",
+      "raw": {
+        "m0": {
+          "unit": "MHz",
+          "value": 1500.0
+        },
+        "refer": "BARY",
+        "type": "frequency"
+      }
+    },
+    "reopened": {
+      "m0": {
+        "unit": "GHz",
+        "value": 1.5
+      },
+      "refer": "BARY",
+      "type": "frequency"
+    }
+  }
+}
