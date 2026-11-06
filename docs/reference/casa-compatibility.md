@@ -1596,7 +1596,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 47 | 2 | 12 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 48 | 2 | 11 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1613,7 +1613,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 47, Partial: 2, Not implemented: 12, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 48, Partial: 2, Not implemented: 11, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1622,7 +1622,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `asciitocomponentlist` | `filename, asciifile, refer='J2000', format='ST', direction={}, spectrum={}, flux={}, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `close` | `log=True` | Implemented | Writes the list to its table and empties the tool. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `concatenate` | `list=[], which=[-1], log=True` | Partial (#1053) | Appends selected components from readable component-list tables, preserving the destination and requested rows. Record input is not yet implemented. Corrects CASA wrong-row and failed-index mutations. | [signature](#componentlist-evidence-signature), [concatenate-casa](#componentlist-evidence-concatenate-casa) |
-| `convertfluxpol` | `which, polarization='Stokes'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `convertfluxpol` | `which, polarization='Stokes'` | Implemented (#1053) | Converts complex flux values between Stokes, linear and circular bases for one or all components, preserving units and stored error values. As in CASA, warns that unchanged nonzero errors may not describe the new basis. Rejects empty-list and failed-index cases before unsafe mutation. | [signature](#componentlist-evidence-signature), [convertfluxpol-casa](#componentlist-evidence-convertfluxpol-casa) |
 | `convertfluxunit` | `which, unit='Jy'` | Implemented | Converts one or all component fluxes and errors to conforming Jy units, retaining complex values. Rejects nonconforming sources atomically and raises instead of crashing on an empty list. | [signature](#componentlist-evidence-signature), [convertfluxunit-casa](#componentlist-evidence-convertfluxunit-casa) |
 | `convertfrequnit` | `which, unit='GHz'` | Implemented (#1053) | Changes one component spectrum record frequency unit, preserving its physical reference frequency, frame and independent error. Table reopen resets the record unit to GHz. Non-frequency targets are rejected before mutation. | [signature](#componentlist-evidence-signature), [convertfrequnit-casa](#componentlist-evidence-convertfrequnit-casa) |
 | `convertrefdir` | `which, frame` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
@@ -2087,6 +2087,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/data/casa_componentlist_concatenate.cl.tgz](https://github.com/bglenden/casa-rs/blob/a58bb93b4c80d9bbcaad08b42caf9563b5fb22e5/crates/casars-python/python/tests/data/casa_componentlist_concatenate.cl.tgz)
 - [crates/casars-python/python/tests/test_componentlist_concatenate.py](https://github.com/bglenden/casa-rs/blob/a58bb93b4c80d9bbcaad08b42caf9563b5fb22e5/crates/casars-python/python/tests/test_componentlist_concatenate.py)
 - [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/a58bb93b4c80d9bbcaad08b42caf9563b5fb22e5/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-convertfluxpol-casa"></a>
+##### convertfluxpol-casa
+
+**CASA-recorded values — measured.** 12 CASA 6.7.6-14 table cases cover every source and target basis for one or all components, including complex values and nonzero complex errors. Twelve argument probes and an isolated empty-list crash cover error handling. CASA reads a casa-rs converted table with flux, errors, keyword and unrelated components intact. componentlist.convertfluxpol and complex flux values.
+
+- [tools/simulation/componentlist_convertfluxpol_oracle.py](https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/tools/simulation/componentlist_convertfluxpol_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.json](https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.cl.tgz](https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_convertfluxpol.py](https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/crates/casars-python/python/tests/test_componentlist_convertfluxpol.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 ### measures
 

@@ -51,12 +51,12 @@
    ]
   },
   "convertfluxpol": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Converts complex flux values between Stokes, linear and circular bases for one or all components, preserving units and stored error values. As in CASA, warns that unchanged nonzero errors may not describe the new basis. Rejects empty-list and failed-index cases before unsafe mutation.",
    "evidence": [
     "signature",
-    "refusals"
+    "convertfluxpol-casa"
    ]
   },
   "convertfluxunit": {
@@ -1052,6 +1052,20 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "a58bb93b4c80d9bbcaad08b42caf9563b5fb22e5"
+  },
+  "convertfluxpol-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "12 CASA 6.7.6-14 table cases cover every source and target basis for one or all components, including complex values and nonzero complex errors. Twelve argument probes and an isolated empty-list crash cover error handling. CASA reads a casa-rs converted table with flux, errors, keyword and unrelated components intact.",
+   "scope": "componentlist.convertfluxpol and complex flux values.",
+   "links": [
+    "tools/simulation/componentlist_convertfluxpol_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_convertfluxpol.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "a297aeb7133d596b7f7f7f60127d545f51329318"
   }
  }
 }
