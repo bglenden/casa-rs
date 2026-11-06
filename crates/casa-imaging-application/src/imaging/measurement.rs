@@ -353,6 +353,25 @@ impl KernelAdmission<'_> {
     }
 }
 
+/// Build one chart's W kernels and retain their exact resident charge.
+fn w_kernel_set(
+    geometry: &GridGeometry,
+    polarization: &PolarizationRouting,
+    count: WPlaneCount,
+    admission: KernelAdmission<'_>,
+) -> Result<(WPlanes, Kernels), ImagingError> {
+    let screening = admission.admit(
+        "W-projection screens",
+        WPlanes::screens_bytes(geometry, count)?,
+    )?;
+    let screens = WPlanes::screens(geometry, polarization, count)?;
+    let mut kernels = admission.admit("convolution functions", screens.kernel_bytes())?;
+    let set = screens.finish()?;
+    drop(screening);
+    kernels.retain(set.resident_bytes());
+    Ok((set, Kernels::Admitted { _charge: kernels }))
+}
+
 /// The kernel set of `kind` on `geometry` routing `polarization`, with the
 /// charge of what it holds, admitted before it is built. W-projection and
 /// mosaic sets are built in two stages, their screens and then the kernels
@@ -398,16 +417,8 @@ fn kernel_set(
                     });
                 }
             };
-            let screening = admission.admit(
-                "W-projection screens",
-                WPlanes::screens_bytes(geometry, count)?,
-            )?;
-            let screens = WPlanes::screens(geometry, polarization, count)?;
-            let mut kernels = admission.admit(PHASE, screens.kernel_bytes())?;
-            let set = screens.finish()?;
-            drop(screening);
-            kernels.retain(set.resident_bytes());
-            (Box::new(set), Kernels::Admitted { _charge: kernels })
+            let (set, kernels) = w_kernel_set(geometry, polarization, count, admission)?;
+            (Box::new(set), kernels)
         }
         KernelSetKind::Mosaic => {
             if keys.dish_classes.is_empty() {
@@ -710,6 +721,62 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use super::*;
+
+    /// Every W-facet owns and charges its own retained kernel set (#1063).
+    #[test]
+    fn each_w_facet_retains_its_kernel_set_charge() {
+        let host = HostResources {
+            threads: 2,
+            performance_cores: 2,
+            available_memory: 1 << 40,
+            metal: false,
+        };
+        let policy = ResourcePolicy::Exclusive;
+        let admission = KernelAdmission {
+            host: &host,
+            policy: &policy,
+            workers: 1,
+        };
+        let geometry = GridGeometry::new(
+            ImageExtent {
+                shape: [64, 64],
+                increment_rad: [-0.001, 0.001],
+                reference_pixel: [32, 32],
+            },
+            GridPadding::CasaComposite(PaddingFactor::TCLEAN),
+        )
+        .unwrap();
+        let pol = PolarizationRouting::compile(
+            &[Correlation::XX, Correlation::YY],
+            &[casa_imaging_model::PolarizationCoordinate::StokesI],
+        )
+        .unwrap();
+        let mut owners = Vec::new();
+        for _ in 0..4 {
+            let (set, charge) = w_kernel_set(&geometry, &pol, WPlaneCount::Fixed(4), admission)
+                .expect("W kernels fit");
+            let Kernels::Admitted { ref _charge } = charge else {
+                panic!("W set is admitted")
+            };
+            assert!(set.resident_bytes() > 0);
+            assert_eq!(_charge.memory(), set.resident_bytes());
+            owners.push((set, charge));
+        }
+        let charged: u64 = owners
+            .iter()
+            .map(|(_, charge)| match charge {
+                Kernels::Admitted { _charge } => _charge.memory(),
+                Kernels::Catalog { .. } => unreachable!(),
+            })
+            .sum();
+        assert_eq!(
+            charged,
+            owners
+                .iter()
+                .map(|(set, _)| set.resident_bytes())
+                .sum::<u64>()
+        );
+    }
 
     /// `SynthesisImagerVi2::weight`: `npixels = n` makes the continuum
     /// density `n × n` whatever the image's shape, each cell `(n·Δ)/n`; the
