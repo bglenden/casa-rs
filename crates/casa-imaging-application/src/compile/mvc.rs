@@ -183,7 +183,7 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
     )?;
     let expansion_reference_hz = parent.reffreq.unwrap_or_else(|| band.gridded.midpoint_hz());
     let request = parent;
-    let spectral = super::spectral::prepare_axis(
+    let mut spectral = super::spectral::prepare_axis(
         request,
         (surveyed.stores, surveyed.reference),
         Some(band),
@@ -191,6 +191,11 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
         None,
         None,
     )?;
+    // CASA's `cube2tt` copies the cube image coordinates and changes only
+    // the spectral reference pixel, value and increment. The rest-frequency
+    // label therefore comes from the cube, not the independently prepared
+    // continuum axis (`PyMtmfsViaCubeSynthesisImager::copy_image`).
+    spectral.image.rest_frequency_hz = surveyed.spectral.image.rest_frequency_hz;
     let taylor_surveyed = super::Surveyed {
         stores: surveyed.stores,
         reference: surveyed.reference,

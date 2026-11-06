@@ -431,3 +431,63 @@ fn mvc_unrestored_tiny_weights_publish_blank_taylor_moments() {
         "a refused family must not publish its staged cube"
     );
 }
+
+/// CASA reuses the cube image's rest-frequency label in its Taylor image
+/// family, even though the Taylor WCS reference is the LSRK band midpoint.
+/// These differ for topocentric source data without a SOURCE rest frequency.
+#[test]
+fn mvc_taylor_rest_frequency_follows_the_cube_label() {
+    use casa_coordinates::CoordinateModel;
+    use casa_types::measures::frequency::FrequencyRef;
+
+    let observation = Observation::synthesise_band(6, &[("point", POINT)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    ms.spectral_window_mut()
+        .unwrap()
+        .set_i32(0, "MEAS_FREQ_REF", FrequencyRef::TOPO.casacore_code())
+        .unwrap();
+    ms.save().unwrap();
+    drop(ms);
+    let controls = json!({
+        "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+        "nchan": 3, "niter": 0, "weighting": "natural", "write_pb": true,
+        "restoration": false,
+    });
+    let (_, implicit) = observation.image("mvc-topo-rest-implicit", controls.clone());
+    let rest = |products: &super::fixture::Products, suffix: &str| {
+        let CoordinateModel::Spectral(axis) =
+            products.get(suffix).image.coordinates().coordinate(2)
+        else {
+            panic!("spectral coordinate")
+        };
+        axis.rest_frequency()
+    };
+    let cube_rest = rest(&implicit, ".psf");
+    let taylor_rest = rest(&implicit, ".psf.tt0");
+    let taylor_reference = implicit.get(".psf.tt0").channel_frequency_hz(0);
+    assert!(
+        (cube_rest - taylor_reference).abs() > 1_000.0,
+        "the test must distinguish the source-frame rest label and LSRK reference"
+    );
+    assert!(
+        (cube_rest - taylor_rest).abs() < 1e-3,
+        "cube rest {cube_rest}, Taylor rest {taylor_rest}"
+    );
+    let mut explicit = controls;
+    explicit["restfreq"] = json!(["45GHz", "46GHz"]);
+    let (_, explicit) = observation.image("mvc-topo-rest-explicit", explicit);
+    assert_eq!(rest(&explicit, ".psf"), 45e9);
+    assert_eq!(rest(&explicit, ".psf.tt0"), 45e9);
+    for suffix in [".psf", ".psf.tt0"] {
+        let CoordinateModel::Spectral(axis) =
+            explicit.get(suffix).image.coordinates().coordinate(2)
+        else {
+            panic!("spectral coordinate")
+        };
+        assert_eq!(
+            axis.rest_frequencies(),
+            [45e9, 46e9],
+            "{suffix} rest-frequency list"
+        );
+    }
+}
