@@ -108,10 +108,26 @@ fn source_lsrk_cube_waves_equal_the_resident_cube() {
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
     let mut ms = MeasurementSet::open(&measurement_set).expect("open MS");
-    ms.spectral_window_mut()
-        .unwrap()
-        .set_i32(0, "MEAS_FREQ_REF", 1)
+    let mut spw = ms.spectral_window_mut().unwrap();
+    spw.set_i32(0, "MEAS_FREQ_REF", 1).unwrap();
+    let frequencies = (0..32)
+        .map(|channel| 44.0e9 + f64::from(channel) * 1000.0)
+        .collect();
+    spw.set_array(
+        0,
+        "CHAN_FREQ",
+        ArrayValue::Float64(ArrayD::from_shape_vec(vec![32], frequencies).unwrap()),
+    )
+    .unwrap();
+    for column in ["CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"] {
+        spw.set_array(
+            0,
+            column,
+            ArrayValue::Float64(ArrayD::from_shape_vec(vec![32], vec![1000.0; 32]).unwrap()),
+        )
         .unwrap();
+    }
+    spw.set_f64(0, "TOTAL_BANDWIDTH", 32_000.0).unwrap();
     ms.save().expect("save LSRK frame");
     drop(ms);
     let cube = |name: &str, memory: u64| {
@@ -124,6 +140,12 @@ fn source_lsrk_cube_waves_equal_the_resident_cube() {
     };
     let (resident, resident_waves) = cube("source-lsrk-resident", 4 << 30);
     assert_eq!(resident_waves, None);
+    assert!(
+        read_product(&resident, ".sumwt")
+            .1
+            .iter()
+            .any(|value| *value > 0.0)
+    );
     let (waved, waves) = cube("source-lsrk-waved", WAVED_MEMORY_BYTES);
     assert!(waves.is_some_and(|planes| planes < 30), "waves: {waves:?}");
     for suffix in DIRTY_PRODUCT_SUFFIXES {
