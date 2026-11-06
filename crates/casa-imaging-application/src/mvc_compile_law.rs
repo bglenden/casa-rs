@@ -559,13 +559,18 @@ fn mvc_projected_model_uses_each_cube_frequency_and_beam_under_admission() {
     let taylor_model = taylor_lifecycle
         .initial_from_start_model(&coefficients)
         .unwrap();
+    // An asymmetric common PB distinguishes the model's y-major order
+    // from the product plane's x-major order at the off-axis point.
+    let mut mean_pb = taylor_completion.value.primary_beam.clone();
+    mean_pb[20 * 64 + 10] = 0.7;
+    mean_pb[10 * 64 + 20] = 0.9;
     let projection_inputs = || crate::mvc::MvcModelProjectionInputs {
         cube_problem: &cube,
         cube: &cube_completion,
         cube_lifecycle: &cube_lifecycle,
         taylor_problem: &taylor,
         taylor_model: &taylor_model,
-        mean_pb: &taylor_completion.value.primary_beam,
+        mean_pb: &mean_pb,
         expansion_reference_hz: view.expansion_reference_hz,
         controls,
         centres: None,
@@ -588,14 +593,27 @@ fn mvc_projected_model_uses_each_cube_frequency_and_beam_under_admission() {
         let factor = (freq - 45e9) / 45e9;
         for &point in &points {
             let polynomial = (1.25_f64 + factor * -0.75_f64) as f32;
-            let expected =
-                polynomial * pb.pixels[point] / taylor_completion.value.primary_beam[point];
+            let (x, y) = (point % 64, point / 64);
+            let product_pixel = x * 64 + y;
+            let expected = polynomial * pb.pixels[product_pixel] / mean_pb[product_pixel];
             let index = channel * cells + point;
             let actual = projected.value.read_samples(index..index + 1).unwrap()[0]
                 .value()
                 .value() as f32;
             assert_eq!(actual, expected, "channel {channel}, pixel {point}");
         }
+    }
+    for channel in 0..3 {
+        let transposed = channel * cells + 20 * 64 + 10;
+        assert_eq!(
+            projected
+                .value
+                .read_samples(transposed..transposed + 1)
+                .unwrap()[0]
+                .value()
+                .value(),
+            0.0
+        );
     }
     let tight = casa_imaging_runtime::ResourcePolicy::Explicit {
         workers: 1,

@@ -337,12 +337,17 @@ pub(crate) fn project_mvc_model(
     )?;
     let read_term = |term| -> Result<Vec<f32>, NativeError> {
         let samples = taylor_model.read_plane(0, term, 0)?;
-        let mut values = Vec::with_capacity(cells);
-        for sample in &samples {
-            if sample.support() != ModelSupport::Valid {
-                return Err(invalid());
+        // Model storage is y-major with x contiguous; product planes are
+        // x-major with y contiguous. Translate at this boundary.
+        let mut values = vec![0.0_f32; cells];
+        for y in 0..shape[1] {
+            for x in 0..shape[0] {
+                let sample = samples[y * shape[0] + x];
+                if sample.support() != ModelSupport::Valid {
+                    return Err(invalid());
+                }
+                values[x * shape[1] + y] = sample.value().value() as f32;
             }
-            values.push(sample.value().value() as f32);
         }
         Ok(values)
     };
@@ -377,7 +382,9 @@ pub(crate) fn project_mvc_model(
             .evaluate(&mut output)?;
             loaded_channel = Some(channel);
         }
-        Ok(output[index % cells])
+        let pixel = index % cells;
+        let (x, y) = (pixel % shape[0], pixel / shape[0]);
+        Ok(output[x * shape[1] + y])
     })?;
     Ok(Admitted {
         value: model,
