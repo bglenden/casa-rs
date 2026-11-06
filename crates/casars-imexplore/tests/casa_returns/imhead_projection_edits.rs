@@ -97,7 +97,8 @@ fn projection_edits_match_casa() {
 fn unsupported_projection_transitions_leave_the_image_unchanged() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
     let workspace = tempfile::tempdir().unwrap();
-    for target in ["CAR", "MOL"] {
+    {
+        let target = "MOL";
         let path = workspace.path().join(format!("{target}.im"));
         copy_tree(&fixture, &path);
         let before = casa_images::PagedImage::<f32>::open(&path)

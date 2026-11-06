@@ -1315,9 +1315,10 @@ mod tests {
 
         let world = cs.to_world(&[128.0, 128.0, 0.0, 2.0]).unwrap();
         assert_eq!(world.len(), 4);
-        assert!((world[3] - 1.150345e11).abs() < 10.0);
+        // Casacore reconstructs a spectral lookup on consecutive channels.
+        assert!((world[3] - 1.1504075e11).abs() < 10.0);
 
-        let pixel = cs.to_pixel(&[4.02298, 0.08843, 1.0, 1.150345e11]).unwrap();
+        let pixel = cs.to_pixel(&[4.02298, 0.08843, 1.0, 1.1504075e11]).unwrap();
         assert!((pixel[3] - 2.0).abs() < 1e-10);
     }
 

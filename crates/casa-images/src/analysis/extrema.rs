@@ -15,6 +15,10 @@ use crate::{AnyPagedImage, ImageError, ImagePixel, PagedImage};
 /// The chunk buffers are capped at 1,048,576 pixels each; the table storage
 /// manager can additionally retain a complete physical tile in its cache.
 pub fn imhead_extrema(path: impl AsRef<Path>) -> Result<Option<ImageExtrema>, ImageError> {
+    let path = path.as_ref();
+    if path.is_file() {
+        return super::imhead_fits::extrema(path);
+    }
     match AnyPagedImage::open(path)? {
         AnyPagedImage::Float32(image) => extrema(&image),
         AnyPagedImage::Float64(image) => extrema(&image),

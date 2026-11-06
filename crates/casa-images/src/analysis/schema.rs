@@ -480,6 +480,9 @@ pub struct ImageHeaderSummary {
     pub image_type: String,
     /// Stored default pixel mask name.
     pub default_mask: Option<String>,
+    /// Whether a pixel mask applies, including an unnamed FITS blank mask.
+    #[serde(default)]
+    pub has_mask: bool,
     /// Stored pixel masks.
     pub masks: Vec<String>,
     /// Stored regions.

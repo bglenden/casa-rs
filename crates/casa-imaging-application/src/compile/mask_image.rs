@@ -445,6 +445,7 @@ fn spectral_near(mask: &SpectralCoordinate, image: &SpectralCoordinate) -> bool 
         CoordinateModel::Spectral(Box::new(image.clone())),
     );
     mask.frequency_ref() == image.frequency_ref()
+        && mask_model.axis_units() == image_model.axis_units()
         && near(mask.rest_frequency(), image.rest_frequency())
         && pairs(mask_model.reference_value(), image_model.reference_value())
         && pairs(mask_model.increment(), image_model.increment())

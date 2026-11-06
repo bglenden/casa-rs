@@ -14,6 +14,82 @@ use crate::coordinate::{Coordinate, CoordinateType};
 use crate::error::CoordinateError;
 use crate::record_utils::{get_optional_string, get_optional_vec_string, get_required_vec_f64};
 
+pub(crate) enum TabularEdit {
+    ReferencePixel(f64),
+    ReferenceValue(f64),
+    Increment(f64),
+}
+
+pub(crate) struct EditedTable {
+    pub(crate) old: f64,
+    pub(crate) values: Vec<f64>,
+    pub(crate) increment: f64,
+}
+
+/// Apply casacore's tabular affine edit to its sampled world values.
+pub(crate) fn edit_table(
+    pixel_values: &[f64],
+    world_values: &[f64],
+    reference_value: f64,
+    increment: f64,
+    reference_pixel: f64,
+    edit: TabularEdit,
+) -> Result<EditedTable, CoordinateError> {
+    if pixel_values.len() < 2 || pixel_values.len() != world_values.len() || !increment.is_normal()
+    {
+        return Err(CoordinateError::InvalidRecord(
+            "invalid tabular coordinate or subnormal increment (#977)".into(),
+        ));
+    }
+    let (old, values) = match edit {
+        TabularEdit::ReferencePixel(value) => (
+            reference_pixel,
+            world_values
+                .iter()
+                .map(|world| *world - increment * (value - reference_pixel))
+                .collect::<Vec<_>>(),
+        ),
+        TabularEdit::ReferenceValue(value) => (
+            reference_value,
+            world_values
+                .iter()
+                .map(|world| *world + (value - reference_value))
+                .collect::<Vec<_>>(),
+        ),
+        TabularEdit::Increment(value) => (
+            increment,
+            world_values
+                .iter()
+                .map(|world| reference_value + (*world - reference_value) * (value / increment))
+                .collect::<Vec<_>>(),
+        ),
+    };
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err(CoordinateError::InvalidRecord(
+            "tabular edit produces non-finite values (#977)".into(),
+        ));
+    }
+    let first = values[0];
+    let last = values[values.len() - 1];
+    let span = pixel_values[pixel_values.len() - 1] - pixel_values[0];
+    let increment = (last - first) / span;
+    let sign = (last - first).signum();
+    if !increment.is_normal()
+        || values
+            .windows(2)
+            .any(|pair| (pair[1] - pair[0]) * sign <= 0.0)
+    {
+        return Err(CoordinateError::InvalidRecord(
+            "tabular edit produces an invalid increment (#977)".into(),
+        ));
+    }
+    Ok(EditedTable {
+        old,
+        values,
+        increment,
+    })
+}
+
 /// A one-axis coordinate defined by a pair of lookup tables.
 ///
 /// The `pixel_values` and `world_values` vectors must have the same length
@@ -25,6 +101,8 @@ use crate::record_utils::{get_optional_string, get_optional_vec_string, get_requ
 pub struct TabularCoordinate {
     pixel_values: Vec<f64>,
     world_values: Vec<f64>,
+    /// Linear tabular coordinates carry no sampled lookup table.
+    linear: Option<(f64, f64, f64)>,
     name: String,
     unit: String,
 }
@@ -56,6 +134,7 @@ impl TabularCoordinate {
         Self {
             pixel_values,
             world_values,
+            linear: None,
             name: name.into(),
             unit: unit.into(),
         }
@@ -71,6 +150,26 @@ impl TabularCoordinate {
         &self.world_values
     }
 
+    pub(crate) fn edit(&mut self, edit: TabularEdit) -> Result<f64, CoordinateError> {
+        if let Some((ref mut crval, ref mut cdelt, ref mut crpix)) = self.linear {
+            return Ok(match edit {
+                TabularEdit::ReferencePixel(value) => std::mem::replace(crpix, value),
+                TabularEdit::ReferenceValue(value) => std::mem::replace(crval, value),
+                TabularEdit::Increment(value) => std::mem::replace(cdelt, value),
+            });
+        }
+        let updated = edit_table(
+            &self.pixel_values,
+            &self.world_values,
+            self.reference_value()[0],
+            self.increment()[0],
+            self.reference_pixel()[0],
+            edit,
+        )?;
+        self.world_values = updated.values;
+        Ok(updated.old)
+    }
+
     /// Reconstructs a tabular coordinate from a serialized record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
         let pixel_values = get_required_vec_f64(rec, "pixelvalues")?;
@@ -81,6 +180,25 @@ impl TabularCoordinate {
         let unit = get_optional_string(rec, "unit")
             .or_else(|| get_optional_vec_string(rec, "units").and_then(|v| v.into_iter().next()))
             .unwrap_or_default();
+        if pixel_values.is_empty() && world_values.is_empty() {
+            let read = |field| {
+                let values = get_required_vec_f64(rec, field)?;
+                if values.len() == 1 {
+                    Ok(values[0])
+                } else {
+                    Err(CoordinateError::InvalidRecord(format!(
+                        "invalid tabular {field}"
+                    )))
+                }
+            };
+            return Ok(Self {
+                pixel_values,
+                world_values,
+                linear: Some((read("crval")?, read("cdelt")?, read("crpix")?)),
+                name,
+                unit,
+            });
+        }
         if pixel_values.len() != world_values.len() || pixel_values.len() < 2 {
             return Err(CoordinateError::InvalidRecord(
                 "tabular coordinate requires matching pixel/world tables with at least 2 entries"
@@ -154,7 +272,11 @@ impl Coordinate for TabularCoordinate {
                 got: pixel.len(),
             });
         }
-        let world = interpolate(&self.pixel_values, &self.world_values, pixel[0])?;
+        let world = if let Some((crval, cdelt, crpix)) = self.linear {
+            crval + cdelt * (pixel[0] - crpix)
+        } else {
+            interpolate(&self.pixel_values, &self.world_values, pixel[0])?
+        };
         Ok(vec![world])
     }
 
@@ -165,22 +287,41 @@ impl Coordinate for TabularCoordinate {
                 got: world.len(),
             });
         }
-        let pixel = interpolate(&self.world_values, &self.pixel_values, world[0])?;
+        let pixel = if let Some((crval, cdelt, crpix)) = self.linear {
+            if cdelt.abs() < 1e-300 {
+                return Err(CoordinateError::ConversionFailed(
+                    "zero tabular increment".into(),
+                ));
+            }
+            crpix + (world[0] - crval) / cdelt
+        } else {
+            interpolate(&self.world_values, &self.pixel_values, world[0])?
+        };
         Ok(vec![pixel])
     }
 
     fn reference_value(&self) -> Vec<f64> {
-        vec![self.world_values[0]]
+        vec![
+            self.linear
+                .map_or_else(|| self.world_values[0], |(crval, _, _)| crval),
+        ]
     }
 
     fn reference_pixel(&self) -> Vec<f64> {
-        vec![self.pixel_values[0]]
+        vec![
+            self.linear
+                .map_or_else(|| self.pixel_values[0], |(_, _, crpix)| crpix),
+        ]
     }
 
     fn increment(&self) -> Vec<f64> {
-        // Approximate increment from first two entries
-        let dp = self.pixel_values[1] - self.pixel_values[0];
-        let dw = self.world_values[1] - self.world_values[0];
+        if let Some((_, cdelt, _)) = self.linear {
+            return vec![cdelt];
+        }
+        // Casacore derives the global increment from the table endpoints.
+        let last = self.pixel_values.len() - 1;
+        let dp = self.pixel_values[last] - self.pixel_values[0];
+        let dw = self.world_values[last] - self.world_values[0];
         if dp.abs() < 1e-300 {
             vec![0.0]
         } else {

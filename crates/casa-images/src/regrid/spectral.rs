@@ -78,11 +78,10 @@ impl SpectralPlan {
         debug_assert_eq!(input.coordinate_type(), CoordinateType::Spectral);
         let positions = (0..output_channels)
             .map(|channel| {
-                output
-                    .to_world(&[channel as f64])
-                    .and_then(|world| input.to_pixel(&world))
+                theirs
+                    .world_frequency_hz(channel as f64)
+                    .and_then(|frequency| ours.pixel_at_frequency_hz(frequency))
                     .ok()
-                    .and_then(|pixel| pixel.first().copied())
                     .filter(|pixel| pixel.is_finite())
                     .map(|pixel| pixel as f32)
             })
@@ -159,6 +158,27 @@ fn linear(x: f32, at: impl Fn(usize) -> (f32, bool), count: usize) -> (f32, bool
 mod tests {
     use super::*;
     use crate::regrid::{RegridMethod, RegridTemplate, regrid, regrid_along_frequency};
+
+    #[test]
+    fn spectral_plan_converts_between_axis_units() {
+        use casa_coordinates::SpectralCoordinate;
+        use casa_types::measures::frequency::FrequencyRef;
+
+        let input = CoordinateModel::Spectral(Box::new(SpectralCoordinate::new(
+            FrequencyRef::LSRK,
+            1.0e9,
+            1.0e8,
+            0.0,
+            1.4e9,
+        )));
+        let output = CoordinateModel::Spectral(Box::new(
+            SpectralCoordinate::new(FrequencyRef::LSRK, 1.05, 0.1, 0.0, 1.4).with_unit("GHz"),
+        ));
+        let plan = SpectralPlan::new((&input, 4), (&output, 3), 0).unwrap();
+        for (actual, expected) in plan.positions.iter().zip([0.5_f32, 1.5, 2.5]) {
+            assert!((actual.unwrap() - expected).abs() < 1e-5);
+        }
+    }
 
     /// A 4 × 4 image of one Stokes plane and `channels` channels from
     /// `first_hz`, `step_hz` apart, each plane holding `value(channel)`.

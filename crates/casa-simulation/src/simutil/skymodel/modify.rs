@@ -435,10 +435,7 @@ fn spectral_axis(
                 refval: ModelValue::Model(in_unit(coordinate.reference_value()[0])),
                 refpix: coordinate.reference_pixel()[0],
                 width: ModelValue::Model(in_unit(coordinate.increment()[0])),
-                rest_frequency: ModelValue::Model(Quantity::with_unit(
-                    coordinate.rest_frequency(),
-                    unit("Hz"),
-                )),
+                rest_frequency: ModelValue::Model(in_unit(coordinate.rest_frequency())),
             }
         }
         None => {

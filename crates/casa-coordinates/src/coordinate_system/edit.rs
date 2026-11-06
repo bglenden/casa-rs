@@ -6,29 +6,250 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use super::CoordinateSystem;
 use crate::{Coordinate, CoordinateError, CoordinateType};
 
-// CASA rebuilds every direction coordinate when it sets any reference value.
-// In these tested canonical coordinates that rebuild leaves the direction
-// record unchanged; other non-zenithal cases can adjust its pole or pixels.
-fn stable_nonzenithal_reference(record: &RecordValue) -> bool {
-    let same_frame = matches!(
-        (record.get("system"), record.get("conversionSystem")),
-        (Some(Value::Scalar(ScalarValue::String(native))), Some(Value::Scalar(ScalarValue::String(converted))))
-            if native == converted
+/// Store WCSLIB's resolved latitude of the native pole after changing a
+/// direction's projection or reference value.
+fn refresh_direction_pole(record: &mut RecordValue) -> Result<(), CoordinateError> {
+    let direction = crate::DirectionCoordinate::from_record(record)?;
+    let pole = direction.native_pole()[1];
+    if ["CAR", "SFL", "MER", "AIT"].contains(&direction.projection().name()) {
+        let latitude = direction.reference_value()[1].to_degrees();
+        let longitude = direction.longpole().to_degrees();
+        // WCSLIB checks the *unclamped* candidate pole latitude in degrees.
+        // A residual in sin(latitude) alone misses errors near LONGPOLE=90.
+        let (u, v) = if longitude == 0.0 {
+            (0.0, 90.0 - latitude)
+        } else {
+            let (_, cosine) = crate::direction::wcslib_sin_cos_degrees(longitude);
+            let (sine_latitude, _) = crate::direction::wcslib_sin_cos_degrees(latitude);
+            let z = cosine.abs();
+            if z == 0.0 {
+                if sine_latitude != 0.0 {
+                    return Err(CoordinateError::InvalidRecord(
+                        "invalid direction coordinate transformation".into(),
+                    ));
+                }
+                (0.0, 0.0)
+            } else {
+                let ratio = sine_latitude / z;
+                if ratio.abs() - 1.0 >= 1e-10 {
+                    return Err(CoordinateError::InvalidRecord(
+                        "invalid direction coordinate transformation".into(),
+                    ));
+                }
+                (
+                    0.0_f64.atan2(cosine).to_degrees(),
+                    ratio.clamp(-1.0, 1.0).acos().to_degrees(),
+                )
+            }
+        };
+        let wrap = |angle: f64| {
+            if angle > 180.0 {
+                angle - 360.0
+            } else if angle < -180.0 {
+                angle + 360.0
+            } else {
+                angle
+            }
+        };
+        if wrap(u + v).abs().min(wrap(u - v).abs()) > 90.0 + 1e-10 {
+            return Err(CoordinateError::InvalidRecord(
+                "ill-conditioned direction coordinate transformation".into(),
+            ));
+        }
+    }
+    let casa_style = record.get("units").is_some()
+        || record.get("conversionSystem").is_some()
+        || record.get("axes").is_some();
+    record.upsert(
+        "latpole",
+        Value::Scalar(ScalarValue::Float64(if casa_style {
+            pole.to_degrees()
+        } else {
+            pole
+        })),
     );
-    let zero_reference = matches!(record.get("crval"), Some(Value::Array(ArrayValue::Float64(values)))
-        if values.shape() == [2] && values.iter().all(|value| value.to_bits() == 0));
-    let pole = matches!(record.get("latpole"), Some(Value::Scalar(ScalarValue::Float64(value))) if *value == 90.0)
-        && matches!(record.get("longpole"), Some(Value::Scalar(ScalarValue::Float64(value))) if value.to_bits() == 0);
-    let identity = matches!(record.get("pc"), Some(Value::Array(ArrayValue::Float64(values)))
-        if values.shape() == [2, 2]
-            && values[[0, 0]] == 1.0 && values[[1, 1]] == 1.0
-            && values[[0, 1]].to_bits() == 0 && values[[1, 0]].to_bits() == 0);
-    let no_parameters = matches!(record.get("projection_parameters"), Some(Value::Array(ArrayValue::Float64(values))) if values.is_empty());
-    let increments = matches!(record.get("cdelt"), Some(Value::Array(ArrayValue::Float64(values)))
-        if values.shape() == [2] && values[[0]] == -1.0 && values[[1]] == 1.0);
-    let units = matches!(record.get("units"), Some(Value::Array(ArrayValue::String(values)))
-        if values.shape() == [2] && values.iter().all(|unit| unit == "'"));
-    same_frame && zero_reference && pole && identity && no_parameters && increments && units
+    Ok(())
+}
+
+/// Casacore applies every direction reference value when any coordinate's
+/// reference value changes. SFL moves latitude into the reference pixel.
+fn rebuild_direction_reference(record: &mut RecordValue) -> Result<(), CoordinateError> {
+    normalize_direction_matrix(record)?;
+    let sfl = matches!(record.get("projection"), Some(Value::Scalar(ScalarValue::String(name))) if name.eq_ignore_ascii_case("SFL"));
+    if sfl {
+        let crval = crate::record_utils::get_required_vec_f64(record, "crval")?;
+        let cdelt = crate::record_utils::get_required_vec_f64(record, "cdelt")?;
+        let crpix = crate::record_utils::get_required_vec_f64(record, "crpix")?;
+        if crval.len() != 2 || cdelt.len() != 2 || crpix.len() != 2 {
+            return Err(CoordinateError::InvalidRecord(
+                "invalid direction reference values".into(),
+            ));
+        }
+        if crval[1] != 0.0 && cdelt[1] != 0.0 {
+            let pixel = crpix[1] - crval[1] / cdelt[1];
+            if !pixel.is_finite() {
+                return Err(CoordinateError::InvalidRecord(
+                    "SFL reference pixel is not finite (#977)".into(),
+                ));
+            }
+            let Some(Value::Array(ArrayValue::Float64(values))) = record.get_mut("crpix") else {
+                return Err(CoordinateError::InvalidRecord(
+                    "invalid direction crpix".into(),
+                ));
+            };
+            if values.shape() != [2] {
+                return Err(CoordinateError::InvalidRecord(
+                    "invalid direction crpix".into(),
+                ));
+            }
+            values[[1]] = pixel;
+            let Some(Value::Array(ArrayValue::Float64(values))) = record.get_mut("crval") else {
+                return Err(CoordinateError::InvalidRecord(
+                    "invalid direction crval".into(),
+                ));
+            };
+            if values.shape() != [2] {
+                return Err(CoordinateError::InvalidRecord(
+                    "invalid direction crval".into(),
+                ));
+            }
+            values[[1]] = 0.0;
+        }
+    }
+    refresh_direction_pole(record)
+}
+
+/// Match casacore's direction-coordinate restore, which normalizes the rows
+/// of its WCS PC matrix and absorbs their lengths into the increments. CASA
+/// records store this matrix transposed relative to WCS.
+fn normalize_direction_matrix(record: &mut RecordValue) -> Result<(), CoordinateError> {
+    let mut matrix = match record.get("pc").cloned() {
+        None => return Ok(()),
+        Some(Value::Array(ArrayValue::Float64(matrix))) => matrix,
+        _ => {
+            return Err(CoordinateError::InvalidRecord(
+                "unsupported direction PC matrix (#977)".into(),
+            ));
+        }
+    };
+    if matrix.shape() != [2, 2] {
+        return Err(CoordinateError::InvalidRecord(
+            "invalid direction PC matrix".into(),
+        ));
+    }
+    let Some(Value::Array(ArrayValue::Float64(mut increments))) = record.get("cdelt").cloned()
+    else {
+        return Err(CoordinateError::InvalidRecord(
+            "invalid direction increments".into(),
+        ));
+    };
+    if increments.shape() != [2] {
+        return Err(CoordinateError::InvalidRecord(
+            "invalid direction increments".into(),
+        ));
+    }
+    for axis in 0..2 {
+        let norm_squared = matrix[[0, axis]].powi(2) + matrix[[1, axis]].powi(2);
+        if norm_squared != 0.0 && norm_squared != 1.0 {
+            let diagonal = matrix[[axis, axis]];
+            if diagonal == 0.0 || !norm_squared.is_finite() {
+                return Err(CoordinateError::InvalidRecord(
+                    "unsupported direction PC normalization (#977)".into(),
+                ));
+            }
+            let norm = norm_squared.sqrt().copysign(diagonal);
+            matrix[[0, axis]] /= norm;
+            matrix[[1, axis]] /= norm;
+            increments[[axis]] *= norm;
+        }
+    }
+    record.upsert("pc", Value::Array(ArrayValue::Float64(matrix)));
+    record.upsert("cdelt", Value::Array(ArrayValue::Float64(increments)));
+    Ok(())
+}
+
+fn rebuild_directions(record: &mut RecordValue, fields: &[String]) -> Result<(), CoordinateError> {
+    for field in fields {
+        let Some(Value::Record(direction)) = record.get_mut(field) else {
+            return Err(CoordinateError::InvalidRecord(
+                "missing direction coordinate".into(),
+            ));
+        };
+        rebuild_direction_reference(direction)?;
+    }
+    Ok(())
+}
+
+/// Edit a spectral lookup table in its displayed units, preserving
+/// unrelated outer and table metadata.
+fn tabular_edit(field: &str, value: f64) -> Result<crate::tabular::TabularEdit, CoordinateError> {
+    use crate::tabular::TabularEdit;
+    Ok(match field {
+        "crpix" => TabularEdit::ReferencePixel(value),
+        "crval" => TabularEdit::ReferenceValue(value),
+        "cdelt" => TabularEdit::Increment(value),
+        _ => {
+            return Err(CoordinateError::InvalidRecord(format!(
+                "invalid spectral field {field}"
+            )));
+        }
+    })
+}
+
+fn copy_tabular_fields(
+    target: &mut RecordValue,
+    source: &RecordValue,
+) -> Result<(), CoordinateError> {
+    for key in [
+        "crval",
+        "crpix",
+        "cdelt",
+        "pc",
+        "axes",
+        "units",
+        "pixelvalues",
+        "worldvalues",
+    ] {
+        let value = source
+            .get(key)
+            .ok_or_else(|| CoordinateError::InvalidRecord(format!("missing tabular {key}")))?;
+        target.upsert(key, value.clone());
+    }
+    Ok(())
+}
+
+fn edit_spectral_table(
+    record: &mut RecordValue,
+    field: &str,
+    value: f64,
+) -> Result<f64, CoordinateError> {
+    use crate::spectral::SpectralCoordinate;
+    let mut spectral = SpectralCoordinate::from_record(record)?;
+    let old = spectral.edit_tabular(tabular_edit(field, value)?)?;
+    let generated = spectral.to_record();
+    let Some(Value::Record(source)) = generated.get("tabular") else {
+        return Err(CoordinateError::InvalidRecord(
+            "missing generated spectral table".into(),
+        ));
+    };
+    let Some(Value::Record(target)) = record.get_mut("tabular") else {
+        return Err(CoordinateError::InvalidRecord(
+            "missing spectral table".into(),
+        ));
+    };
+    copy_tabular_fields(target, source)?;
+    Ok(old)
+}
+
+fn edit_generic_table(
+    record: &mut RecordValue,
+    field: &str,
+    value: f64,
+) -> Result<f64, CoordinateError> {
+    let mut table = crate::TabularCoordinate::from_record(record)?;
+    let old = table.edit(tabular_edit(field, value)?)?;
+    copy_tabular_fields(record, &table.to_record())?;
+    Ok(old)
 }
 
 /// Match casacore's restore: clamp the list and select the entry nearest to
@@ -273,8 +494,9 @@ impl CoordinateSystem {
 
     /// Change the first direction coordinate's projection, preserving axis maps.
     ///
-    /// Returns the old projection when it changed. Zenithal projections with
-    /// standard poles are supported; other transitions are refused (#977).
+    /// Returns the old projection when it changed. Supports standard zenithal
+    /// projections and CAR, SFL, MER, and AIT when no frame conversion or
+    /// nonzero projection parameters are present.
     ///
     /// # Errors
     ///
@@ -299,7 +521,9 @@ impl CoordinateSystem {
         let (field, direction) = Self::first_direction_in_record(record)?
             .ok_or_else(|| CoordinateError::InvalidRecord("no direction coordinate".into()))?;
         let name = projection.to_ascii_uppercase();
-        let supported = ["SIN", "TAN", "ARC", "ZEA", "STG"];
+        let supported = [
+            "SIN", "TAN", "ARC", "ZEA", "STG", "CAR", "SFL", "MER", "AIT",
+        ];
         if name == "NCP" {
             return Err(CoordinateError::InvalidRecord(format!(
                 "unknown projection {projection:?}"
@@ -320,8 +544,6 @@ impl CoordinateSystem {
             ));
         };
         let conversion = crate::record_utils::get_optional_string(stored, "conversionSystem");
-        let standard_poles = (direction.longpole() - std::f64::consts::PI).abs() < 1e-12
-            && (direction.latpole() - direction.reference_value()[1]).abs() < 1e-12;
         if !supported.contains(&old.as_str())
             || !supported.contains(&name.as_str())
             || direction
@@ -329,7 +551,6 @@ impl CoordinateSystem {
                 .parameters()
                 .iter()
                 .any(|value| *value != 0.0)
-            || !standard_poles
             || conversion.is_some_and(|frame| {
                 !frame.eq_ignore_ascii_case(direction.direction_ref().as_str())
             })
@@ -342,7 +563,9 @@ impl CoordinateSystem {
         let Some(Value::Record(direction)) = updated.get_mut(&field) else {
             unreachable!()
         };
+        normalize_direction_matrix(direction)?;
         direction.upsert("projection", Value::Scalar(ScalarValue::String(name)));
+        refresh_direction_pole(direction)?;
         let system = Self::from_record(&updated)?;
         *record = updated;
         Ok((system, Some(old)))
@@ -421,8 +644,6 @@ impl CoordinateSystem {
     ///
     /// Returns an error for an invalid axis or unit, nonconformant units,
     /// malformed metadata, or a coordinate layout not yet supported.
-    /// Tabular coordinates and non-Hz spectral target units are currently
-    /// unsupported (#977).
     pub fn set_axis_unit_in_record(
         record: &mut RecordValue,
         pixel_axis: usize,
@@ -462,14 +683,6 @@ impl CoordinateSystem {
         if coordinate.field.starts_with("stokes") {
             return Ok((system, old));
         }
-        if coordinate.field.starts_with("tabular")
-            || (coordinate.field.starts_with("spectral")
-                && matches!(record.get(&coordinate.field), Some(Value::Record(inner)) if inner.get("tabular").is_some()))
-        {
-            return Err(CoordinateError::InvalidRecord(
-                "tabular unit edits are not implemented (#977)".into(),
-            ));
-        }
         let before = casacore_unit(&old)
             .map_err(|error| CoordinateError::InvalidRecord(error.to_string()))?;
         let after = casacore_unit(unit)
@@ -491,11 +704,6 @@ impl CoordinateSystem {
                 "Units are not compatible dimensionally".into(),
             ));
         }
-        if coordinate.field.starts_with("spectral") && after.val().factor != 1.0 {
-            return Err(CoordinateError::InvalidRecord(
-                "non-Hz spectral units are not supported consistently by all coordinate consumers (#977)".into(),
-            ));
-        }
         let factor = before.val().factor / after.val().factor;
         if !factor.is_normal() {
             return Err(CoordinateError::InvalidRecord(
@@ -515,18 +723,54 @@ impl CoordinateSystem {
                     scale_axis_field(target, field, None, factor)?;
                 }
             }
-            let Some(Value::Record(wcs)) = target.get_mut("wcs") else {
+            if let Some(Value::Record(wcs)) = target.get_mut("wcs") {
+                for field in ["crval", "cdelt"] {
+                    scale_axis_field(wcs, field, Some(0), factor)?;
+                }
+            } else if let Some(Value::Record(tabular)) = target.get_mut("tabular") {
+                // The nested table uses its own frequency unit; casacore
+                // serializes it in Hz regardless of the displayed unit.
+                let table_unit = crate::record_utils::get_optional_vec_string(tabular, "units")
+                    .and_then(|units| units.into_iter().next())
+                    .unwrap_or_else(|| "Hz".into());
+                let unit = casacore_unit(&table_unit)
+                    .map_err(|error| CoordinateError::InvalidRecord(error.to_string()))?;
+                let hz = casacore_unit("Hz").expect("built-in frequency unit");
+                if !unit.conformant(&hz) {
+                    return Err(CoordinateError::InvalidRecord(
+                        "invalid tabular frequency unit".into(),
+                    ));
+                }
+                let to_hz = unit.val().factor / hz.val().factor;
+                for field in ["crval", "cdelt"] {
+                    scale_axis_field(tabular, field, Some(0), to_hz)?;
+                }
+                scale_axis_field(tabular, "worldvalues", None, to_hz)?;
+                tabular.upsert(
+                    "units",
+                    Value::Array(ArrayValue::from_string_vec(vec!["Hz".into()])),
+                );
+            } else {
                 return Err(CoordinateError::InvalidRecord(
                     "missing spectral WCS".into(),
                 ));
-            };
-            for field in ["crval", "cdelt"] {
-                scale_axis_field(wcs, field, Some(0), factor)?;
             }
-            target.upsert("unit", Value::Scalar(ScalarValue::String(unit.into())));
+            target.upsert(
+                "unit",
+                Value::Scalar(ScalarValue::String(after.name().into())),
+            );
         } else {
             for field in ["crval", "cdelt"] {
                 scale_axis_field(target, field, Some(local_axis), factor)?;
+            }
+            if coordinate.field.starts_with("tabular") {
+                if !matches!(target.get("worldvalues"), Some(Value::Array(ArrayValue::Float64(values))) if values.is_empty())
+                {
+                    scale_axis_field(target, "worldvalues", None, factor)?;
+                }
+                if target.get("unit").is_some() {
+                    target.upsert("unit", Value::Scalar(ScalarValue::String(unit.into())));
+                }
             }
             let Some(Value::Array(ArrayValue::String(units))) = target.get_mut("units") else {
                 return Err(CoordinateError::InvalidRecord(
@@ -758,25 +1002,35 @@ impl CoordinateSystem {
                 index: pixel_axis,
                 naxes,
             })?;
+        let direction_fields: Vec<String> = coordinates
+            .iter()
+            .filter(|entry| entry.field.starts_with("direction"))
+            .map(|entry| entry.field.clone())
+            .collect();
         if field == "crval" {
-            let directions = coordinates
-                .iter()
-                .filter(|entry| entry.field.starts_with("direction"))
-                .collect::<Vec<_>>();
-            for direction in &directions {
-                let Some(Value::Record(direction_record)) = record.get(&direction.field) else {
+            for field in &direction_fields {
+                let Some(Value::Record(stored)) = record.get(field) else {
                     continue;
                 };
-                let nonzenithal = matches!(direction_record.get("projection"), Some(Value::Scalar(ScalarValue::String(name)))
-                    if ["CAR", "SFL", "MER", "AIT"].iter().any(|projection| name.eq_ignore_ascii_case(projection)));
-                if nonzenithal
-                    && !(coordinate.field.starts_with("spectral")
-                        && directions.len() == 1
-                        && stable_nonzenithal_reference(direction_record))
+                let direction = crate::DirectionCoordinate::from_record(stored)?;
+                if !["CAR", "SFL", "MER", "AIT"].contains(&direction.projection().name()) {
+                    continue;
+                }
+                let conversion =
+                    crate::record_utils::get_optional_string(stored, "conversionSystem");
+                if conversion.is_some_and(|frame| {
+                    !frame.eq_ignore_ascii_case(direction.direction_ref().as_str())
+                }) || direction
+                    .projection()
+                    .parameters()
+                    .iter()
+                    .any(|value| *value != 0.0)
+                    || direction
+                        .increment()
+                        .iter()
+                        .any(|value| value.abs() < 1e-12)
                 {
-                    return Err(CoordinateError::InvalidRecord(
-                        "reference-value edits on non-zenithal projection images are not implemented (#977)".into(),
-                    ));
+                    return Err(CoordinateError::InvalidRecord("reference-value edits for this direction coordinate are not implemented (#977)".into()));
                 }
             }
         }
@@ -803,13 +1057,33 @@ impl CoordinateSystem {
                 "axis increment cannot be zero".into(),
             ));
         }
-        if coordinate.field.starts_with("tabular")
-            || (coordinate.field.starts_with("spectral")
-                && matches!(record.get(&coordinate.field), Some(Value::Record(inner)) if inner.get("tabular").is_some()))
+        if coordinate.field.starts_with("spectral")
+            && matches!(record.get(&coordinate.field), Some(Value::Record(inner)) if inner.get("tabular").is_some())
         {
-            return Err(CoordinateError::InvalidRecord(
-                "tabular coordinate-value edits are not implemented (#977)".into(),
-            ));
+            let mut updated = record.clone();
+            let Some(Value::Record(target)) = updated.get_mut(&coordinate.field) else {
+                unreachable!()
+            };
+            let old = edit_spectral_table(target, field, value)?;
+            if field == "crval" {
+                rebuild_directions(&mut updated, &direction_fields)?;
+            }
+            let system = Self::from_record(&updated)?;
+            *record = updated;
+            return Ok((system, old));
+        }
+        if coordinate.field.starts_with("tabular") {
+            let mut updated = record.clone();
+            let Some(Value::Record(target)) = updated.get_mut(&coordinate.field) else {
+                unreachable!()
+            };
+            let old = edit_generic_table(target, field, value)?;
+            if field == "crval" {
+                rebuild_directions(&mut updated, &direction_fields)?;
+            }
+            let system = Self::from_record(&updated)?;
+            *record = updated;
+            return Ok((system, old));
         }
         let mut updated = record.clone();
         let Some(Value::Record(coordinate_record)) = updated.get_mut(&coordinate.field) else {
@@ -856,6 +1130,9 @@ impl CoordinateSystem {
                 )));
             }
         };
+        if field == "crval" {
+            rebuild_directions(&mut updated, &direction_fields)?;
+        }
         let system = Self::from_record(&updated)?;
         for index in 0..system.n_coordinates() {
             // WCSLIB accepts latitudes up to 1e-10 degrees beyond a pole.
@@ -890,108 +1167,6 @@ mod tests {
     use crate::{
         LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType, TabularCoordinate,
     };
-
-    #[test]
-    fn nonzenithal_spectral_edit_requires_the_verified_direction_form() {
-        let mut direction = RecordValue::new(vec![]);
-        for field in ["system", "conversionSystem"] {
-            direction.upsert(field, Value::Scalar(ScalarValue::String("J2000".into())));
-        }
-        direction.upsert(
-            "crval",
-            Value::Array(ArrayValue::from_f64_vec(vec![0.0, 0.0])),
-        );
-        direction.upsert("latpole", Value::Scalar(ScalarValue::Float64(90.0)));
-        direction.upsert("longpole", Value::Scalar(ScalarValue::Float64(0.0)));
-        direction.upsert(
-            "cdelt",
-            Value::Array(ArrayValue::from_f64_vec(vec![-1.0, 1.0])),
-        );
-        direction.upsert(
-            "units",
-            Value::Array(ArrayValue::from_string_vec(vec!["'".into(), "'".into()])),
-        );
-        direction.upsert(
-            "projection_parameters",
-            Value::Array(ArrayValue::from_f64_vec(vec![])),
-        );
-        direction.upsert(
-            "pc",
-            Value::Array(ArrayValue::Float64(
-                ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[2, 2]), vec![1.0, 0.0, 0.0, 1.0])
-                    .unwrap(),
-            )),
-        );
-        assert!(stable_nonzenithal_reference(&direction));
-        for (field, changed) in [
-            (
-                "crval",
-                Value::Array(ArrayValue::from_f64_vec(vec![0.0, 1.0])),
-            ),
-            ("latpole", Value::Scalar(ScalarValue::Float64(60.0))),
-            ("longpole", Value::Scalar(ScalarValue::Float64(180.0))),
-            (
-                "cdelt",
-                Value::Array(ArrayValue::from_f64_vec(vec![-1e-10, 2e-10])),
-            ),
-            (
-                "units",
-                Value::Array(ArrayValue::from_string_vec(vec![
-                    "deg".into(),
-                    "deg".into(),
-                ])),
-            ),
-            (
-                "conversionSystem",
-                Value::Scalar(ScalarValue::String("GALACTIC".into())),
-            ),
-            (
-                "projection_parameters",
-                Value::Array(ArrayValue::from_f64_vec(vec![1.0])),
-            ),
-            (
-                "pc",
-                Value::Array(ArrayValue::Float64(
-                    ndarray::ArrayD::from_shape_vec(
-                        ndarray::IxDyn(&[2, 2]),
-                        vec![0.0, 1.0, -1.0, 0.0],
-                    )
-                    .unwrap(),
-                )),
-            ),
-        ] {
-            let mut altered = direction.clone();
-            altered.upsert(field, changed);
-            assert!(!stable_nonzenithal_reference(&altered), "{field}");
-        }
-    }
-
-    #[test]
-    fn noncanonical_nonzenithal_spectral_edit_does_not_mutate_record() {
-        use crate::{DirectionCoordinate, Projection, ProjectionType};
-        use casa_types::measures::{direction::DirectionRef, frequency::FrequencyRef};
-        let mut system = CoordinateSystem::new();
-        system.add_coordinate(DirectionCoordinate::new(
-            DirectionRef::J2000,
-            Projection::new(ProjectionType::CAR),
-            [0.0, 30_f64.to_radians()],
-            [-0.01, 0.01],
-            [2.0, 2.0],
-        ));
-        system.add_coordinate(SpectralCoordinate::new(
-            FrequencyRef::LSRK,
-            1.4e9,
-            1e3,
-            1.0,
-            1.4e9,
-        ));
-        let mut record = system.to_record();
-        let before = record.clone();
-        let error =
-            CoordinateSystem::set_reference_value_in_record(&mut record, 2, 1.5e9).unwrap_err();
-        assert!(error.to_string().contains("#977"));
-        assert_eq!(record, before);
-    }
 
     #[test]
     fn direction_frame_edit_preserves_an_implicit_conversion_frame() {
@@ -1187,9 +1362,10 @@ mod tests {
             CoordinateSystem::set_axis_name_in_record(&mut record, 0, "last").unwrap();
         assert_eq!(old, "new");
         assert_eq!(system.coordinate(0).axis_names(), vec!["last"]);
-        let before = record.clone();
-        assert!(CoordinateSystem::set_reference_pixel_in_record(&mut record, 0, 9.).is_err());
-        assert_eq!(record, before);
+        let (updated, old) =
+            CoordinateSystem::set_reference_pixel_in_record(&mut record, 0, 9.).unwrap();
+        assert_eq!(old, 0.0);
+        assert_eq!(updated.coordinate(0).to_world(&[0.0]).unwrap(), vec![-7.0]);
         let mut spectral = CoordinateSystem::new();
         spectral.add_coordinate(
             SpectralCoordinate::from_tabular(
@@ -1204,9 +1380,11 @@ mod tests {
             .unwrap(),
         );
         let mut record = spectral.to_record();
-        let before = record.clone();
-        assert!(CoordinateSystem::set_reference_pixel_in_record(&mut record, 0, 9.).is_err());
-        assert_eq!(record, before);
+        let (updated, old) =
+            CoordinateSystem::set_reference_pixel_in_record(&mut record, 0, 9.).unwrap();
+        assert_eq!(old, 0.0);
+        assert_eq!(updated.coordinate(0).reference_pixel(), vec![0.0]);
+        assert_eq!(updated.coordinate(0).to_world(&[0.0]).unwrap(), vec![-7.0]);
     }
 
     #[test]
