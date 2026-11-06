@@ -201,7 +201,7 @@ def test_generated_stubs_use_catalog_domains_and_surface_refinements() -> None:
     assert tclean["write_pb"] == "bool"
 
     imhead = _annotations(task_functions["imhead"])
-    assert imhead["hdvalue"] == "str | bool | int | float | dict[str, ParameterData] | list[bool | int | float | str]"
+    assert imhead["hdvalue"] == "str | bool | int | float | dict[str, ParameterData] | list[ParameterData]"
 
     importvla = _annotations(task_functions["importvla"])
     assert importvla["archivefiles"] == "StrPath | list[StrPath] | tuple[StrPath, ...]"

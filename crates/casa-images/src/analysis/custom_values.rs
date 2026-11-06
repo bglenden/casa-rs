@@ -4,21 +4,40 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use super::projection_header::cpp_number_precision;
 
-pub(super) fn format_array(array: &ArrayValue) -> String {
-    let values: Vec<String> = match array {
-        ArrayValue::Bool(values) => values
-            .iter()
-            .map(|v| if *v { "1" } else { "0" }.to_string())
-            .collect(),
-        ArrayValue::Int32(values) => values.iter().map(ToString::to_string).collect(),
-        ArrayValue::Float64(values) => values
-            .iter()
-            .map(|value| cpp_number_precision(*value, 6))
-            .collect(),
-        ArrayValue::String(values) => values.iter().cloned().collect(),
+fn array_elements(array: &ArrayValue, column_major: bool) -> Vec<String> {
+    macro_rules! collect {
+        ($values:expr, $render:expr) => {
+            if column_major {
+                $values.view().reversed_axes().iter().map($render).collect()
+            } else {
+                $values.iter().map($render).collect()
+            }
+        };
+    }
+    match array {
+        ArrayValue::Bool(values) => collect!(values, |value: &bool| if *value { "1" } else { "0" }
+            .to_string()),
+        ArrayValue::Int32(values) => collect!(values, |value: &i32| value.to_string()),
+        ArrayValue::Float64(values) => {
+            collect!(values, |value: &f64| cpp_number_precision(*value, 6))
+        }
+        ArrayValue::String(values) => collect!(values, |value: &String| value.clone()),
         _ => unreachable!("only parameter-converted arrays are formatted"),
-    };
-    format!("[{}]", values.join(", "))
+    }
+}
+
+pub(super) fn format_array(array: &ArrayValue) -> String {
+    let values = array_elements(array, false);
+    if let [rows, columns] = array.shape() {
+        let lines = values
+            .chunks(*columns)
+            .map(|row| row.join(", "))
+            .collect::<Vec<_>>()
+            .join("\n ");
+        format!("Axis Lengths: [{rows}, {columns}]  (NB: Matrix in Row/Column order)\n[{lines}]")
+    } else {
+        format!("[{}]", values.join(", "))
+    }
 }
 
 /// Render a parameter-derived record as casacore's ValueHolder does in logs.
@@ -49,11 +68,16 @@ pub(super) fn format_record(record: &RecordValue) -> String {
                             ArrayValue::String(_) => "String",
                             _ => unreachable!("only parameter-derived records are formatted"),
                         };
+                        let shape = array
+                            .shape()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        let values = array_elements(array, true).join(", ");
                         format!(
-                            "{prefix}{kind} array with shape [{}]\n{}{}",
-                            array.len(),
-                            " ".repeat(depth + 2),
-                            format_array(array)
+                            "{prefix}{kind} array with shape [{shape}]\n{}[{values}]",
+                            " ".repeat(depth + 2)
                         )
                     }
                     Value::Record(nested) => {

@@ -7,7 +7,7 @@ use crate::{CasaFloat, CasaValue, ComplexDtype, FloatDtype, IntDtype, ParameterV
 
 /// Convert parameter data to casacore metadata values, including records.
 ///
-/// Record keys use the parameter model's sorted order. Flat array conversion
+/// Record keys use the parameter model's sorted order. Array conversion
 /// follows [`parameter_array_to_casa`].
 ///
 /// # Errors
@@ -30,7 +30,20 @@ pub fn parameter_value_to_casacore(value: &ParameterValue) -> Result<Value, &'st
             ParameterValue::String(value) if !value.contains('\0') => {
                 Value::Scalar(ScalarValue::String(value.clone()))
             }
-            ParameterValue::Array(values) => Value::Array(parameter_array_to_casa(values)?),
+            ParameterValue::Array(values) => {
+                let array = parameter_array_to_casa(values)?;
+                // CASA's record conversion flattens string matrices in
+                // column-major order, while standalone string arrays retain
+                // their two-dimensional shape.
+                match array {
+                    ArrayValue::String(values) if depth > 0 && values.ndim() == 2 => {
+                        Value::Array(ArrayValue::from_string_vec(
+                            values.view().reversed_axes().iter().cloned().collect(),
+                        ))
+                    }
+                    array => Value::Array(array),
+                }
+            }
             ParameterValue::Table(fields) => Value::Record(RecordValue::new(
                 fields
                     .iter()
@@ -161,15 +174,55 @@ pub fn casacore_value_to_casa(value: &Value) -> Result<CasaValue, &'static str> 
     convert(value, 0)
 }
 
-/// Convert a flat parameter array into a casacore array, using CASA's numeric
+/// Convert a flat array or rectangular matrix into a casacore array, using CASA's numeric
 /// promotion from booleans to 32-bit integers to doubles. Empty arrays have
 /// boolean element type, as in CASA's Python variant conversion.
 ///
 /// # Errors
 ///
-/// Returns an error for nested or mixed string arrays, non-finite values, or
+/// Returns an error for higher-dimensional, empty-row, ragged or mixed-string
+/// arrays, non-finite values, or
 /// integer-only values outside the supported 32-bit range (#977).
 pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, &'static str> {
+    if values
+        .iter()
+        .any(|value| matches!(value, ParameterValue::Array(_)))
+    {
+        let mut flat = Vec::new();
+        let mut columns = None;
+        for row in values {
+            let ParameterValue::Array(row) = row else {
+                return Err("ragged arrays are unsupported (#977)");
+            };
+            if row.is_empty() || columns.is_some_and(|n| n != row.len()) {
+                return Err("empty-row or ragged arrays are unsupported (#977)");
+            }
+            columns = Some(row.len());
+            if row
+                .iter()
+                .any(|value| matches!(value, ParameterValue::Array(_)))
+            {
+                return Err("arrays with more than two dimensions are unsupported (#977)");
+            }
+            flat.extend_from_slice(row);
+        }
+        let shape = vec![values.len(), columns.expect("nonempty matrix")];
+        return match parameter_array_to_casa(&flat)? {
+            ArrayValue::Bool(v) => Ok(ArrayValue::Bool(
+                v.into_shape_with_order(shape).expect("rectangular matrix"),
+            )),
+            ArrayValue::Int32(v) => Ok(ArrayValue::Int32(
+                v.into_shape_with_order(shape).expect("rectangular matrix"),
+            )),
+            ArrayValue::Float64(v) => Ok(ArrayValue::Float64(
+                v.into_shape_with_order(shape).expect("rectangular matrix"),
+            )),
+            ArrayValue::String(v) => Ok(ArrayValue::String(
+                v.into_shape_with_order(shape).expect("rectangular matrix"),
+            )),
+            _ => unreachable!("parameter arrays use supported primitive types"),
+        };
+    }
     let mut rank = 0u8;
     for value in values {
         rank = rank.max(match value {
@@ -254,6 +307,34 @@ mod tests {
         );
         assert!(parameter_array_to_casa(&[Integer(i64::MAX)]).is_err());
         assert!(parameter_array_to_casa(&[Integer(1), Text("x".into())]).is_err());
+    }
+
+    #[test]
+    fn rectangular_matrices_preserve_shape_and_reject_ragged_or_empty_rows() {
+        use ParameterValue::{Array, Integer};
+        let matrix = [
+            Array(vec![Integer(1), Integer(2)]),
+            Array(vec![Integer(3), Integer(4)]),
+        ];
+        let converted = parameter_array_to_casa(&matrix).unwrap();
+        assert_eq!(converted.shape(), &[2, 2]);
+        assert_eq!(
+            casacore_value_to_casa(&Value::Array(converted)).unwrap(),
+            CasaValue::IntArray {
+                dtype: IntDtype::Int64,
+                shape: vec![2, 2],
+                data: vec![1, 3, 2, 4],
+            }
+        );
+        assert!(parameter_array_to_casa(&[Array(vec![])]).is_err());
+        assert!(
+            parameter_array_to_casa(&[
+                Array(vec![Integer(1)]),
+                Array(vec![Integer(1), Integer(2)])
+            ])
+            .is_err()
+        );
+        assert!(parameter_array_to_casa(&[Array(vec![Array(vec![Integer(1)])])]).is_err());
     }
 
     #[test]
