@@ -76,6 +76,7 @@ fn run_imhead(
             let axis_name = mode == "put" && key.starts_with("ctype");
             let axis_unit = mode == "put" && key.starts_with("cunit");
             let rest_frequency = mode == "put" && key == "restfreq";
+            let observation_date = mode == "put" && ["date-obs", "epoch"].contains(&key.as_str());
             let spectral_reference = mode == "put" && key == "reffreqtype";
             let beam_key =
                 ["beammajor", "beamminor", "beampa", "bmaj", "bmin", "bpa"].contains(&key.as_str());
@@ -87,6 +88,7 @@ fn run_imhead(
                 && !axis_name
                 && !axis_unit
                 && !rest_frequency
+                && !observation_date
                 && !spectral_reference
                 && !beam_key
                 && !axis_quantity
@@ -128,6 +130,8 @@ fn run_imhead(
                 casa_images::analysis::imhead_put_axis_unit(&path, &hdkey, &hdvalue)
             } else if rest_frequency {
                 casa_images::analysis::imhead_put_rest_frequency(&path, &hdvalue)
+            } else if observation_date {
+                casa_images::analysis::imhead_put_observation_date(&path, &hdkey, &hdvalue)
             } else if spectral_reference {
                 casa_images::analysis::imhead_put_spectral_reference(&path, &hdkey, &hdvalue)
             } else if axis_quantity {

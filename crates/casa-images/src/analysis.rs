@@ -1384,6 +1384,77 @@ pub fn imhead_put_rest_frequency(
     imhead(path)
 }
 
+/// Set CASA's observation date from a time quantity or date string.
+///
+/// # Errors
+///
+/// Returns an error for an invalid time quantity or image I/O failure.
+/// History I/O may fail after the metadata is saved.
+pub fn imhead_put_observation_date(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    use casa_types::measures::{EpochRef, MEpoch};
+    use casa_types::quanta::{Unit, casacore::get_conformant_value, format};
+
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    if matches!(hdvalue, ParameterValue::String(value) if value.is_empty()) {
+        return Err(ImageError::InvalidMetadata(format!(
+            "{hdkey} value not specified"
+        )));
+    }
+    let (quantity, rendered) = quantity_input::parse(hdvalue)?;
+    let days = get_conformant_value(&quantity, &Unit::new("d").expect("valid day unit")).map_err(
+        |_| ImageError::InvalidMetadata(format!("{hdkey} value must have units of time")),
+    )?;
+    // MVTime formatting uses integer calendar arithmetic. Refuse extreme
+    // values before writing rather than overflowing while building the reply.
+    if !days.is_finite() || days.abs() > 1.0e9 {
+        return Err(ImageError::InvalidMetadata(
+            "Non-finite or extreme observation dates are unsupported (#977)".into(),
+        ));
+    }
+    let epoch = MEpoch::from_mjd(days, EpochRef::UTC);
+    let mut image = AnyPagedImage::open(path)?;
+    macro_rules! set_date {
+        ($image:expr) => {{
+            let old = $image
+                .coordinates()
+                .obs_info()
+                .date
+                .as_ref()
+                .map_or(0.0, |epoch| epoch.value().as_mjd());
+            if !old.is_finite() || old.abs() > 1.0e9 {
+                return Err(ImageError::InvalidMetadata(
+                    "Existing observation date is non-finite or extreme (#977)".into(),
+                ));
+            }
+            $image.set_observation_date(epoch)?;
+            old
+        }};
+    }
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => set_date!(image),
+        AnyPagedImage::Float64(image) => set_date!(image),
+        AnyPagedImage::Complex32(image) => set_date!(image),
+        AnyPagedImage::Complex64(image) => set_date!(image),
+    };
+    image.save()?;
+    drop(image);
+    let old = format::format_time(old, format::MJD, 10).replacen('/', "::", 1);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::set",
+        &[format!(
+            "Modified {} from \"Epoch: {old}\n\" to {rendered}",
+            hdkey
+        )],
+    )?;
+    imhead(path)
+}
+
 /// Set CASA's `reffreqtype`, resetting the spectral conversion frame.
 ///
 /// # Errors

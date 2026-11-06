@@ -1533,6 +1533,39 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(())
     }
 
+    /// Set the observation epoch while preserving the stored coordinate maps
+    /// and other observation metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the image has no coordinate record.
+    pub fn set_observation_date(
+        &mut self,
+        epoch: casa_types::measures::MEpoch,
+    ) -> Result<(), ImageError> {
+        let Some(Value::Record(mut coords)) = self.table.keywords().get("coords").cloned() else {
+            return Err(ImageError::InvalidMetadata(
+                "image has no coordinate record".into(),
+            ));
+        };
+        let obs = match coords.get_mut("obsinfo") {
+            Some(Value::Record(obs)) => obs,
+            _ => &mut coords,
+        };
+        // The legacy scalar date is always read as UTC and takes precedence
+        // over obsdate. Remove it so other epoch references survive a reopen.
+        while obs.remove("date").is_some() {}
+        obs.upsert(
+            "obsdate",
+            Value::Record(casa_types::measures::epoch_to_record(&epoch)),
+        );
+        self.table
+            .keywords_mut()
+            .upsert("coords", Value::Record(coords));
+        self.coords.obs_info_mut().date = Some(epoch);
+        Ok(())
+    }
+
     /// Update a zero-based reference pixel while retaining the stored axis maps.
     ///
     /// Returns its previous value. Call [`Self::save`] to persist the change.
@@ -4190,3 +4223,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "image/observation_date_tests.rs"]
+mod observation_date_tests;
