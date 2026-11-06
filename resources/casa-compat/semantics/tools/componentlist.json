@@ -112,12 +112,12 @@
    ]
   },
   "edit": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Matches CASA's placeholder: validates arguments, warns and returns False without editing components.",
    "evidence": [
     "signature",
-    "refusals"
+    "edit-casa"
    ]
   },
   "fromrecord": {
@@ -979,6 +979,18 @@
     "crates/casars-python/python/tests/test_componentlist_convertshape.py"
    ],
    "source_revision": "0f327126e2f5ba348c3faa5fb88225df7e5515bd"
+  },
+  "edit-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "78 CASA 6.7.6-14 calls cover indices, strict boolean arguments, errors and empty, populated and released lists; an additional index conversion is called once.",
+   "scope": "componentlist.edit placeholder.",
+   "links": [
+    "tools/simulation/componentlist_edit_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_edit.json",
+    "crates/casars-python/python/tests/test_componentlist_edit.py"
+   ],
+   "source_revision": "cf9a4e6192aa75986b72835fb93080b49c499b0b"
   }
  }
 }

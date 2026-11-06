@@ -1596,7 +1596,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 44 | 0 | 17 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 45 | 0 | 16 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1613,7 +1613,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 44, Partial: 0, Not implemented: 17, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 45, Partial: 0, Not implemented: 16, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1629,7 +1629,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `convertshape` | `which, majoraxis='arcmin', minoraxis='arcmin', positionangle='deg'` | Implemented (#1053) | Matches CASA's placeholder: validates arguments, warns and returns False without changing shape units. | [signature](#componentlist-evidence-signature), [convertshape-casa](#componentlist-evidence-convertshape-casa) |
 | `deselect` | `which` | Implemented | Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
 | `done` |  | Implemented | As close, and frees the tool. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `edit` | `which, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `edit` | `which, log=True` | Implemented (#1053) | Matches CASA's placeholder: validates arguments, warns and returns False without editing components. | [signature](#componentlist-evidence-signature), [edit-casa](#componentlist-evidence-edit-casa) |
 | `fromrecord` | `record={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `getcomponent` | `which, iknow=False` | Implemented | CASA's record of one component, with CASA's index errors. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getfluxerror` | `which` | Implemented | Returns the real parts of the four stored component flux errors, with CASA index handling. | [signature](#componentlist-evidence-signature), [fluxerror-casa](#componentlist-evidence-fluxerror-casa) |
@@ -2029,6 +2029,15 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/componentlist_convertshape_oracle.py](https://github.com/bglenden/casa-rs/blob/0f327126e2f5ba348c3faa5fb88225df7e5515bd/tools/simulation/componentlist_convertshape_oracle.py)
 - [crates/casars-python/python/tests/data/casa_componentlist_convertshape.json](https://github.com/bglenden/casa-rs/blob/0f327126e2f5ba348c3faa5fb88225df7e5515bd/crates/casars-python/python/tests/data/casa_componentlist_convertshape.json)
 - [crates/casars-python/python/tests/test_componentlist_convertshape.py](https://github.com/bglenden/casa-rs/blob/0f327126e2f5ba348c3faa5fb88225df7e5515bd/crates/casars-python/python/tests/test_componentlist_convertshape.py)
+
+<a id="componentlist-evidence-edit-casa"></a>
+##### edit-casa
+
+**CASA-recorded values — measured.** 78 CASA 6.7.6-14 calls cover indices, strict boolean arguments, errors and empty, populated and released lists; an additional index conversion is called once. componentlist.edit placeholder.
+
+- [tools/simulation/componentlist_edit_oracle.py](https://github.com/bglenden/casa-rs/blob/cf9a4e6192aa75986b72835fb93080b49c499b0b/tools/simulation/componentlist_edit_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_edit.json](https://github.com/bglenden/casa-rs/blob/cf9a4e6192aa75986b72835fb93080b49c499b0b/crates/casars-python/python/tests/data/casa_componentlist_edit.json)
+- [crates/casars-python/python/tests/test_componentlist_edit.py](https://github.com/bglenden/casa-rs/blob/cf9a4e6192aa75986b72835fb93080b49c499b0b/crates/casars-python/python/tests/test_componentlist_edit.py)
 
 ### measures
 
