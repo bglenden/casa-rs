@@ -42,12 +42,12 @@
    ]
   },
   "concatenate": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Appends selected components from readable component-list tables, preserving the destination and requested rows. Record input is not yet implemented. Corrects CASA wrong-row and failed-index mutations.",
    "evidence": [
     "signature",
-    "refusals"
+    "concatenate-casa"
    ]
   },
   "convertfluxpol": {
@@ -1038,6 +1038,20 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "5e4302e2db206b94c6410cc8054e64cba0ae1e2c"
+  },
+  "concatenate-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "21 CASA 6.7.6-14 cases cover table selection, missing files, invalid inputs, failed index conversions and partial mutation; CASA also reads a casa-rs concatenated table with repeated and reordered selections.",
+   "scope": "componentlist.concatenate with a table source.",
+   "links": [
+    "tools/simulation/componentlist_concatenate_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_concatenate.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_concatenate.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_concatenate.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "a58bb93b4c80d9bbcaad08b42caf9563b5fb22e5"
   }
  }
 }
