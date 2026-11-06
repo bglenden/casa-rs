@@ -252,8 +252,7 @@ pub(super) fn check_execution_scope(
     if request.vis.len() != 1
         || selected_fields != 1
         || (request.niter != 0
-            && (request.pblimit >= 0.0
-                || request.nsigma != 0.0
+            && (request.nsigma != 0.0
                 || request.mask_box.iter().any(|region| region.range.is_some())))
         || !request.calcpsf
         || !request.calcres
