@@ -3,6 +3,14 @@
 
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
+/// Convert a Python variant integer as CASA does: retain its low 32 bits.
+///
+/// CASA's scalar and integer-array variant conversions use signed 32-bit
+/// storage, including wraparound for values outside that range.
+pub fn casa_variant_integer(value: i64) -> i32 {
+    value as i32
+}
+
 use crate::{
     CasaFloat, CasaValue, ComplexDtype, EmptyArrayType, FloatDtype, IntDtype, ParameterValue,
 };
@@ -51,8 +59,7 @@ pub fn empty_parameter_array(
 ///
 /// # Errors
 ///
-/// Returns an error for unsupported values, integer overflow, or nesting
-/// beyond 32 records (#977).
+/// Returns an error for unsupported values or nesting beyond 32 records (#977).
 pub fn parameter_value_to_casacore(value: &ParameterValue) -> Result<Value, &'static str> {
     fn convert(value: &ParameterValue, depth: usize) -> Result<Value, &'static str> {
         if depth > 32 {
@@ -60,9 +67,9 @@ pub fn parameter_value_to_casacore(value: &ParameterValue) -> Result<Value, &'st
         }
         Ok(match value {
             ParameterValue::Bool(value) => Value::Scalar(ScalarValue::Bool(*value)),
-            ParameterValue::Integer(value) => Value::Scalar(ScalarValue::Int32(
-                i32::try_from(*value).map_err(|_| "record integer is out of range (#977)")?,
-            )),
+            ParameterValue::Integer(value) => {
+                Value::Scalar(ScalarValue::Int32(casa_variant_integer(*value)))
+            }
             ParameterValue::Float(value) => Value::Scalar(ScalarValue::Float64(*value)),
             ParameterValue::Complex([real, imag]) => Value::Scalar(ScalarValue::Complex64(
                 casa_types::Complex64::new(real.0, imag.0),
@@ -248,7 +255,7 @@ pub fn casacore_value_to_casa(value: &Value) -> Result<CasaValue, &'static str> 
 /// # Errors
 ///
 /// Returns an error for empty nested dimensions, ragged or deeply nested
-/// arrays or integer-only values outside the supported 32-bit range (#977).
+/// arrays (#977).
 pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, &'static str> {
     if values
         .iter()
@@ -337,13 +344,11 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
             values
                 .iter()
                 .map(|value| match value {
-                    ParameterValue::Bool(value) => Ok(i32::from(*value)),
-                    ParameterValue::Integer(value) => {
-                        i32::try_from(*value).map_err(|_| "array integer is out of range (#977)")
-                    }
+                    ParameterValue::Bool(value) => i32::from(*value),
+                    ParameterValue::Integer(value) => casa_variant_integer(*value),
                     _ => unreachable!(),
                 })
-                .collect::<Result<Vec<_>, _>>()?,
+                .collect(),
         )),
         2 => Ok(ArrayValue::from_f64_vec(
             values
@@ -440,7 +445,10 @@ mod tests {
             parameter_array_to_casa(&[Text("x".into())]).unwrap(),
             ArrayValue::from_string_vec(vec!["x".into()])
         );
-        assert!(parameter_array_to_casa(&[Integer(i64::MAX)]).is_err());
+        assert_eq!(
+            parameter_array_to_casa(&[Integer(i64::MAX)]).unwrap(),
+            ArrayValue::from_i32_vec(vec![-1])
+        );
         assert_eq!(
             parameter_array_to_casa(&[Integer(1), Text("x".into())]).unwrap(),
             ArrayValue::from_string_vec(vec!["1".into(), "x".into()])

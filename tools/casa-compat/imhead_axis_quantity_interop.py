@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Have CASA reopen native imhead axis-quantity edits."""
 import argparse
+import ast
 import json
 import math
 import shutil
@@ -23,6 +24,12 @@ def close(actual, expected):
     return actual == expected
 
 
+def task_arguments(text):
+    call = ast.parse(text, mode='eval').body
+    assert isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == 'imhead'
+    return {keyword.arg: ast.literal_eval(keyword.value) for keyword in call.keywords}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('binary', type=lambda p: Path(p).resolve()); args = parser.parse_args()
@@ -39,7 +46,8 @@ def main():
             if 'error' not in case:
                 ia = image(); ia.open(str(path)); history = ia.history(list=False); ia.done()
                 assert history[-3] == case['history'][0], (case, history[-3:])
-                assert history[-1] == case['history'][2].replace('<IMAGE>', str(path)), (case, history[-3:])
+                expected_task = case['history'][2].replace('<IMAGE>', str(path))
+                assert task_arguments(history[-1]) == task_arguments(expected_task), (case, history[-3:])
     print(f"CASA {version_string()} reopened {len(expected['cases'])} axis-quantity results")
 
 

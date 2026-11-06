@@ -22,11 +22,6 @@ pub(super) fn parse(value: &ParameterValue) -> Result<(Quantity, String), ImageE
             Ok((quantity, format!("\"{text}\"")))
         }
         ParameterValue::Table(fields) => {
-            if fields.keys().any(|key| key != "value" && key != "unit") {
-                return Err(invalid(
-                    "Additional quantity record fields are not implemented (#977)".into(),
-                ));
-            }
             let Some(ParameterValue::String(unit)) = fields.get("unit") else {
                 return Err(invalid("Illegal Quantity record".into()));
             };
@@ -40,11 +35,7 @@ pub(super) fn parse(value: &ParameterValue) -> Result<(Quantity, String), ImageE
                     (*value, "Double", cpp_number_precision(*value, 6))
                 }
                 Some(ParameterValue::Integer(value)) => {
-                    let value = i32::try_from(*value).map_err(|_| {
-                        invalid(
-                            "Quantity integer is outside the supported 32-bit range (#977)".into(),
-                        )
-                    })?;
+                    let value = casa_provider_contracts::casa_variant_integer(*value);
                     (f64::from(value), "Int", value.to_string())
                 }
                 _ => return Err(invalid("Illegal Quantity record".into())),
@@ -52,10 +43,17 @@ pub(super) fn parse(value: &ParameterValue) -> Result<(Quantity, String), ImageE
             let unit_value = casa_types::quanta::casacore::casacore_unit(unit)
                 .map_err(|error| invalid(error.to_string()))?;
             let quantity = Quantity::with_unit(number, unit_value);
-            Ok((
-                quantity,
-                format!("  unit: String \"{unit}\"\n  value: {ty} {rendered}"),
-            ))
+            let rendered = if fields.len() == 2 {
+                format!("  unit: String \"{unit}\"\n  value: {ty} {rendered}")
+            } else {
+                let record = casa_provider_contracts::parameter_value_to_casacore(value)
+                    .map_err(|error| invalid(error.into()))?;
+                let casa_types::Value::Record(record) = record else {
+                    unreachable!()
+                };
+                super::custom_values::format_record(&record)
+            };
+            Ok((quantity, rendered))
         }
         _ => Err(invalid("Quantity must be a record or string".into())),
     }

@@ -3,6 +3,53 @@
 use super::*;
 
 #[test]
+fn large_integer_writes_match_casa() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let oracle: Value = serde_json::from_slice(
+        &std::fs::read(fixture.join("large_integer_expected.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(oracle["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for (index, case) in oracle["cases"].as_array().unwrap().iter().enumerate() {
+        let path = workspace.path().join(format!("large-int-{index}.im"));
+        copy_tree(&fixture.join("normal.im"), &path);
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({"imagename":path, "mode":case["mode"], "hdkey":case["key"], "hdvalue":case["value"]}),
+        );
+        assert!(
+            matches!(
+                reply,
+                Some(TaskReply::Succeeded {
+                    value: CasaValue::None,
+                    ..
+                })
+            ),
+            "{index}: {reply:?}"
+        );
+        let got = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename":path, "mode":"get", "hdkey":case["key"]}),
+        );
+        if case["key"] == "cdelt1" {
+            let got = got.to_plain_json();
+            assert_eq!(got["unit"], case["get"]["unit"]);
+            let actual = got["value"].as_f64().unwrap();
+            let expected = case["get"]["value"].as_f64().unwrap();
+            assert!(
+                (actual - expected).abs() <= expected.abs() * 1e-12,
+                "{index}: {actual} != {expected}"
+            );
+        } else {
+            assert_eq!(got.to_plain_json(), case["get"], "{index}");
+        }
+    }
+}
+
+#[test]
 fn custom_record_sequences_match_casa() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
     let oracle: Value = serde_json::from_slice(

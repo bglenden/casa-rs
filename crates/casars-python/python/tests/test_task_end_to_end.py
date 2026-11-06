@@ -422,6 +422,24 @@ def test_imhead_reads_casa_created_nonfinite_record(tmp_path: Path) -> None:
     np.testing.assert_array_equal(actual["words"], expected["words"])
 
 
+def test_imhead_large_integer_record_uses_casa_conversion(tmp_path: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "large-integers.im"
+    shutil.copytree(fixture, image)
+    value = {"scalar": 2147483648, "integers": [2147483648, 4294967295],
+             "floats": [2147483648, 1.5]}
+    assert tasks.imhead(str(image), mode="add", hdkey="custom", hdvalue=value) is None
+    result = tasks.imhead(str(image), mode="get", hdkey="custom")
+    assert type(result["scalar"]) is int and result["scalar"] == -2147483648
+    assert result["integers"].dtype == np.dtype("int64")
+    np.testing.assert_array_equal(result["integers"], [-2147483648, -1])
+    assert result["floats"].dtype == np.dtype("float64")
+    np.testing.assert_array_equal(result["floats"], [2147483648, 1.5])
+
+
 def test_imhead_unsigned_record_array_uses_casa_dtype(tmp_path: Path) -> None:
     import json
     import numpy as np

@@ -1267,11 +1267,7 @@ pub fn imhead_put_reference_pixel(
     }
     let (value, rendered) = match hdvalue {
         ParameterValue::Integer(value) => {
-            let value = i32::try_from(*value).map_err(|_| {
-                ImageError::InvalidMetadata(
-                    "Reference pixel integer is outside the supported 32-bit range (#977)".into(),
-                )
-            })?;
+            let value = casa_provider_contracts::casa_variant_integer(*value);
             (f64::from(value), value.to_string())
         }
         ParameterValue::Float(value) if value.is_finite() => {
@@ -2108,14 +2104,10 @@ pub fn imhead_custom_value_change(
                 Value::Scalar(ScalarValue::String(value.clone())),
                 format!("\"{value}\""),
             ),
-            ParameterValue::Integer(value) => (
-                Value::Scalar(ScalarValue::Int32(i32::try_from(*value).map_err(|_| {
-                    ImageError::InvalidMetadata(
-                        "User-defined integer is outside the supported 32-bit range (#977)".into(),
-                    )
-                })?)),
-                value.to_string(),
-            ),
+            ParameterValue::Integer(value) => {
+                let value = casa_provider_contracts::casa_variant_integer(*value);
+                (Value::Scalar(ScalarValue::Int32(value)), value.to_string())
+            }
             ParameterValue::Float(value) => (
                 Value::Scalar(ScalarValue::Float64(*value)),
                 self::projection_header::cpp_number_precision(*value, 12),
