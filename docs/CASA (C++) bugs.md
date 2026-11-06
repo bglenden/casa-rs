@@ -4003,3 +4003,21 @@ SIGSEGV, as does a cyclic quantity record. A non-finite coordinate returns
 large for the binding as the component index raises `SystemError` only after
 changing every component's direction. casa-rs rejects these inputs without
 changing any components, and reports the crashes as catchable errors.
+
+## Component-list concatenation copies the wrong components
+
+- Date noted: 2026-11-06
+- Status: CASA copies unintended rows; casa-rs copies the requested rows (#1053).
+- Owner decision: Correct CASA data loss and contradictions of evident intent as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_concatenate_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_concatenate.json`, CASA 6.7.6-14 on the Mac mini.
+
+For a source list labeled `source0`, `source1`, `source2`, CASA's
+`concatenate(source, [2, 0])` appends `source0`, `source1`; the source loop
+checks each requested index but copies the component at the index's position
+in the request. Duplicated or reordered requests can therefore silently
+replace the components the user asked for. casa-rs appends `source2`,
+`source0`. A request longer than the source list can also raise an assertion
+after appending some wrong rows; casa-rs appends every valid requested row.
+CASA also appends components before raising `SystemError` when
+the index-vector conversion leaves a Python exception pending (for example
+`which=None`); casa-rs reports the error without modifying the destination.

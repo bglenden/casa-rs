@@ -59,6 +59,65 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// Append selected components read from a component-list table.
+    pub(crate) fn concatenate(
+        &mut self,
+        source: &Variant,
+        indices: &[i64],
+        pending: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let filename = match source {
+            Variant::Text(value) => value.clone(),
+            Variant::Texts(_) => source.describe(),
+            _ => {
+                lines.push(LogLine::error(
+                    "Can concatenate only componentlists which are on disk or are a record for now",
+                ));
+                return Ok(false);
+            }
+        };
+        if filename.is_empty() || !Path::new(&filename).join("table.dat").is_file() {
+            return Err(ConvertError::runtime(format!(
+                "Cannot read componentlist {filename}"
+            )));
+        }
+        let source = ComponentList::read_table(&filename)
+            .map_err(|_| ConvertError::runtime(format!("Cannot read componentlist {filename}")))?;
+        if source.is_empty() {
+            lines.push(LogLine::warning("Empty componentlist"));
+            return Ok(false);
+        }
+        // CASA can report a failed Python conversion only after appending.
+        if pending {
+            return Ok(false);
+        }
+        let all = indices.is_empty() || indices[0] < 0;
+        let selected: Vec<usize> = if all {
+            (0..source.len()).collect()
+        } else {
+            indices
+                .iter()
+                .enumerate()
+                .filter_map(|(position, &index)| {
+                    if index >= 0 && (index as usize) < source.len() {
+                        Some(index as usize)
+                    } else {
+                        lines.push(LogLine::error(format!(
+                            "component {position}does not exist in this list "
+                        )));
+                        None
+                    }
+                })
+                .collect()
+        };
+        for index in selected {
+            self.list
+                .push(source.get(index).expect("validated index").clone());
+        }
+        Ok(true)
+    }
+
     /// The attached table, required by CASA's keyword methods.
     pub(crate) fn keyword_table_path(&self) -> ConvertResult<&Path> {
         self.table
