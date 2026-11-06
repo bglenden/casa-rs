@@ -18,6 +18,8 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[non-frequency component frequency units](#a-non-frequency-component-unit-corrupts-casas-spectrum),
+[nonconforming component flux conversion](#component-flux-conversion-can-relabel-incompatible-units-or-crash),
 [duplicate and empty component removals](#component-removal-can-lose-data-or-crash),
 [component labels containing invalid UTF-8](#casa-accepts-component-labels-it-cannot-return),
 [cyclic component-list type checks](#cyclic-component-list-type-checks-crash-casa),
@@ -3852,6 +3854,42 @@ while an equivalent Python complex or NumPy complex128 value raises an error.
 CASA also treats the complex64 value as zero in other quantity operations.
 casa-rs preserves both parts and raises `Wrong QuantumHolder to convert
 asQuantumDouble` rather than silently discarding them.
+
+## A non-frequency component unit corrupts CASA's spectrum
+
+- Date noted: 2026-11-06
+- Status: CASA changes the spectrum before raising and later aborts; casa-rs refuses the unit without changing the spectrum (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/casa-compat/componentlist_convertfrequnit_oracle.py`, CASA 6.7.6-14 on the Mac mini, with the failing case isolated and core dumps disabled.
+
+After adding a component with frequency `1.4GHz`,
+`cl.convertfrequnit(0, 'm')` raises a `RuntimeError` in CASA, but it has
+already installed the incompatible unit. A subsequent `cl.getspectrum(0)`
+also raises, and closing the component list aborts the process. casa-rs
+checks the unit first, raises a catchable error and leaves the frequency,
+its record unit and the component list unchanged.
+
+The same failure occurs if a stored spectrum uses `MHz` and a later
+`qa.define('Hz', '1m')` makes the current frequency definition incompatible.
+casa-rs uses coherent Hz for the stored physical frequency in that case,
+retaining a readable record and allowing an attached table to be saved.
+
+## Component flux conversion can relabel incompatible units or crash
+
+- Date noted: 2026-11-06
+- Status: CASA silently changes the dimensions of a flux and crashes on an empty list; casa-rs refuses both without changing components (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/casa-compat/componentlist_convertfluxunit_oracle.py`, CASA 6.7.6-14 on the Mac mini; the empty-list call runs in an isolated process with core dumps disabled.
+
+A component-list table may hold a flux in `Jy.km/s`. Given such a component,
+CASA's `cl.convertfluxunit(-1, 'mJy')` reports success, scales the flux by
+unit factors and labels it `mJy`, despite the incompatible dimensions. It
+also modifies earlier components when the incompatible one is later in the
+list. casa-rs checks every selected source before changing any component and
+raises a catchable error if one does not conform. On an empty list, CASA's
+`cl.convertfluxunit(-1, 'mJy')` terminates with SIGSEGV; casa-rs raises a
+catchable error. A target with dimensions unlike Jy still returns `False`, as
+CASA does, before it examines the indices.
 
 ## Component removal can lose data or crash
 

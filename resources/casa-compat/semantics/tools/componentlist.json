@@ -60,21 +60,20 @@
    ]
   },
   "convertfluxunit": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Converts one or all component fluxes and errors to conforming Jy units, retaining complex values. Rejects nonconforming sources atomically and raises instead of crashing on an empty list.",
    "evidence": [
     "signature",
-    "refusals"
+    "convertfluxunit-casa"
    ]
   },
   "convertfrequnit": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Changes one component spectrum record frequency unit, preserving its physical reference frequency, frame and independent error. Table reopen resets the record unit to GHz. Non-frequency targets are rejected before mutation.",
    "evidence": [
     "signature",
-    "refusals"
+    "convertfrequnit-casa"
    ]
   },
   "convertrefdir": {
@@ -864,6 +863,35 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "903b541567638789bd6fa270d7b801244f49ad07"
+  },
+  "convertfluxunit-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "19 CASA 6.7.6-14 calls compare conversions, arguments and complex flux and error values in tables. Separate cases cover a redefined unit, a nonconforming source and an isolated empty-list crash.",
+   "scope": "componentlist.convertfluxunit.",
+   "links": [
+    "tools/casa-compat/componentlist_convertfluxunit_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_convertfluxunit.json",
+    "crates/casars-python/python/tests/data/casa_convertfluxunit.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_convertfluxunit_nonconforming.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_convertfluxunit.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "245fc7ebfc6e4a962930c9f5628adbe8d15def49"
+  },
+  "convertfrequnit-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "19 CASA 6.7.6-14 calls compare conversions and arguments; separate cases cover table persistence, recovery, unit redefinitions, and isolated invalid-unit crashes.",
+   "scope": "componentlist.convertfrequnit.",
+   "links": [
+    "tools/casa-compat/componentlist_convertfrequnit_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_convertfrequnit.json",
+    "crates/casars-python/python/tests/data/casa_convertfrequnit.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_convertfrequnit.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "dfe21eb091b0181bc84d113cb65198ffe4c4a7ce"
   }
  }
 }

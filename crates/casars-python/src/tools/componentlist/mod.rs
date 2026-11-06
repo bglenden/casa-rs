@@ -166,7 +166,10 @@ impl Drop for PyComponentList {
     fn drop(&mut self) {
         let state = self.state.get_mut().unwrap_or_else(PoisonError::into_inner);
         Python::attach(|py| {
-            if let Err(message) = py.detach(|| state.release()) {
+            if let Err(message) = py.detach(|| {
+                casa_types::quanta::registry::global_registry()
+                    .with_locked_units(|| state.release())
+            }) {
                 let category = py.get_type::<PyRuntimeWarning>();
                 let message = CString::new(message).unwrap_or_default();
                 if let Err(error) = PyErr::warn(py, category.as_any(), &message, 1) {
@@ -305,24 +308,82 @@ impl PyComponentList {
         stub("convertfluxpol")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Convert one or all components' flux values and errors to a Jy unit.
     #[pyo3(signature = (which, unit = None), text_signature = "($self, which, unit='Jy')")]
     fn convertfluxunit(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] unit: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("convertfluxunit")
+        let (which, pending) = match which.extract::<i64>() {
+            Ok(index) => (i64::from(index as i32), false),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => {
+                (-1, true)
+            }
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let unit: String = match unit {
+            None => "Jy".to_string(),
+            Some(value) if value.is_instance_of::<PyString>() => value.extract()?,
+            Some(value) if value.is_instance_of::<PyBytes>() => {
+                let bytes = value.cast::<PyBytes>()?.as_bytes();
+                let end = bytes
+                    .iter()
+                    .position(|&byte| byte == 0)
+                    .unwrap_or(bytes.len());
+                PyBytes::new(py, &bytes[..end])
+                    .call_method1("decode", ("utf-8",))?
+                    .extract()?
+            }
+            Some(_) => return Err(PyTypeError::new_err("argument _unit must be a string")),
+        };
+        let unit = unit.split('\0').next().unwrap_or_default().to_string();
+        let result = self.call(py, move |state, lines| {
+            state
+                .convertfluxunit(which, &unit, lines)
+                .map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_convertfluxunit> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Change the reference-frequency unit used in one component's records.
     #[pyo3(signature = (which, unit = None), text_signature = "($self, which, unit='GHz')")]
     fn convertfrequnit(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] unit: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("convertfrequnit")
+        let which = match which.extract::<i64>() {
+            Ok(index) => i64::from(index as i32),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => -1,
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let unit: String = match unit {
+            None => "GHz".to_string(),
+            Some(value) if value.is_instance_of::<PyString>() => value.extract()?,
+            Some(value) if value.is_instance_of::<PyBytes>() => {
+                let bytes = value.cast::<PyBytes>()?.as_bytes();
+                let end = bytes
+                    .iter()
+                    .position(|&byte| byte == 0)
+                    .unwrap_or(bytes.len());
+                PyBytes::new(py, &bytes[..end])
+                    .call_method1("decode", ("utf-8",))?
+                    .extract()?
+            }
+            Some(_) => return Err(PyTypeError::new_err("argument _unit must be a string")),
+        };
+        let unit = unit.split('\0').next().unwrap_or_default().to_string();
+        self.call(py, move |state, _| {
+            state.convertfrequnit(which, &unit).map(CasaValue::Bool)
+        })
     }
 
     /// Not yet implemented in casa-rs.

@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_components::{ComponentList, ComponentListError, SkyComponent};
+use casa_components::{ComponentList, ComponentListError, Flux, SkyComponent};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
 use casa_types::quanta::Unit;
@@ -31,7 +31,7 @@ use casa_types::{RecordValue, Value};
 
 use super::add::AddComponent;
 use crate::convert::value::CasaValue;
-use crate::convert::{ConvertError, ConvertResult, quantity};
+use crate::convert::{ConvertError, ConvertResult, casacore_unit, quantity};
 use crate::tools::LogLine;
 
 /// The table a list is attached to.
@@ -406,6 +406,86 @@ impl State {
             .and_then(|index| self.list.get_mut(index))
             .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
         component.set_label(value);
+        Ok(true)
+    }
+
+    /// Change the unit used in one component's spectrum record.
+    pub(crate) fn convertfrequnit(&mut self, which: i64, name: &str) -> ConvertResult<bool> {
+        let unit = casacore_unit(name).map_err(ConvertError::runtime)?;
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        component
+            .spectrum_mut()
+            .set_frequency_unit(unit)
+            .map_err(|error| ConvertError::runtime(error.to_string()))?;
+        Ok(true)
+    }
+
+    /// Convert selected component fluxes only after all source units conform.
+    pub(crate) fn convertfluxunit(
+        &mut self,
+        which: i64,
+        name: &str,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let target = casacore_unit(name).map_err(ConvertError::runtime)?;
+        let jy = casacore_unit("Jy").map_err(ConvertError::runtime)?;
+        if !target.conformant(&jy) {
+            lines.push(LogLine::error(
+                "The flux units must have the same dimensions as the Jansky\nFlux not changed on any components",
+            ));
+            return Ok(false);
+        }
+        let indices = if which == -1 {
+            if self.list.is_empty() {
+                return Err(ConvertError::runtime(
+                    "componentlist.convertfluxunit on an empty list would crash CASA (#1053)",
+                ));
+            }
+            (0..self.list.len()).collect::<Vec<_>>()
+        } else if which < 0 || which >= self.length() {
+            let message = "Index out of range.\nA component number is less than one or greater than the list length\nFlux not changed on any components";
+            lines.push(LogLine::error(message));
+            return Err(ConvertError::runtime(message));
+        } else {
+            vec![which as usize]
+        };
+        let mut converted = Vec::with_capacity(indices.len());
+        for &index in &indices {
+            let flux = self.list.get(index).expect("validated index").flux();
+            // CASA does nothing when the unit names already match, even if
+            // the unit's scale is zero; avoid a spurious zero divided by zero.
+            if flux.unit().name() == target.name() {
+                converted.push(flux.clone());
+                continue;
+            }
+            if !flux.unit().conformant(&target) {
+                return Err(ConvertError::runtime(format!(
+                    "non-conforming flux unit '{}' cannot be converted to '{}'",
+                    flux.unit().name(),
+                    target.name()
+                )));
+            }
+            let factor = flux.unit().val().factor / target.val().factor;
+            let values = flux.values().map(|value| value * factor);
+            let errors = flux.errors().map(|error| error * factor);
+            let result = Flux::new(values, target.name(), flux.polarisation())
+                .map_err(|error| ConvertError::runtime(error.to_string()))?
+                .with_errors(errors);
+            converted.push(result);
+        }
+        for (index, flux) in indices.into_iter().zip(converted) {
+            *self
+                .list
+                .get_mut(index)
+                .expect("validated index")
+                .flux_mut() = flux;
+        }
         Ok(true)
     }
 

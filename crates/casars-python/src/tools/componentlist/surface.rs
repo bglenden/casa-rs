@@ -90,13 +90,13 @@ const METHODS: &[Method] = &[
         "convertfluxunit",
         &[WHICH, param("unit", K::Text, Text("Jy"))],
         R::Bool,
-        No,
+        Yes,
     ),
     method(
         "convertfrequnit",
         &[WHICH, param("unit", K::Text, Text("GHz"))],
         R::Bool,
-        No,
+        Yes,
     ),
     method(
         "convertrefdir",
