@@ -175,7 +175,7 @@ const METHODS: &[Method] = &[
         "iscomponentlist",
         &[param("tool", K::Any, Empty)],
         R::Bool,
-        No,
+        Yes,
     ),
     method("isphysical", &[WHICH_ALL], R::Bool, Yes),
     method("length", &[], R::Int, Yes),
@@ -257,7 +257,7 @@ const METHODS: &[Method] = &[
         "setlabel",
         &[WHICH, param("value", K::Text, Required), LOG],
         R::Bool,
-        No,
+        Yes,
     ),
     method(
         "setrefdir",

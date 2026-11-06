@@ -294,12 +294,11 @@
    ]
   },
   "iscomponentlist": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "CASA placeholder logs a warning and returns False; cyclic arguments are handled safely.",
    "evidence": [
     "signature",
-    "refusals"
+    "iscomponentlist-casa"
    ]
   },
   "isphysical": {
@@ -437,12 +436,11 @@
    ]
   },
   "setlabel": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Replaces one component label and preserves the change on writable table release; read-only changes remain in memory. Rejects invalid UTF-8 byte strings to avoid an unreadable label.",
    "evidence": [
     "signature",
-    "refusals"
+    "setlabel-casa"
    ]
   },
   "setrefdir": {
@@ -630,6 +628,19 @@
    ],
    "state": "Previously agreed",
    "owner_decision": "Owner approved a catchable error on 2026-11-05 (#1158)."
+  },
+  {
+   "id": "iscomponentlist-cyclic-input",
+   "inputs": "A self-referential Python list passed to componentlist.iscomponentlist.",
+   "casa": "CASA 6.7.6-14 terminates the Python process with SIGSEGV.",
+   "ours": "Logs the placeholder warning and returns False without recursing forever.",
+   "rationale": "A type-check placeholder should not terminate its caller.",
+   "impact": "Callers retain the Python session.",
+   "evidence": [
+    "iscomponentlist-casa"
+   ],
+   "state": "Previously agreed",
+   "owner_decision": "Owner approved correcting CASA crashes as a class on 2026-11-05; see docs/simulation/owner-decisions-20261105.md."
   }
  ],
  "evidence": {
@@ -805,6 +816,32 @@
     "crates/casars-python/python/tests/test_componentlist_record_shape_units.py"
    ],
    "source_revision": "d1d339c0262d04d52391687faa11f2da047b0a96"
+  },
+  "iscomponentlist-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "87 CASA 6.7.6-14 calls cover argument forms, oversized integers and empty, populated and released lists; a separate cyclic-input process exits with SIGSEGV.",
+   "scope": "componentlist.iscomponentlist.",
+   "links": [
+    "tools/simulation/componentlist_iscomponentlist_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_iscomponentlist.json",
+    "crates/casars-python/python/tests/test_componentlist_iscomponentlist.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "f972f9756be067ceafcd4957d7c40505d30dc628"
+  },
+  "setlabel-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "20 CASA 6.7.6-14 calls cover successful updates, index and argument errors, Unicode, byte strings and preservation of other components; table lifecycle and invalid UTF-8 behavior are also recorded.",
+   "scope": "componentlist.setlabel and label persistence.",
+   "links": [
+    "tools/casa-compat/componentlist_setlabel_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setlabel.json",
+    "crates/casars-python/python/tests/test_componentlist_setlabel.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "465f7a87fc7acd6fc61d462d7d4056eb321b39d6"
   }
  }
 }

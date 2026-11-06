@@ -713,6 +713,39 @@ fn an_outlier_files_relative_name_reads_from_the_working_directory() {
     assert!(!directory.join("products/fields").exists());
 }
 
+/// CASA `clarkstokes` sends Stokes I and V to separate minor cycles,
+/// while `clark` sends them together (#1126).
+#[test]
+fn clarkstokes_cleans_polarization_planes_separately() {
+    use super::fixture::Setup;
+    use casa_ms::{SyntheticPolarizationBasis, SyntheticPolarizationSetup};
+
+    let observation = Observation::synthesise_polarized(
+        Setup::vla_q_band(1),
+        SyntheticPolarizationSetup {
+            basis: SyntheticPolarizationBasis::Linear,
+            correlation_count: 4,
+            source_stokes_fractional_quv: [0.0, 0.0, 0.4],
+        },
+        &[("point", POINT)],
+    );
+    let run = |name: &str, deconvolver: &str| {
+        observation
+            .image(
+                name,
+                json!({
+                    "stokes": "IV", "deconvolver": deconvolver, "niter": 1,
+                    "cycleniter": 1, "gain": 0.2, "weighting": "natural",
+                }),
+            )
+            .0
+    };
+    let joint = run("joint-clark", "clark");
+    let separate = run("separate-clark", "clarkstokes");
+    assert_eq!(joint.actual_minor_iterations, 1);
+    assert_eq!(separate.actual_minor_iterations, 2);
+}
+
 /// A requested main-lobe cutoff reaches the minor cycle's PSF sidelobe,
 /// not just the beam written in the final image metadata (#1140).
 #[test]
@@ -978,6 +1011,78 @@ fn tclean_fresh_off_centre_psf_uses_its_domain_beam_for_sidelobes() {
     };
     let sidelobe = scalar(&result, "maxpsfsidelobe");
     assert!((sidelobe - 0.39395368).abs() < 2e-5, "{sidelobe}");
+}
+
+/// A fresh cube whose PSF peaks off-centre in every channel uses CASA's
+/// tiny beam in automatic masking (#1140). The adjacent subthreshold pixel
+/// must not be pulled into the mask by a one-pixel fallback beam.
+#[test]
+fn tclean_all_refused_psfs_use_the_tiny_beam_in_automatic_masks() {
+    use casa_images::{ImageBeamSet, PagedImage};
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let directory = observation.scratch("all-refused-psf-automask");
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut values = json!({
+        "vis": observation.measurement_set(), "imagename": directory.join("image"),
+        "imsize": 64, "cell": ["0.012arcsec", "0.012arcsec"], "backend": "cpu",
+        "specmode": "cube", "nchan": 2, "start": 0, "width": 1,
+        "deconvolver": "clark", "niter": 0, "restoration": false,
+    });
+    let seed = json_run(&directory, values.clone());
+    assert!(matches!(seed, TaskReply::Succeeded { .. }), "{seed:?}");
+    for product in ["psf", "residual"] {
+        let mut image =
+            PagedImage::<f32>::open(directory.join(format!("image.{product}"))).unwrap();
+        let mut info = image.image_info().unwrap();
+        info.beam_set = ImageBeamSet::empty();
+        image.set_image_info(&info).unwrap();
+        let mut data = image.get().unwrap();
+        data.fill(0.0);
+        for channel in 0..2 {
+            if product == "psf" {
+                data[[15, 32, 0, channel]] = 1.0;
+            } else {
+                for x in 0..64 {
+                    for y in 0..64 {
+                        data[[x, y, 0, channel]] =
+                            (((x * 73 + y * 29 + channel * 11) % 101) as f32 - 50.0) / 10_000.0;
+                    }
+                }
+                data[[32, 32, 0, channel]] = 1.0;
+                data[[31, 32, 0, channel]] = 0.3;
+            }
+        }
+        image.put_slice(&data, &[0; 4]).unwrap();
+        image.save().unwrap();
+    }
+    let mut sumwt = PagedImage::<f32>::open(directory.join("image.sumwt")).unwrap();
+    let mut weights = sumwt.get().unwrap();
+    weights.fill(1.0);
+    sumwt.put_slice(&weights, &[0; 4]).unwrap();
+    sumwt.save().unwrap();
+    drop(sumwt);
+    values["niter"] = json!(2);
+    values["calcpsf"] = json!(false);
+    values["calcres"] = json!(false);
+    values["usemask"] = json!("auto-multithresh");
+    values["sidelobethreshold"] = json!(0.8);
+    values["noisethreshold"] = json!(3.0);
+    values["lownoisethreshold"] = json!(1.5);
+    values["minbeamfrac"] = json!(0.3);
+    values["negativethreshold"] = json!(0.0);
+    let result = json_run(&directory, values);
+    assert!(matches!(result, TaskReply::Succeeded { .. }), "{result:?}");
+    let mask = PagedImage::<f32>::open(directory.join("image.mask"))
+        .unwrap()
+        .get()
+        .unwrap();
+    assert_eq!(
+        mask.iter().filter(|&&value| value != 0.0).count(),
+        2,
+        "{result:?}"
+    );
+    assert_eq!(mask[[32, 32, 0, 0]], 1.0);
+    assert_eq!(mask[[32, 32, 0, 1]], 1.0);
 }
 
 /// MFS retains an existing PSF beam through recomputation; cube gridding

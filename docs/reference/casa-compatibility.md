@@ -715,7 +715,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `pointingoffsetsigdev` | `[]` | `[]`; `pointingoffsetsigdev` → `pointingoffsetsigdev` | Implemented | Scalar/list numbers converted to comma text for AW; otherwise ignored. [gridders](#tclean-behavior-gridders)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `pblimit` | `0.2` | `0.2`; `pblimit` → `pblimit` | Implemented | Copied; request requires non-zero magnitude below 1. Where it is not negative and the run has a .pb, the residual carries the .pb's support (pb > pblimit) as its pixel mask, and the minor cycle's peaks and automatic mask read only those pixels (SIImageStore::divideResidualByWeight, getPeakResidual, #1079); a negative pblimit leaves the residual unmasked. [gridders](#tclean-behavior-gridders)<br>Catalog domain: `float` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [pb-statistics-20261103](#tclean-evidence-pb-statistics-20261103) |
 | `normtype` | `'flatnoise'` | `'flatnoise'`; `normtype` → `normtype` | Implemented | Passed only to mosaic/AW; other gridders ignore it. pbsquare divides the residual by the PB peak squared everywhere and takes the model to and from apparent units through PB², zero where PB² is not above \|pblimit\| (SIImageStore and SIImageStoreMultiTerm divideResidualByWeight, divideModelByWeight, multiplyModelByWeight; #1061). [gridders](#tclean-behavior-gridders)<br>Catalog domain: `flatnoise`, `flatsky`, `pbsquare` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [pbsquare-20261103](#tclean-evidence-pbsquare-20261103) |
-| `deconvolver` | `'hogbom'` | `'hogbom'`; `deconvolver` → `deconvolver` | Partial | hogbom/clark/multiscale/mtmfs pass; asp refused with issue 223; other CASA algorithms refused with issue 823. mtmfs with specmode cube or cubedata is refused, as CASA's tclean warns and images nothing. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `asp`, `clark`, `clark_exp`, `clarkstokes`, `clarkstokes_exp`, `hogbom`, `mem`, `mtmfs`, `multiscale` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [mtmfs-nterms1-polarized-20261103](#tclean-evidence-mtmfs-nterms1-polarized-20261103), [mtmfs-polarized-review-20261103](#tclean-evidence-mtmfs-polarized-review-20261103), [blank-mask-beam-20261105](#tclean-evidence-blank-mask-beam-20261105), [common-beam-platform-20261105](#tclean-evidence-common-beam-platform-20261105) |
+| `deconvolver` | `'hogbom'` | `'hogbom'`; `deconvolver` → `deconvolver` | Partial | hogbom/clark/clarkstokes/multiscale/mtmfs pass; clark cleans polarizations jointly and clarkstokes cleans each independently (#1126). asp is refused with issue 223; mem and the experimental Clark variants are refused with issue 1060. mtmfs with specmode cube or cubedata is refused, as CASA's tclean warns and images nothing. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `asp`, `clark`, `clark_exp`, `clarkstokes`, `clarkstokes_exp`, `hogbom`, `mem`, `mtmfs`, `multiscale` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [mtmfs-nterms1-polarized-20261103](#tclean-evidence-mtmfs-nterms1-polarized-20261103), [mtmfs-polarized-review-20261103](#tclean-evidence-mtmfs-polarized-review-20261103), [blank-mask-beam-20261105](#tclean-evidence-blank-mask-beam-20261105), [common-beam-platform-20261105](#tclean-evidence-common-beam-platform-20261105) |
 | `scales` | `[]` | `[]`; `scales` → `scales` | Partial | Number list; forwarded only for multiscale/mtmfs, otherwise normalized to none; request disallows negative scales. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
 | `nterms` | `2` | `2`; `nterms` → `nterms` | Partial | Used only by mtmfs; other deconvolvers force one. mtmfs takes nterms >= 1: one term images a Taylor family of one (.tt0 products, no spectral index), as CASA does (issue 1065); request refuses more than one term without mtmfs. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `integer` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader), [mtmfs-nterms1-polarized-20261103](#tclean-evidence-mtmfs-nterms1-polarized-20261103) |
 | `smallscalebias` | `0.0` | `0.0`; `smallscalebias` → `smallscalebias` | Implemented | Copied to request. [deconvolution](#tclean-behavior-deconvolution)<br>Catalog domain: `float` | [signature](#tclean-evidence-signature), [reader](#tclean-evidence-reader) |
@@ -804,9 +804,9 @@ Evidence: [reader](#tclean-evidence-reader), [additions](#tclean-evidence-additi
 <a id="tclean-behavior-deconvolution"></a>
 ##### Deconvolution, masks and stopping
 
-**Partial** — Hogbom, Clark, multiscale, MT-MFS, iteration controls, user masks and auto-multithresh.
+**Partial** — Hogbom, Clark, Clark-Stokes, multiscale, MT-MFS, iteration controls, user masks and auto-multithresh.
 
-The owner approved contract31's native CASA-inclusive Hogbom default, preserving explicit strict. Normal-build ordinary Hogbom10 point-source comparisons pass seven products on CPU64/CPU32/GPU32 with no explicit accounting option; prototype ALMA mosaic CLEAN also passes in that mode. Independent default-continuation and migration tests pass. ASP, MEM, Clark-Stokes, MT-MFS nterms=1, PB masks/pbsquare, several auto-mask controls, explicit restoring beams are incomplete or refused. The shared nmajor=-1/0/positive domain is implemented;20 small paired CLI/Python rows verify initial-only products, threshold/zero-mask precedence, seed retention and exact counts. Compare convergence/flux/beam and exact mask support separately; nonlinear component identity is not required, but approved mode-specific gates stay binding. The owner accepted only the original identity-bound b6a87 clean8/cpu32 weak model result; raw model.tt1 NRMS 0.0012759712 remains recorded. No general weak-model waiver or automatic future-output acceptance exists. Explicit all-zero image masks now stop with CASA code 7 for the verified standard-MFS cases; existing nonzero models are preserved on empty-mask restart. Broader mode combinations still require evidence. Signed integer pixel-box clipping and explicit empty CRTF are repaired at086a67f1d4.36 CLI pairs pass recorded products/exact counts at two PB limits on three backends;2 public Python pairs additionally pass two selected scalars and old-file preservation under fresh numbering. General regions and other mask combinations remain unfinished. A plane whose published .sumwt is positive but at most CASA's 1e-07 bound is now empty as in CASA (zero PSF, residual, model and image; nothing cleaned), verified by a paired constructed-weight cube probe (8fcee92).
+Clark-Stokes uses Clark's solver on each polarization separately, while Clark jointly selects and updates a channel's polarization planes (#1126). Five paired CASA 6.7.6.14 I, IV, IQUV, IV-cube and masked-IV runs agree in every returned minor-cycle row and all seven image products; worst product NRMS 5.63e-6. The owner approved contract31's native CASA-inclusive Hogbom default, preserving explicit strict. Normal-build ordinary Hogbom10 point-source comparisons pass seven products on CPU64/CPU32/GPU32 with no explicit accounting option; prototype ALMA mosaic CLEAN also passes in that mode. Independent default-continuation and migration tests pass. ASP, MEM, MT-MFS nterms=1, PB masks/pbsquare, several auto-mask controls, explicit restoring beams are incomplete or refused. The shared nmajor=-1/0/positive domain is implemented;20 small paired CLI/Python rows verify initial-only products, threshold/zero-mask precedence, seed retention and exact counts. Compare convergence/flux/beam and exact mask support separately; nonlinear component identity is not required, but approved mode-specific gates stay binding. The owner accepted only the original identity-bound b6a87 clean8/cpu32 weak model result; raw model.tt1 NRMS 0.0012759712 remains recorded. No general weak-model waiver or automatic future-output acceptance exists. Explicit all-zero image masks now stop with CASA code 7 for the verified standard-MFS cases; existing nonzero models are preserved on empty-mask restart. Broader mode combinations still require evidence. Signed integer pixel-box clipping and explicit empty CRTF are repaired at086a67f1d4.36 CLI pairs pass recorded products/exact counts at two PB limits on three backends;2 public Python pairs additionally pass two selected scalars and old-file preservation under fresh numbering. General regions and other mask combinations remain unfinished. A plane whose published .sumwt is positive but at most CASA's 1e-07 bound is now empty as in CASA (zero PSF, residual, model and image; nothing cleaned), verified by a paired constructed-weight cube probe (8fcee92).
 
 Evidence: [reader](#tclean-evidence-reader), [representative](#tclean-evidence-representative), [compensated-current](#tclean-evidence-compensated-current), [adopted-defaults](#tclean-evidence-adopted-defaults), [standard-mtmfs-current](#tclean-evidence-standard-mtmfs-current), [approved-comparisons-restart](#tclean-evidence-approved-comparisons-restart), [scalars-empty-mask](#tclean-evidence-scalars-empty-mask), [mask-boxes](#tclean-evidence-mask-boxes), [nmajor-zero](#tclean-evidence-nmajor-zero), [cloud-continuation](#tclean-evidence-cloud-continuation).
 
@@ -1596,13 +1596,13 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 30 | 0 | 31 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 32 | 0 | 29 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
 | ms | `casars.tools` | 77 | no | | | | | | |
 | msmetadata | `casars.tools` | 103 | no | | | | | | |
-| [quanta](#quanta) | `casars.tools` | 57 | yes | 53 | 0 | 4 | 0 | 0 | 0 |
+| [quanta](#quanta) | `casars.tools` | 57 | yes | 55 | 0 | 2 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 18 | 11 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 46 | 2 | 9 | 0 | 0 | 0 |
 | table | `casars.tools` | 83 | no | | | | | | |
@@ -1613,7 +1613,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 30, Partial: 0, Not implemented: 31, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 32, Partial: 0, Not implemented: 29, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1650,7 +1650,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `getspectrum` | `which` | Implemented | A component's spectrum record. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `haskeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `indices` |  | Implemented | Matches CASA's placeholder: warns and returns an empty int64 array. | [signature](#componentlist-evidence-signature), [indices-casa](#componentlist-evidence-indices-casa) |
-| `iscomponentlist` | `tool=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `iscomponentlist` | `tool=[]` | Implemented | CASA placeholder logs a warning and returns False; cyclic arguments are handled safely. | [signature](#componentlist-evidence-signature), [iscomponentlist-casa](#componentlist-evidence-iscomponentlist-casa) |
 | `isphysical` | `which=[-1]` | Implemented | Checks selected components using CASA Stokes physicality; an explicit empty index list returns true, and selecting all on an empty list raises an owner-approved error rather than exiting. | [signature](#componentlist-evidence-signature), [isphysical-casa](#componentlist-evidence-isphysical-casa) |
 | `length` |  | Implemented | The number of components. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `open` | `filename='', nomodify=False, log=True` | Implemented | Opens a component-list table, writing a list it replaces first; refuses what is not a component list. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
@@ -1666,7 +1666,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `setflux` | `which, value=[], unit='Jy', polarization='Stokes', error=[], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `setfreq` | `which, value, unit='GHz', log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `setfreqframe` | `which, frame='LSRK', log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `setlabel` | `which, value, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setlabel` | `which, value, log=True` | Implemented | Replaces one component label and preserves the change on writable table release; read-only changes remain in memory. Rejects invalid UTF-8 byte strings to avoid an unreadable label. | [signature](#componentlist-evidence-signature), [setlabel-casa](#componentlist-evidence-setlabel-casa) |
 | `setrefdir` | `which=1, ra=[], dec=[], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `setrefdirframe` | `which, frame, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `setshape` | `which, type='Point', majoraxis=[], minoraxis=[], positionangle=[], majoraxiserror=[], minoraxiserror=[], positionangleerror=[], optionalparms=[0.0], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
@@ -1747,6 +1747,16 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 - User impact: Callers can recover rather than lose the Python session.
 - Owner decision: Owner approved a catchable error on 2026-11-05 (#1158).
 - Evidence: [isphysical-casa](#componentlist-evidence-isphysical-casa).
+
+##### iscomponentlist-cyclic-input: Previously agreed
+
+- Inputs: A self-referential Python list passed to componentlist.iscomponentlist.
+- CASA: CASA 6.7.6-14 terminates the Python process with SIGSEGV.
+- casa-rs: Logs the placeholder warning and returns False without recursing forever.
+- Rationale: A type-check placeholder should not terminate its caller.
+- User impact: Callers retain the Python session.
+- Owner decision: Owner approved correcting CASA crashes as a class on 2026-11-05; see docs/simulation/owner-decisions-20261105.md.
+- Evidence: [iscomponentlist-casa](#componentlist-evidence-iscomponentlist-casa).
 
 #### componentlist evidence
 
@@ -1888,6 +1898,26 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/simulation/componentlist_record_shape_units_oracle.py](https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/tools/simulation/componentlist_record_shape_units_oracle.py)
 - [crates/casars-python/python/tests/data/casa_componentlist_record_shape_units.json](https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/crates/casars-python/python/tests/data/casa_componentlist_record_shape_units.json)
 - [crates/casars-python/python/tests/test_componentlist_record_shape_units.py](https://github.com/bglenden/casa-rs/blob/d1d339c0262d04d52391687faa11f2da047b0a96/crates/casars-python/python/tests/test_componentlist_record_shape_units.py)
+
+<a id="componentlist-evidence-iscomponentlist-casa"></a>
+##### iscomponentlist-casa
+
+**CASA-recorded values — measured.** 87 CASA 6.7.6-14 calls cover argument forms, oversized integers and empty, populated and released lists; a separate cyclic-input process exits with SIGSEGV. componentlist.iscomponentlist.
+
+- [tools/simulation/componentlist_iscomponentlist_oracle.py](https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/tools/simulation/componentlist_iscomponentlist_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_iscomponentlist.json](https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/crates/casars-python/python/tests/data/casa_componentlist_iscomponentlist.json)
+- [crates/casars-python/python/tests/test_componentlist_iscomponentlist.py](https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/crates/casars-python/python/tests/test_componentlist_iscomponentlist.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/f972f9756be067ceafcd4957d7c40505d30dc628/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-setlabel-casa"></a>
+##### setlabel-casa
+
+**CASA-recorded values — measured.** 20 CASA 6.7.6-14 calls cover successful updates, index and argument errors, Unicode, byte strings and preservation of other components; table lifecycle and invalid UTF-8 behavior are also recorded. componentlist.setlabel and label persistence.
+
+- [tools/casa-compat/componentlist_setlabel_oracle.py](https://github.com/bglenden/casa-rs/blob/465f7a87fc7acd6fc61d462d7d4056eb321b39d6/tools/casa-compat/componentlist_setlabel_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_setlabel.json](https://github.com/bglenden/casa-rs/blob/465f7a87fc7acd6fc61d462d7d4056eb321b39d6/crates/casars-python/python/tests/data/casa_componentlist_setlabel.json)
+- [crates/casars-python/python/tests/test_componentlist_setlabel.py](https://github.com/bglenden/casa-rs/blob/465f7a87fc7acd6fc61d462d7d4056eb321b39d6/crates/casars-python/python/tests/test_componentlist_setlabel.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/465f7a87fc7acd6fc61d462d7d4056eb321b39d6/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 ### measures
 
@@ -2072,13 +2102,13 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 53, Partial: 0, Not implemented: 4, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 55, Partial: 0, Not implemented: 2, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
 | `abs` | `v=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `acos` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
-| `add` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa), [record-complex-array-casa](#quanta-evidence-record-complex-array-casa), [bare-complex-scalar-casa](#quanta-evidence-bare-complex-scalar-casa) |
+| `add` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa), [record-complex-array-casa](#quanta-evidence-record-complex-array-casa), [bare-complex-scalar-casa](#quanta-evidence-bare-complex-scalar-casa), [record-empty-float-vector-casa](#quanta-evidence-record-empty-float-vector-casa), [record-zero-dimensional-casa](#quanta-evidence-record-zero-dimensional-casa) |
 | `angle` | `v=[], prec=0, form=[], showform=False` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `asin` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
 | `atan` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
@@ -2090,22 +2120,22 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `checkfreq` | `cm=[]` | Implemented | Tests whether a scalar quantity has a frequency-compatible dimension, with CASA conversion errors. | [signature](#quanta-evidence-signature), [checkfreq-casa](#quanta-evidence-checkfreq-casa) |
 | `compare` | `v=[], a=[]` | Implemented | Answers as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `constants` | `v='pi'` | Implemented | CASA's named physical constants and case-insensitive minimax lookup, including ambiguous names. | [signature](#quanta-evidence-signature), [constants-casa](#quanta-evidence-constants-casa) |
-| `convert` | `v=[], outunit=[]` | Implemented | Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance). | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `convert` | `v=[], outunit=[]` | Implemented | Converts to a unit or to canonical SI units with CASA's dimension rules; a unit that does not conform is refused (decision unit-conformance). | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-empty-float-vector-casa](#quanta-evidence-record-empty-float-vector-casa), [record-zero-dimensional-casa](#quanta-evidence-record-zero-dimensional-casa) |
 | `convertdop` | `v=[], outunit='km/s'` | Implemented | Converts scalar quantities between dimensionless Doppler values and speeds using CASA unit equivalencies. | [signature](#quanta-evidence-signature), [spectral-conversion-casa](#quanta-evidence-spectral-conversion-casa) |
 | `convertfreq` | `v=[], outunit='Hz'` | Implemented | Converts scalar quantities between frequency, period, wavelength, angular frequency, wavenumber, energy, and momentum using CASA unit equivalencies. | [signature](#quanta-evidence-signature), [spectral-conversion-casa](#quanta-evidence-spectral-conversion-casa) |
 | `cos` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
-| `define` | `name, v=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `define` | `name, v=[]` | Implemented (#1053) | Defines and redefines process-wide user units, including built-in overrides; coordinated unit state keeps conversions and other tool operations consistent during concurrent changes. | [signature](#quanta-evidence-signature), [define-casa](#quanta-evidence-define-casa) |
 | `div` | `v=[], a=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `done` | `kill=False` | Implemented | As CASA's. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `eq` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
 | `exp` | `v=[]` | Implemented | Scalar dimensionless exponential or logarithm with CASA unit checking and conversion errors. | [signature](#quanta-evidence-signature), [logarithms-casa](#quanta-evidence-logarithms-casa) |
-| `fits` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#quanta-evidence-signature), [refusals](#quanta-evidence-refusals) |
+| `fits` |  | Implemented | Registers CASA FITS unit aliases process-wide, including the change of S from siemens to seconds. | [signature](#quanta-evidence-signature), [fits-units-casa](#quanta-evidence-fits-units-casa) |
 | `floor` | `v=[]` | Implemented | Rounds a scalar quantity in its own unit, preserving CASA conversion errors. | [signature](#quanta-evidence-signature), [rounding-casa](#quanta-evidence-rounding-casa) |
 | `formxxx` | `v=[], format='dms', prec=2` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `ge` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
 | `getformat` | `t=''` | Implemented | CASA's placeholder warns and returns 'F'; it does not change formatting. | [signature](#quanta-evidence-signature), [format-placeholders-casa](#quanta-evidence-format-placeholders-casa) |
-| `getunit` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa), [record-complex-array-casa](#quanta-evidence-record-complex-array-casa), [bare-complex-scalar-casa](#quanta-evidence-bare-complex-scalar-casa) |
-| `getvalue` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
+| `getunit` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa), [record-complex-array-casa](#quanta-evidence-record-complex-array-casa), [bare-complex-scalar-casa](#quanta-evidence-bare-complex-scalar-casa), [record-empty-float-vector-casa](#quanta-evidence-record-empty-float-vector-casa), [record-zero-dimensional-casa](#quanta-evidence-record-zero-dimensional-casa) |
+| `getvalue` | `v=[]` | Implemented | Reads a quantity's value and unit back. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-empty-float-vector-casa](#quanta-evidence-record-empty-float-vector-casa), [record-zero-dimensional-casa](#quanta-evidence-record-zero-dimensional-casa) |
 | `gt` | `v=[], a=[]` | Implemented | CASA scalar quantity comparison, including unit conversion, unlike dimensions and non-finite values. | [signature](#quanta-evidence-signature), [relational-casa](#quanta-evidence-relational-casa) |
 | `isangle` | `v=[]` | Implemented | Tests whether a scalar quantity has angle or time dimensions, with CASA conversion errors. | [signature](#quanta-evidence-signature), [isangle-casa](#quanta-evidence-isangle-casa) |
 | `isquantity` | `v=[]` | Implemented | Answers as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
@@ -2120,7 +2150,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `neg` | `v=[]` | Implemented | Arithmetic on quantities and arrays, with CASA's unit rules; arrays stay arrays. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
 | `norm` | `v=[], a=-0.5` | Implemented | CASA scalar angle normalization in a one-turn range, returned in degrees. | [signature](#quanta-evidence-signature), [normalize-casa](#quanta-evidence-normalize-casa) |
 | `pow` | `v=[], a=1` | Implemented | CASA scalar integer powers, with original unit spelling, C-int narrowing, non-finite values and exponent limits. | [signature](#quanta-evidence-signature), [power-casa](#quanta-evidence-power-casa) |
-| `quantity` | `v=[], unitname='', keepshape=False` | Implemented | Builds quantities and quantity arrays from strings, numbers and records, as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa), [record-complex-array-casa](#quanta-evidence-record-complex-array-casa), [bare-complex-scalar-casa](#quanta-evidence-bare-complex-scalar-casa) |
+| `quantity` | `v=[], unitname='', keepshape=False` | Implemented | Builds quantities and quantity arrays from strings, numbers and records, as CASA does. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values), [record-complex-scalar-casa](#quanta-evidence-record-complex-scalar-casa), [record-complex-array-casa](#quanta-evidence-record-complex-array-casa), [bare-complex-scalar-casa](#quanta-evidence-bare-complex-scalar-casa), [record-empty-float-vector-casa](#quanta-evidence-record-empty-float-vector-casa), [record-zero-dimensional-casa](#quanta-evidence-record-zero-dimensional-casa) |
 | `setformat` | `t='', v='F'` | Implemented | CASA's placeholder warns and returns False; it does not change formatting. | [signature](#quanta-evidence-signature), [format-placeholders-casa](#quanta-evidence-format-placeholders-casa) |
 | `sin` | `v=[]` | Implemented | Scalar trigonometry with CASA unit checking, quantity conversion errors and result units. | [signature](#quanta-evidence-signature), [trigonometry-casa](#quanta-evidence-trigonometry-casa) |
 | `splitdate` | `v=[]` | Implemented | Formats and splits times and angles as CASA does, including formxxx's empty string for an unknown format. | [signature](#quanta-evidence-signature), [casa-values](#quanta-evidence-casa-values) |
@@ -2330,6 +2360,42 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [tools/casa-compat/quantity_bare_complex_scalar_oracle.py](https://github.com/bglenden/casa-rs/blob/0b16178dcfbe9020cf7cdd45e8deb048d0781e65/tools/casa-compat/quantity_bare_complex_scalar_oracle.py)
 - [crates/casars-python/python/tests/data/casa_quanta_bare_complex_scalar.json](https://github.com/bglenden/casa-rs/blob/0b16178dcfbe9020cf7cdd45e8deb048d0781e65/crates/casars-python/python/tests/data/casa_quanta_bare_complex_scalar.json)
 - [crates/casars-python/python/tests/test_quanta_bare_complex_scalar.py](https://github.com/bglenden/casa-rs/blob/0b16178dcfbe9020cf7cdd45e8deb048d0781e65/crates/casars-python/python/tests/test_quanta_bare_complex_scalar.py)
+
+<a id="quanta-evidence-fits-units-casa"></a>
+##### fits-units-casa
+
+**CASA-recorded values — measured.** CASA 6.7.6-14 comparisons cover 19 FITS aliases, prefixes and compounds before and after registration, converted values, repeat calls and a second instance. quanta.fits and its process-wide unit registry.
+
+- [tools/casa-compat/quanta_fits_oracle.py](https://github.com/bglenden/casa-rs/blob/f0c42837f0d70b1404fd726397431b5a01ebdd47/tools/casa-compat/quanta_fits_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_fits.json](https://github.com/bglenden/casa-rs/blob/f0c42837f0d70b1404fd726397431b5a01ebdd47/crates/casars-python/python/tests/data/casa_quanta_fits.json)
+- [crates/casars-python/python/tests/test_quanta_fits.py](https://github.com/bglenden/casa-rs/blob/f0c42837f0d70b1404fd726397431b5a01ebdd47/crates/casars-python/python/tests/test_quanta_fits.py)
+
+<a id="quanta-evidence-record-empty-float-vector-casa"></a>
+##### record-empty-float-vector-casa
+
+**CASA-recorded values — measured.** 56 CASA 6.7.6-14 calls compare empty NumPy vectors, element types, valid and invalid units, and scalar and array operations. Empty quantity-record vectors in quanta.quantity, getunit, getvalue, add and convert.
+
+- [tools/casa-compat/quantity_record_empty_array_oracle.py](https://github.com/bglenden/casa-rs/blob/a9bed31f4033c1c34490c96cef9b87889aad0f28/tools/casa-compat/quantity_record_empty_array_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quantity_record_empty_array.json](https://github.com/bglenden/casa-rs/blob/a9bed31f4033c1c34490c96cef9b87889aad0f28/crates/casars-python/python/tests/data/casa_quantity_record_empty_array.json)
+- [crates/casars-python/python/tests/test_quanta_record_empty_array.py](https://github.com/bglenden/casa-rs/blob/a9bed31f4033c1c34490c96cef9b87889aad0f28/crates/casars-python/python/tests/test_quanta_record_empty_array.py)
+
+<a id="quanta-evidence-record-zero-dimensional-casa"></a>
+##### record-zero-dimensional-casa
+
+**CASA-recorded values — measured.** 60 CASA 6.7.6-14 calls cover zero-dimensional floating quantity records; CASA silently replaces values with zero in quantity and convert, while casa-rs preserves them. Four bare-array observations provide a control. Zero-dimensional float32 and float64 quantity records in quanta.quantity, getunit, getvalue, add and convert.
+
+- [tools/casa-compat/quantity_record_zero_dim_oracle.py](https://github.com/bglenden/casa-rs/blob/56667e6a4ae6d0daca4ea89e2e68cac3a9d096d3/tools/casa-compat/quantity_record_zero_dim_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quantity_record_zero_dim.json](https://github.com/bglenden/casa-rs/blob/56667e6a4ae6d0daca4ea89e2e68cac3a9d096d3/crates/casars-python/python/tests/data/casa_quantity_record_zero_dim.json)
+- [crates/casars-python/python/tests/test_quanta_record_zero_dim.py](https://github.com/bglenden/casa-rs/blob/56667e6a4ae6d0daca4ea89e2e68cac3a9d096d3/crates/casars-python/python/tests/test_quanta_record_zero_dim.py)
+
+<a id="quanta-evidence-define-casa"></a>
+##### define-casa
+
+**CASA-recorded values — measured.** 26 CASA 6.7.6-14 calls cover user definitions and redefinitions, shared instances, cached compounds, error handling, built-in overrides and FITS aliases. quanta.define and the process-wide unit registry.
+
+- [tools/casa-compat/quanta_define_oracle.py](https://github.com/bglenden/casa-rs/blob/19c603abfee0f2446f6b8c2a5c8db151f0a7d4ee/tools/casa-compat/quanta_define_oracle.py)
+- [crates/casars-python/python/tests/data/casa_quanta_define.json](https://github.com/bglenden/casa-rs/blob/19c603abfee0f2446f6b8c2a5c8db151f0a7d4ee/crates/casars-python/python/tests/data/casa_quanta_define.json)
+- [crates/casars-python/python/tests/test_quanta_define.py](https://github.com/bglenden/casa-rs/blob/19c603abfee0f2446f6b8c2a5c8db151f0a7d4ee/crates/casars-python/python/tests/test_quanta_define.py)
 
 ### simulator
 

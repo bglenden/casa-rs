@@ -18,6 +18,8 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[component labels containing invalid UTF-8](#casa-accepts-component-labels-it-cannot-return),
+[cyclic component-list type checks](#cyclic-component-list-type-checks-crash-casa),
 [complex quantity-array values](#casa-discards-the-values-of-bare-complex-quantity-arrays),
 [bare complex64 quantity values](#casa-discards-bare-numpy-complex64-quantity-values),
 [automatic-mask convolution on rectangular pixels](#automatic-mask-convolution-requires-square-pixels-in-casa),
@@ -3849,3 +3851,43 @@ while an equivalent Python complex or NumPy complex128 value raises an error.
 CASA also treats the complex64 value as zero in other quantity operations.
 casa-rs preserves both parts and raises `Wrong QuantumHolder to convert
 asQuantumDouble` rather than silently discarding them.
+
+## CASA accepts component labels it cannot return
+
+- Date noted: 2026-11-05
+- Status: CASA accepts an unreadable label; casa-rs rejects the input and preserves the previous label (#1053).
+- Owner decision: Correct CASA data corruption as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/casa-compat/componentlist_setlabel_oracle.py`, CASA 6.7.6-14 on the Mac mini.
+
+After adding a component, `cl.setlabel(0, b'\xff')` returns `True` in CASA,
+but `cl.getlabel(0)` then raises `UnicodeDecodeError`: the previous readable
+label has been replaced by bytes the Python binding cannot return. casa-rs
+raises `UnicodeDecodeError` before changing the label. Valid UTF-8 byte strings
+and text are accepted, and both implementations stop at the first NUL byte.
+
+## Cyclic component-list type checks crash CASA
+
+- Date noted: 2026-11-05
+- Status: CASA crashes; casa-rs returns the placeholder result (#1053).
+- Owner decision: Correct CASA crashes as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_iscomponentlist_oracle.py`, CASA 6.7.6-14 on the Mac mini, in an isolated process with core dumps disabled.
+
+Passing a list that contains itself to `componentlist.iscomponentlist`
+terminates CASA's Python process with a segmentation fault before the
+placeholder can return. The method otherwise logs a warning and returns
+`False`. casa-rs detects cycles while inspecting the ignored argument and
+returns that same placeholder value without crashing.
+
+## CASA discards zero-dimensional floating quantity-record values
+
+- Date noted: 2026-11-05
+- Status: CASA silently loses input values; casa-rs preserves them (#1170).
+- Owner decision: Correct CASA data corruption as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/casa-compat/quantity_record_zero_dim_oracle.py`, CASA 6.7.6-14 on the Mac mini.
+
+For `qa.quantity({'value': np.array(1.25, dtype='float64'), 'unit': 'm'})`,
+CASA returns a one-element array containing `0.0 m`. `qa.convert` likewise
+converts zero. CASA handles the same array correctly when passed without a
+record. casa-rs preserves `1.25 m` and converts it to `125 cm`, using the
+same one-element output shape. Its `getunit`, `getvalue` and scalar arithmetic
+still report CASA's wrong-holder error for the record.

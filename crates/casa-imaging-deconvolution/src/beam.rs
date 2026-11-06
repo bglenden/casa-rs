@@ -137,6 +137,10 @@ pub fn psf_fit_workspace_bytes(shape: [usize; 2]) -> u64 {
         + 2 * size_of::<Array2<f32>>()) as u64
 }
 
+/// Circular beam used when a PSF domain has no fitted beam
+/// (`SIImageStore::makeImageBeamSet`), in radians.
+pub const CASA_TINY_PSF_BEAM_RAD: f64 = 1.0e-6 * std::f64::consts::PI / (180.0 * 3600.0);
+
 /// CASA's default main-lobe cutoff used by both restoring-beam fitting and
 /// the fitted-Gaussian PSF sidelobe measurement.
 pub const DEFAULT_PSF_FIT_CUTOFF: f32 = 0.35;

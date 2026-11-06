@@ -112,12 +112,14 @@ impl PySimulator {
         work: impl FnOnce(&mut Session, &mut Vec<LogLine>) -> PyResult<T> + Send,
     ) -> PyResult<Option<T>> {
         let (result, lines) = py.detach(|| {
-            let mut lines = Vec::new();
-            let result = match self.lock().as_mut() {
-                Some(session) => work(session, &mut lines).map(Some),
-                None => Ok(None),
-            };
-            (result, lines)
+            casa_types::quanta::registry::global_registry().with_locked_units(|| {
+                let mut lines = Vec::new();
+                let result = match self.lock().as_mut() {
+                    Some(session) => work(session, &mut lines).map(Some),
+                    None => Ok(None),
+                };
+                (result, lines)
+            })
         });
         emit(py, LOGGER, &lines)?;
         result

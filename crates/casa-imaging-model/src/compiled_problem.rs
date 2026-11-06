@@ -762,8 +762,10 @@ pub enum ReconstructionAlgorithm {
     Dirty,
     /// Högbom point-component minor cycle.
     Hogbom,
-    /// Clark point-component minor cycle.
+    /// Clark point-component minor cycle, jointly over polarizations.
     Clark,
+    /// Clark point-component minor cycle on each polarization separately.
+    ClarkStokes,
     /// Multiscale minor cycle with explicit scale sizes in pixels.
     Multiscale {
         /// Canonical requested scale sizes.
@@ -2423,7 +2425,9 @@ fn derive_capabilities(
     capabilities.insert(match reconstruction.algorithm {
         ReconstructionAlgorithm::Dirty => RequiredCapability::DirtyReconstruction,
         ReconstructionAlgorithm::Hogbom => RequiredCapability::HogbomReconstruction,
-        ReconstructionAlgorithm::Clark => RequiredCapability::ClarkReconstruction,
+        ReconstructionAlgorithm::Clark | ReconstructionAlgorithm::ClarkStokes => {
+            RequiredCapability::ClarkReconstruction
+        }
         ReconstructionAlgorithm::Multiscale { .. } => RequiredCapability::MultiscaleReconstruction,
         ReconstructionAlgorithm::Mtmfs { .. } => RequiredCapability::MtmfsReconstruction,
     });

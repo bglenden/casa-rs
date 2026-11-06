@@ -267,6 +267,49 @@ fn an_off_centre_plane_takes_its_domains_largest_beam_and_clarks_patch() {
     assert!(off.clark().exterior_sidelobe >= 1.0);
 }
 
+/// When every PSF fit in a domain is refused, CASA 6.7.6.14 assigns the
+/// same 1e-6 arcsec circular beam to each plane (#1140). The minor cycle
+/// expresses that angular width in first-axis pixels.
+#[test]
+fn an_all_refused_domain_uses_casas_tiny_beam() {
+    const WIDTH: usize = 64;
+    let problem = problem(
+        WIDTH,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Clark,
+    );
+    let scene = Scene::new(&problem);
+    let cells = WIDTH * WIDTH;
+    let completion = completion(&problem, &scene, |images| {
+        let psf = images.psf.as_mut().expect("the initial PSF");
+        psf.fill(0.0);
+        images.residual.fill(0.0);
+        for channel in 0..2 {
+            psf[channel * cells + 15 * WIDTH + 32] = 1.0;
+            images.residual[channel * cells + 32 * WIDTH + 32] = 1.0;
+        }
+    });
+    let mut cache = PsfCache::default();
+    prepare_minor_cycle(
+        &completion,
+        &full_plane(&problem),
+        &setup(&problem, None),
+        &mut cache,
+        &WorkerTeam::new(1).expect("team"),
+    )
+    .expect("prepare");
+    let cell_rad = problem.geometry().domains()[0].direction().increment_rad()[0].abs();
+    let expected = (1.0e-6_f64 / 3600.0).to_radians() / cell_rad;
+    for channel in 0..2 {
+        let summary = cache.summary(0, channel, 0).expect("a measured plane");
+        assert!(summary.off_centre() && !summary.needs_domain_beam());
+        let beam = summary.beam();
+        assert!((beam.major_fwhm_rad() / expected - 1.0).abs() < 1e-12);
+        assert!((beam.minor_fwhm_rad() / expected - 1.0).abs() < 1e-12);
+        assert_eq!(beam.position_angle_rad(), 0.0);
+    }
+}
+
 /// CASA 6.7.6.14 subtracts the domain's fitted beam at the image centre
 /// before choosing the largest sidelobe, including for an off-centre PSF.
 #[test]
@@ -1003,6 +1046,107 @@ fn clark_solves_a_channels_polarizations_as_one_component() {
     assert_eq!(trace[1].cell.polarization(), 1);
     assert!((trace[0].flux - 0.17).abs() < 1e-6);
     assert!((trace[1].flux - 0.51).abs() < 1e-6);
+}
+
+/// CASA's clarkstokes gives each polarization its own peak and component
+/// rather than Clark's joint polarization component (#1126).
+#[test]
+fn clarkstokes_solves_each_polarization_separately() {
+    use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesV};
+    let problem = problems::reconstruction_problem_of_shape_and_polarizations(
+        31,
+        [64, 64],
+        1,
+        1,
+        ReconstructionBasis::ChannelLocal { channels: 1 },
+        ReconstructionAlgorithm::ClarkStokes,
+        ReconstructionControls::new(1, 0.17, 0.0),
+        vec![StokesI, StokesV],
+    );
+    let scene = Scene::new(&problem);
+    let completion = completion(&problem, &scene, |images| {
+        let cells = 64 * 64;
+        images.polarizations = 2;
+        let psf = images.psf.as_ref().unwrap().clone();
+        images.psf = Some([psf.as_slice(), psf.as_slice()].concat());
+        images.sum_weights = vec![1.0, 1.0];
+        images.published_sum_weights = vec![1.0, 1.0];
+        images.residual = vec![0.0; 2 * cells];
+        images.residual[20 * 64 + 20] = 3.0;
+        images.residual[40 * 64 + 40] = 1.0;
+        images.residual[cells + 40 * 64 + 40] = 3.0;
+    });
+    let (_, outcome) = minor_cycle(
+        &problem,
+        &completion,
+        &setup(&problem, None),
+        &controls(1, 0.17),
+        1,
+    );
+    assert_eq!(outcome.summary.iterations, 2);
+    assert_eq!(outcome.summary.planes.len(), 2);
+    assert!(
+        outcome
+            .summary
+            .planes
+            .iter()
+            .all(|row| row.polarizations == 1)
+    );
+    let trace = &outcome.summary.trace;
+    assert_eq!(trace.len(), 2);
+    assert_eq!(trace[0].cell.pixel(), [20, 20]);
+    assert_eq!(trace[1].cell.pixel(), [40, 40]);
+    assert_eq!(trace[0].cell.polarization(), 0);
+    assert_eq!(trace[1].cell.polarization(), 1);
+    assert!((trace[0].flux - 0.51).abs() < 1e-6);
+    assert!((trace[1].flux - 0.51).abs() < 1e-6);
+}
+
+/// With one polarization CASA's two Clark names use the same solver, and
+/// the one retained refresh is covered by the planned charge (#1126).
+#[test]
+fn single_plane_clarkstokes_matches_clark_and_its_refresh_charge() {
+    use casa_imaging_runtime::MinorLayout;
+    let mut traces = Vec::new();
+    for algorithm in [
+        ReconstructionAlgorithm::Clark,
+        ReconstructionAlgorithm::ClarkStokes,
+    ] {
+        let problem = problem(
+            64,
+            ReconstructionBasis::ChannelLocal { channels: 1 },
+            algorithm,
+        );
+        let scene = Scene::new(&problem).with_point([32, 32], &[1.0]);
+        let completion = completion(&problem, &scene, |_| {});
+        let setup = setup(&problem, None);
+        let team = WorkerTeam::new(1).expect("team");
+        let mut cache = PsfCache::default();
+        let prepared = prepare_minor_cycle(
+            &completion,
+            &full_plane(&problem),
+            &setup,
+            &mut cache,
+            &team,
+        )
+        .expect("prepare");
+        let outcome = run_minor_cycle(
+            prepared,
+            &completion,
+            &setup,
+            &controls(5, 0.2),
+            &mut cache,
+            &team,
+            (&HOST, &POLICY),
+        )
+        .expect("minor cycle");
+        let actual = cache.refresh_bytes(&completion);
+        let planned = MinorLayout::of(completion.normal_state()).refresh_bytes(&setup);
+        assert!(actual > 0, "Clark keeps its refresh");
+        assert_eq!(actual, planned, "the retained refresh is admitted");
+        traces.push(outcome.summary.trace);
+    }
+    assert_eq!(traces[0], traces[1], "the one-plane Clark solvers agree");
 }
 
 /// A channel with no samples does not disable joint Clark on a healthy

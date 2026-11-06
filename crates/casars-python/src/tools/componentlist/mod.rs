@@ -7,8 +7,9 @@
 //! CASA's simulation tasks call are implemented (`open`, `addcomponent`,
 //! `rename`, `close`, `done`, `length`, `torecord`, `getspectrum`,
 //! `getrefdir`), with the accessors `getcomponent`, `getfluxvalue`,
-//! `getfluxunit`, `getlabel`, `shapetype` and `spectrumtype`; the rest raise
-//! `NotImplementedError` naming #1053.
+//! `getfluxunit`, `getlabel`, `shapetype` and `spectrumtype`, and CASA's
+//! `iscomponentlist` placeholder; the rest raise `NotImplementedError`
+//! naming #1053.
 //!
 //! CASA's outcomes are kept ([`ops`] for the table, `add` for
 //! `addcomponent`): what CASA raises is a `RuntimeError` with CASA's
@@ -24,6 +25,7 @@
 
 mod add;
 mod ops;
+mod placeholder;
 mod selection;
 pub(crate) mod surface;
 
@@ -32,7 +34,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pyo3::exceptions::{PyOverflowError, PyRuntimeWarning, PySystemError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::PyString;
+use pyo3::types::{PyBool, PyBytes, PyString};
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, DoubleList, Variant};
@@ -141,7 +143,10 @@ impl PyComponentList {
         work: impl FnOnce(&mut State, &mut Vec<LogLine>) -> ConvertResult<CasaValue> + Send,
     ) -> PyResult<Py<PyAny>> {
         let mut lines = Vec::new();
-        let result = py.detach(|| work(&mut self.lock(), &mut lines));
+        let result = py.detach(|| {
+            casa_types::quanta::registry::global_registry()
+                .with_locked_units(|| work(&mut self.lock(), &mut lines))
+        });
         emit(py, LOGGER, &lines)?;
         result?.into_python(py)
     }
@@ -580,10 +585,27 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder logs a warning and returns false.
     #[pyo3(signature = (tool = None), text_signature = "($self, tool=[])")]
-    fn iscomponentlist(&self, tool: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("iscomponentlist")
+    fn iscomponentlist(
+        &self,
+        py: Python<'_>,
+        tool: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let pending = tool
+            .map(placeholder::pending_integer_overflow)
+            .transpose()?
+            .unwrap_or(false);
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning("is_componentlist not implemented yet"));
+            Ok(CasaValue::Bool(false))
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_iscomponentlist> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Check whether the selected components have physically possible fluxes.
@@ -761,15 +783,50 @@ impl PyComponentList {
         stub("setfreqframe")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Replace the user label of one component.
     #[pyo3(signature = (which, value, log = None), text_signature = "($self, which, value, log=True)")]
     fn setlabel(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
         value: &Bound<'_, PyAny>,
-        log: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("setlabel")
+        let which = match which.extract::<i64>() {
+            Ok(index) => i64::from(index as i32),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => -1,
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let value: String = if value.is_instance_of::<PyString>() {
+            value.extract()?
+        } else if value.is_instance_of::<PyBytes>() {
+            let bytes = value.cast::<PyBytes>()?.as_bytes();
+            let end = bytes
+                .iter()
+                .position(|&byte| byte == 0)
+                .unwrap_or(bytes.len());
+            PyBytes::new(py, &bytes[..end])
+                .call_method1("decode", ("utf-8",))?
+                .extract()?
+        } else {
+            return Err(PyTypeError::new_err("argument _value must be a string"));
+        };
+        if log.as_ref().is_some_and(|v| !v.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_setlabel', argument 4 of type 'bool'",
+            ));
+        }
+        // The CASA wrapper passes a NUL-terminated C string to casacore.
+        let value = value.split('\0').next().unwrap_or_default().to_string();
+        self.call(py, move |state, lines| {
+            match state.setlabel(which, &value) {
+                Ok(result) => Ok(CasaValue::Bool(result)),
+                Err(error) => {
+                    lines.push(LogLine::error(format!("Exception Reported: {error}")));
+                    Err(error)
+                }
+            }
+        })
     }
 
     /// Not yet implemented in casa-rs.
