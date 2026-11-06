@@ -917,15 +917,60 @@ impl PyComponentList {
         Ok(result)
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Relabel one component's frequency frame without converting its value.
     #[pyo3(signature = (which, frame = None, log = None), text_signature = "($self, which, frame='LSRK', log=True)")]
     fn setfreqframe(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        frame: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] frame: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("setfreqframe")
+        let (which, pending) = match which.extract::<i64>() {
+            Ok(index) => (i64::from(index as i32), false),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => {
+                (-1, true)
+            }
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let frame: String = match frame {
+            None => "LSRK".to_string(),
+            Some(value) if value.is_instance_of::<PyString>() => value.extract()?,
+            Some(value) if value.is_instance_of::<PyBytes>() => {
+                let bytes = value.cast::<PyBytes>()?.as_bytes();
+                let end = bytes
+                    .iter()
+                    .position(|&byte| byte == 0)
+                    .unwrap_or(bytes.len());
+                PyBytes::new(py, &bytes[..end])
+                    .call_method1("decode", ("utf-8",))?
+                    .extract()?
+            }
+            Some(_) => return Err(PyTypeError::new_err("argument _frame must be a string")),
+        };
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_setfreqframe', argument 4 of type 'bool'",
+            ));
+        }
+        let frame = frame.split('\0').next().unwrap_or_default().to_string();
+        let result = self.call(py, move |state, lines| {
+            state
+                .setfreqframe(which, &frame, lines)
+                .map(|result| match result {
+                    Some(result) => CasaValue::Bool(result),
+                    None => CasaValue::Text("Undefined".to_string()),
+                })
+        })?;
+        if result.bind(py).is_instance_of::<PyString>() {
+            return not_yet_implemented_in("componentlist", "setfreqframe(Undefined)", 1053);
+        }
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_setfreqframe> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Replace the user label of one component.

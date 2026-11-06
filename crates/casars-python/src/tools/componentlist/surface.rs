@@ -251,7 +251,7 @@ const METHODS: &[Method] = &[
         "setfreqframe",
         &[WHICH, param("frame", K::Text, Text("LSRK")), LOG],
         R::Bool,
-        No,
+        Yes,
     ),
     method(
         "setlabel",
