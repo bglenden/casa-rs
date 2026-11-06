@@ -3860,7 +3860,7 @@ asQuantumDouble` rather than silently discarding them.
 - Date noted: 2026-11-06
 - Status: CASA changes the spectrum before raising and later aborts; casa-rs refuses the unit without changing the spectrum (#1053).
 - Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
-- Evidence: `tools/casa-compat/componentlist_convertfrequnit_oracle.py`, CASA 6.7.6-14 on the Mac mini, with the failing case isolated and core dumps disabled.
+- Evidence: `tools/casa-compat/componentlist_convertfrequnit_oracle.py` and `tools/casa-compat/componentlist_setfreq_oracle.py`, CASA 6.7.6-14 on the Mac mini, with failing cases isolated and core dumps disabled.
 
 After adding a component with frequency `1.4GHz`,
 `cl.convertfrequnit(0, 'm')` raises a `RuntimeError` in CASA, but it has
@@ -3868,6 +3868,10 @@ already installed the incompatible unit. A subsequent `cl.getspectrum(0)`
 also raises, and closing the component list aborts the process. casa-rs
 checks the unit first, raises a catchable error and leaves the frequency,
 its record unit and the component list unchanged.
+
+`cl.setfreq(0, 1, 'm')` also changes the spectrum before raising; the next
+read raises and closing aborts. casa-rs rejects this unit before changing
+either the reference frequency or its record unit.
 
 The same failure occurs if a stored spectrum uses `MHz` and a later
 `qa.define('Hz', '1m')` makes the current frequency definition incompatible.
