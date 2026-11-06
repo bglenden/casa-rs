@@ -1467,6 +1467,28 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(old)
     }
 
+    /// Set the active rest frequency in the spectral coordinate's stored unit.
+    ///
+    /// The change is persisted when [`Self::save`] is called.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the value or spectral metadata is invalid.
+    pub fn set_rest_frequency(&mut self, value: f64) -> Result<f64, ImageError> {
+        let Some(Value::Record(mut record)) = self.table.keywords().get("coords").cloned() else {
+            return Err(ImageError::InvalidMetadata(
+                "image has no coordinate record".into(),
+            ));
+        };
+        let (coordinates, old) =
+            CoordinateSystem::set_rest_frequency_in_record(&mut record, value)?;
+        self.table
+            .keywords_mut()
+            .upsert("coords", Value::Record(record));
+        self.coords = coordinates;
+        Ok(old)
+    }
+
     /// Set an axis name, preserving the stored coordinate mappings.
     ///
     /// The change is persisted when [`Self::save`] is called.

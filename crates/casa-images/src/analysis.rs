@@ -31,6 +31,7 @@ mod axes;
 mod extrema;
 mod planes;
 mod projection_header;
+mod quantity_input;
 mod world_header;
 
 use self::axes::{
@@ -1265,6 +1266,56 @@ pub fn imhead_put_reference_pixel(
 pub(crate) fn imhead_axis_index(suffix: &str) -> Option<usize> {
     let digits = suffix.bytes().take_while(u8::is_ascii_digit).count();
     suffix[..digits].parse::<usize>().ok()?.checked_sub(1)
+}
+
+/// Set a CASA `restfreq` value from a quantity string or value-and-unit record.
+///
+/// # Errors
+///
+/// Returns an error for an invalid quantity, absent spectral metadata, or
+/// image I/O failure. History I/O may fail after the metadata is saved.
+pub fn imhead_put_rest_frequency(
+    path: impl AsRef<Path>,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let summary = imhead(path)?;
+    let spectral = summary
+        .spectral
+        .as_ref()
+        .ok_or_else(|| ImageError::InvalidMetadata("Image has no spectral coordinate".into()))?;
+    let (quantity, rendered) = quantity_input::parse(hdvalue)?;
+    if quantity.value() <= 0.0 {
+        return Err(ImageError::InvalidMetadata(
+            "Rest frequency must be positive".into(),
+        ));
+    }
+    // CASA interprets an unqualified rest frequency as Hz, unlike axis
+    // increments and reference values, which default to their axis units.
+    let quantity = if quantity.unit().name().is_empty() {
+        casa_types::quanta::Quantity::new(quantity.value(), "Hz")
+            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?
+    } else {
+        quantity
+    };
+    let frequency = quantity_input::in_unit(&quantity, &spectral.unit)?;
+    let mut image = AnyPagedImage::open(path)?;
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_rest_frequency(frequency)?,
+        AnyPagedImage::Float64(image) => image.set_rest_frequency(frequency)?,
+        AnyPagedImage::Complex32(image) => image.set_rest_frequency(frequency)?,
+        AnyPagedImage::Complex64(image) => image.set_rest_frequency(frequency)?,
+    };
+    image.save()?;
+    drop(image);
+    let old = projection_header::cpp_number_precision(old, 12);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::set",
+        &[format!("Modified restfreq from {old} to {rendered}")],
+    )?;
+    imhead(path)
 }
 
 /// Set a CASA `ctypeN` axis name and record the image history.

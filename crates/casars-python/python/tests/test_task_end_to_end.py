@@ -9,6 +9,7 @@ then a missing executable fails the run.
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -237,6 +238,15 @@ def test_imhead_history_is_visible_with_default_logging(
     capsys.readouterr()
     assert tasks.imhead(image.name, mode="history") is None
     assert 'Modified object from "python-fixture" to "M31"' in capsys.readouterr().err
+
+
+def test_imhead_put_accepts_rest_frequency_quantity_record(tmp_path: Path) -> None:
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "spectral.im"
+    shutil.copytree(fixture, image)
+    assert tasks.imhead(str(image), mode="put", hdkey="restfreq", hdvalue={"value": 1.5, "unit": "GHz"}) is None
+    assert tasks.imhead(str(image), mode="get", hdkey="restfreq") == {"value": 1.5e9, "unit": "Hz"}
 
 
 def test_msconvert_converts_both_ways_and_reports_its_losses(

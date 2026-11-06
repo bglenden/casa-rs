@@ -104,6 +104,25 @@ pub fn convert(value: &Quantity, target: Option<&Unit>) -> Result<Quantity, Quan
     Ok(Quantity::with_unit(scaling.apply(value.value()), unit))
 }
 
+/// Return `Quantum::getValue` in a conformant unit, preserving its operation order.
+///
+/// Unlike [`convert`], casacore divides by the inverse unit ratio. The two
+/// forms can differ by a floating-point rounding bit.
+///
+/// # Errors
+///
+/// Returns an error when the units have different dimensions.
+pub fn get_conformant_value(value: &Quantity, target: &Unit) -> Result<f64, QuantumError> {
+    if value.unit().val().dim != target.val().dim {
+        return Err(QuantumError(format!(
+            "From/to units not consistent. Cannot convert {} to {}",
+            value.unit().name(),
+            target.name()
+        )));
+    }
+    Ok(value.value() / (target.val().factor / value.unit().val().factor))
+}
+
 /// casacore's `Quantum::operator+`: the second value in the first's unit,
 /// added (`qa.add`).
 pub fn add(left: &Quantity, right: &Quantity) -> Result<Quantity, QuantumError> {

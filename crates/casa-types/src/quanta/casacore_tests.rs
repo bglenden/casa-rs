@@ -2,11 +2,24 @@
 //! The expected strings are CASA 6.7.6's (`tools/simulation/simutil_oracle.py`;
 //! casa-simulation's `simutil_casa.json` holds the whole grid).
 
-use super::{add, convert, div, formxxx, mul, mvangle_normalized, stream_double, sub, tos};
+use super::{
+    add, convert, div, formxxx, get_conformant_value, mul, mvangle_normalized, stream_double, sub,
+    tos,
+};
 use crate::quanta::{Quantity, Unit};
 
 fn read(text: &str) -> Quantity {
     Quantity::read(text).expect("a quantity")
+}
+
+#[test]
+fn get_value_uses_casacores_inverse_ratio_order() {
+    let hz = Unit::new("Hz").unwrap();
+    assert_eq!(
+        get_conformant_value(&read("1.42GHz"), &hz).unwrap(),
+        1_419_999_999.999_999_8
+    );
+    assert!(get_conformant_value(&read("2m"), &hz).is_err());
 }
 
 #[test]

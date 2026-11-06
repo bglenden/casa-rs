@@ -7,6 +7,73 @@ use super::CoordinateSystem;
 use crate::{CoordinateError, CoordinateType};
 
 impl CoordinateSystem {
+    /// Set the active rest frequency in the spectral coordinate's stored unit.
+    ///
+    /// Other listed rest frequencies and the coordinate's original mappings
+    /// remain intact. Returns the updated system and previous active value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for missing or malformed spectral metadata, or a
+    /// non-positive or non-finite frequency.
+    pub fn set_rest_frequency_in_record(
+        record: &mut RecordValue,
+        value: f64,
+    ) -> Result<(Self, f64), CoordinateError> {
+        if !value.is_finite() || value <= 0.0 {
+            return Err(CoordinateError::InvalidRecord(
+                "rest frequency must be positive and finite".into(),
+            ));
+        }
+        let coordinates = Self::record_coordinates(record)?;
+        let coordinate = coordinates
+            .iter()
+            .find(|entry| entry.field.starts_with("spectral"))
+            .ok_or_else(|| CoordinateError::InvalidRecord("no spectral coordinate".into()))?;
+        let mut updated = record.clone();
+        let Some(Value::Record(spectral)) = updated.get_mut(&coordinate.field) else {
+            return Err(CoordinateError::InvalidRecord(
+                "missing spectral record".into(),
+            ));
+        };
+        let Some(Value::Scalar(ScalarValue::Float64(raw_old))) = spectral.get("restfreq") else {
+            return Err(CoordinateError::InvalidRecord(
+                "missing rest frequency".into(),
+            ));
+        };
+        let mut old = *raw_old;
+        if let Some(field) = spectral.get_mut("restfreqs") {
+            let Value::Array(ArrayValue::Float64(values)) = field else {
+                return Err(CoordinateError::InvalidRecord(
+                    "invalid rest frequency list".into(),
+                ));
+            };
+            if values.ndim() != 1 || values.iter().any(|frequency| !frequency.is_finite()) {
+                return Err(CoordinateError::InvalidRecord(
+                    "invalid rest frequency list".into(),
+                ));
+            }
+            for frequency in values.iter_mut() {
+                *frequency = frequency.max(0.0);
+            }
+            let active = values
+                .iter_mut()
+                .min_by(|a, b| {
+                    (a.max(0.0) - old)
+                        .abs()
+                        .total_cmp(&(b.max(0.0) - old).abs())
+                })
+                .ok_or_else(|| {
+                    CoordinateError::InvalidRecord("empty rest frequency list".into())
+                })?;
+            old = active.max(0.0);
+            *active = value;
+        }
+        spectral.upsert("restfreq", Value::Scalar(ScalarValue::Float64(value)));
+        let system = Self::from_record(&updated)?;
+        *record = updated;
+        Ok((system, old))
+    }
     /// Update a stored world-axis name while preserving coordinate axis maps.
     ///
     /// Returns the updated coordinate system and the previous name. The
@@ -201,6 +268,48 @@ mod tests {
     use crate::{
         LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType, TabularCoordinate,
     };
+
+    #[test]
+    fn rest_frequency_edits_preserve_other_entries_and_reject_bad_lists() {
+        let mut system = CoordinateSystem::new();
+        system.add_coordinate(
+            SpectralCoordinate::new(
+                casa_types::measures::frequency::FrequencyRef::LSRK,
+                1.,
+                1.,
+                0.,
+                1.,
+            )
+            .with_rest_frequencies(vec![1., 2., 3.]),
+        );
+        let mut record = system.to_record();
+        let Some(Value::Record(spectral)) = record.get_mut("spectral0") else {
+            panic!("missing spectral coordinate")
+        };
+        spectral.upsert("restfreq", Value::Scalar(ScalarValue::Float64(2.)));
+        let (updated, old) =
+            CoordinateSystem::set_rest_frequency_in_record(&mut record, 4.).unwrap();
+        assert_eq!(old, 2.);
+        let crate::CoordinateModel::Spectral(spectral) = updated.coordinate(0) else {
+            panic!("not spectral")
+        };
+        assert_eq!(spectral.rest_frequencies(), &[1., 4., 3.]);
+        for invalid in [
+            Value::Scalar(ScalarValue::String("bad".into())),
+            Value::Array(ArrayValue::from_i32_vec(vec![1, 2])),
+            Value::Array(ArrayValue::Float64(
+                ndarray::ArrayD::from_shape_vec(ndarray::IxDyn(&[1, 2]), vec![1., 2.]).unwrap(),
+            )),
+        ] {
+            let Some(Value::Record(spectral)) = record.get_mut("spectral0") else {
+                unreachable!()
+            };
+            spectral.upsert("restfreqs", invalid);
+            let before = record.clone();
+            assert!(CoordinateSystem::set_rest_frequency_in_record(&mut record, 5.).is_err());
+            assert_eq!(record, before);
+        }
+    }
 
     #[test]
     fn tabular_axis_names_update_both_record_forms() {
