@@ -104,12 +104,15 @@ const METHODS: &[Method] = &[
         R::Bool,
         Yes,
     ),
-    method(
-        "convertrefdir",
-        &[WHICH, param("frame", K::Text, Required)],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "convertrefdir",
+            &[WHICH, param("frame", K::Text, Required)],
+            R::Bool,
+            Yes,
+        )
+    },
     method(
         "convertshape",
         &[

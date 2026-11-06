@@ -24,6 +24,7 @@
 //! the flux's double precision (`add`).
 
 mod add;
+mod convertrefdir;
 mod keywords;
 mod ops;
 mod placeholder;
@@ -465,16 +466,6 @@ impl PyComponentList {
         self.call(py, move |state, _| {
             state.convertfrequnit(which, &unit).map(CasaValue::Bool)
         })
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (which, frame), text_signature = "($self, which, frame)")]
-    fn convertrefdir(
-        &self,
-        which: &Bound<'_, PyAny>,
-        frame: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("convertrefdir")
     }
 
     /// CASA's placeholder: logs a warning and returns false without changing
