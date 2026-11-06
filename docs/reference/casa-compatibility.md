@@ -1596,7 +1596,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 32 | 0 | 29 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 35 | 0 | 26 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1613,7 +1613,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 32, Partial: 0, Not implemented: 29, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 35, Partial: 0, Not implemented: 26, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1654,10 +1654,10 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `isphysical` | `which=[-1]` | Implemented | Checks selected components using CASA Stokes physicality; an explicit empty index list returns true, and selecting all on an empty list raises an owner-approved error rather than exiting. | [signature](#componentlist-evidence-signature), [isphysical-casa](#componentlist-evidence-isphysical-casa) |
 | `length` |  | Implemented | The number of components. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `open` | `filename='', nomodify=False, log=True` | Implemented | Opens a component-list table, writing a list it replaces first; refuses what is not a component list. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `purge` |  | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `purge` |  | Implemented | Discards the recovery bin and returns CASA's false result. | [signature](#componentlist-evidence-signature), [removal-casa](#componentlist-evidence-removal-casa) |
 | `putkeyword` | `keyword='metadata', value=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `recover` | `log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `remove` | `which=[-1], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `recover` | `log=True` | Implemented | Appends removed components in reverse removal order, preserving their values and in-memory shape units; returns CASA's false result. | [signature](#componentlist-evidence-signature), [removal-casa](#componentlist-evidence-removal-casa) |
+| `remove` | `which=[-1], log=True` | Implemented | Removes validated component indices and keeps a recovery bin; repeated indices remove once to preserve other components, and remove-all on an empty list raises instead of crashing. | [signature](#componentlist-evidence-signature), [removal-casa](#componentlist-evidence-removal-casa) |
 | `rename` | `filename, log=True` | Implemented | Names the table the list is written to, writing at once. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `replace` | `which, list, whichones=[-1]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `sample` | `direction=[], pixellatsize=[], pixellongsize=[], frequency=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
@@ -1918,6 +1918,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/data/casa_componentlist_setlabel.json](https://github.com/bglenden/casa-rs/blob/465f7a87fc7acd6fc61d462d7d4056eb321b39d6/crates/casars-python/python/tests/data/casa_componentlist_setlabel.json)
 - [crates/casars-python/python/tests/test_componentlist_setlabel.py](https://github.com/bglenden/casa-rs/blob/465f7a87fc7acd6fc61d462d7d4056eb321b39d6/crates/casars-python/python/tests/test_componentlist_setlabel.py)
 - [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/465f7a87fc7acd6fc61d462d7d4056eb321b39d6/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-removal-casa"></a>
+##### removal-casa
+
+**CASA-recorded values — measured.** 34 CASA 6.7.6-14 calls in 12 scenarios cover removal, recovery, purge, selection, component values, shape units and errors; isolated empty-list calls crash. Duplicate indices lose a different component in CASA. componentlist.remove, recover and purge.
+
+- [tools/casa-compat/componentlist_removal_oracle.py](https://github.com/bglenden/casa-rs/blob/61b8a7091c2c9e34933eca41448a7cad1e8cf2d1/tools/casa-compat/componentlist_removal_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_removal.json](https://github.com/bglenden/casa-rs/blob/61b8a7091c2c9e34933eca41448a7cad1e8cf2d1/crates/casars-python/python/tests/data/casa_componentlist_removal.json)
+- [crates/casars-python/python/tests/test_componentlist_removal.py](https://github.com/bglenden/casa-rs/blob/61b8a7091c2c9e34933eca41448a7cad1e8cf2d1/crates/casars-python/python/tests/test_componentlist_removal.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/61b8a7091c2c9e34933eca41448a7cad1e8cf2d1/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
 ### measures
 

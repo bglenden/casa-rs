@@ -653,10 +653,10 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Discard all removed components.
     #[pyo3(signature = (), text_signature = "($self)")]
-    fn purge(&self) -> PyResult<Py<PyAny>> {
-        stub("purge")
+    fn purge(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, _| Ok(CasaValue::Bool(state.purge())))
     }
 
     /// Not yet implemented in casa-rs.
@@ -669,20 +669,47 @@ impl PyComponentList {
         stub("putkeyword")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Append removed components in reverse removal order.
     #[pyo3(signature = (log = None), text_signature = "($self, log=True)")]
-    fn recover(&self, log: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("recover")
+    fn recover(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        if log.as_ref().is_some_and(|v| !v.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_recover', argument 2 of type 'bool'",
+            ));
+        }
+        self.call(py, |state, _| Ok(CasaValue::Bool(state.recover())))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Remove components, keeping them available for recovery.
     #[pyo3(signature = (which = None, log = None), text_signature = "($self, which=[-1], log=True)")]
     fn remove(
         &self,
-        which: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] which: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("remove")
+        let (indices, pending) = match which {
+            Some(which) => selection::indices(&which)?,
+            None => (vec![-1], false),
+        };
+        if log.as_ref().is_some_and(|v| !v.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_remove', argument 3 of type 'bool'",
+            ));
+        }
+        let result = self.call(py, move |state, lines| {
+            state.remove(&indices, lines).map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_remove> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Attach the list to a new table `filename`, written at once (a list

@@ -50,6 +50,8 @@ pub(crate) struct State {
     list: ComponentList,
     selection: std::collections::BTreeSet<i64>,
     shape_units: BTreeMap<usize, [Unit; 3]>,
+    /// Removed components in request order; recovery appends them in reverse.
+    removed: Vec<(SkyComponent, Option<[Unit; 3]>)>,
     table: Option<Attached>,
     measures: Option<Arc<dyn MeasuresProvider>>,
 }
@@ -77,6 +79,7 @@ impl State {
         let list = std::mem::take(&mut self.list);
         self.selection.clear();
         self.shape_units.clear();
+        self.removed.clear();
         match self.table.take() {
             Some(Attached {
                 path,
@@ -241,6 +244,83 @@ impl State {
             shape: vec![self.selection.len()],
             values: self.selection.iter().copied().collect(),
         }
+    }
+
+    /// Remove components after validating all indices, keeping a recovery bin.
+    pub(crate) fn remove(
+        &mut self,
+        indices: &[i64],
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let requested: Vec<usize> = if indices == [-1] {
+            if self.list.is_empty() {
+                return Err(ConvertError::runtime(
+                    "componentlist.remove on an empty list would crash CASA (#1053)",
+                ));
+            }
+            (0..self.list.len()).collect()
+        } else {
+            if indices
+                .iter()
+                .any(|&index| index < 0 || index >= self.length())
+            {
+                let message = "Index out of range.\nA component number is less than one or greater than the list length\nNo components removed";
+                lines.push(LogLine::error(message));
+                return Err(ConvertError::runtime(message));
+            }
+            indices.iter().map(|&index| index as usize).collect()
+        };
+        let mut removed = std::collections::BTreeSet::new();
+        for index in requested {
+            // CASA loses a different component when the same index is repeated.
+            if removed.insert(index) {
+                self.removed.push((
+                    self.list.get(index).expect("validated index").clone(),
+                    self.shape_units.get(&index).cloned(),
+                ));
+            }
+        }
+        let sorted: Vec<usize> = removed.into_iter().collect();
+        let mut components = std::mem::take(&mut self.list).into_components();
+        let mut index = 0;
+        components.retain(|_| {
+            let keep = sorted.binary_search(&index).is_err();
+            index += 1;
+            keep
+        });
+        self.list = components.into();
+        let remap = |index: usize| -> Option<usize> {
+            match sorted.binary_search(&index) {
+                Ok(_) => None,
+                Err(before) => Some(index - before),
+            }
+        };
+        self.selection = std::mem::take(&mut self.selection)
+            .into_iter()
+            .filter_map(|index| remap(index as usize).map(|new| new as i64))
+            .collect();
+        self.shape_units = std::mem::take(&mut self.shape_units)
+            .into_iter()
+            .filter_map(|(index, units)| remap(index).map(|new| (new, units)))
+            .collect();
+        Ok(true)
+    }
+
+    /// Restore removed components in reverse removal order, without selecting them.
+    pub(crate) fn recover(&mut self) -> bool {
+        while let Some((component, units)) = self.removed.pop() {
+            if let Some(units) = units {
+                self.shape_units.insert(self.list.len(), units);
+            }
+            self.list.push(component);
+        }
+        false // CASA returns false even on success.
+    }
+
+    /// Forget the recovery bin; CASA returns false even on success.
+    pub(crate) fn purge(&mut self) -> bool {
+        self.removed.clear();
+        false
     }
 
     /// `length()`.
