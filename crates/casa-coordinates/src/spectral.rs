@@ -227,6 +227,70 @@ impl SpectralCoordinate {
         self.value_in_hz(self.to_world(&[pixel])?[0])
     }
 
+    /// Rebuild a tabular spectral record for a unit-stride image section.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stored coordinate or lookup table is invalid.
+    pub fn subimage_tabular_record(
+        record: &mut RecordValue,
+        start: usize,
+        length: usize,
+    ) -> Result<bool, CoordinateError> {
+        let Some(Value::Record(table)) = record.get("tabular") else {
+            return Ok(false);
+        };
+        let table_unit = get_optional_vec_string(table, "units")
+            .and_then(|units| units.into_iter().next())
+            .unwrap_or_else(|| "Hz".into());
+        let coordinate = Self::from_record(record)?;
+        let SpectralMapping::Tabular {
+            pixel_values,
+            world_values,
+            ..
+        } = &coordinate.mapping
+        else {
+            return Ok(false);
+        };
+        let factor = coordinate
+            .unit_scale_hz
+            .ok_or_else(|| CoordinateError::InvalidRecord("invalid spectral unit".into()))?
+            / frequency_unit_scale(&table_unit).ok_or_else(|| {
+                CoordinateError::InvalidRecord("invalid tabular spectral unit".into())
+            })?;
+        let count = length.max(2);
+        let values = (0..count)
+            .map(|pixel| {
+                interpolate(pixel_values, world_values, (start + pixel) as f64)
+                    .map(|world| world * factor)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let increment = (values[count - 1] - values[0]) / (count - 1) as f64;
+        let Some(Value::Record(table)) = record.get_mut("tabular") else {
+            unreachable!()
+        };
+        table.upsert(
+            "crval",
+            Value::Array(ArrayValue::from_f64_vec(vec![values[0]])),
+        );
+        table.upsert(
+            "cdelt",
+            Value::Array(ArrayValue::from_f64_vec(vec![increment])),
+        );
+        table.upsert("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0])));
+        table.upsert(
+            "pixelvalues",
+            Value::Array(ArrayValue::from_f64_vec(
+                (0..count).map(|i| i as f64).collect(),
+            )),
+        );
+        table.upsert(
+            "worldvalues",
+            Value::Array(ArrayValue::from_f64_vec(values)),
+        );
+        Ok(true)
+    }
+
     /// Return the spectral increment in the world frame, expressed in Hz.
     ///
     /// # Errors

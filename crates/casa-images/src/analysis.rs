@@ -2890,8 +2890,9 @@ where
     let selection = Selection::new(image, box_region.as_ref(), request.chans.as_deref())?;
     let data = image.get_slice(&selection.start, &selection.shape)?;
     let mask = image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
-    let output_coordinates = subimage_coordinates(image.coordinates(), &selection.start)?;
-    let legacy_coordinates = legacy_subimage_coordinates(image, &selection.start);
+    let output_coordinates =
+        subimage_coordinates(image.coordinates(), &selection.start, &selection.shape)?;
+    let legacy_coordinates = legacy_subimage_coordinates(image, &selection.start, &selection.shape);
     let mut output = TempImage::<T>::new(
         selection.shape.clone(),
         output_coordinates,
