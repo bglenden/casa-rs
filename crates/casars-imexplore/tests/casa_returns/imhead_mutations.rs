@@ -935,7 +935,13 @@ fn imhead_refuses_unimplemented_variants_without_mutating_metadata() {
         "imhead",
         json!({"imagename": path, "mode": "del", "hdkey": "object", "hdvalue": [1, 2]}),
     );
-    assert!(matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("#977")));
+    assert!(matches!(
+        reply,
+        Some(TaskReply::Succeeded {
+            value: CasaValue::None,
+            ..
+        })
+    ));
     assert_eq!(
         returned(
             workspace.path(),
@@ -943,7 +949,7 @@ fn imhead_refuses_unimplemented_variants_without_mutating_metadata() {
             json!({"imagename": path, "mode": "get", "hdkey": "object"})
         )
         .to_plain_json(),
-        "preserved"
+        ""
     );
 }
 

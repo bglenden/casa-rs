@@ -109,16 +109,6 @@ fn run_imhead(
                 .value("hdvalue")
                 .cloned()
                 .unwrap_or_else(|| ParameterValue::String(String::new()));
-            if matches!(hdvalue, ParameterValue::Array(_) | ParameterValue::Table(_))
-                && mode == "del"
-                && !beam_key
-                && !casa_images::analysis::imhead_is_custom_key(&hdkey)
-            {
-                return Err(TaskFailure::validation(
-                    "imhead del with an array or record hdvalue is not implemented (#977)",
-                )
-                .at("hdvalue"));
-            }
             let mut write_task_history = true;
             let summary = if beam_key {
                 casa_images::analysis::imhead_change_beam(&path, &mode, &hdkey, &hdvalue).map(

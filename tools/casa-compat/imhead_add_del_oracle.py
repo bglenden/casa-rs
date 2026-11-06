@@ -13,7 +13,7 @@ def main():
     cases = []
     with tempfile.TemporaryDirectory(prefix='imhead-add-del-oracle-') as temp:
         for key in ('bunit', 'object', 'observer', 'telescope'):
-            for mode, initial, value in [('add', '', 'New value' if key != 'bunit' else 'K'), ('add', 'K' if key == 'bunit' else 'Existing', 'K' if key == 'bunit' else 'New value'), ('del', 'K' if key == 'bunit' else 'Existing', 'ignored'), ('del', '', '')]:
+            for mode, initial, value in [('add', '', 'New value' if key != 'bunit' else 'K'), ('add', 'K' if key == 'bunit' else 'Existing', 'K' if key == 'bunit' else 'New value'), ('del', 'K' if key == 'bunit' else 'Existing', 'ignored'), ('del', '', ''), ('del', 'K' if key == 'bunit' else 'Existing', [1, 2]), ('del', 'K' if key == 'bunit' else 'Existing', {'ignored': 'yes'})]:
                 path = Path(temp) / f'{len(cases)}.im'
                 shutil.copytree(root / 'base.im', path)
                 imhead(str(path), mode='put', hdkey=key, hdvalue=initial)

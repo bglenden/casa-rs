@@ -49,6 +49,37 @@
       ]
     },
     {
+      "mode": "del",
+      "key": "bunit",
+      "initial": "K",
+      "value": [
+        1,
+        2
+      ],
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified bunit from \"K\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bunit\", hdvalue=[1, 2], verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "bunit",
+      "initial": "K",
+      "value": {
+        "ignored": "yes"
+      },
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified bunit from \"K\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bunit\", hdvalue={'ignored': 'yes'}, verbose=False)"
+      ]
+    },
+    {
       "mode": "add",
       "key": "object",
       "initial": "",
@@ -93,6 +124,37 @@
         "Modified object from \"\" to \"\"",
         "version: 6.7.6-14 CASAtools:v1.0.0",
         "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"object\", hdvalue=\"\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "object",
+      "initial": "Existing",
+      "value": [
+        1,
+        2
+      ],
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified object from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"object\", hdvalue=[1, 2], verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "object",
+      "initial": "Existing",
+      "value": {
+        "ignored": "yes"
+      },
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified object from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"object\", hdvalue={'ignored': 'yes'}, verbose=False)"
       ]
     },
     {
@@ -143,6 +205,37 @@
       ]
     },
     {
+      "mode": "del",
+      "key": "observer",
+      "initial": "Existing",
+      "value": [
+        1,
+        2
+      ],
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified observer from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"observer\", hdvalue=[1, 2], verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "observer",
+      "initial": "Existing",
+      "value": {
+        "ignored": "yes"
+      },
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified observer from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"observer\", hdvalue={'ignored': 'yes'}, verbose=False)"
+      ]
+    },
+    {
       "mode": "add",
       "key": "telescope",
       "initial": "",
@@ -187,6 +280,37 @@
         "Modified telescope from \"\" to \"\"",
         "version: 6.7.6-14 CASAtools:v1.0.0",
         "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"telescope\", hdvalue=\"\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "telescope",
+      "initial": "Existing",
+      "value": [
+        1,
+        2
+      ],
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified telescope from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"telescope\", hdvalue=[1, 2], verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "telescope",
+      "initial": "Existing",
+      "value": {
+        "ignored": "yes"
+      },
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified telescope from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"telescope\", hdvalue={'ignored': 'yes'}, verbose=False)"
       ]
     }
   ]

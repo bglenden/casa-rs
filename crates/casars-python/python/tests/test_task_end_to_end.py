@@ -441,6 +441,19 @@ def test_imhead_nonzenithal_spectral_reference_matches_casa(tmp_path: Path, proj
     np.testing.assert_array_equal(summary["refpix"], expected["after"]["refpix"])
 
 
+@pytest.mark.parametrize("key", ["bunit", "object", "observer", "telescope"])
+@pytest.mark.parametrize("ignored", [[1, 2], {"ignored": "yes"}])
+def test_imhead_delete_ignores_compound_value(tmp_path: Path, key: str, ignored: object) -> None:
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_put/base.im"
+    image = tmp_path / f"{key}.im"
+    shutil.copytree(fixture, image)
+    value = "K" if key == "bunit" else "Existing"
+    assert tasks.imhead(str(image), mode="put", hdkey=key, hdvalue=value) is None
+    assert tasks.imhead(str(image), mode="del", hdkey=key, hdvalue=ignored) is None
+    assert tasks.imhead(str(image), mode="get", hdkey=key) == ""
+
+
 def test_imhead_large_integer_record_uses_casa_conversion(tmp_path: Path) -> None:
     import numpy as np
 
