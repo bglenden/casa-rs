@@ -180,8 +180,8 @@ pub fn casacore_value_to_casa(value: &Value) -> Result<CasaValue, &'static str> 
 ///
 /// # Errors
 ///
-/// Returns an error for higher-dimensional, empty-row, ragged or mixed-string
-/// arrays, non-finite values, or
+/// Returns an error for higher-dimensional, empty-row, or ragged arrays,
+/// non-finite values, or
 /// integer-only values outside the supported 32-bit range (#977).
 pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, &'static str> {
     if values
@@ -267,13 +267,19 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
                 .collect(),
         )),
         _ => {
+            // casatools converts scalar elements to strings when any element
+            // is a string, using C++'s lower-case booleans and fixed six
+            // decimal places for doubles.
             let strings = values
                 .iter()
                 .map(|value| match value {
-                    ParameterValue::String(value) => Ok(value.clone()),
-                    _ => Err("mixed string arrays are not supported (#977)"),
+                    ParameterValue::Bool(value) => value.to_string(),
+                    ParameterValue::Integer(value) => value.to_string(),
+                    ParameterValue::Float(value) => format!("{value:.6}"),
+                    ParameterValue::String(value) => value.clone(),
+                    _ => unreachable!("nested values were rejected"),
                 })
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect();
             Ok(ArrayValue::from_string_vec(strings))
         }
     }
@@ -306,7 +312,10 @@ mod tests {
             ArrayValue::from_string_vec(vec!["x".into()])
         );
         assert!(parameter_array_to_casa(&[Integer(i64::MAX)]).is_err());
-        assert!(parameter_array_to_casa(&[Integer(1), Text("x".into())]).is_err());
+        assert_eq!(
+            parameter_array_to_casa(&[Integer(1), Text("x".into())]).unwrap(),
+            ArrayValue::from_string_vec(vec!["1".into(), "x".into()])
+        );
     }
 
     #[test]

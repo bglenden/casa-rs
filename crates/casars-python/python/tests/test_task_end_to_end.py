@@ -252,12 +252,13 @@ def test_imhead_custom_records_from_python(image: Path) -> None:
     import numpy as np
 
     require_executables("imhead")
-    value = {"nested": {"values": [1, 2], "label": "test", "matrix": [[1, 2], [3, 4]]}}
+    value = {"nested": {"values": [1, 2], "label": "test", "matrix": [[1, 2], [3, 4]], "mixed": [True, 1.5, "x"]}}
     assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue=value) is None
     nested = tasks.imhead(str(image), mode="get", hdkey="custom")["nested"]
     assert nested["label"] == "test"
     np.testing.assert_array_equal(nested["values"], np.array([1, 2], dtype=np.int64))
     np.testing.assert_array_equal(nested["matrix"], [[1, 2], [3, 4]])
+    np.testing.assert_array_equal(nested["mixed"], ["true", "1.500000", "x"])
 
 
 def test_imhead_casa_record_multidimensional_arrays(tmp_path: Path) -> None:
