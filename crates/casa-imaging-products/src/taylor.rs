@@ -18,6 +18,8 @@ use crate::normalization::{
 use crate::restore::{fft_convolve, gaussian_beam_image, rescale_residual_to_beam};
 use crate::source::ContinuumProductInputs;
 
+mod blank;
+
 /// The products of a Taylor reconstruction: one family per polarization,
 /// in the reconstruction's order. CASA cleans and restores each Stokes
 /// plane as a Taylor family of its own (`SDAlgorithmMSMFS::restore` loops
@@ -435,6 +437,9 @@ fn principal_primary_beam(
     directional: Option<MosaicSensitivity<'_>>,
     weight0: &[f32],
 ) -> Result<Vec<f32>, ProductsError> {
+    if let Some(beam) = inputs.taylor_primary_beam() {
+        return Ok(beam.to_vec());
+    }
     if let Some(beam) = primary_beam_model.and_then(|model| inputs.analytic_primary_beam(model)) {
         return beam.plane(domain_role, 0);
     }
@@ -487,14 +492,21 @@ impl<'a> SolvedFamily<'a> {
         // WTCF normal sum scales PSF/sensitivity products, while the CFS
         // publication sum scales dirty/residual image products. They are
         // equal for non-AW direct Taylor reconstruction.
-        let residual_sum_weight = state
+        let published_sum_weight = state
             .published_sum_weight(0, polarization)
             .expect("the zeroth published sum of weights");
+        let residual_sum_weight = inputs
+            .taylor_residual_sum_weight()
+            .unwrap_or(published_sum_weight);
         // Every Stokes plane of a Taylor term has the first correlation's
         // sum of weights (`MultiTermFTNew`). With none, CASA writes every
         // plane as zeros, whatever the other correlations hold; casa-rs
         // refuses (#1109, `docs/CASA (C++) bugs.md`).
-        for sum_weight in [principal_sum_weight, residual_sum_weight] {
+        for sum_weight in [
+            principal_sum_weight,
+            published_sum_weight,
+            residual_sum_weight,
+        ] {
             if !(sum_weight.is_finite() && sum_weight > 0.0) {
                 return Err(ProductsError::PrincipalSumWeight { sum_weight });
             }
@@ -671,6 +683,13 @@ impl TaylorProducts {
         // Binding the inputs established one domain, `terms` coefficient
         // terms and 2·terms − 1 normal moments per polarization.
         let state = &state.read_window(state.slab().core_range())?;
+        if inputs.taylor_primary_beam().is_some()
+            && inputs.taylor_residual_sum_weight() == Some(1.0)
+            && state.polarization_count() == 1
+            && state.published_sum_weight(0, 0) == Some(0.0)
+        {
+            return blank::build(inputs, state, primary_beam_model);
+        }
         let solved = (0..state.polarization_count())
             .map(|polarization| {
                 SolvedFamily::read(inputs, state, polarization, psf_cutoff, primary_beam_model)

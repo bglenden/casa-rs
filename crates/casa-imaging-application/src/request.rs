@@ -44,6 +44,13 @@ pub struct ImagingRequest {
     /// Internal reader provenance only; this is never a catalog parameter.
     #[serde(default)]
     pub(crate) explicit_empty_mask: bool,
+    /// MVC's internally resolved output cube size, separate from the input
+    /// `channel_count` selector. Set after its selected band is surveyed.
+    #[serde(skip)]
+    pub(crate) mvc_output_channels: Option<NonZeroUsize>,
+    /// Ask CASA's MVC bandwidth rule to resolve the output cube depth.
+    #[serde(skip)]
+    pub(crate) mvc_auto_channels: bool,
     /// The MeasurementSets of tclean's `vis`, in the order it names them,
     /// each with the selection tclean applies to it: its own selectors, or
     /// the one each selector gives every MeasurementSet. Compile images them
@@ -643,6 +650,15 @@ pub struct InvalidRequest {
 }
 
 impl ImagingRequest {
+    /// The cube's output depth; MVC derives this independently of its input
+    /// channel selection (`PyMtmfsViaCubeSynthesisImager`).
+    pub(crate) const fn cube_output_channel_count(&self) -> Option<usize> {
+        match self.mvc_output_channels {
+            Some(channels) => Some(channels.get()),
+            None => self.channel_count,
+        }
+    }
+
     /// Check that the request can continue on what an earlier run left at
     /// its `imagename`, as tclean's `restart=True` does (#944): the same
     /// run's family of products, a model with no `startmodel`, a CLEAN mask

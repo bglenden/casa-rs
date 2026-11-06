@@ -37,6 +37,8 @@ pub(super) struct SpecificationInputs {
     /// Whether the run has a primary beam: the mosaic sensitivity, or the
     /// telescope's analytic beam.
     pub(super) primary_beam: bool,
+    /// MVC always publishes its Taylor PB even when the parent did not request one.
+    pub(super) force_primary_beam: bool,
     pub(super) w_projection: Option<WProjectionContract>,
     pub(super) aw_projection: Option<AwProjectionContract>,
     /// Whether a mosaic grids with its conjugate beams: `conjbeams` on an
@@ -105,7 +107,7 @@ pub(super) fn primary_beam_validity(
 /// The problem specification of `request` over `spectral`.
 pub(super) fn specification(
     request: &ImagingRequest,
-    spectral: &PreparedSpectralAxis,
+    spectral: &PreparedSpectralAxis<'_>,
     inputs: SpecificationInputs,
 ) -> Result<ProblemSpecification, PrepareError> {
     let direction_dependent = !matches!(
@@ -119,10 +121,12 @@ pub(super) fn specification(
         },
         _ => spectral.basis,
     };
+    let controls = reconstruction_controls(request, &algorithm);
+    let minor_cycle = algorithm != ReconstructionAlgorithm::Dirty && request.iterations() > 0;
     let reconstruction = ReconstructionContract::new(
         basis,
-        algorithm.clone(),
-        reconstruction_controls(request, &algorithm),
+        algorithm,
+        controls,
         PolarizationContract::new(request.stokes.clone()),
     );
     let equation = measurement_equation(&inputs);
@@ -145,13 +149,17 @@ pub(super) fn specification(
     if let Some(padding) = inputs.cube_density_padding {
         weighting = weighting.with_casa_cube_density_padding(padding);
     }
-    let minor_cycle = algorithm != ReconstructionAlgorithm::Dirty && request.iterations() > 0;
     let specification = ProblemSpecification::new(
         science,
         reconstruction,
         weighting,
         ProductRequirements::new(
-            requested_products(request, minor_cycle, direction_dependent),
+            requested_products(
+                request,
+                minor_cycle,
+                direction_dependent,
+                inputs.force_primary_beam,
+            ),
             normalization(request),
             restoring_beam,
             ProductValidityPolicies::new(
@@ -364,6 +372,7 @@ fn requested_products(
     request: &ImagingRequest,
     minor_cycle: bool,
     weight_image: bool,
+    force_primary_beam: bool,
 ) -> Vec<ProductKind> {
     let mtmfs = request.deconvolver == Deconvolver::Mtmfs;
     // CASA's `restoration=False` neither restores nor PB-corrects, so it
@@ -406,7 +415,7 @@ fn requested_products(
     if weight_image {
         products.push(ProductKind::Weight);
     }
-    if request.write_pb || request.pbcor {
+    if request.write_pb || request.pbcor || force_primary_beam {
         products.push(ProductKind::PrimaryBeam);
     }
     if request.pbcor && restored {
@@ -418,28 +427,14 @@ fn requested_products(
     products
 }
 
-/// The highest and lowest selected frequencies.
-fn frequency_range_hz(windows: &[SourceSpectralWindow]) -> [f64; 2] {
-    let frequencies = || {
-        windows
-            .iter()
-            .flat_map(|window| window.frequencies_hz.iter().copied())
-    };
-    [
-        frequencies().fold(f64::INFINITY, f64::min),
-        frequencies().fold(0.0_f64, f64::max),
-    ]
-}
-
 /// W-projection over the selected `|w|` range: the requested planes, else
 /// CASA `wStat` of the selection (the smallest `|w|` at the lowest
 /// frequency, the rms at the highest).
 pub(super) fn w_projection(
     planes: Option<NonZeroUsize>,
-    windows: &[SourceSpectralWindow],
+    [lowest_hz, highest_hz]: [f64; 2],
     w: WRange,
 ) -> Result<WProjectionContract, PrepareError> {
-    let [lowest_hz, highest_hz] = frequency_range_hz(windows);
     let contract = WProjectionContract::new(
         w.maximum_abs_m * highest_hz / SPEED_OF_LIGHT_M_PER_S,
         planes,
@@ -463,10 +458,9 @@ const CASA_DEFAULT_AW_POINTING_OFFSET_SIGDEV_ARCSEC: [f64; 2] = [600.0, 600.0];
 /// parallactic-angle steps, over the selected `|w|` range.
 pub(super) fn aw_projection(
     aw: &AwProjection,
-    windows: &[SourceSpectralWindow],
+    [_, highest_hz]: [f64; 2],
     w: WRange,
 ) -> Result<AwProjectionContract, PrepareError> {
-    let [_, highest_hz] = frequency_range_hz(windows);
     let planes = aw
         .wprojplanes
         .expect("a validated AW request names its W planes");
@@ -803,7 +797,7 @@ mod tests {
             request.gridder,
             Gridder::Standard { .. } | Gridder::Wproject { .. }
         );
-        requested_products(request, minor_cycle, weight_image)
+        requested_products(request, minor_cycle, weight_image, false)
             .into_iter()
             .collect()
     }

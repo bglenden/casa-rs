@@ -49,6 +49,10 @@ mod synthetic_observation;
 
 #[path = "admission_memory/aw.rs"]
 mod aw;
+#[path = "admission_memory/mvc_view.rs"]
+mod mvc_view;
+#[path = "admission_memory/staging.rs"]
+mod staging;
 use synthetic_observation::{CELL_ARCSEC, observation, observation_as};
 
 #[global_allocator]
@@ -135,7 +139,9 @@ unsafe impl GlobalAlloc for CountingHeap {
             if moved != pointer {
                 // The block moved: the old and the new bytes were held at
                 // once while it was copied.
-                observe(LIVE.load(Ordering::Relaxed) + new);
+                let peak = LIVE.load(Ordering::Relaxed) + new;
+                mvc_view::allocation(new, peak);
+                observe(peak);
             }
             if new >= old {
                 grow(new - old);
@@ -149,6 +155,7 @@ unsafe impl GlobalAlloc for CountingHeap {
 
 fn grow(bytes: u64) {
     let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
+    mvc_view::allocation(bytes, live);
     observe(live);
 }
 

@@ -4,7 +4,7 @@
 //! cube's channel-local output axis in its output or the moving source's
 //! rest frame (CASA `SpectralImagingMode`, `CubeSpectralSetup`).
 
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 
 use casa_imaging_model::{
     DirectionCoordinateSpec, DopplerConvention, Epoch, FrequencyBands, FrequencyFrame,
@@ -32,9 +32,9 @@ use super::survey::Survey;
 use crate::{ImagingRequest, SaveModel, SpecMode};
 
 /// The compiled spectral axis and the source channels it reads.
-pub(super) struct PreparedSpectralAxis {
+pub(super) struct PreparedSpectralAxis<'a> {
     /// Each store's source channels the axis reads, in store order.
-    pub(super) selected_source_channels: Vec<WindowChannels>,
+    pub(super) selected_source_channels: Cow<'a, [WindowChannels]>,
     /// How each store's windows read beyond their selected channels at
     /// every time ([`WindowRead`]), in store order.
     pub(super) window_reads: Vec<WindowReads>,
@@ -57,7 +57,7 @@ pub(super) struct PreparedSpectralAxis {
     pub(super) increment_hz: f64,
 }
 
-impl PreparedSpectralAxis {
+impl PreparedSpectralAxis<'_> {
     /// The model's spectral coordinate of this axis.
     pub(super) fn coordinate(&self) -> SpectralCoordinateSpec {
         SpectralCoordinateSpec::new(
@@ -121,9 +121,14 @@ pub(super) struct FrameContext<'a> {
     pub(super) engine: &'a MsCalEngine,
 }
 
+/// Borrow the already selected continuum windows rather than duplicating them.
+pub(crate) fn continuum_channels(channels: &[WindowChannels]) -> Cow<'_, [WindowChannels]> {
+    Cow::Borrowed(channels)
+}
+
 /// The output axis of one spectral mode, before its frame anchor.
-struct AxisLaw {
-    selected_source_channels: Vec<WindowChannels>,
+struct AxisLaw<'a> {
+    selected_source_channels: Cow<'a, [WindowChannels]>,
     window_reads: Vec<WindowReads>,
     output_frequency_reference: FrequencyRef,
     reference_frequency_hz: f64,
@@ -141,13 +146,14 @@ struct AxisLaw {
 /// plane over `continuum`, the band of every store, or a cube on the
 /// reference store's window that reads each store's window where it reaches
 /// the cube.
-pub(super) fn prepare_axis(
+pub(super) fn prepare_axis<'a>(
     request: &ImagingRequest,
     (stores, reference): (&[SurveyedStore], usize),
-    continuum: Option<&ContinuumBand>,
+    continuum: Option<&'a ContinuumBand>,
     frame: &FrameContext<'_>,
     moving_rest_frame: Option<&MeasFrame>,
-) -> Result<PreparedSpectralAxis, PrepareError> {
+    continuum_reference_hz: Option<f64>,
+) -> Result<PreparedSpectralAxis<'a>, PrepareError> {
     let store = &stores[reference];
     let (msv2, catalogue) = (
         store
@@ -163,6 +169,7 @@ pub(super) fn prepare_axis(
             (msv2, catalogue),
             survey,
             continuum.expect("prepare spans the band of every continuum run"),
+            continuum_reference_hz,
         )?,
         SpecMode::Cube | SpecMode::Cubedata => cube_law(request, (stores, reference), frame)?,
         SpecMode::Cubesource => {
@@ -210,25 +217,26 @@ pub(super) fn prepare_axis(
 /// visibility buffer's source line ([`continuum_rest_frequency_hz`] on an
 /// MSv2, whose `SOURCE` and `DOPPLER` tables CASA reads; the catalogue's
 /// first line on an MSv4), else the recorded band's midpoint (`getImFreq`).
-fn continuum_law(
+fn continuum_law<'a>(
     request: &ImagingRequest,
     (msv2, catalogue): (Option<&MeasurementSet>, &Catalogue),
     survey: &Survey,
-    band: &ContinuumBand,
-) -> Result<AxisLaw, PrepareError> {
+    band: &'a ContinuumBand,
+    continuum_reference_hz: Option<f64>,
+) -> Result<AxisLaw<'a>, PrepareError> {
     let (channels, envelope, recorded) = (&band.channels, &band.gridded, &band.recorded);
     let [lower_hz, upper_hz] = envelope.edges_hz();
     let [recorded_lower_hz, recorded_upper_hz] = recorded.edges_hz();
     // `getImFreq`: a given reffreq is the reference at pixel 0, with the
     // band widened by twice its offset from the band's centre (CAS-9518).
-    let reference = |midpoint_hz: f64, width_hz: f64| match request.reffreq {
+    let reference = |midpoint_hz: f64, width_hz: f64| match continuum_reference_hz {
         Some(reference_hz) => (
             reference_hz,
             width_hz + 2.0 * (reference_hz - midpoint_hz).abs(),
         ),
         None => (midpoint_hz, width_hz),
     };
-    if request.reffreq.is_some() && request.outframe != FrequencyRef::LSRK {
+    if continuum_reference_hz.is_some() && request.outframe != FrequencyRef::LSRK {
         return Err(PrepareError::ReferenceFrequencyOutsideLsrk {
             outframe: request.outframe,
         });
@@ -258,7 +266,7 @@ fn continuum_law(
             .unwrap_or(recorded.midpoint_hz()),
     };
     Ok(AxisLaw {
-        selected_source_channels: channels.clone(),
+        selected_source_channels: continuum_channels(channels),
         window_reads: vec![WindowReads::new(); channels.len()],
         output_frequency_reference: FrequencyRef::LSRK,
         reference_frequency_hz,
@@ -476,7 +484,7 @@ fn cube_setup(
         survey.source_frequency_reference,
         &frequencies_hz,
         &widths_hz,
-        request.channel_count,
+        request.cube_output_channel_count(),
         &axis,
         frame.anchor_time_mjd_seconds,
         frame.field_id,
@@ -774,7 +782,7 @@ fn cube_law(
     request: &ImagingRequest,
     (stores, reference): (&[SurveyedStore], usize),
     frame: &FrameContext<'_>,
-) -> Result<AxisLaw, PrepareError> {
+) -> Result<AxisLaw<'static>, PrepareError> {
     let store = &stores[reference];
     let (catalogue, survey) = (store.catalogue(), &store.survey);
     let band_surveys = stores.iter().map(|store| &store.survey).collect::<Vec<_>>();
@@ -799,7 +807,7 @@ fn cube_law(
         ),
     };
     Ok(AxisLaw {
-        selected_source_channels,
+        selected_source_channels: Cow::Owned(selected_source_channels),
         window_reads,
         output_frequency_reference: setup.output_freq_ref,
         reference_frequency_hz,
@@ -837,7 +845,7 @@ fn source_frame_cube_law(
     store: &SurveyedStore,
     frame: &FrameContext<'_>,
     moving_rest_frame: &MeasFrame,
-) -> Result<AxisLaw, PrepareError> {
+) -> Result<AxisLaw<'static>, PrepareError> {
     let (catalogue, survey) = (store.catalogue(), &store.survey);
     if survey.spectral_windows.len() > 1 {
         return Err(PrepareError::SourceFrameCubeWindows {
@@ -880,7 +888,7 @@ fn source_frame_cube_law(
         )?)
         .ok_or(PrepareError::RestFrequencyMissing)?;
     Ok(AxisLaw {
-        selected_source_channels: vec![reads.channels],
+        selected_source_channels: Cow::Owned(vec![reads.channels]),
         window_reads: vec![reads.windows],
         output_frequency_reference: FrequencyRef::REST,
         reference_frequency_hz,

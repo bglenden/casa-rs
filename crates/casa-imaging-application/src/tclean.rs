@@ -73,7 +73,7 @@ impl ImagingRequest {
     /// request cannot read (`imsize = [0]`), refused at its tclean parameter.
     pub fn from_tclean(values: &Map<String, Value>) -> Result<Self, TcleanRefusal> {
         let (request, _) = read(values)?;
-        let request: Self = serde_path_to_error::deserialize(Value::Object(request)).map_err(
+        let mut request: Self = serde_path_to_error::deserialize(Value::Object(request)).map_err(
             |error: serde_path_to_error::Error<serde_json::Error>| {
                 // A MeasurementSet's selector is its own parameter.
                 let parameter = match error
@@ -96,6 +96,24 @@ impl ImagingRequest {
                 )
             },
         )?;
+        if values.get("specmode").and_then(Value::as_str) == Some("mvc") {
+            // The cube's output depth is independent of the selected input
+            // channels. CASA derives it from the selected bandwidth when
+            // nchan is less than one.
+            let nchan = values
+                .get("nchan")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| TcleanRefusal::new("nchan", "MVC needs an integer nchan"))?;
+            if nchan < 1 {
+                request.mvc_auto_channels = true;
+            } else {
+                let count = usize::try_from(nchan)
+                    .ok()
+                    .and_then(std::num::NonZeroUsize::new)
+                    .ok_or_else(|| TcleanRefusal::new("nchan", "MVC nchan is too large"))?;
+                request.mvc_output_channels = Some(count);
+            }
+        }
         Ok(request)
     }
 }
@@ -287,10 +305,11 @@ impl<'a> Tclean<'a> {
     }
 
     fn modes(&mut self) -> Result<Modes, TcleanRefusal> {
-        let specmode = match self.text("specmode")? {
-            // CASA reads `cont` as `mfs` (`task_tclean.py`).
-            "cont" | "mfs" => "mfs",
-            "mvc" => return Err(TcleanRefusal::not_yet("specmode", "'mvc'", 1069)),
+        let named_specmode = self.text("specmode")?;
+        let mvc = named_specmode == "mvc";
+        let specmode = match named_specmode {
+            // CASA reads `cont` as `mfs`; MVC's Taylor view is MFS.
+            "cont" | "mfs" | "mvc" => "mfs",
             cube => cube,
         };
         self.set("specmode", specmode);
@@ -350,6 +369,13 @@ impl<'a> Tclean<'a> {
                 "deconvolver",
                 format!("{deconvolver:?}"),
                 issue,
+            ));
+        }
+        if mvc && deconvolver != "mtmfs" {
+            return Err(TcleanRefusal::not_yet(
+                "specmode",
+                "'mvc' without deconvolver='mtmfs'",
+                1069,
             ));
         }
         // CASA's tclean images nothing for this pair, whatever `nterms`

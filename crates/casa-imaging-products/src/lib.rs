@@ -14,6 +14,9 @@ mod beam;
 mod demand;
 mod error;
 mod generation;
+mod mvc_cube;
+mod mvc_normal;
+mod mvc_reduction;
 mod normalization;
 mod plan;
 mod plane;
@@ -21,6 +24,8 @@ mod restore;
 mod source;
 mod storage;
 mod taylor;
+mod taylor_beam;
+mod taylor_moments;
 mod visibility;
 mod writer;
 
@@ -29,6 +34,11 @@ pub use beam::{RestoringBeam, fit_restoring_beam};
 pub use demand::ContinuumGenerationDemand;
 pub use error::ProductsError;
 pub use generation::produce_continuum_members;
+pub use mvc_cube::{
+    MvcCubePlane, MvcCubePrimaryBeam, read_mvc_cube_plane, read_mvc_cube_primary_beam,
+};
+pub use mvc_normal::{encode_mvc_blank_taylor_planes, encode_mvc_taylor_planes};
+pub use mvc_reduction::reduce_mvc_cube;
 pub use normalization::{
     MinorCycleImageResponse, MosaicSensitivity, ResidualFamily, normalize_plane,
 };
@@ -41,5 +51,8 @@ pub use restore::{
 };
 pub use source::{ContinuumProductInputs, FacetSumWeights, PrimaryBeamCentres};
 pub use storage::{ProductStoragePlan, ProductWindow, ProductWindowExecutor, ProductWindowLayout};
+pub use taylor_beam::TaylorPrimaryBeamAccumulator;
 pub use visibility::VisibilityProductCompletion;
 pub use writer::{CasaImageDomainOutput, CasaImageWriter};
+
+pub use taylor_moments::TaylorMomentAccumulator;

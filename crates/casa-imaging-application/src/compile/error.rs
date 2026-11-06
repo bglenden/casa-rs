@@ -20,6 +20,22 @@ use casa_types::measures::{
 /// action can cause is a bug and panics with the invariant it broke.
 #[derive(Debug, thiserror::Error)]
 pub enum PrepareError {
+    /// The initial MVC execution cannot honour this run's controls yet.
+    #[error(
+        "MVC currently supports fresh dirty imaging of one selected field and MeasurementSet, with LSRK coordinates, no side effects or PB correction, and a user box or full mask (#1069)"
+    )]
+    MvcExecutionUnsupported,
+    /// The additional MVC view is not yet bounded for this configuration.
+    #[error(
+        "MVC currently supports one fixed-centre Stokes I domain, one standard-gridder facet, natural weighting, and two Taylor terms (#1069)"
+    )]
+    MvcViewUnsupported,
+    /// CASA MVC could not choose enough output channels for its Taylor terms.
+    #[error("invalid MVC cube depth: {reason} (#1069)")]
+    MvcCubeDepth {
+        /// The invalid band or channel count.
+        reason: &'static str,
+    },
     /// Existing products require CASA restart, which is not implemented yet.
     #[error(
         "existing image product {path:?}: this CASA restart configuration is not implemented yet (#944); previous products were preserved; choose a new imagename and, when applicable, supply the previous model with startmodel"
