@@ -1230,15 +1230,51 @@ mod tests {
         assert_eq!(wide_imaging.weight_half_support, [4, 4]);
     }
 
+    /// A catalog with only the group index allocated, for checking the
+    /// retained charge and the public kernel-set lookup independently.
+    fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
+        AwCatalog {
+            root: PathBuf::new(),
+            indexing: AwIndexing {
+                conjugate_beams: false,
+                image_reference_hz: 1.0e9,
+            },
+            pa_deg: Vec::new(),
+            frequencies_hz: Vec::new(),
+            w_values: Vec::new(),
+            w_increment: 0.0,
+            mueller_elements: vec![0],
+            cells: Vec::new(),
+            groups,
+            oversampling: 2,
+            max_half_support: [0, 0],
+            mueller: MuellerRouting::scalar(&[Some(0)], 1),
+            correction: ImageCorrection::new(Vec::new(), Vec::new()),
+            lru: Mutex::new(Lru {
+                slots: Vec::new(),
+                clock: 0,
+                bytes: 0,
+                loads: 0,
+            }),
+            bound: CacheBound::new(0),
+            load_ended: Condvar::new(),
+        }
+    }
+
     /// The index's retained charge covers both origin selectors at every
     /// allocated group slot, including spare capacity (#1070).
     #[test]
     fn group_index_charge_counts_both_origin_selectors() {
         let groups = Vec::<Group>::with_capacity(41);
         let per_group = 2 * size_of::<[u16; 2]>() + 2 * size_of::<bool>();
+        let allocated = groups.capacity() * per_group;
+        let catalog = catalog_with_groups(groups);
         assert_eq!(
-            group_index_bytes(groups.capacity()),
-            groups.capacity() * per_group
+            catalog.cache_charge().kept,
+            allocated as u64
+                + (catalog.mueller_elements.capacity() * size_of::<u32>()) as u64
+                + catalog.mueller.bytes()
+                + catalog.correction.resident_bytes()
         );
     }
 
@@ -1274,6 +1310,15 @@ mod tests {
             shifts,
             [[true, false], [true, false], [false, true], [false, true]]
         );
+        let catalog = catalog_with_groups(groups);
+        for (index, [imaging, weight]) in shifts.into_iter().enumerate() {
+            let key = CfKey {
+                group: index as u16,
+                cube: 0,
+            };
+            assert_eq!(catalog.pointing_origin_shift(key, false), imaging);
+            assert_eq!(catalog.pointing_origin_shift(key, true), weight);
+        }
     }
 
     #[test]
