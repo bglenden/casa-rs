@@ -320,6 +320,15 @@ fn mvc_taylor_completion_is_reduced_and_admitted() {
             }
         }
     }
+    assert_taylor_model_is_carried(
+        &cube,
+        &cube_completion,
+        &taylor,
+        view.expansion_reference_hz,
+        controls,
+        &context,
+        &pb,
+    );
     let live = admitted.value.scientific.resident_bytes().unwrap()
         + u64::try_from(admitted.value.primary_beam.capacity() * size_of::<f32>()).unwrap();
     let pass_planes = u64::try_from(5 * cells * size_of::<f32>()).unwrap();
@@ -327,6 +336,24 @@ fn mvc_taylor_completion_is_reduced_and_admitted() {
         admitted.reservation.memory() >= live + pass_planes,
         "the retained Taylor state, PB and input pass planes overlap under admission"
     );
+    assert_taylor_admission(
+        &cube,
+        &cube_completion,
+        &taylor,
+        view.expansion_reference_hz,
+        controls,
+        &context,
+    );
+}
+
+fn assert_taylor_admission(
+    cube: &casa_imaging_model::CompiledProblem,
+    cube_completion: &casa_imaging_deconvolution::MajorCycleCompletion,
+    taylor: &casa_imaging_model::CompiledProblem,
+    reference_hz: f64,
+    controls: casa_imaging_products::ContinuumProductControls,
+    context: &RunContext,
+) {
     let tight = casa_imaging_runtime::ResourcePolicy::Explicit {
         workers: 1,
         memory: 1,
@@ -334,10 +361,10 @@ fn mvc_taylor_completion_is_reduced_and_admitted() {
     assert!(matches!(
         crate::mvc::assemble_taylor_completion(
             crate::mvc::TaylorAssemblyInputs {
-                cube_problem: &cube,
-                cube: &cube_completion,
-                taylor_problem: &taylor,
-                expansion_reference_hz: view.expansion_reference_hz,
+                cube_problem: cube,
+                cube: cube_completion,
+                taylor_problem: taylor,
+                expansion_reference_hz: reference_hz,
                 controls,
                 centres: None
             },
@@ -351,10 +378,10 @@ fn mvc_taylor_completion_is_reduced_and_admitted() {
         matches!(
             crate::mvc::assemble_taylor_completion(
                 crate::mvc::TaylorAssemblyInputs {
-                    cube_problem: &cube,
-                    cube: &cube_completion,
-                    taylor_problem: &taylor,
-                    expansion_reference_hz: view.expansion_reference_hz,
+                    cube_problem: cube,
+                    cube: cube_completion,
+                    taylor_problem: taylor,
+                    expansion_reference_hz: reference_hz,
                     controls,
                     centres: None
                 },
@@ -367,16 +394,89 @@ fn mvc_taylor_completion_is_reduced_and_admitted() {
     assert!(matches!(
         crate::mvc::assemble_taylor_completion(
             crate::mvc::TaylorAssemblyInputs {
-                cube_problem: &cube,
-                cube: &cube_completion,
-                taylor_problem: &taylor,
-                expansion_reference_hz: view.expansion_reference_hz,
+                cube_problem: cube,
+                cube: cube_completion,
+                taylor_problem: taylor,
+                expansion_reference_hz: reference_hz,
                 controls,
                 centres: None
             },
             (&context.host, &context.policy, &cancelled)
         ),
         Err(crate::native::NativeError::Cancelled(_))
+    ));
+}
+
+fn assert_taylor_model_is_carried(
+    cube: &casa_imaging_model::CompiledProblem,
+    cube_completion: &casa_imaging_deconvolution::MajorCycleCompletion,
+    taylor: &casa_imaging_model::CompiledProblem,
+    reference_hz: f64,
+    controls: casa_imaging_products::ContinuumProductControls,
+    context: &RunContext,
+    expected_pb: &[f32],
+) {
+    use casa_imaging_deconvolution::{ModelLifecycle, ModelStoragePlan};
+    let cells = 64 * 64;
+    // A minor cycle's prepared Taylor model must survive reassembly around
+    // the refreshed normal state, including its pending update.
+    let taylor_lifecycle = ModelLifecycle::new(taylor, ModelStoragePlan::resident(cells).unwrap());
+    let mut initial = vec![0.0_f32; 2 * cells];
+    let point = 32 * 64 + 32;
+    initial[point] = 1.0;
+    initial[cells + point] = -0.75;
+    let prepared_model = taylor_lifecycle
+        .prepare_final_model(
+            taylor_lifecycle.initial_from_start_model(&initial).unwrap(),
+            [casa_imaging_model::ModelDeltaTerm::new(
+                casa_imaging_model::ModelCell::new(0, 0, 0, [32, 32]),
+                casa_imaging_model::ModelValue::new(0.5).unwrap(),
+            )],
+        )
+        .unwrap();
+    let carried = crate::mvc::assemble_taylor_with_model(
+        crate::mvc::TaylorAssemblyInputs {
+            cube_problem: cube,
+            cube: cube_completion,
+            taylor_problem: taylor,
+            expansion_reference_hz: reference_hz,
+            controls,
+            centres: None,
+        },
+        Some(prepared_model),
+        (&context.host, &context.policy, &context.cancel),
+    )
+    .unwrap();
+    let model = carried.value.scientific.final_model();
+    assert_eq!(
+        model.read_samples(point..point + 1).unwrap()[0]
+            .value()
+            .value(),
+        1.5
+    );
+    assert_eq!(
+        model
+            .read_samples(cells + point..cells + point + 1)
+            .unwrap()[0]
+            .value()
+            .value(),
+        -0.75
+    );
+    assert_eq!(carried.value.primary_beam, expected_pb);
+    let lifecycle = ModelLifecycle::new(cube, ModelStoragePlan::resident(1 << 16).unwrap());
+    let wrong_model = lifecycle
+        .prepare_final_model(lifecycle.initial_empty().unwrap(), [])
+        .unwrap();
+    assert!(matches!(
+        crate::mvc::assemble_taylor_with_model(
+            crate::mvc::TaylorAssemblyInputs {
+                cube_problem: cube, cube: cube_completion, taylor_problem: taylor,
+                expansion_reference_hz: reference_hz, controls, centres: None,
+            },
+            Some(wrong_model),
+            (&context.host, &context.policy, &context.cancel),
+        ),
+        Err(crate::native::NativeError::Other(error)) if error.to_string().contains("model does not match")
     ));
 }
 
@@ -483,4 +583,264 @@ fn mvc_native_run_publishes_both_families() {
         );
     }
     assert_eq!(outcome.summary.products.len(), names.len());
+}
+
+/// A test-only backing with the same samples and no reported resident charge.
+/// Comparing it with the real resident owner isolates the model's charge from
+/// the other projection workspace. It is not used for a live memory bound.
+#[derive(Debug)]
+struct UnchargedModelFactory {
+    cancel_on_last_write: Option<Cancel>,
+}
+
+#[derive(Debug)]
+struct UnchargedModel {
+    samples: Vec<casa_imaging_model::ModelSample>,
+    cancel_on_last_write: Option<Cancel>,
+}
+
+impl casa_imaging_deconvolution::ModelStorageFactory for UnchargedModelFactory {
+    fn create(
+        &self,
+        count: usize,
+    ) -> Result<
+        Box<dyn casa_imaging_deconvolution::ModelSampleStorage>,
+        casa_imaging_deconvolution::ModelLifecycleError,
+    > {
+        let zero = casa_imaging_model::ModelSample::valid(
+            casa_imaging_model::ModelValue::new(0.0).unwrap(),
+        );
+        Ok(Box::new(UnchargedModel {
+            samples: vec![zero; count],
+            cancel_on_last_write: self.cancel_on_last_write.clone(),
+        }))
+    }
+}
+
+impl casa_imaging_deconvolution::ModelSampleStorage for UnchargedModel {
+    fn sample_count(&self) -> usize {
+        self.samples.len()
+    }
+    fn read(
+        &self,
+        start: usize,
+        out: &mut [casa_imaging_model::ModelSample],
+    ) -> Result<(), casa_imaging_deconvolution::ModelLifecycleError> {
+        out.copy_from_slice(&self.samples[start..start + out.len()]);
+        Ok(())
+    }
+    fn write(
+        &mut self,
+        start: usize,
+        samples: &[casa_imaging_model::ModelSample],
+    ) -> Result<(), casa_imaging_deconvolution::ModelLifecycleError> {
+        self.samples[start..start + samples.len()].copy_from_slice(samples);
+        if start + samples.len() == self.samples.len()
+            && let Some(cancel) = &self.cancel_on_last_write
+        {
+            cancel.cancel();
+        }
+        Ok(())
+    }
+    fn apply_updates(
+        &self,
+        _updates: &[casa_imaging_deconvolution::ModelSampleUpdate],
+        _precision: casa_imaging_model::NumericPrecision,
+        _bound: f64,
+    ) -> Result<f64, casa_imaging_deconvolution::ModelLifecycleError> {
+        unreachable!("the projection creates an initial model without updates")
+    }
+}
+
+/// The cube model owner receives canonical channel planes formed from the
+/// Taylor model and each channel's real PB. Its separate admission remains
+/// held with the resulting model (#1069).
+#[test]
+fn mvc_projected_model_uses_each_cube_frequency_and_beam_under_admission() {
+    use casa_imaging_deconvolution::{ModelLifecycle, ModelStoragePlan};
+    use casa_imaging_model::{ProblemInput, compile, compile_observation};
+    use casa_imaging_products::{
+        AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
+        PlannedContinuumGeneration, read_mvc_cube_primary_beam,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let ms = synthetic_observation::observation(root.path(), 6);
+    let mut request = crate::request::tests::request(json!({
+        "vis": ms, "imagename": root.path().join("mvc-model"),
+        "specmode": "mfs", "deconvolver": "mtmfs", "nterms": 2,
+        "reffreq": "45GHz", "niter": 0, "backend": "cpu", "imsize": 64,
+        "cell": "0.3arcsec", "write_pb": true,
+    }));
+    request.mvc_output_channels = std::num::NonZeroUsize::new(3);
+    let context = RunContext {
+        host: HostResources::detect().unwrap(),
+        policy: request.resource_policy(),
+        cancel: Cancel::default(),
+        summary: None,
+    };
+    let prepared = crate::compile::prepare(&request, &context).unwrap();
+    let view = prepared.mvc_taylor.unwrap();
+    let snapshot = compile_observation(prepared.snapshot).unwrap();
+    let cube = compile(ProblemInput::new(
+        prepared.specification,
+        prepared.geometry,
+        snapshot.clone(),
+        prepared.model_lifecycle,
+    ))
+    .unwrap();
+    let taylor = compile(ProblemInput::new(
+        view.specification,
+        view.geometry,
+        snapshot,
+        view.model_lifecycle,
+    ))
+    .unwrap();
+    let cube_lifecycle = ModelLifecycle::new(&cube, ModelStoragePlan::resident(1 << 16).unwrap());
+    let empty = cube_lifecycle
+        .prepare_final_model(cube_lifecycle.initial_empty().unwrap(), [])
+        .unwrap();
+    let scene = synthetic_pass::Scene::new(&cube).with_point(0, [32, 32], &[1.0, 1.0, 1.0]);
+    let cube_completion = scene.reconcile_initial(&cube, empty);
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaVlaBand);
+    let taylor_completion = crate::mvc::assemble_taylor_completion(
+        crate::mvc::TaylorAssemblyInputs {
+            cube_problem: &cube,
+            cube: &cube_completion,
+            taylor_problem: &taylor,
+            expansion_reference_hz: view.expansion_reference_hz,
+            controls,
+            centres: None,
+        },
+        (&context.host, &context.policy, &context.cancel),
+    )
+    .unwrap();
+    let cells = 64 * 64;
+    let points = [32 * 64 + 32, 10 * 64 + 20];
+    let mut coefficients = vec![0.0_f32; 2 * cells];
+    for &point in &points {
+        coefficients[point] = 1.25;
+        coefficients[cells + point] = -0.75;
+    }
+    let taylor_lifecycle = ModelLifecycle::new(&taylor, ModelStoragePlan::resident(cells).unwrap());
+    let taylor_model = taylor_lifecycle
+        .initial_from_start_model(&coefficients)
+        .unwrap();
+    // An asymmetric common PB distinguishes the model's y-major order
+    // from the product plane's x-major order at the off-axis point.
+    let mut mean_pb = taylor_completion.value.primary_beam.clone();
+    mean_pb[20 * 64 + 10] = 0.7;
+    mean_pb[10 * 64 + 20] = 0.9;
+    let projection_inputs = || crate::mvc::MvcModelProjectionInputs {
+        cube_problem: &cube,
+        cube: &cube_completion,
+        cube_lifecycle: &cube_lifecycle,
+        taylor_problem: &taylor,
+        taylor_model: &taylor_model,
+        mean_pb: &mean_pb,
+        expansion_reference_hz: view.expansion_reference_hz,
+        controls,
+        centres: None,
+    };
+    let projected = crate::mvc::project_mvc_model(
+        projection_inputs(),
+        (&context.host, &context.policy, &context.cancel),
+    )
+    .unwrap();
+    assert!(projected.reservation.memory() >= projected.value.resident_bytes());
+    let uncharged_lifecycle = ModelLifecycle::new(
+        &cube,
+        ModelStoragePlan::new(
+            std::sync::Arc::new(UnchargedModelFactory {
+                cancel_on_last_write: None,
+            }),
+            1 << 16,
+        )
+        .unwrap(),
+    );
+    let mut uncharged_inputs = projection_inputs();
+    uncharged_inputs.cube_lifecycle = &uncharged_lifecycle;
+    let uncharged = crate::mvc::project_mvc_model(
+        uncharged_inputs,
+        (&context.host, &context.policy, &context.cancel),
+    )
+    .unwrap();
+    assert_eq!(
+        projected.reservation.memory() - uncharged.reservation.memory(),
+        projected.value.resident_bytes(),
+        "the actual model owner adds its resident bytes to admission"
+    );
+    let inputs = ContinuumProductInputs::from_major_cycle(&cube, &cube_completion);
+    let planned = PlannedContinuumGeneration::new(&inputs, &controls).unwrap();
+    for channel in 0..3 {
+        let pb = read_mvc_cube_primary_beam(&planned, &inputs, channel).unwrap();
+        let freq = cube
+            .geometry()
+            .spectral()
+            .channel_centre_hz(channel)
+            .unwrap();
+        let factor = (freq - 45e9) / 45e9;
+        for &point in &points {
+            let polynomial = (1.25_f64 + factor * -0.75_f64) as f32;
+            let (x, y) = (point % 64, point / 64);
+            let product_pixel = x * 64 + y;
+            let expected = polynomial * pb.pixels[product_pixel] / mean_pb[product_pixel];
+            let index = channel * cells + point;
+            let actual = projected.value.read_samples(index..index + 1).unwrap()[0]
+                .value()
+                .value() as f32;
+            assert_eq!(actual, expected, "channel {channel}, pixel {point}");
+            let uncharged_actual = uncharged.value.read_samples(index..index + 1).unwrap()[0]
+                .value()
+                .value() as f32;
+            assert_eq!(uncharged_actual, actual);
+        }
+    }
+    drop(uncharged);
+    for channel in 0..3 {
+        let transposed = channel * cells + 20 * 64 + 10;
+        assert_eq!(
+            projected
+                .value
+                .read_samples(transposed..transposed + 1)
+                .unwrap()[0]
+                .value()
+                .value(),
+            0.0
+        );
+    }
+    let tight = casa_imaging_runtime::ResourcePolicy::Explicit {
+        workers: 1,
+        memory: 1,
+    };
+    assert!(matches!(
+        crate::mvc::project_mvc_model(
+            projection_inputs(),
+            (&context.host, &tight, &context.cancel)
+        ),
+        Err(crate::native::NativeError::Admission(_))
+    ));
+    let late_cancel = Cancel::default();
+    let late_lifecycle = ModelLifecycle::new(
+        &cube,
+        ModelStoragePlan::new(
+            std::sync::Arc::new(UnchargedModelFactory {
+                cancel_on_last_write: Some(late_cancel.clone()),
+            }),
+            1 << 16,
+        )
+        .unwrap(),
+    );
+    let mut late_inputs = projection_inputs();
+    late_inputs.cube_lifecycle = &late_lifecycle;
+    assert!(matches!(
+        crate::mvc::project_mvc_model(late_inputs, (&context.host, &context.policy, &late_cancel)),
+        Err(crate::native::NativeError::Cancelled(_))
+    ));
+    let cancelled = Cancel::default();
+    cancelled.cancel();
+    assert!(matches!(
+        crate::mvc::project_mvc_model(projection_inputs(), (&context.host, &tight, &cancelled)),
+        Err(crate::native::NativeError::Cancelled(_))
+    ));
 }

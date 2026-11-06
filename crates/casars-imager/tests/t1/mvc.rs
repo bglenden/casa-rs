@@ -491,3 +491,135 @@ fn mvc_taylor_rest_frequency_follows_the_cube_label() {
         );
     }
 }
+
+/// CASA 6.7.6 on this weighted, wide-field fixture makes a cube model from
+/// the Taylor model after each minor cycle, then grids that cube model to
+/// form the next Taylor residual (#1069). Three one-iteration minor cycles
+/// exercise more than one model handoff and an expansion reference that is
+/// different from the Taylor image's WCS center.
+#[test]
+fn mvc_clean_refreshes_the_cube_from_the_taylor_model() {
+    let observation = weighted_observation();
+    for (iterations, majors, model, residual, cube) in [
+        (
+            1,
+            2,
+            [0.481_774_9_f32, -0.441_601_57],
+            [4.416_162_f32, -0.089_114_144],
+            [0.491_723_6_f32, 0.490_279_85, 0.488_836_23],
+        ),
+        (
+            3,
+            4,
+            [1.305_975_3_f32, -1.178_515_7],
+            [3.577_092_2_f32, -0.072_181_99],
+            [1.332_531_3_f32, 1.328_670_6, 1.324_810_1],
+        ),
+    ] {
+        let (summary, products) = observation.image(
+            &format!("mvc-clean-{iterations}"),
+            json!({
+                "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+                "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+                "niter": iterations, "cycleniter": 1, "write_pb": true, "pblimit": -0.1,
+            }),
+        );
+        assert_eq!(summary.actual_minor_iterations, iterations);
+        assert_eq!(summary.major_cycles, majors);
+        let close = |label: &str, actual: f32, expected: f32| {
+            assert!(
+                (actual - expected).abs() <= 0.001 * expected.abs(),
+                "{label}: {actual} vs CASA {expected}"
+            );
+        };
+        for term in 0..2 {
+            close(
+                &format!("model.tt{term}"),
+                products.get(&format!(".model.tt{term}")).pixels[[152, 144]],
+                model[term],
+            );
+            close(
+                &format!("residual.tt{term}"),
+                products.get(&format!(".residual.tt{term}")).pixels[[152, 144]],
+                residual[term],
+            );
+        }
+        for (channel, expected) in cube.into_iter().enumerate() {
+            close(
+                &format!("cube model channel {channel}"),
+                products.get(".model").plane(channel)[[152, 144]],
+                expected,
+            );
+        }
+    }
+}
+
+/// CASA does not create a cube model when the initial threshold check
+/// stops before any minor cycle, but does publish the Taylor models (#1069).
+#[test]
+fn mvc_clean_stopping_before_minor_does_not_publish_cube_model() {
+    let observation = weighted_observation();
+    let (summary, products) = observation.image(
+        "mvc-clean-stopped",
+        json!({
+            "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+            "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+            "niter": 3, "cycleniter": 1, "threshold": "100Jy",
+            "write_pb": true, "pblimit": -0.1,
+        }),
+    );
+    assert_eq!(summary.actual_minor_iterations, 0);
+    assert_eq!(summary.major_cycles, 1);
+    assert!(!products.suffixes().contains(".model"));
+    for suffix in [".model.tt0", ".model.tt1"] {
+        assert!(
+            products
+                .get(suffix)
+                .pixels
+                .iter()
+                .all(|value| *value == 0.0)
+        );
+    }
+    let _ = products.get(".mask");
+}
+
+/// CASA publishes the Taylor deconvolver's user mask for cleaned MVC,
+/// including the box edges, rather than a full-plane mask (#1069).
+#[test]
+fn mvc_clean_publishes_the_taylor_user_box_mask() {
+    let observation = weighted_observation();
+    let (_, products) = observation.image(
+        "mvc-clean-box",
+        json!({
+            "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+            "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+            "niter": 1, "cycleniter": 1, "write_pb": true, "pblimit": -0.1,
+            "mask": "140,130,160,150",
+        }),
+    );
+    let mask = &products.get(".mask").pixels;
+    for ((x, y), value) in mask.indexed_iter() {
+        let inside = (140..=160).contains(&x) && (130..=150).contains(&y);
+        assert_eq!(*value, f32::from(inside), "mask at [{x}, {y}]");
+    }
+}
+
+/// A spectral range is prepared on the cube, while MVC cleans one Taylor
+/// plane. Refuse it before imaging until that mask can be prepared for the
+/// Taylor view (#1069).
+#[test]
+fn mvc_clean_refuses_spectrally_ranged_user_masks() {
+    let observation = weighted_observation();
+    let result = observation.try_image(
+        "mvc-clean-ranged-mask",
+        json!({
+            "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+            "nchan": 3, "reffreq": "45GHz", "weighting": "natural",
+            "niter": 1, "write_pb": true, "pblimit": -0.1,
+            "mask": "box[[140pix,130pix],[160pix,150pix]],range=[1pix,1pix]",
+        }),
+    );
+    assert!(
+        matches!(result, Err(error) if error.contains("spatial-only") && error.contains("#1069"))
+    );
+}

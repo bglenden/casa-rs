@@ -240,9 +240,9 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
     })
 }
 
-/// The first native MVC slice forms a fresh dirty cube and its two-term
-/// Taylor products. Cleaning, restart, additional selections and side
-/// effects remain refused until their CASA execution is implemented.
+/// The first native MVC slice forms a fresh cube and its two-term Taylor
+/// products. Cleaning currently needs a negative pblimit, no nsigma, and
+/// spatial-only user boxes; restart and side effects remain refused (#1069).
 pub(super) fn check_execution_scope(
     request: &ImagingRequest,
     selected_fields: usize,
@@ -251,7 +251,10 @@ pub(super) fn check_execution_scope(
     use casa_types::measures::frequency::FrequencyRef;
     if request.vis.len() != 1
         || selected_fields != 1
-        || request.niter != 0
+        || (request.niter != 0
+            && (request.pblimit >= 0.0
+                || request.nsigma != 0.0
+                || request.mask_box.iter().any(|region| region.range.is_some())))
         || !request.calcpsf
         || !request.calcres
         || request.tclean_restart
@@ -363,6 +366,18 @@ mod tests {
         let mut other = parent.clone();
         other.niter = 1;
         assert!(check_execution_scope(&other, 1).is_err());
+        other.pblimit = -0.1;
+        assert!(check_execution_scope(&other, 1).is_ok());
+        other.nsigma = 1.0;
+        assert!(check_execution_scope(&other, 1).is_err());
+        other.nsigma = 0.0;
+        other.mask_box = vec![crate::UserMaskBox {
+            corners: [1, 1, 2, 2],
+            range: Some(crate::SpectralMaskRange::Pixel([0.0, 1.0])),
+        }];
+        assert!(check_execution_scope(&other, 1).is_err());
+        other.mask_box[0].range = None;
+        assert!(check_execution_scope(&other, 1).is_ok());
         let mut other = parent.clone();
         other.calcpsf = false;
         assert!(check_execution_scope(&other, 1).is_err());

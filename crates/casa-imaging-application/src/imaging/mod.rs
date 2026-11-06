@@ -13,7 +13,7 @@ mod setup;
 mod trace;
 mod visibility_write;
 
-pub(crate) use cycle::{Forms, ImagingInputs, plane_bounds, run};
+pub(crate) use cycle::{Forms, ImagingInputs, MvcCycleSpec, plane_bounds, run};
 pub(crate) use images::prepare_model;
 pub(crate) use measurement::{
     KernelAdmission, domain_operator, image_extent, metal_kernel_set, multi_store_kernel_set,
@@ -56,6 +56,9 @@ pub(crate) enum ImagingError {
     /// A normal state could not be assembled.
     #[error(transparent)]
     Normal(#[from] NormalStateError),
+    /// An MVC conversion or model handoff failed.
+    #[error("MVC handoff: {0}")]
+    Mvc(#[source] crate::ApplicationError),
     /// The model lifecycle rejected a generation or update.
     #[error(transparent)]
     Model(#[from] ModelLifecycleError),
@@ -88,4 +91,14 @@ pub(crate) enum ImagingError {
     /// the initial pass's weights.
     #[error("startmodel units: {0}")]
     StartModelUnits(#[source] casa_imaging_products::ProductsError),
+}
+
+impl From<crate::native::NativeError> for ImagingError {
+    fn from(error: crate::native::NativeError) -> Self {
+        match error {
+            crate::native::NativeError::Admission(error) => Self::Admission(error),
+            crate::native::NativeError::Cancelled(error) => Self::Cancelled(error),
+            crate::native::NativeError::Other(error) => Self::Mvc(error),
+        }
+    }
 }

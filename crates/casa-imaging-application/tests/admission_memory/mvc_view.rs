@@ -588,3 +588,37 @@ fn mvc_full_run_stays_within_its_held_admission() {
         admission_breach("MVC full run", &measured).unwrap_or_default()
     );
 }
+
+/// A cleaned MVC run holds the cube and Taylor states together while the
+/// Taylor model is projected and the cube residual is refreshed (#1069).
+#[test]
+fn mvc_clean_run_stays_within_its_held_admission() {
+    if !alone("mvc_view::mvc_clean_run_stays_within_its_held_admission") {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let measurement_set = observation(root.path(), 6);
+    warm(&measurement_set, root.path());
+    let request = request(
+        &measurement_set,
+        &root.path().join("mvc-clean-admission"),
+        1024,
+        json!({
+            "specmode": "mvc", "deconvolver": "mtmfs", "nterms": 2,
+            "nchan": 3, "niter": 2, "cycleniter": 1, "pblimit": -0.1,
+            "backend": "cpu", "write_pb": true,
+        }),
+    );
+    let measured = measure(&request, 1, AMPLE);
+    let outcome = measured.outcome.as_ref().expect("MVC cleaning run");
+    assert!(
+        outcome.total_actual_minor_iterations >= 2,
+        "both minor cycles ran"
+    );
+    assert!(outcome.major_cycle_count >= 3, "both cube refreshes ran");
+    assert!(
+        admission_breach("MVC clean run", &measured).is_none(),
+        "{}",
+        admission_breach("MVC clean run", &measured).unwrap_or_default()
+    );
+}
