@@ -79,6 +79,26 @@ pub struct AutoMaskPlane {
 /// A plane's residual and valid pixels; `None` for a plane with no data.
 pub type AutoMaskRead<'a, E> = dyn Fn(MaskPlaneKey) -> Result<Option<AutoMaskPlane>, E> + Sync + 'a;
 
+/// A channel-scoped reader for an automatic mask. It may share working
+/// data among the channel's polarizations and observe each completed mask.
+/// The reader is dropped when the channel finishes.
+pub trait AutoMaskChannel<E> {
+    /// Read one polarization's residual and valid pixels.
+    fn read(&mut self, key: MaskPlaneKey) -> Result<Option<AutoMaskPlane>, E>;
+
+    /// Observe the mask before the next polarization is read.
+    fn masked(
+        &mut self,
+        key: MaskPlaneKey,
+        plane: Option<&AutoMaskPlane>,
+        support: &[bool],
+    ) -> Result<(), E>;
+}
+
+/// Open one channel-scoped reader. At most one is live per masking worker.
+pub type AutoMaskOpenChannel<'a, E> =
+    dyn Fn(MaskPlaneKey) -> Result<Box<dyn AutoMaskChannel<E> + 'a>, E> + Sync + 'a;
+
 /// A plane's PSF measurements; `None` for a plane with no data.
 pub type AutoMaskPsf<'a> = dyn Fn(MaskPlaneKey) -> Option<PsfSummary> + Sync + 'a;
 
@@ -89,6 +109,8 @@ pub type AutoMaskPsf<'a> = dyn Fn(MaskPlaneKey) -> Option<PsfSummary> + Sync + '
 pub struct AutoMaskSource<'a, E> {
     /// Each plane's residual and valid pixels.
     pub read: &'a AutoMaskRead<'a, E>,
+    /// Optional channel-scoped reader, used instead of `read` when present.
+    pub channel: Option<&'a AutoMaskOpenChannel<'a, E>>,
     /// Each plane's PSF measurements.
     pub psf: &'a AutoMaskPsf<'a>,
     /// The channels masked at once: more than one masks a block's channels
@@ -219,14 +241,29 @@ impl<E: From<MaskError>> Block<'_, '_, E> {
                 .unwrap_or(false),
         };
         let cells = self.shape[0] * self.shape[1];
+        let mut reader = self
+            .source
+            .channel
+            .map(|open| {
+                open(MaskPlaneKey {
+                    domain: self.domain,
+                    channel,
+                    polarization: 0,
+                })
+            })
+            .transpose()?;
         let mut positive = false;
         for (polarization, (out, row)) in support.chunks_mut(cells).zip(rows.iter_mut()).enumerate()
         {
-            let plane = (self.source.read)(MaskPlaneKey {
+            let key = MaskPlaneKey {
                 domain: self.domain,
                 channel,
                 polarization,
-            })?;
+            };
+            let plane = match &mut reader {
+                Some(reader) => reader.read(key)?,
+                None => (self.source.read)(key)?,
+            };
             let made = plane_mask(&PlaneInputs {
                 plane: plane.as_ref(),
                 inherited: inherited(polarization),
@@ -236,6 +273,9 @@ impl<E: From<MaskError>> Block<'_, '_, E> {
                 controls: state.controls,
                 beam: self.beam,
             })?;
+            if let Some(reader) = &mut reader {
+                reader.masked(key, plane.as_ref(), &made.support)?;
+            }
             out.copy_from_slice(&made.support);
             *row = made.evidence;
             positive |= made.positive;
@@ -738,6 +778,7 @@ mod tests {
             _ => None,
         };
         let source = AutoMaskSource {
+            channel: None,
             read: &read,
             psf: &psfs,
             workers: 1,
@@ -848,5 +889,141 @@ mod tests {
         assert_eq!(channel_blocks(11, [900, 900]), [0..10, 10..11]);
         // 400 by 400: blocks of fifty.
         assert_eq!(channel_blocks(120, [400, 400]), [0..50, 50..100, 100..120]);
+    }
+}
+
+#[cfg(test)]
+mod channel_law {
+    use super::*;
+    use casa_imaging_model::{DirectionFrame, NoiseEstimate, Projection, SkyDirection};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Reader<'a> {
+        channel: usize,
+        live: &'a AtomicUsize,
+        reads: &'a AtomicUsize,
+        masked: &'a AtomicUsize,
+    }
+
+    impl Drop for Reader<'_> {
+        fn drop(&mut self) {
+            self.live.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    impl AutoMaskChannel<MaskError> for Reader<'_> {
+        fn read(&mut self, key: MaskPlaneKey) -> Result<Option<AutoMaskPlane>, MaskError> {
+            assert_eq!(key.channel, self.channel);
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            Ok(Some(AutoMaskPlane {
+                residual: vec![0.0; 64],
+                valid: vec![true; 64],
+                statistics: None,
+            }))
+        }
+
+        fn masked(
+            &mut self,
+            key: MaskPlaneKey,
+            _: Option<&AutoMaskPlane>,
+            support: &[bool],
+        ) -> Result<(), MaskError> {
+            assert_eq!(key.channel, self.channel);
+            assert_eq!(support.len(), 64);
+            self.masked.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// Channel work, including all four polarizations, owns at most one
+    /// reader per worker, regardless of the cube's channel count.
+    #[test]
+    fn automatic_mask_scopes_readers_to_channels_in_flight() {
+        const CHANNELS: usize = 21;
+        const WORKERS: usize = 4;
+        let live = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+        let opened = AtomicUsize::new(0);
+        let reads = AtomicUsize::new(0);
+        let masked = AtomicUsize::new(0);
+        let open =
+            |key: MaskPlaneKey| -> Result<Box<dyn AutoMaskChannel<MaskError> + '_>, MaskError> {
+                opened.fetch_add(1, Ordering::SeqCst);
+                let current = live.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(current, Ordering::SeqCst);
+                Ok(Box::new(Reader {
+                    channel: key.channel,
+                    live: &live,
+                    reads: &reads,
+                    masked: &masked,
+                }))
+            };
+        let legacy = |_: MaskPlaneKey| -> Result<Option<AutoMaskPlane>, MaskError> {
+            panic!("channel reader is used")
+        };
+        let mut values = vec![0.0; 64];
+        values[36] = 1.0;
+        let summary = PsfSummary::with_saved_beam(
+            &values,
+            crate::PlaneShape::new(8, 8),
+            RestoringBeam::new(2.0, 2.0, 0.0).unwrap(),
+        )
+        .unwrap();
+        let psf = |_: MaskPlaneKey| Some(summary);
+        let source = AutoMaskSource {
+            read: &legacy,
+            channel: Some(&open),
+            psf: &psf,
+            workers: WORKERS,
+        };
+        let coordinate = DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+            [4.0, 4.0],
+            [-1.0e-4, 1.0e-4],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 90.0],
+        );
+        let controls = AutoMultithreshControls {
+            sidelobe_factor: 2.0,
+            noise_factor: 4.25,
+            low_noise_factor: 1.5,
+            negative_factor: 0.0,
+            minimum_beam_fraction: 0.0,
+            smooth_factor: 1.0,
+            cut_threshold: 0.01,
+            grow_iterations: 0,
+            grow_prune: false,
+            minimum_percent_change: -1.0,
+            noise: NoiseEstimate::Fast,
+            verbose: false,
+        };
+        let state = AutoMaskState {
+            coordinate,
+            controls: &controls,
+            completed_major_cycles: 0,
+            threshold_reached: false,
+            previous: None,
+            stopped_channels: &[],
+        };
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(WORKERS)
+            .build()
+            .unwrap()
+            .install(|| {
+                auto_mask_domain(
+                    &state,
+                    0,
+                    [8, 8],
+                    MaskPlanes::new(CHANNELS, 4).unwrap(),
+                    &source,
+                )
+                .unwrap();
+            });
+        assert_eq!(opened.load(Ordering::SeqCst), CHANNELS);
+        assert_eq!(reads.load(Ordering::SeqCst), CHANNELS * 4);
+        assert_eq!(masked.load(Ordering::SeqCst), CHANNELS * 4);
+        assert!(peak.load(Ordering::SeqCst) <= WORKERS);
+        assert_eq!(live.load(Ordering::SeqCst), 0);
     }
 }

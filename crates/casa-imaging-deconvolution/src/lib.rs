@@ -52,9 +52,10 @@ pub use major_cycle::{
     MajorCycleCompletion, MajorCycleError, PassAppender, normal_state_window_residency_bytes,
 };
 pub use mask::{
-    AUTO_MULTITHRESH_BYTES_PER_CELL, AutoMaskBeam, AutoMaskCycle, AutoMaskEvidence, AutoMaskPlane,
-    AutoMaskPsf, AutoMaskRead, AutoMaskSource, AutoMaskThreshold, AutoMultithreshControls,
-    AutoMultithreshEvidence, ImageDomainMaskMaterialization, ImageDomainReconstructionMaskPlans,
+    AUTO_MULTITHRESH_BYTES_PER_CELL, AutoMaskBeam, AutoMaskChannel, AutoMaskCycle,
+    AutoMaskEvidence, AutoMaskOpenChannel, AutoMaskPlane, AutoMaskPsf, AutoMaskRead,
+    AutoMaskSource, AutoMaskThreshold, AutoMultithreshControls, AutoMultithreshEvidence,
+    ImageDomainMaskMaterialization, ImageDomainReconstructionMaskPlans,
     ImageDomainReconstructionMasks, MaskBeamRead, MaskBox, MaskError, MaskPlaneKey, MaskPlanes,
     MaskReprojection, MaskSources, NoiseMaskExclusion, ReconstructionMask, ReconstructionMaskPlan,
     ReconstructionMaskSet, auto_multithresh, auto_multithresh_bytes, reproject_mask_support,
