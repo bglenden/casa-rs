@@ -53,6 +53,14 @@ enum Kernels {
 }
 
 impl DomainOperator {
+    /// The charge held with an already-admitted kernel set.
+    pub(crate) fn retained_kernel_bytes(&self) -> u64 {
+        match &self.kernels {
+            Kernels::Admitted { _charge } => _charge.memory(),
+            Kernels::Catalog { .. } => 0,
+        }
+    }
+
     /// Bytes the kernel set still to be admitted holds for passes on
     /// `workers` streaming workers, at most the ceiling it was opened for,
     /// at its cache's bound now; zero for a set already admitted.

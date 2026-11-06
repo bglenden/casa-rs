@@ -6,8 +6,8 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, DensityCells, PolarizationCoordinate, ProductKind, ReconstructionAlgorithm,
-    ReconstructionBasis, RequiredCapability, WeightingScheme,
+    CompiledProblem, DensityCells, InstrumentResponse, PolarizationCoordinate, ProductKind,
+    ReconstructionAlgorithm, ReconstructionBasis, RequiredCapability, WeightingScheme,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::HostResources;
@@ -233,8 +233,9 @@ pub fn check(
                 problem.reconstruction().basis(),
                 ReconstructionBasis::Constant
             )
-            && (problem.reconstruction().polarization().coordinates()
-                != [PolarizationCoordinate::StokesI]
+            && (equation.instrument_response() != InstrumentResponse::Scalar
+                || problem.reconstruction().polarization().coordinates()
+                    != [PolarizationCoordinate::StokesI]
                 || !matches!(
                     problem.reconstruction().algorithm(),
                     ReconstructionAlgorithm::Dirty | ReconstructionAlgorithm::Hogbom

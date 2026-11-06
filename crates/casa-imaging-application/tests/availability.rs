@@ -484,6 +484,15 @@ fn w_facet_availability_refuses_unverified_compiled_modes() {
     superuniform.density_cells =
         casa_imaging_model::DensityCells::Box(std::num::NonZeroUsize::new(3).unwrap());
     assert_exactly_unsupported(on_cpu(&superuniform.compile()), [Unsupported::FacetedWMode]);
+    let mut response = base();
+    response.instrument_model =
+        Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
+    response.measurement_equation =
+        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products())
+            .with_w_projection(
+                WProjectionContract::new(100.0, std::num::NonZeroUsize::new(4)).unwrap(),
+            );
+    assert_exactly_unsupported(on_cpu(&response.compile()), [Unsupported::FacetedWMode]);
     let mut automatic = base();
     automatic.measurement_equation =
         MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products())
