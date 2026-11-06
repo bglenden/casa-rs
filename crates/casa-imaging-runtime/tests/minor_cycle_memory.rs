@@ -515,6 +515,16 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
         let mut setup = automask_setup(&problem, algorithm, &centres, (with_beam, with_response));
         if empty_beam {
             setup.pbmask = 0.2;
+            let beam = setup.primary_beam.as_ref().expect("analytic beam");
+            for channel in 0..channels {
+                assert!(
+                    beam.pb(&casa_imaging_model::ImageDomainRole::Main, channel)
+                        .expect("channel beam")
+                        .iter()
+                        .all(|value| *value <= setup.pbmask as f32),
+                    "{label}: channel {channel} must exercise the empty-domain fallback"
+                );
+            }
         }
         let mut plans =
             ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::AutoMultithresh {
@@ -563,6 +573,12 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
             MEASURING.store(false, Ordering::Relaxed);
             drop(preparing);
             let prepared = prepared.expect("prepared");
+            if empty_beam && boundary == 0 {
+                assert!(
+                    prepared.statistics.nsigma_threshold > 0.0,
+                    "{label}: the first boundary must fall back to the valid pixels"
+                );
+            }
             let excess = EXCESS.load(Ordering::Relaxed);
             assert!(
                 excess <= 0,
