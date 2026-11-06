@@ -71,7 +71,7 @@ const METHODS: &[Method] = &[
             LOG,
         ],
         R::Int,
-        No,
+        Yes,
     ),
     method("close", &[LOG], R::Bool, Yes),
     Method {

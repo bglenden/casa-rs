@@ -266,7 +266,7 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder warns and returns zero without reading or writing.
     #[pyo3(
         signature = (filename, asciifile, refer = None, format = None, direction = None, spectrum = None, flux = None, log = None),
         text_signature = "($self, filename, asciifile, refer='J2000', format='ST', direction={}, spectrum={}, flux={}, log=True)"
@@ -274,16 +274,58 @@ impl PyComponentList {
     #[allow(clippy::too_many_arguments)]
     fn asciitocomponentlist(
         &self,
+        py: Python<'_>,
         filename: &Bound<'_, PyAny>,
         asciifile: &Bound<'_, PyAny>,
-        refer: Option<&Bound<'_, PyAny>>,
-        format: Option<&Bound<'_, PyAny>>,
-        direction: Option<&Bound<'_, PyAny>>,
-        spectrum: Option<&Bound<'_, PyAny>>,
-        flux: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] refer: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] format: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] direction: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] spectrum: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] flux: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("asciitocomponentlist")
+        for (name, value) in [
+            ("filename", Some(filename)),
+            ("asciifile", Some(asciifile)),
+            ("refer", refer.as_ref()),
+            ("format", format.as_ref()),
+        ] {
+            if value.is_some_and(|value| {
+                !value.is_instance_of::<PyString>() && !value.is_instance_of::<PyBytes>()
+            }) {
+                return Err(PyTypeError::new_err(format!(
+                    "argument _{name} must be a string"
+                )));
+            }
+        }
+        let mut pending = false;
+        for (name, value) in [
+            ("direction", direction),
+            ("spectrum", spectrum),
+            ("flux", flux),
+        ] {
+            if let Some(value) = value {
+                if !value.is_instance_of::<PyDict>() {
+                    return Err(PyTypeError::new_err(format!("_{name} is not a dictionary")));
+                }
+                pending |= replace_args::record_pending(&value)?;
+            }
+        }
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_asciitocomponentlist', argument 9 of type 'bool'",
+            ));
+        }
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning("asciitocomponentlist not implemented yet"));
+            Ok(CasaValue::Int(0))
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_asciitocomponentlist> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Release the list (writing a list opened for update or renamed) and

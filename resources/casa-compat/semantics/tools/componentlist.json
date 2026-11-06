@@ -23,12 +23,12 @@
    ]
   },
   "asciitocomponentlist": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Matches CASA's placeholder: validates arguments, warns and returns zero without reading a file, creating a table or changing the list. Cyclic records are handled safely.",
    "evidence": [
     "signature",
-    "refusals"
+    "ascii-placeholder-casa"
    ]
   },
   "close": {
@@ -1149,6 +1149,19 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "5a3fb213684683baa61766c828d559a5a88d15a5"
+  },
+  "ascii-placeholder-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "57 CASA 6.7.6-14 calls cover empty, populated and closed lists, accepted and rejected arguments, and integer overflow. An isolated cyclic-record probe crashes CASA; casa-rs safely returns the placeholder result.",
+   "scope": "componentlist.asciitocomponentlist placeholder behavior and Python argument conversion.",
+   "links": [
+    "tools/simulation/componentlist_ascii_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_ascii.json",
+    "crates/casars-python/python/tests/test_componentlist_ascii.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "fc0f6d90156354fbd8cdc29d222c6ff67390f32e"
   }
  }
 }

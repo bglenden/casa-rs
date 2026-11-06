@@ -3960,6 +3960,12 @@ the placeholder result; for cyclic or non-finite index arguments it raises a
 catchable `ValueError`, as for component selection (#1176). No component is
 changed.
 
+`componentlist.asciitocomponentlist('a', 'b', direction=record)` likewise
+crashes while converting a self-referential record, even though CASA's
+placeholder ignores that record. `tools/simulation/componentlist_ascii_oracle.py`
+records the crash in an isolated process. casa-rs returns the placeholder's
+zero and warning without reading a file or changing the list.
+
 ## Invalid component direction frames use an uninitialized reference
 
 - Date noted: 2026-11-06
