@@ -1017,6 +1017,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
+<a href="#component-flux-conversion-can-relabel-incompatible-units-or-crash">nonconforming component flux conversion</a>,
 <a href="#component-removal-can-lose-data-or-crash">duplicate and empty component removals</a>,
 <a href="#casa-accepts-component-labels-it-cannot-return">component labels containing invalid UTF-8</a>,
 <a href="#cyclic-component-list-type-checks-crash-casa">cyclic component-list type checks</a>,
@@ -4688,6 +4689,22 @@ while an equivalent Python complex or NumPy complex128 value raises an error.
 CASA also treats the complex64 value as zero in other quantity operations.
 casa-rs preserves both parts and raises <code>Wrong QuantumHolder to convert
 asQuantumDouble</code> rather than silently discarding them.</p>
+<h2 id="component-flux-conversion-can-relabel-incompatible-units-or-crash">Component flux conversion can relabel incompatible units or crash<a class="headerlink" href="#component-flux-conversion-can-relabel-incompatible-units-or-crash" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-06</li>
+<li>Status: CASA silently changes the dimensions of a flux and crashes on an empty list; casa-rs refuses both without changing components (#1053).</li>
+<li>Owner decision: Correct CASA crashes and data corruption as classes; see <code>docs/simulation/owner-decisions-20261105.md</code>.</li>
+<li>Evidence: <code>tools/casa-compat/componentlist_convertfluxunit_oracle.py</code>, CASA 6.7.6-14 on the Mac mini; the empty-list call runs in an isolated process with core dumps disabled.</li>
+</ul>
+<p>A component-list table may hold a flux in <code>Jy.km/s</code>. Given such a component,
+CASA's <code>cl.convertfluxunit(-1, 'mJy')</code> reports success, scales the flux by
+unit factors and labels it <code>mJy</code>, despite the incompatible dimensions. It
+also modifies earlier components when the incompatible one is later in the
+list. casa-rs checks every selected source before changing any component and
+raises a catchable error if one does not conform. On an empty list, CASA's
+<code>cl.convertfluxunit(-1, 'mJy')</code> terminates with SIGSEGV; casa-rs raises a
+catchable error. A target with dimensions unlike Jy still returns <code>False</code>, as
+CASA does, before it examines the indices.</p>
 <h2 id="component-removal-can-lose-data-or-crash">Component removal can lose data or crash<a class="headerlink" href="#component-removal-can-lose-data-or-crash" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-05</li>

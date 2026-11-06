@@ -2230,6 +2230,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#convertfluxunit-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        convertfluxunit-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6063,6 +6074,17 @@
     <span class="md-ellipsis">
       
         sample-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#convertfluxunit-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        convertfluxunit-casa
       
     </span>
   </a>
@@ -10486,9 +10508,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">36</td>
+<td style="text-align: right;">37</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">25</td>
+<td style="text-align: right;">24</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10606,7 +10628,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 36, Partial: 0, Not implemented: 25, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 37, Partial: 0, Not implemented: 24, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -10663,9 +10685,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>convertfluxunit</code></td>
 <td><code>which, unit='Jy'</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Converts one or all component fluxes and errors to conforming Jy units, retaining complex values. Rejects nonconforming sources atomically and raises instead of crashing on an empty list.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-convertfluxunit-casa">convertfluxunit-casa</a></td>
 </tr>
 <tr>
 <td><code>convertfrequnit</code></td>
@@ -11284,6 +11306,17 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/903b541567638789bd6fa270d7b801244f49ad07/crates/casars-python/python/tests/data/casa_componentlist_sample.json">crates/casars-python/python/tests/data/casa_componentlist_sample.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/903b541567638789bd6fa270d7b801244f49ad07/crates/casars-python/python/tests/test_componentlist_sample.py">crates/casars-python/python/tests/test_componentlist_sample.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/903b541567638789bd6fa270d7b801244f49ad07/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
+</ul>
+<p><a id="componentlist-evidence-convertfluxunit-casa"></a></p>
+<h5 id="convertfluxunit-casa">convertfluxunit-casa<a class="headerlink" href="#convertfluxunit-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 19 CASA 6.7.6-14 calls compare conversions, arguments and complex flux and error values in tables. Separate cases cover a redefined unit, a nonconforming source and an isolated empty-list crash. componentlist.convertfluxunit.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/245fc7ebfc6e4a962930c9f5628adbe8d15def49/tools/casa-compat/componentlist_convertfluxunit_oracle.py">tools/casa-compat/componentlist_convertfluxunit_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/245fc7ebfc6e4a962930c9f5628adbe8d15def49/crates/casars-python/python/tests/data/casa_componentlist_convertfluxunit.json">crates/casars-python/python/tests/data/casa_componentlist_convertfluxunit.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/245fc7ebfc6e4a962930c9f5628adbe8d15def49/crates/casars-python/python/tests/data/casa_convertfluxunit.cl.tgz">crates/casars-python/python/tests/data/casa_convertfluxunit.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/245fc7ebfc6e4a962930c9f5628adbe8d15def49/crates/casars-python/python/tests/data/casa_convertfluxunit_nonconforming.cl.tgz">crates/casars-python/python/tests/data/casa_convertfluxunit_nonconforming.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/245fc7ebfc6e4a962930c9f5628adbe8d15def49/crates/casars-python/python/tests/test_componentlist_convertfluxunit.py">crates/casars-python/python/tests/test_componentlist_convertfluxunit.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/245fc7ebfc6e4a962930c9f5628adbe8d15def49/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>
