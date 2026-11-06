@@ -114,10 +114,11 @@ impl Table {
 
     /// Acquires a lock on the table.
     ///
-    /// Re-reads the table data from disk if another process modified it
-    /// since the last lock was held. A table that already holds a lock is not
-    /// re-read, and a read lock requested while the write lock is held keeps
-    /// the write lock, as in casacore.
+    /// Re-reads the table data from disk if another handle published a
+    /// change since the last synchronization, when acquiring a lock or
+    /// upgrading a read lock to a write lock. A repeated read lock does not
+    /// refresh; a read lock requested while the write lock is held keeps
+    /// that lock and its unflushed changes, as in casacore.
     ///
     /// `nattempts`: number of lock attempts. 0 means wait indefinitely for
     /// another process, 1 means try once without waiting, and more retries
@@ -156,11 +157,12 @@ impl Table {
         // The NoRead modes only spare a table the read lock it takes on
         // open (`skip_read_lock`); an explicit request takes it, as
         // casacore's `PlainTable::lock` does.
-        // A table already locked needs no synchronization: no other process
-        // can have written it (casacore's `PlainTable::lock`). Requesting a
-        // read lock while holding the write lock keeps the write lock and
-        // this handle's unflushed changes.
+        // Other handles in this process can publish while this one holds a
+        // read lock. Refresh on an upgrade before it writes stale metadata.
+        // A handle that already holds the write lock keeps its unflushed
+        // changes, and a repeated read lock does not synchronize.
         let already_locked = state.lock_file.has_lock(LockType::Read);
+        let already_write_locked = state.lock_file.has_lock(LockType::Write);
         let acquired = state
             .lock_file
             .acquire(lock_type, nattempts)
@@ -170,7 +172,8 @@ impl Table {
             })?
             .is_acquired();
 
-        if acquired && !already_locked {
+        if acquired && (!already_locked || (lock_type == LockType::Write && !already_write_locked))
+        {
             self.reload_if_published()?;
         }
 
@@ -237,12 +240,11 @@ impl Table {
     /// reloaded if its modify counter moved. The lock stays held. Returns
     /// whether the table was reloaded.
     ///
-    /// [`lock`](Table::lock) synchronizes only when it takes a lock the
-    /// handle did not hold, as casacore's `PlainTable::lock` does; a handle
-    /// that keeps its lock between calls uses this to see a change another
-    /// handle of the same process published (casacore shares one table
-    /// between them). A handle holding the write lock is the table's only
-    /// writer and is left as it is.
+    /// [`lock`](Table::lock) synchronizes on acquisition and on a read-to-
+    /// write upgrade; a handle that keeps its read lock between calls uses
+    /// this to see a change another handle of the same process published
+    /// (casacore shares one table between them). A handle holding the write
+    /// lock is the table's only writer and is left as it is.
     ///
     /// # Errors
     ///

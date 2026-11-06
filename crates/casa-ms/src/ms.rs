@@ -11,6 +11,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use casa_tables::table_measures::{MeasureType, TableMeasDesc, default_frequency_ref_map};
 use casa_tables::{
     ColumnBinding, ColumnOverrides, DataManagerKind, Table, TableError, TableInfo, TableOptions,
     TableWriteLock,
@@ -898,6 +899,19 @@ impl MeasurementSet {
             let mut table = table;
             apply_column_metadata(&mut table, crate::schema::required_columns(id));
             apply_column_metadata(&mut table, crate::schema::optional_columns(id));
+            if id == SubtableId::SpectralWindow {
+                for column in ["CHAN_FREQ", "REF_FREQUENCY"] {
+                    let (types, codes) = default_frequency_ref_map();
+                    TableMeasDesc::new_variable_int(
+                        column,
+                        MeasureType::Frequency,
+                        "MEAS_FREQ_REF",
+                        types,
+                        codes,
+                    )?
+                    .write(&mut table)?;
+                }
+            }
             if let Some(ref p) = path {
                 subtable_paths.insert(id, p.join(id.name()));
             }

@@ -448,39 +448,56 @@ impl ImageDomainReconstructionMaskPlans {
         (channel, polarization): (usize, usize),
         current: &'a ImageDomainReconstructionMasks,
     ) -> NoiseMaskExclusion<'a> {
-        let full = |plane: &[bool]| plane.iter().all(|set| *set);
-        match self.plans.get(ordinal) {
-            Some(ReconstructionMaskPlan::AutoMultithresh {
+        if let Some(exclusion) = self.automatic_noise_exclusion(ordinal, (channel, polarization)) {
+            return exclusion;
+        }
+        if self.completed_major_cycles == 0 {
+            return NoiseMaskExclusion::Unmasked;
+        }
+        current
+            .get(ordinal)
+            .and_then(|mask| mask.plane(channel, polarization))
+            .map_or(NoiseMaskExclusion::Unmasked, |support| {
+                NoiseMaskExclusion::Mask {
+                    support,
+                    full: support.iter().all(|set| *set),
+                }
+            })
+    }
+
+    /// The inherited-mask exclusion for an automatic plane, available as
+    /// its new mask is formed. `None` denotes a non-automatic domain.
+    #[must_use]
+    pub fn automatic_noise_exclusion(
+        &self,
+        ordinal: usize,
+        (channel, polarization): (usize, usize),
+    ) -> Option<NoiseMaskExclusion<'_>> {
+        match self.plans.get(ordinal)? {
+            ReconstructionMaskPlan::AutoMultithresh {
                 stopped_channels, ..
-            }) if stopped_channels.get(channel).copied().unwrap_or(false) => {
-                NoiseMaskExclusion::Stopped
+            } if stopped_channels.get(channel).copied().unwrap_or(false) => {
+                Some(NoiseMaskExclusion::Stopped)
             }
-            Some(ReconstructionMaskPlan::AutoMultithresh { previous, .. }) => previous
-                .as_deref()
-                .and_then(|mask| {
-                    let support = mask.plane(channel, polarization)?;
-                    // The statistics of a channel block read the mask's
-                    // first plane in it (`calcRobustImageStatistics`).
-                    let first = channel_blocks(mask.planes().channels(), mask.shape())
-                        .into_iter()
-                        .find(|block| block.contains(&channel))
-                        .map_or(0, |block| block.start);
-                    Some(NoiseMaskExclusion::Mask {
-                        support,
-                        full: mask.plane(first, 0).is_some_and(full),
+            ReconstructionMaskPlan::AutoMultithresh { previous, .. } => Some(
+                previous
+                    .as_deref()
+                    .and_then(|mask| {
+                        let support = mask.plane(channel, polarization)?;
+                        let first = channel_blocks(mask.planes().channels(), mask.shape())
+                            .into_iter()
+                            .find(|block| block.contains(&channel))
+                            .map_or(0, |block| block.start);
+                        Some(NoiseMaskExclusion::Mask {
+                            support,
+                            full: mask
+                                .plane(first, 0)
+                                .is_some_and(|plane| plane.iter().all(|set| *set)),
+                        })
                     })
-                })
-                .unwrap_or(NoiseMaskExclusion::Unmasked),
-            _ if self.completed_major_cycles == 0 => NoiseMaskExclusion::Unmasked,
-            _ => current
-                .get(ordinal)
-                .and_then(|mask| mask.plane(channel, polarization))
-                .map_or(NoiseMaskExclusion::Unmasked, |support| {
-                    NoiseMaskExclusion::Mask {
-                        support,
-                        full: full(support),
-                    }
-                }),
+                    .unwrap_or(NoiseMaskExclusion::Unmasked),
+            ),
+            _ => None,
         }
     }
 

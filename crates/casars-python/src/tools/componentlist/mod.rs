@@ -7,9 +7,9 @@
 //! CASA's simulation tasks call are implemented (`open`, `addcomponent`,
 //! `rename`, `close`, `done`, `length`, `torecord`, `getspectrum`,
 //! `getrefdir`), with the accessors `getcomponent`, `getfluxvalue`,
-//! `getfluxunit`, `getlabel`, `shapetype` and `spectrumtype`, and CASA's
-//! `iscomponentlist` placeholder; the rest raise `NotImplementedError`
-//! naming #1053.
+//! `getfluxunit`, `getlabel`, `shapetype`, `spectrumtype`, table keyword
+//! reads and writes, and CASA's `iscomponentlist` placeholder. The surface records
+//! the other implemented methods and refusals naming #1053.
 //!
 //! CASA's outcomes are kept ([`ops`] for the table, `add` for
 //! `addcomponent`): what CASA raises is a `RuntimeError` with CASA's
@@ -24,17 +24,26 @@
 //! the flux's double precision (`add`).
 
 mod add;
+mod keywords;
 mod ops;
 mod placeholder;
+mod replace_args;
 mod selection;
+mod setflux;
+mod setrefdir_args;
+mod setshape;
 pub(crate) mod surface;
 
 use std::ffi::CString;
+use std::str::FromStr;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use pyo3::exceptions::{PyOverflowError, PyRuntimeWarning, PySystemError, PyTypeError};
+use casa_types::measures::direction::DirectionRef;
+use pyo3::exceptions::{
+    PyNotImplementedError, PyOverflowError, PyRuntimeWarning, PySystemError, PyTypeError,
+};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyString};
+use pyo3::types::{PyBool, PyBytes, PyDict, PyString};
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, DoubleList, Variant};
@@ -287,25 +296,96 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Append selected components from a component-list table.
     #[pyo3(signature = (list = None, which = None, log = None), text_signature = "($self, list=[], which=[-1], log=True)")]
     fn concatenate(
         &self,
-        list: Option<&Bound<'_, PyAny>>,
-        which: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] list: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] which: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("concatenate")
+        let source = match list {
+            Some(value) if value.is_instance_of::<PyDict>() => {
+                return Err(PyNotImplementedError::new_err(
+                    "componentlist.concatenate record input is not yet implemented (#1053)",
+                ));
+            }
+            Some(value) => value.extract::<Variant>()?,
+            None => Variant::Empty,
+        };
+        let (indices, pending) = match which {
+            Some(value) => selection::indices(&value)?,
+            None => (vec![-1], false),
+        };
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_concatenate', argument 4 of type 'bool'",
+            ));
+        }
+        let result = self.call(py, move |state, lines| {
+            state
+                .concatenate(&source, &indices, pending, lines)
+                .map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_concatenate> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Convert one or all component fluxes to a polarisation representation.
     #[pyo3(signature = (which, polarization = None), text_signature = "($self, which, polarization='Stokes')")]
     fn convertfluxpol(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        polarization: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] polarization: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("convertfluxpol")
+        let (which, pending) = match which.extract::<i64>() {
+            Ok(index) => (i64::from(index as i32), false),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => {
+                (-1, true)
+            }
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let polarization: String = match polarization {
+            None => "Stokes".to_string(),
+            Some(value) if value.is_instance_of::<PyString>() => value.extract()?,
+            Some(value) if value.is_instance_of::<PyBytes>() => {
+                let bytes = value.cast::<PyBytes>()?.as_bytes();
+                let end = bytes
+                    .iter()
+                    .position(|&byte| byte == 0)
+                    .unwrap_or(bytes.len());
+                PyBytes::new(py, &bytes[..end])
+                    .call_method1("decode", ("utf-8",))?
+                    .extract()?
+            }
+            Some(_) => {
+                return Err(PyTypeError::new_err(
+                    "argument _polarization must be a string",
+                ));
+            }
+        };
+        let polarization = polarization
+            .split('\0')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let result = self.call(py, move |state, lines| {
+            state
+                .convertfluxpol(which, &polarization, pending, lines)
+                .map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_convertfluxpol> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Convert one or all components' flux values and errors to a Jy unit.
@@ -396,19 +476,52 @@ impl PyComponentList {
         stub("convertrefdir")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns false without changing
+    /// the component's shape or units.
     #[pyo3(
         signature = (which, majoraxis = None, minoraxis = None, positionangle = None),
         text_signature = "($self, which, majoraxis='arcmin', minoraxis='arcmin', positionangle='deg')"
     )]
     fn convertshape(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        majoraxis: Option<&Bound<'_, PyAny>>,
-        minoraxis: Option<&Bound<'_, PyAny>>,
-        positionangle: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] majoraxis: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] minoraxis: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] positionangle: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("convertshape")
+        let index = which.extract::<i64>();
+        let system_error = which.is_none()
+            || index
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.is_instance_of::<PyOverflowError>(py));
+        if index.is_err() && !system_error {
+            return Err(PyTypeError::new_err("argument _which must be an integer"));
+        }
+        for (name, value) in [
+            ("majoraxis", majoraxis),
+            ("minoraxis", minoraxis),
+            ("positionangle", positionangle),
+        ] {
+            if value.is_some_and(|value| {
+                !value.is_instance_of::<PyString>() && !value.is_instance_of::<PyBytes>()
+            }) {
+                return Err(PyTypeError::new_err(format!(
+                    "argument _{name} must be a string"
+                )));
+            }
+        }
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning("convertshape not implemented yet"));
+            Ok(CasaValue::Bool(false))
+        })?;
+        if system_error {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_convertshape> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Deselect component indices.
@@ -433,14 +546,38 @@ impl PyComponentList {
         self.call(py, |state, _| state.done().map(CasaValue::Bool))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder: logs a warning and returns false without editing.
     #[pyo3(signature = (which, log = None), text_signature = "($self, which, log=True)")]
     fn edit(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        log: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("edit")
+        let index = which.extract::<i64>();
+        let system_error = which.is_none()
+            || index
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.is_instance_of::<PyOverflowError>(py));
+        if index.is_err() && !system_error {
+            return Err(PyTypeError::new_err("argument _which must be an integer"));
+        }
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_edit', argument 3 of type 'bool'",
+            ));
+        }
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning("edit  not implemented yet"));
+            Ok(CasaValue::Bool(false))
+        })?;
+        if system_error {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_edit> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Not yet implemented in casa-rs.
@@ -452,9 +589,7 @@ impl PyComponentList {
     /// Component `which`'s record.
     #[pyo3(signature = (which, iknow = false), text_signature = "($self, which, iknow=False)")]
     fn getcomponent(&self, py: Python<'_>, which: i64, iknow: bool) -> PyResult<Py<PyAny>> {
-        self.call(py, move |state, _| {
-            ops::record(state.checked(which)?.to_record())
-        })
+        self.call(py, move |state, _| state.getcomponent(which))
     }
 
     /// The real parts of component `which`'s four flux errors.
@@ -536,10 +671,17 @@ impl PyComponentList {
         self.getter_placeholder(py, which, "getfreqvalue", CasaValue::Float(0.0))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Read a table keyword, including a dotted path into a nested record.
     #[pyo3(signature = (keyword = None), text_signature = "($self, keyword='metadata')")]
-    fn getkeyword(&self, keyword: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("getkeyword")
+    fn getkeyword(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] keyword: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let keyword = keywords::argument(py, keyword.as_ref())?;
+        self.call(py, move |state, _| {
+            keywords::get(state.keyword_table_path()?, &keyword)
+        })
     }
 
     /// Component `which`'s label.
@@ -628,10 +770,17 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Whether the attached table has the named top-level keyword.
     #[pyo3(signature = (keyword = None), text_signature = "($self, keyword='metadata')")]
-    fn haskeyword(&self, keyword: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("haskeyword")
+    fn haskeyword(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] keyword: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        let keyword = keywords::argument(py, keyword.as_ref())?;
+        self.call(py, move |state, _| {
+            keywords::has(state.keyword_table_path()?, &keyword)
+        })
     }
 
     /// CASA's placeholder: logs a warning and returns an empty int64 array.
@@ -720,14 +869,21 @@ impl PyComponentList {
         self.call(py, |state, _| Ok(CasaValue::Bool(state.purge())))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Write a keyword to the attached table, as CASA's `putkeyword` does.
     #[pyo3(signature = (keyword = None, value = None), text_signature = "($self, keyword='metadata', value=[])")]
     fn putkeyword(
         &self,
-        keyword: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] keyword: Option<Bound<'_, PyAny>>,
         value: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("putkeyword")
+        let name = keywords::argument(py, keyword.as_ref())?;
+        let value = crate::tools::table::component_keyword_value(py, value)?;
+        self.call(py, move |state, _| {
+            keywords::put(state.keyword_table_path()?, &name, value)?;
+            Ok(CasaValue::Bool(true))
+        })?;
+        Ok(py.None())
     }
 
     /// Append removed components in reverse removal order.
@@ -783,15 +939,41 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder warns and returns false without replacing anything.
     #[pyo3(signature = (which, list, whichones = None), text_signature = "($self, which, list, whichones=[-1])")]
     fn replace(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
         list: &Bound<'_, PyAny>,
-        whichones: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] whichones: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("replace")
+        let index = which.extract::<i64>();
+        let mut pending = which.is_none()
+            || index
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.is_instance_of::<PyOverflowError>(py));
+        if index.is_err() && !pending {
+            return Err(PyTypeError::new_err("argument _which must be an integer"));
+        }
+        if !list.is_instance_of::<PyDict>() {
+            return Err(PyTypeError::new_err("_list is not a dictionary"));
+        }
+        pending |= replace_args::record_pending(list)?;
+        if let Some(whichones) = whichones {
+            pending |= replace_args::indices_pending(&whichones)?;
+        }
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning("replace not implemented yet"));
+            Ok(CasaValue::Bool(false))
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_replace> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// CASA's placeholder warns and returns an empty float array.
@@ -847,7 +1029,7 @@ impl PyComponentList {
         self.call(py, |state, _| Ok(state.selected()))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Set the flux and errors of one or all components.
     #[pyo3(
         signature = (which, value = None, unit = None, polarization = None, error = None, log = None),
         text_signature = "($self, which, value=[], unit='Jy', polarization='Stokes', error=[], log=True)"
@@ -855,14 +1037,67 @@ impl PyComponentList {
     #[allow(clippy::too_many_arguments)]
     fn setflux(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        value: Option<&Bound<'_, PyAny>>,
-        unit: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-        error: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] value: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] unit: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] polarization: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] error: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("setflux")
+        let (which, index_pending) = match which.extract::<i64>() {
+            Ok(index) => (i64::from(index as i32), false),
+            Err(err) if which.is_none() || err.is_instance_of::<PyOverflowError>(py) => (-1, true),
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let (value, value_pending) = setflux::argument(value)?;
+        let string =
+            |arg: Option<Bound<'_, PyAny>>, default: &str, name: &str| -> PyResult<String> {
+                let text: String = match arg {
+                    None => default.to_string(),
+                    Some(v) if v.is_instance_of::<PyString>() => v.extract()?,
+                    Some(v) if v.is_instance_of::<PyBytes>() => {
+                        let bytes = v.cast::<PyBytes>()?.as_bytes();
+                        let end = bytes
+                            .iter()
+                            .position(|&byte| byte == 0)
+                            .unwrap_or(bytes.len());
+                        PyBytes::new(py, &bytes[..end])
+                            .call_method1("decode", ("utf-8",))?
+                            .extract()?
+                    }
+                    Some(_) => {
+                        return Err(PyTypeError::new_err(format!(
+                            "argument _{name} must be a string"
+                        )));
+                    }
+                };
+                Ok(text.split('\0').next().unwrap_or_default().to_string())
+            };
+        let unit = string(unit, "Jy", "unit")?;
+        let polarization = string(polarization, "Stokes", "polarization")?;
+        let (error, error_pending) = setflux::argument(error)?;
+        if log.is_some_and(|v| !v.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_setflux', argument 7 of type 'bool'",
+            ));
+        }
+        let pending = index_pending || value_pending || error_pending;
+        let result = self.call(py, move |state, lines| {
+            let flux =
+                setflux::prepare(&value, &unit, &polarization, &error).inspect_err(|err| {
+                    lines.push(LogLine::error(err.to_string()));
+                })?;
+            state
+                .setflux(which, flux, pending, lines)
+                .map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_setflux> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Change a component's reference frequency and its record unit.
@@ -917,15 +1152,54 @@ impl PyComponentList {
         Ok(result)
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Relabel one component's frequency frame without converting its value.
     #[pyo3(signature = (which, frame = None, log = None), text_signature = "($self, which, frame='LSRK', log=True)")]
     fn setfreqframe(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        frame: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] frame: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("setfreqframe")
+        let (which, pending) = match which.extract::<i64>() {
+            Ok(index) => (i64::from(index as i32), false),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => {
+                (-1, true)
+            }
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let frame: String = match frame {
+            None => "LSRK".to_string(),
+            Some(value) if value.is_instance_of::<PyString>() => value.extract()?,
+            Some(value) if value.is_instance_of::<PyBytes>() => {
+                let bytes = value.cast::<PyBytes>()?.as_bytes();
+                let end = bytes
+                    .iter()
+                    .position(|&byte| byte == 0)
+                    .unwrap_or(bytes.len());
+                PyBytes::new(py, &bytes[..end])
+                    .call_method1("decode", ("utf-8",))?
+                    .extract()?
+            }
+            Some(_) => return Err(PyTypeError::new_err("argument _frame must be a string")),
+        };
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_setfreqframe', argument 4 of type 'bool'",
+            ));
+        }
+        let frame = frame.split('\0').next().unwrap_or_default().to_string();
+        let result = self.call(py, move |state, lines| {
+            state
+                .setfreqframe(which, &frame, lines)
+                .map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_setfreqframe> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Replace the user label of one component.
@@ -974,49 +1248,109 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Set component direction coordinates, preserving their reference frames.
     #[pyo3(signature = (which = None, ra = None, dec = None, log = None), text_signature = "($self, which=1, ra=[], dec=[], log=True)")]
     fn setrefdir(
         &self,
-        which: Option<&Bound<'_, PyAny>>,
-        ra: Option<&Bound<'_, PyAny>>,
-        dec: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] which: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] ra: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] dec: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("setrefdir")
+        let (which, mut pending) = match which {
+            None => (1, false),
+            Some(value) => match value.extract::<i64>() {
+                Ok(index) => (i64::from(index as i32), false),
+                Err(error) if value.is_none() || error.is_instance_of::<PyOverflowError>(py) => {
+                    (-1, true)
+                }
+                Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+            },
+        };
+        let (ra, ra_pending) = setrefdir_args::argument(ra)?;
+        let (dec, dec_pending) = setrefdir_args::argument(dec)?;
+        pending |= ra_pending || dec_pending;
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_setrefdir', argument 5 of type 'bool'",
+            ));
+        }
+        let result = self.call(py, move |state, lines| {
+            state
+                .setrefdir(which, &ra, &dec, pending, lines)
+                .map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_setrefdir> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Relabel one component's direction frame without converting its value.
     #[pyo3(signature = (which, frame, log = None), text_signature = "($self, which, frame, log=True)")]
     fn setrefdirframe(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
         frame: &Bound<'_, PyAny>,
-        log: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("setrefdirframe")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(
-        signature = (which, r#type = None, majoraxis = None, minoraxis = None, positionangle = None, majoraxiserror = None, minoraxiserror = None, positionangleerror = None, optionalparms = None, log = None),
-        text_signature = "($self, which, type='Point', majoraxis=[], minoraxis=[], positionangle=[], majoraxiserror=[], minoraxiserror=[], positionangleerror=[], optionalparms=[0.0], log=True)"
-    )]
-    #[allow(clippy::too_many_arguments)]
-    fn setshape(
-        &self,
-        which: &Bound<'_, PyAny>,
-        r#type: Option<&Bound<'_, PyAny>>,
-        majoraxis: Option<&Bound<'_, PyAny>>,
-        minoraxis: Option<&Bound<'_, PyAny>>,
-        positionangle: Option<&Bound<'_, PyAny>>,
-        majoraxiserror: Option<&Bound<'_, PyAny>>,
-        minoraxiserror: Option<&Bound<'_, PyAny>>,
-        positionangleerror: Option<&Bound<'_, PyAny>>,
-        optionalparms: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("setshape")
+        let (which, pending) = match which.extract::<i64>() {
+            Ok(index) => (i64::from(index as i32), false),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => {
+                (-1, true)
+            }
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let frame: String = if frame.is_instance_of::<PyString>() {
+            frame.extract()?
+        } else if frame.is_instance_of::<PyBytes>() {
+            let bytes = frame.cast::<PyBytes>()?.as_bytes();
+            let end = bytes
+                .iter()
+                .position(|&byte| byte == 0)
+                .unwrap_or(bytes.len());
+            // Frame names are ASCII. Lossy decoding retains an ASCII prefix
+            // followed by non-UTF-8 bytes, which casacore accepts when that
+            // complete prefix identifies a frame, and leaves an invalid
+            // prefix unmatched.
+            String::from_utf8_lossy(&bytes[..end]).into_owned()
+        } else {
+            return Err(PyTypeError::new_err("argument _frame must be a string"));
+        };
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_setrefdirframe', argument 4 of type 'bool'",
+            ));
+        }
+        let frame = frame.split('\0').next().unwrap_or_default();
+        let Some(name) = crate::convert::holder::DIRECTION_CODES.resolve(frame) else {
+            return self.call(py, |_, lines| {
+                lines.push(LogLine::error(
+                    "Could not parse the 'frame' string: Direction frame not changed",
+                ));
+                Err(crate::convert::ConvertError::runtime(
+                    "Could not parse the direction frame",
+                ))
+            });
+        };
+        let frame = DirectionRef::from_str(name).map_err(|_| {
+            PyNotImplementedError::new_err(format!(
+                "direction reference {name} is not supported by the shared measure model (#1053)"
+            ))
+        })?;
+        let result = self.call(py, move |state, _| {
+            state.setrefdirframe(which, frame).map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_setrefdirframe> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Not yet implemented in casa-rs.

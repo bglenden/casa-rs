@@ -28,7 +28,8 @@ pub use auto_multithresh::{
     AutoMultithreshControls, AutoMultithreshEvidence, auto_multithresh, auto_multithresh_bytes,
 };
 pub use auto_planes::{
-    AutoMaskEvidence, AutoMaskPlane, AutoMaskPsf, AutoMaskRead, AutoMaskSource, MaskPlaneKey,
+    AutoMaskChannel, AutoMaskEvidence, AutoMaskOpenChannel, AutoMaskPlane, AutoMaskPsf,
+    AutoMaskRead, AutoMaskSource, MaskPlaneKey,
 };
 pub use plans::{
     ImageDomainMaskMaterialization, ImageDomainReconstructionMaskPlans,

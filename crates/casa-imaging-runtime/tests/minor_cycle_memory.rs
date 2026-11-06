@@ -329,24 +329,9 @@ fn a_solve_measuring_through_a_beam_holds_at_most_its_admission() {
     );
 }
 
-/// CASA's automatic mask of every channel (#980): preparing a minor cycle
-/// measures every plane's PSF, masks each channel side by side on the team
-/// and keeps the masks, a support and a summary row per plane. It holds no
-/// more than [`prepare_bytes`], which charges the new masks, the planes
-/// being masked and what it records of each plane, and the PSF summaries it
-/// measures, which the run holds ([`psf_cache_bytes`]); the mask it evolves
-/// from is the run's, outside the measurement. At the first boundary and the next, which grows each mask
-/// from the one before, on one worker and on four: cubes of a few channels,
-/// one block of 240 channels of 16 by 16 pixels, whose per-plane results a
-/// block once gathered beside the mask, and a five-term Taylor family,
-/// whose mask once read every term and PSF moment to keep the first.
-#[test]
-fn an_automatic_cube_mask_holds_at_most_its_admission() {
-    let _measurement = MEASUREMENT.lock().expect("measurement lock");
-    let mtmfs = ReconstructionAlgorithm::Mtmfs {
-        scales_px: vec![0.0],
-        small_scale_bias: 0.0,
-    };
+type AutomaticMemoryCase = (usize, ReconstructionBasis, usize, bool, bool);
+
+fn automatic_memory_cases() -> impl Iterator<Item = (AutomaticMemoryCase, usize, bool)> {
     // The cases with a beam read an analytic `.pb` for the residual's
     // pixel mask and an `nsigma` noise inside it (#1078, #1079); the EVLA's
     // beam covers the cubes' 1.05 to 7.35 GHz.
@@ -412,8 +397,40 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
         // weight image's, read into an owned sensitivity plane.
         (64, ReconstructionBasis::Taylor { terms: 5 }, 1, true, true),
     ];
-    for (width, basis, workers, with_beam, with_response) in cases {
-        let (channels, planes, algorithm, fluxes) = match basis {
+    let full_stokes = (
+        32,
+        ReconstructionBasis::ChannelLocal { channels: 16 },
+        4,
+        true,
+        false,
+    );
+    cases
+        .into_iter()
+        .map(|case| (case, 1, false))
+        .chain([(full_stokes, 4, false), (full_stokes, 4, true)])
+}
+
+/// CASA's automatic mask of every channel (#980): preparing a minor cycle
+/// measures every plane's PSF, masks each channel side by side on the team
+/// and keeps the masks, a support and a summary row per plane. It holds no
+/// more than [`prepare_bytes`], which charges the new masks, the planes
+/// being masked and what it records of each plane, and the PSF summaries it
+/// measures, which the run holds ([`psf_cache_bytes`]); the mask it evolves
+/// from is the run's, outside the measurement. At the first boundary and the next, which grows each mask
+/// from the one before, on one worker and on four: cubes of a few channels,
+/// one block of 240 channels of 16 by 16 pixels, whose per-plane results a
+/// block once gathered beside the mask, and a five-term Taylor family,
+/// whose mask once read every term and PSF moment to keep the first.
+#[test]
+fn an_automatic_cube_mask_holds_at_most_its_admission() {
+    let _measurement = MEASUREMENT.lock().expect("measurement lock");
+    let mtmfs = ReconstructionAlgorithm::Mtmfs {
+        scales_px: vec![0.0],
+        small_scale_bias: 0.0,
+    };
+    let cases = automatic_memory_cases();
+    for ((width, basis, workers, with_beam, with_response), polarizations, empty_beam) in cases {
+        let (channels, planes_per_polarization, algorithm, fluxes) = match basis {
             ReconstructionBasis::ChannelLocal { channels } => (
                 channels,
                 channels,
@@ -428,17 +445,32 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
             ),
             ReconstructionBasis::Constant => unreachable!("not measured here"),
         };
+        let planes = planes_per_polarization * polarizations;
         let label = format!(
-            "{basis:?} of {width} px on {workers} workers, beam {with_beam}, response {with_response}"
+            "{basis:?} of {width} px and {polarizations} polarizations on {workers} workers, beam {with_beam}, response {with_response}"
         );
-        let problem = reconstruction_problem(
-            31,
-            width,
-            channels,
-            basis,
-            algorithm.clone(),
-            ReconstructionControls::new(100, 0.1, 0.0),
-        );
+        let problem = if polarizations == 4 {
+            use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
+            problems::reconstruction_problem_of_shape_and_polarizations(
+                31,
+                [width, width],
+                channels,
+                1,
+                basis,
+                algorithm.clone(),
+                ReconstructionControls::new(100, 0.1, 0.0),
+                vec![StokesI, StokesQ, StokesU, StokesV],
+            )
+        } else {
+            reconstruction_problem(
+                31,
+                width,
+                channels,
+                basis,
+                algorithm.clone(),
+                ReconstructionControls::new(100, 0.1, 0.0),
+            )
+        };
         let scene = Scene::new(&problem)
             .with_point([width * 3 / 8, width * 9 / 16], &fluxes)
             .with_noise(0.01);
@@ -450,13 +482,50 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
         )
         .expect("major cycle");
         let (model, mut pass) = cycle.parts();
-        pass.append(scene.pass_images(model, true)).expect("images");
+        let mut images = scene.pass_images(model, true);
+        if polarizations == 4 {
+            images.polarizations = 4;
+            let cells = width * width;
+            images.psf = images.psf.take().map(|psf| {
+                psf.chunks_exact(cells)
+                    .flat_map(|plane| plane.repeat(4))
+                    .collect()
+            });
+            images.residual = images
+                .residual
+                .chunks_exact(cells)
+                .flat_map(|plane| plane.repeat(4))
+                .collect();
+            images.sum_weights = vec![1.0; channels * 4];
+            images.published_sum_weights = vec![1.0; channels * 4];
+        }
+        pass.append(images).expect("images");
         let completion = cycle.finish(SAMPLES, BLOCKS).expect("complete");
         let centres = std::collections::BTreeMap::from([(
             casa_imaging_model::ImageDomainRole::Main,
-            vec![[width as f64 / 2.0, width as f64 / 2.0]],
+            vec![[
+                if empty_beam {
+                    -1.0e5
+                } else {
+                    width as f64 / 2.0
+                },
+                width as f64 / 2.0,
+            ]],
         )]);
-        let setup = automask_setup(&problem, algorithm, &centres, (with_beam, with_response));
+        let mut setup = automask_setup(&problem, algorithm, &centres, (with_beam, with_response));
+        if empty_beam {
+            setup.pbmask = 0.2;
+            let beam = setup.primary_beam.as_ref().expect("analytic beam");
+            for channel in 0..channels {
+                assert!(
+                    beam.pb(&casa_imaging_model::ImageDomainRole::Main, channel)
+                        .expect("channel beam")
+                        .iter()
+                        .all(|value| *value <= setup.pbmask as f32),
+                    "{label}: channel {channel} must exercise the empty-domain fallback"
+                );
+            }
+        }
         let mut plans =
             ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::AutoMultithresh {
                 coordinate: problem.geometry().domains()[0].direction(),
@@ -504,6 +573,12 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
             MEASURING.store(false, Ordering::Relaxed);
             drop(preparing);
             let prepared = prepared.expect("prepared");
+            if empty_beam && boundary == 0 {
+                assert!(
+                    prepared.statistics.nsigma_threshold > 0.0,
+                    "{label}: the first boundary must fall back to the valid pixels"
+                );
+            }
             let excess = EXCESS.load(Ordering::Relaxed);
             assert!(
                 excess <= 0,
@@ -519,9 +594,10 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
                 planes,
                 "{label}: a mask plane per channel"
             );
-            assert!(
+            assert_eq!(
                 prepared.masks().primary().support().iter().any(|set| *set),
-                "{label}: the point is masked"
+                !empty_beam,
+                "{label}: the mask respects an empty beam"
             );
             plans = plans
                 .next_cycle(prepared.masks(), prepared.auto_masks(), boundary + 1, false)

@@ -1595,7 +1595,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
-| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 39 | 0 | 22 | 0 | 0 | 0 |
+| [componentlist](#componentlist) | `casars.tools` | 61 | yes | 50 | 2 | 9 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
 | image | `casars.tools` | 103 | no | | | | | | |
 | [measures](#measures) | `casars.tools` | 48 | yes | 24 | 0 | 24 | 0 | 0 | 0 |
@@ -1612,7 +1612,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise `NotImplementedError` naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.
 
-Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 39, Partial: 0, Not implemented: 22, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
+Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Implemented: 50, Partial: 2, Not implemented: 9, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.
 
 | CASA method | CASA parameters | Implementation | Scope | Evidence |
 |---|---|---|---|---|
@@ -1620,15 +1620,15 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `addcomponent` | `flux=[], fluxunit='Jy', polarization='Stokes', dir=[], shape='point', majoraxis=[], minoraxis=[], positionangle=[], freq=[], spectrumtype='constant', index=[], optionalparms=[0.0], label=''` | Implemented | Adds point, Gaussian and disk components with constant or spectral-index spectra, call by call as CASA 6.7.6.14 does (`casa_componentlist_tool.json`); shapes CASA cannot construct raise and add nothing. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `asciitocomponentlist` | `filename, asciifile, refer='J2000', format='ST', direction={}, spectrum={}, flux={}, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `close` | `log=True` | Implemented | Writes the list to its table and empties the tool. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `concatenate` | `list=[], which=[-1], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `convertfluxpol` | `which, polarization='Stokes'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `concatenate` | `list=[], which=[-1], log=True` | Partial (#1053) | Appends selected components from readable component-list tables, preserving the destination and requested rows. Record input is not yet implemented. Corrects CASA wrong-row and failed-index mutations. | [signature](#componentlist-evidence-signature), [concatenate-casa](#componentlist-evidence-concatenate-casa) |
+| `convertfluxpol` | `which, polarization='Stokes'` | Implemented (#1053) | Converts complex flux values between Stokes, linear and circular bases for one or all components, preserving units and stored error values. As in CASA, warns that unchanged nonzero errors may not describe the new basis. Rejects empty-list and failed-index cases before unsafe mutation. | [signature](#componentlist-evidence-signature), [convertfluxpol-casa](#componentlist-evidence-convertfluxpol-casa) |
 | `convertfluxunit` | `which, unit='Jy'` | Implemented | Converts one or all component fluxes and errors to conforming Jy units, retaining complex values. Rejects nonconforming sources atomically and raises instead of crashing on an empty list. | [signature](#componentlist-evidence-signature), [convertfluxunit-casa](#componentlist-evidence-convertfluxunit-casa) |
 | `convertfrequnit` | `which, unit='GHz'` | Implemented (#1053) | Changes one component spectrum record frequency unit, preserving its physical reference frequency, frame and independent error. Table reopen resets the record unit to GHz. Non-frequency targets are rejected before mutation. | [signature](#componentlist-evidence-signature), [convertfrequnit-casa](#componentlist-evidence-convertfrequnit-casa) |
 | `convertrefdir` | `which, frame` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `convertshape` | `which, majoraxis='arcmin', minoraxis='arcmin', positionangle='deg'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `convertshape` | `which, majoraxis='arcmin', minoraxis='arcmin', positionangle='deg'` | Implemented (#1053) | Matches CASA's placeholder: validates arguments, warns and returns False without changing shape units. | [signature](#componentlist-evidence-signature), [convertshape-casa](#componentlist-evidence-convertshape-casa) |
 | `deselect` | `which` | Implemented | Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
 | `done` |  | Implemented | As close, and frees the tool. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `edit` | `which, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `edit` | `which, log=True` | Implemented (#1053) | Matches CASA's placeholder: validates arguments, warns and returns False without editing components. | [signature](#componentlist-evidence-signature), [edit-casa](#componentlist-evidence-edit-casa) |
 | `fromrecord` | `record={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `getcomponent` | `which, iknow=False` | Implemented | CASA's record of one component, with CASA's index errors. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getfluxerror` | `which` | Implemented | Returns the real parts of the four stored component flux errors, with CASA index handling. | [signature](#componentlist-evidence-signature), [fluxerror-casa](#componentlist-evidence-fluxerror-casa) |
@@ -1639,7 +1639,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `getfreqframe` | `which` | Implemented | Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency. | [signature](#componentlist-evidence-signature), [frequency-placeholders-casa](#componentlist-evidence-frequency-placeholders-casa) |
 | `getfrequnit` | `which` | Implemented | Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency. | [signature](#componentlist-evidence-signature), [frequency-placeholders-casa](#componentlist-evidence-frequency-placeholders-casa) |
 | `getfreqvalue` | `which` | Implemented | Matches CASA 6.7.6.14's unimplemented placeholder, warning and sentinel result; it does not expose the stored frequency. | [signature](#componentlist-evidence-signature), [frequency-placeholders-casa](#componentlist-evidence-frequency-placeholders-casa) |
-| `getkeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `getkeyword` | `keyword='metadata'` | Implemented (#1053) | Reads a table keyword from the attached component list, including dotted paths through nested records; preserves CASA scalar and array result types. | [signature](#componentlist-evidence-signature), [keyword-reads-casa](#componentlist-evidence-keyword-reads-casa) |
 | `getlabel` | `which` | Implemented | A component's label. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getrefdir` | `which` | Implemented | A component's reference direction as a measure record. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getrefdirdec` | `which, unit='deg', precision=6` | Implemented | CASA's own placeholder logs a warning and returns an empty string, including for out-of-range indices. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
@@ -1647,28 +1647,28 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `getrefdirra` | `which, unit='deg', precision=6` | Implemented | CASA's own placeholder logs a warning and returns an empty string, including for out-of-range indices. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `getshape` | `which` | Implemented | Returns CASA shape axes and errors, preserving supplied axis units in memory and table units after reopening; point shapes return an empty record. | [signature](#componentlist-evidence-signature), [getshape-casa](#componentlist-evidence-getshape-casa) |
 | `getspectrum` | `which` | Implemented | A component's spectrum record. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `haskeyword` | `keyword='metadata'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `haskeyword` | `keyword='metadata'` | Implemented (#1053) | Tests whether the attached component list has a literal top-level table keyword; dotted names are not traversed. | [signature](#componentlist-evidence-signature), [keyword-reads-casa](#componentlist-evidence-keyword-reads-casa) |
 | `indices` |  | Implemented | Matches CASA's placeholder: warns and returns an empty int64 array. | [signature](#componentlist-evidence-signature), [indices-casa](#componentlist-evidence-indices-casa) |
 | `iscomponentlist` | `tool=[]` | Implemented | CASA placeholder logs a warning and returns False; cyclic arguments are handled safely. | [signature](#componentlist-evidence-signature), [iscomponentlist-casa](#componentlist-evidence-iscomponentlist-casa) |
 | `isphysical` | `which=[-1]` | Implemented | Checks selected components using CASA Stokes physicality; an explicit empty index list returns true, and selecting all on an empty list raises an owner-approved error rather than exiting. | [signature](#componentlist-evidence-signature), [isphysical-casa](#componentlist-evidence-isphysical-casa) |
 | `length` |  | Implemented | The number of components. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `open` | `filename='', nomodify=False, log=True` | Implemented | Opens a component-list table, writing a list it replaces first; refuses what is not a component list. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
 | `purge` |  | Implemented | Discards the recovery bin and returns CASA's false result. | [signature](#componentlist-evidence-signature), [removal-casa](#componentlist-evidence-removal-casa) |
-| `putkeyword` | `keyword='metadata', value=[]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `putkeyword` | `keyword='metadata', value=[]` | Implemented (#1053) | Writes typed table keywords immediately, including dotted paths through existing records and read-only reopen; preserves other table data and published concurrent writes. Oversized integer values are preserved or refused instead of silently truncated. | [signature](#componentlist-evidence-signature), [keyword-writes-casa](#componentlist-evidence-keyword-writes-casa) |
 | `recover` | `log=True` | Implemented | Appends removed components in reverse removal order, preserving their values and in-memory shape units; returns CASA's false result. | [signature](#componentlist-evidence-signature), [removal-casa](#componentlist-evidence-removal-casa) |
 | `remove` | `which=[-1], log=True` | Implemented | Removes validated component indices and keeps a recovery bin; repeated indices remove once to preserve other components, and remove-all on an empty list raises instead of crashing. | [signature](#componentlist-evidence-signature), [removal-casa](#componentlist-evidence-removal-casa) |
 | `rename` | `filename, log=True` | Implemented | Names the table the list is written to, writing at once. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [table-fixtures](#componentlist-evidence-table-fixtures), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
-| `replace` | `which, list, whichones=[-1]` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `replace` | `which, list, whichones=[-1]` | Implemented (#1053) | Matches CASA's placeholder: validates arguments, warns and returns False without replacing components. Cyclic records are safe; cyclic or non-finite index inputs raise instead of crashing. | [signature](#componentlist-evidence-signature), [replace-casa](#componentlist-evidence-replace-casa) |
 | `sample` | `direction=[], pixellatsize=[], pixellongsize=[], frequency=[]` | Implemented | Matches CASA's placeholder: warns and returns an empty float64 array without numerical sampling. Cyclic arguments return safely rather than crashing. | [signature](#componentlist-evidence-signature), [sample-casa](#componentlist-evidence-sample-casa) |
 | `select` | `which` | Implemented | Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
 | `selected` |  | Implemented | Component selection with recorded CASA index coercions and sorted int64 results; scalar non-finite and cyclic inputs are safely refused (#1176). | [signature](#componentlist-evidence-signature), [selection-casa](#componentlist-evidence-selection-casa) |
-| `setflux` | `which, value=[], unit='Jy', polarization='Stokes', error=[], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setflux` | `which, value=[], unit='Jy', polarization='Stokes', error=[], log=True` | Implemented (#1053) | Sets scalar or four-component Stokes flux and errors for one or all components, including NumPy arrays in column-major order. Preserves finite double precision and a singleton error; rejects non-finite values, nonzero imaginary parts, and unsafe index conversions before mutation. | [signature](#componentlist-evidence-signature), [setflux-casa](#componentlist-evidence-setflux-casa) |
 | `setfreq` | `which, value, unit='GHz', log=True` | Implemented (#1053) | Changes one component reference frequency and record unit while preserving its frame and independent frequency error. Non-frequency units are rejected before mutation. | [signature](#componentlist-evidence-signature), [setfreq-casa](#componentlist-evidence-setfreq-casa) |
-| `setfreqframe` | `which, frame='LSRK', log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setfreqframe` | `which, frame='LSRK', log=True` | Implemented (#1053) | Relabels one component frequency in any of the nine physical frames or Undefined without converting the value; accepts CASA frame prefixes and preserves the record unit and error. | [signature](#componentlist-evidence-signature), [setfreqframe-casa](#componentlist-evidence-setfreqframe-casa), [undefined-frequency-casa](#componentlist-evidence-undefined-frequency-casa) |
 | `setlabel` | `which, value, log=True` | Implemented | Replaces one component label and preserves the change on writable table release; read-only changes remain in memory. Rejects invalid UTF-8 byte strings to avoid an unreadable label. | [signature](#componentlist-evidence-signature), [setlabel-casa](#componentlist-evidence-setlabel-casa) |
-| `setrefdir` | `which=1, ra=[], dec=[], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `setrefdirframe` | `which, frame, log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
-| `setshape` | `which, type='Point', majoraxis=[], minoraxis=[], positionangle=[], majoraxiserror=[], minoraxiserror=[], positionangleerror=[], optionalparms=[0.0], log=True` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
+| `setrefdir` | `which=1, ra=[], dec=[], log=True` | Implemented (#1053) | Sets one or all component direction coordinates while preserving each reference frame and other component and table values. Rejects non-finite coordinates, cyclic records, empty-list all-indices and failed index conversions before unsafe mutation. | [signature](#componentlist-evidence-signature), [setrefdir-casa](#componentlist-evidence-setrefdir-casa) |
+| `setrefdirframe` | `which, frame, log=True` | Partial (#1053) | Relabels one component reference direction without converting its coordinates; accepts CASA frame prefixes and preserves component values and table metadata. Recognized frames absent from the shared direction model (B1950_VLA, BMEAN, BTRUE and planetary or comet references) raise NotImplementedError. Invalid names are rejected before mutation. | [signature](#componentlist-evidence-signature), [setrefdirframe-casa](#componentlist-evidence-setrefdirframe-casa) |
+| `setshape` | `which, type='Point', majoraxis=[], minoraxis=[], positionangle=[], majoraxiserror=[], minoraxiserror=[], positionangleerror=[], optionalparms=[0.0], log=True` | Implemented (#1053) | Sets Point, Gaussian or Disk shapes and angular errors while preserving the reference direction and its errors. Retains supplied shape units in memory and CASA table units after reopening. Rejects non-finite values and cyclic or failed argument conversions before unsafe mutation; unsupported names and limb-darkened disks return false as in CASA. | [signature](#componentlist-evidence-signature), [setshape-casa](#componentlist-evidence-setshape-casa) |
 | `setspectrum` | `which, type='spectral index', index=[], tabularfreqs=[100000000000.0], tabularflux=[1.0], tabularframe='LSRK'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `setstokesspectrum` | `which, type='spectral index', index=[0.0], tabularfreqs=[100000000000.0], tabulari=[1.0], tabularq=[0.0], tabularu=[0.0], tabularv=[0.0], reffreq=[], frame='LSRK'` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#componentlist-evidence-signature), [refusals](#componentlist-evidence-refusals) |
 | `shapetype` | `which` | Implemented | A component's shape name. | [signature](#componentlist-evidence-signature), [casa-values](#componentlist-evidence-casa-values), [casa-on-casa](#componentlist-evidence-casa-on-casa) |
@@ -1972,6 +1972,154 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - [crates/casars-python/python/tests/test_componentlist_setfreq.py](https://github.com/bglenden/casa-rs/blob/4643a1a41bec39b8641b713ef4037cdedd6136db/crates/casars-python/python/tests/test_componentlist_setfreq.py)
 - [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/4643a1a41bec39b8641b713ef4037cdedd6136db/docs/CASA%20%28C%2B%2B%29%20bugs.md)
 
+<a id="componentlist-evidence-setfreqframe-casa"></a>
+##### setfreqframe-casa
+
+**CASA-recorded values — measured.** 56 CASA 6.7.6-14 calls compare frame names, prefixes, indices and argument errors; a table case covers frame, frequency and error persistence. At that evidence revision, Undefined was not yet implemented. componentlist.setfreqframe.
+
+- [tools/casa-compat/componentlist_setfreqframe_oracle.py](https://github.com/bglenden/casa-rs/blob/b649c4559abd40c025f6ab7f004070a1f39d85a7/tools/casa-compat/componentlist_setfreqframe_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.json](https://github.com/bglenden/casa-rs/blob/b649c4559abd40c025f6ab7f004070a1f39d85a7/crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.cl.tgz](https://github.com/bglenden/casa-rs/blob/b649c4559abd40c025f6ab7f004070a1f39d85a7/crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_setfreqframe.py](https://github.com/bglenden/casa-rs/blob/b649c4559abd40c025f6ab7f004070a1f39d85a7/crates/casars-python/python/tests/test_componentlist_setfreqframe.py)
+
+<a id="componentlist-evidence-undefined-frequency-casa"></a>
+##### undefined-frequency-casa
+
+**CASA-recorded values — measured.** CASA 6.7.6-14 records Undefined frequency identity and refusal of cross-frame conversions, component tables with string, explicit, remapped and inferred integer references, invalid table-reference aliases, and MS mappings in which code 64 means LSRK and 9 means Undefined; type-only MS frequency metadata defaults to REST, while an integer reference column with no mapping arrays uses standard codes. Undefined frequency measures, component-list frame updates and table reference mappings.
+
+- [tools/casa-compat/undefined_frequency_oracle.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/tools/casa-compat/undefined_frequency_oracle.py)
+- [tools/casa-compat/undefined_frequency_ms_oracle.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/tools/casa-compat/undefined_frequency_ms_oracle.py)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency.json](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency.json)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz)
+- [crates/casars-python/python/tests/test_undefined_frequency.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/test_undefined_frequency.py)
+- [crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs)
+- [crates/casars-imager/tests/t1/virtual_model.rs](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-imager/tests/t1/virtual_model.rs)
+
+<a id="componentlist-evidence-keyword-reads-casa"></a>
+##### keyword-reads-casa
+
+**CASA-recorded values — measured.** 32 CASA 6.7.6-14 keyword read cases cover defaults, detached tools, missing and dotted names, nested records, typed arrays, read-only tables and argument errors; a CASA-created table exercises persistence and cross-tool updates. componentlist.getkeyword and haskeyword.
+
+- [tools/casa-compat/componentlist_keyword_read_oracle.py](https://github.com/bglenden/casa-rs/blob/5d69a948650dd925073d14348b2790c67ca470d5/tools/casa-compat/componentlist_keyword_read_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_keyword_read.json](https://github.com/bglenden/casa-rs/blob/5d69a948650dd925073d14348b2790c67ca470d5/crates/casars-python/python/tests/data/casa_componentlist_keyword_read.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_keyword_read.cl.tgz](https://github.com/bglenden/casa-rs/blob/5d69a948650dd925073d14348b2790c67ca470d5/crates/casars-python/python/tests/data/casa_componentlist_keyword_read.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_keyword_read.py](https://github.com/bglenden/casa-rs/blob/5d69a948650dd925073d14348b2790c67ca470d5/crates/casars-python/python/tests/test_componentlist_keyword_read.py)
+
+<a id="componentlist-evidence-keyword-writes-casa"></a>
+##### keyword-writes-casa
+
+**CASA-recorded values — measured.** 25 CASA 6.7.6-14 cases cover defaults, detached tools, types and errors, nested records, read-only reopen and persisted keywords; independent tests check concurrent writers, already-open readers and integer overflow. componentlist.putkeyword.
+
+- [tools/casa-compat/componentlist_putkeyword_oracle.py](https://github.com/bglenden/casa-rs/blob/c4dc397131e12e480778b02b42f182c828e8a1e2/tools/casa-compat/componentlist_putkeyword_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_putkeyword.json](https://github.com/bglenden/casa-rs/blob/c4dc397131e12e480778b02b42f182c828e8a1e2/crates/casars-python/python/tests/data/casa_componentlist_putkeyword.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_putkeyword.cl.tgz](https://github.com/bglenden/casa-rs/blob/c4dc397131e12e480778b02b42f182c828e8a1e2/crates/casars-python/python/tests/data/casa_componentlist_putkeyword.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_putkeyword.py](https://github.com/bglenden/casa-rs/blob/c4dc397131e12e480778b02b42f182c828e8a1e2/crates/casars-python/python/tests/test_componentlist_putkeyword.py)
+
+<a id="componentlist-evidence-convertshape-casa"></a>
+##### convertshape-casa
+
+**CASA-recorded values — measured.** 72 CASA 6.7.6-14 calls cover type checks, errors, string and byte units, and empty, populated and released lists. The component shape is left unchanged. componentlist.convertshape placeholder.
+
+- [tools/simulation/componentlist_convertshape_oracle.py](https://github.com/bglenden/casa-rs/blob/0f327126e2f5ba348c3faa5fb88225df7e5515bd/tools/simulation/componentlist_convertshape_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_convertshape.json](https://github.com/bglenden/casa-rs/blob/0f327126e2f5ba348c3faa5fb88225df7e5515bd/crates/casars-python/python/tests/data/casa_componentlist_convertshape.json)
+- [crates/casars-python/python/tests/test_componentlist_convertshape.py](https://github.com/bglenden/casa-rs/blob/0f327126e2f5ba348c3faa5fb88225df7e5515bd/crates/casars-python/python/tests/test_componentlist_convertshape.py)
+
+<a id="componentlist-evidence-edit-casa"></a>
+##### edit-casa
+
+**CASA-recorded values — measured.** 78 CASA 6.7.6-14 calls cover indices, strict boolean arguments, errors and empty, populated and released lists; an additional index conversion is called once. componentlist.edit placeholder.
+
+- [tools/simulation/componentlist_edit_oracle.py](https://github.com/bglenden/casa-rs/blob/cf9a4e6192aa75986b72835fb93080b49c499b0b/tools/simulation/componentlist_edit_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_edit.json](https://github.com/bglenden/casa-rs/blob/cf9a4e6192aa75986b72835fb93080b49c499b0b/crates/casars-python/python/tests/data/casa_componentlist_edit.json)
+- [crates/casars-python/python/tests/test_componentlist_edit.py](https://github.com/bglenden/casa-rs/blob/cf9a4e6192aa75986b72835fb93080b49c499b0b/crates/casars-python/python/tests/test_componentlist_edit.py)
+
+<a id="componentlist-evidence-replace-casa"></a>
+##### replace-casa
+
+**CASA-recorded values — measured.** 147 CASA 6.7.6-14 calls cover records, index vectors, errors and empty, populated and released lists; five isolated crash probes cover cycles and non-finite indices. componentlist.replace placeholder.
+
+- [tools/simulation/componentlist_replace_oracle.py](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/tools/simulation/componentlist_replace_oracle.py)
+- [tools/simulation/componentlist_replace_crashes_oracle.py](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/tools/simulation/componentlist_replace_crashes_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_replace.json](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/crates/casars-python/python/tests/data/casa_componentlist_replace.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json)
+- [crates/casars-python/python/tests/test_componentlist_replace.py](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/crates/casars-python/python/tests/test_componentlist_replace.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/a14325107afdadcc52a58e7312c7c43f6a20411b/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-setrefdirframe-casa"></a>
+##### setrefdirframe-casa
+
+**CASA-recorded values — measured.** 47 CASA 6.7.6-14 cases cover frame names, prefixes, indices, argument errors and unaffected components. A CASA-created table records writable and read-only persistence; five isolated invalid-name cases record CASA assertions. componentlist.setrefdirframe for shared direction frames.
+
+- [tools/simulation/componentlist_setrefdirframe_oracle.py](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/tools/simulation/componentlist_setrefdirframe_oracle.py)
+- [tools/simulation/componentlist_setrefdirframe_invalid_oracle.py](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/tools/simulation/componentlist_setrefdirframe_invalid_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe.json](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe.cl.tgz](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_setrefdirframe.py](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/crates/casars-python/python/tests/test_componentlist_setrefdirframe.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/190e85bf30f31e18109abc39d8ff6c437c267306/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-setrefdir-casa"></a>
+##### setrefdir-casa
+
+**CASA-recorded values — measured.** 34 CASA 6.7.6-14 calls cover angular quantities, normalization, indices, errors and unchanged components; a CASA-created table covers writable and read-only persistence. Five isolated probes record crashes or non-finite corruption. CASA also reads casa-rs updates with unrelated table values intact. componentlist.setrefdir coordinates and safety.
+
+- [tools/simulation/componentlist_setrefdir_oracle.py](https://github.com/bglenden/casa-rs/blob/5e4302e2db206b94c6410cc8054e64cba0ae1e2c/tools/simulation/componentlist_setrefdir_oracle.py)
+- [tools/simulation/componentlist_setrefdir_crashes_oracle.py](https://github.com/bglenden/casa-rs/blob/5e4302e2db206b94c6410cc8054e64cba0ae1e2c/tools/simulation/componentlist_setrefdir_crashes_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_setrefdir.json](https://github.com/bglenden/casa-rs/blob/5e4302e2db206b94c6410cc8054e64cba0ae1e2c/crates/casars-python/python/tests/data/casa_componentlist_setrefdir.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_setrefdir_crashes.json](https://github.com/bglenden/casa-rs/blob/5e4302e2db206b94c6410cc8054e64cba0ae1e2c/crates/casars-python/python/tests/data/casa_componentlist_setrefdir_crashes.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_setrefdir.cl.tgz](https://github.com/bglenden/casa-rs/blob/5e4302e2db206b94c6410cc8054e64cba0ae1e2c/crates/casars-python/python/tests/data/casa_componentlist_setrefdir.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_setrefdir.py](https://github.com/bglenden/casa-rs/blob/5e4302e2db206b94c6410cc8054e64cba0ae1e2c/crates/casars-python/python/tests/test_componentlist_setrefdir.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/5e4302e2db206b94c6410cc8054e64cba0ae1e2c/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-concatenate-casa"></a>
+##### concatenate-casa
+
+**CASA-recorded values — measured.** 21 CASA 6.7.6-14 cases cover table selection, missing files, invalid inputs, failed index conversions and partial mutation; CASA also reads a casa-rs concatenated table with repeated and reordered selections. componentlist.concatenate with a table source.
+
+- [tools/simulation/componentlist_concatenate_oracle.py](https://github.com/bglenden/casa-rs/blob/a58bb93b4c80d9bbcaad08b42caf9563b5fb22e5/tools/simulation/componentlist_concatenate_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_concatenate.json](https://github.com/bglenden/casa-rs/blob/a58bb93b4c80d9bbcaad08b42caf9563b5fb22e5/crates/casars-python/python/tests/data/casa_componentlist_concatenate.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_concatenate.cl.tgz](https://github.com/bglenden/casa-rs/blob/a58bb93b4c80d9bbcaad08b42caf9563b5fb22e5/crates/casars-python/python/tests/data/casa_componentlist_concatenate.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_concatenate.py](https://github.com/bglenden/casa-rs/blob/a58bb93b4c80d9bbcaad08b42caf9563b5fb22e5/crates/casars-python/python/tests/test_componentlist_concatenate.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/a58bb93b4c80d9bbcaad08b42caf9563b5fb22e5/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-convertfluxpol-casa"></a>
+##### convertfluxpol-casa
+
+**CASA-recorded values — measured.** 12 CASA 6.7.6-14 table cases cover every source and target basis for one or all components, including complex values and nonzero complex errors. Twelve argument probes and an isolated empty-list crash cover error handling. CASA reads a casa-rs converted table with flux, errors, keyword and unrelated components intact. componentlist.convertfluxpol and complex flux values.
+
+- [tools/simulation/componentlist_convertfluxpol_oracle.py](https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/tools/simulation/componentlist_convertfluxpol_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.json](https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.cl.tgz](https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_convertfluxpol.py](https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/crates/casars-python/python/tests/test_componentlist_convertfluxpol.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-setflux-casa"></a>
+##### setflux-casa
+
+**CASA-recorded values — measured.** 31 CASA 6.7.6-14 argument cases, 12 NumPy cases, three complex-loss cases, three non-finite/overflow cases and two isolated crash probes cover flux assignment. CASA reads a casa-rs-updated table with array values, errors, keyword and unrelated direction errors intact. componentlist.setflux values, errors and table persistence.
+
+- [tools/simulation/componentlist_setflux_oracle.py](https://github.com/bglenden/casa-rs/blob/c7812db83679f9c49e5397540c331895da3aa89d/tools/simulation/componentlist_setflux_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_setflux.json](https://github.com/bglenden/casa-rs/blob/c7812db83679f9c49e5397540c331895da3aa89d/crates/casars-python/python/tests/data/casa_componentlist_setflux.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_setflux.cl.tgz](https://github.com/bglenden/casa-rs/blob/c7812db83679f9c49e5397540c331895da3aa89d/crates/casars-python/python/tests/data/casa_componentlist_setflux.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_setflux.py](https://github.com/bglenden/casa-rs/blob/c7812db83679f9c49e5397540c331895da3aa89d/crates/casars-python/python/tests/test_componentlist_setflux.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/c7812db83679f9c49e5397540c331895da3aa89d/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
+<a id="componentlist-evidence-setshape-casa"></a>
+##### setshape-casa
+
+**CASA-recorded values — measured.** 36 CASA 6.7.6-14 setter cases, 11 optional-parameter cases, two non-finite cases and an isolated cyclic-input crash cover shape values, units and safety. CASA reads a casa-rs-written disk with shape and preserved direction errors and keyword intact. componentlist.setshape and shape records.
+
+- [tools/simulation/componentlist_setshape_oracle.py](https://github.com/bglenden/casa-rs/blob/bf58ba339a8b951d5b93aa14585441d23f8dbeb8/tools/simulation/componentlist_setshape_oracle.py)
+- [crates/casars-python/python/tests/data/casa_componentlist_setshape.json](https://github.com/bglenden/casa-rs/blob/bf58ba339a8b951d5b93aa14585441d23f8dbeb8/crates/casars-python/python/tests/data/casa_componentlist_setshape.json)
+- [crates/casars-python/python/tests/data/casa_componentlist_setshape.cl.tgz](https://github.com/bglenden/casa-rs/blob/bf58ba339a8b951d5b93aa14585441d23f8dbeb8/crates/casars-python/python/tests/data/casa_componentlist_setshape.cl.tgz)
+- [crates/casars-python/python/tests/test_componentlist_setshape.py](https://github.com/bglenden/casa-rs/blob/bf58ba339a8b951d5b93aa14585441d23f8dbeb8/crates/casars-python/python/tests/test_componentlist_setshape.py)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/bf58ba339a8b951d5b93aa14585441d23f8dbeb8/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+
 ### measures
 
 #### measures method implementation
@@ -2000,7 +2148,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `expand` | `v={}` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `framecomet` | `v=''` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `framenow` |  | Implemented | Sets the frame's epoch, position and direction. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `frequency` | `rf='LSRK', v0=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `frequency` | `rf='LSRK', v0=[], off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [undefined-frequency-casa](#measures-evidence-undefined-frequency-casa) |
 | `getoffset` | `v` | Not implemented (#1053) | Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it. | [signature](#measures-evidence-signature), [refusals](#measures-evidence-refusals) |
 | `getref` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `gettype` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
@@ -2008,7 +2156,7 @@ Audit baseline: `49c810c57210127fc4bc4f66289cadec90f49947`. Status counts: Imple
 | `ismeasure` | `v` | Implemented | Queries measure records as CASA does. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
 | `linelist` |  | Implemented | The rest lines of the measures data, their names joined by spaces in the table's order, with CASA's deprecation warning. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists) |
 | `listcodes` | `ms` | Implemented | The measures data's observatories and sources, and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
-| `measure` | `v, rf, off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
+| `measure` | `v, rf, off={}` | Implemented | Defines measures and converts them between reference frames with casacore's conversions; a conversion lacking a frame element fails with CASA's message (decision empty-frame). Undefined is retained; cross-frame conversions to or from it return an empty record, as in CASA. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [undefined-frequency-casa](#measures-evidence-undefined-frequency-casa) |
 | `observatory` | `name='ALMA'` | Implemented | The measures data's observatories and sources, found by name as casacore's MeasTable finds them (ignoring case, or by a unique prefix), and casacore's reference codes. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values), [casa-observatories](#measures-evidence-casa-observatories), [casa-names](#measures-evidence-casa-names) |
 | `obslist` |  | Implemented | The observatories of the measures data, by name in the table's order, as CASA lists them; CASA's readantenna, sensitivity and itrf2locname, and simobserve, call it. | [signature](#measures-evidence-signature), [casa-lists](#measures-evidence-casa-lists), [casa-values](#measures-evidence-casa-values) |
 | `posangle` | `m1, m2` | Implemented | Angular separation and position angle, as casacore computes them. | [signature](#measures-evidence-signature), [casa-values](#measures-evidence-casa-values) |
@@ -2148,6 +2296,24 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 **CASA-recorded values — measured.** Recorded from CASA 6.7.6-14 by measures_names_oracle.py: me.observatory for 471 names and me.spectralline for 125 (every prefix of every entry's name, upper and lower case, and names longer than an entry or with spaces around them), and me.source for 10. casa-rs finds what CASA finds for each, by casacore's MUString::minimaxNC rule (#1110). Passes in the Python tests. How me.observatory, me.spectralline and me.source find an entry by name.
 
 - [crates/casars-python/python/tests/test_tools_measures.py](https://github.com/bglenden/casa-rs/blob/49c810c57210127fc4bc4f66289cadec90f49947/crates/casars-python/python/tests/test_tools_measures.py)
+
+<a id="measures-evidence-undefined-frequency-casa"></a>
+##### undefined-frequency-casa
+
+**CASA-recorded values — measured.** CASA 6.7.6-14 records Undefined frequency identity and refusal of cross-frame conversions, component tables with string, explicit, remapped and inferred integer references, invalid table-reference aliases, and MS mappings in which code 64 means LSRK and 9 means Undefined; type-only MS frequency metadata defaults to REST, while an integer reference column with no mapping arrays uses standard codes. Undefined frequency measures, component-list frame updates and table reference mappings.
+
+- [tools/casa-compat/undefined_frequency_oracle.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/tools/casa-compat/undefined_frequency_oracle.py)
+- [tools/casa-compat/undefined_frequency_ms_oracle.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/tools/casa-compat/undefined_frequency_ms_oracle.py)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency.json](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency.json)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz)
+- [crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz)
+- [crates/casars-python/python/tests/test_undefined_frequency.py](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-python/python/tests/test_undefined_frequency.py)
+- [crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs)
+- [crates/casars-imager/tests/t1/virtual_model.rs](https://github.com/bglenden/casa-rs/blob/3d64b4397df26f904ab94e7b477acdd5ab2e55e0/crates/casars-imager/tests/t1/virtual_model.rs)
 
 ### quanta
 

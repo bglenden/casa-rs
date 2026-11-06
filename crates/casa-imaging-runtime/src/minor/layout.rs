@@ -229,7 +229,7 @@ impl MinorLayout {
 /// the cutoff and above a `pbmask` above zero, and, for an analytic beam,
 /// the beam it forms them from, which a mask of `mask_plans` cut to the
 /// primary beam also forms ([`super::pixels::plane_beam`]).
-fn beam_bytes_per_cell(
+pub(super) fn beam_bytes_per_cell(
     setup: &MinorCycleSetup<'_>,
     mask_plans: &ImageDomainReconstructionMaskPlans,
 ) -> u64 {
@@ -241,7 +241,18 @@ fn beam_bytes_per_cell(
     if supports == 0 && !mask_plans.reads_primary_beam() {
         return 0;
     }
-    supports * size_of::<bool>() as u64
+    let shared = if mask_plans.automatic()
+        && setup.primary_beam.is_some()
+        && setup.response.is_none()
+        && super::pixels::reads_beam(setup)
+    {
+        // Channel supports and one polarization's validity and intersections.
+        3 * size_of::<bool>() as u64
+    } else {
+        0
+    };
+    shared
+        + supports * size_of::<bool>() as u64
         + if setup.primary_beam.is_some() {
             casa_imaging_products::ANALYTIC_PRIMARY_BEAM_BYTES_PER_CELL
         } else {
@@ -292,7 +303,17 @@ pub fn prepare_bytes_for(
         |domain| layout.domains.get(domain).copied(),
         layout.channels_and_polarizations,
         workers,
-    ) + layout.planes as u64 * MinorLayout::plane_record_bytes(mask_plans.automatic())
+    ) + layout.planes as u64
+        * (MinorLayout::plane_record_bytes(mask_plans.automatic())
+            + if mask_plans.automatic()
+                && setup.primary_beam.is_some()
+                && setup.response.is_none()
+                && super::pixels::reads_beam(setup)
+            {
+                size_of::<Option<Measured>>() as u64
+            } else {
+                0
+            })
         + layout.concurrent(workers) * (layout.load_bytes(setup.response.is_some()) + measure)
 }
 

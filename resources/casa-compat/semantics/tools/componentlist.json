@@ -42,21 +42,21 @@
    ]
   },
   "concatenate": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Appends selected components from readable component-list tables, preserving the destination and requested rows. Record input is not yet implemented. Corrects CASA wrong-row and failed-index mutations.",
    "evidence": [
     "signature",
-    "refusals"
+    "concatenate-casa"
    ]
   },
   "convertfluxpol": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Converts complex flux values between Stokes, linear and circular bases for one or all components, preserving units and stored error values. As in CASA, warns that unchanged nonzero errors may not describe the new basis. Rejects empty-list and failed-index cases before unsafe mutation.",
    "evidence": [
     "signature",
-    "refusals"
+    "convertfluxpol-casa"
    ]
   },
   "convertfluxunit": {
@@ -86,12 +86,12 @@
    ]
   },
   "convertshape": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Matches CASA's placeholder: validates arguments, warns and returns False without changing shape units.",
    "evidence": [
     "signature",
-    "refusals"
+    "convertshape-casa"
    ]
   },
   "deselect": {
@@ -112,12 +112,12 @@
    ]
   },
   "edit": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Matches CASA's placeholder: validates arguments, warns and returns False without editing components.",
    "evidence": [
     "signature",
-    "refusals"
+    "edit-casa"
    ]
   },
   "fromrecord": {
@@ -205,12 +205,12 @@
    ]
   },
   "getkeyword": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Reads a table keyword from the attached component list, including dotted paths through nested records; preserves CASA scalar and array result types.",
    "evidence": [
     "signature",
-    "refusals"
+    "keyword-reads-casa"
    ]
   },
   "getlabel": {
@@ -276,12 +276,12 @@
    ]
   },
   "haskeyword": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Tests whether the attached component list has a literal top-level table keyword; dotted names are not traversed.",
    "evidence": [
     "signature",
-    "refusals"
+    "keyword-reads-casa"
    ]
   },
   "indices": {
@@ -336,12 +336,12 @@
    ]
   },
   "putkeyword": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Writes typed table keywords immediately, including dotted paths through existing records and read-only reopen; preserves other table data and published concurrent writes. Oversized integer values are preserved or refused instead of silently truncated.",
    "evidence": [
     "signature",
-    "refusals"
+    "keyword-writes-casa"
    ]
   },
   "recover": {
@@ -371,12 +371,12 @@
    ]
   },
   "replace": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Matches CASA's placeholder: validates arguments, warns and returns False without replacing components. Cyclic records are safe; cyclic or non-finite index inputs raise instead of crashing.",
    "evidence": [
     "signature",
-    "refusals"
+    "replace-casa"
    ]
   },
   "sample": {
@@ -404,12 +404,12 @@
    ]
   },
   "setflux": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Sets scalar or four-component Stokes flux and errors for one or all components, including NumPy arrays in column-major order. Preserves finite double precision and a singleton error; rejects non-finite values, nonzero imaginary parts, and unsafe index conversions before mutation.",
    "evidence": [
     "signature",
-    "refusals"
+    "setflux-casa"
    ]
   },
   "setfreq": {
@@ -422,12 +422,13 @@
    ]
   },
   "setfreqframe": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Relabels one component frequency in any of the nine physical frames or Undefined without converting the value; accepts CASA frame prefixes and preserves the record unit and error.",
    "evidence": [
     "signature",
-    "refusals"
+    "setfreqframe-casa",
+    "undefined-frequency-casa"
    ]
   },
   "setlabel": {
@@ -439,30 +440,30 @@
    ]
   },
   "setrefdir": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Sets one or all component direction coordinates while preserving each reference frame and other component and table values. Rejects non-finite coordinates, cyclic records, empty-list all-indices and failed index conversions before unsafe mutation.",
    "evidence": [
     "signature",
-    "refusals"
+    "setrefdir-casa"
    ]
   },
   "setrefdirframe": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Relabels one component reference direction without converting its coordinates; accepts CASA frame prefixes and preserves component values and table metadata. Recognized frames absent from the shared direction model (B1950_VLA, BMEAN, BTRUE and planetary or comet references) raise NotImplementedError. Invalid names are rejected before mutation.",
    "evidence": [
     "signature",
-    "refusals"
+    "setrefdirframe-casa"
    ]
   },
   "setshape": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Sets Point, Gaussian or Disk shapes and angular errors while preserving the reference direction and its errors. Retains supplied shape units in memory and CASA table units after reopening. Rejects non-finite values and cyclic or failed argument conversions before unsafe mutation; unsupported names and limb-darkened disks return false as in CASA.",
    "evidence": [
     "signature",
-    "refusals"
+    "setshape-casa"
    ]
   },
   "setspectrum": {
@@ -906,6 +907,193 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "4643a1a41bec39b8641b713ef4037cdedd6136db"
+  },
+  "setfreqframe-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "56 CASA 6.7.6-14 calls compare frame names, prefixes, indices and argument errors; a table case covers frame, frequency and error persistence. At that evidence revision, Undefined was not yet implemented.",
+   "scope": "componentlist.setfreqframe.",
+   "links": [
+    "tools/casa-compat/componentlist_setfreqframe_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_setfreqframe.py"
+   ],
+   "source_revision": "b649c4559abd40c025f6ab7f004070a1f39d85a7"
+  },
+  "undefined-frequency-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "CASA 6.7.6-14 records Undefined frequency identity and refusal of cross-frame conversions, component tables with string, explicit, remapped and inferred integer references, invalid table-reference aliases, and MS mappings in which code 64 means LSRK and 9 means Undefined; type-only MS frequency metadata defaults to REST, while an integer reference column with no mapping arrays uses standard codes.",
+   "scope": "Undefined frequency measures, component-list frame updates and table reference mappings.",
+   "links": [
+    "tools/casa-compat/undefined_frequency_oracle.py",
+    "tools/casa-compat/undefined_frequency_ms_oracle.py",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency.json",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_ms.json",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_integer.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_remapped.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_sparse.cl.tgz",
+    "crates/casars-python/python/tests/data/casa_undefined_frequency_alias.cl.tgz",
+    "crates/casars-python/python/tests/test_undefined_frequency.py",
+    "crates/casa-ms/tests/observation_io/creation_undefined_frequency.rs",
+    "crates/casars-imager/tests/t1/virtual_model.rs"
+   ],
+   "source_revision": "3d64b4397df26f904ab94e7b477acdd5ab2e55e0"
+  },
+  "keyword-reads-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "32 CASA 6.7.6-14 keyword read cases cover defaults, detached tools, missing and dotted names, nested records, typed arrays, read-only tables and argument errors; a CASA-created table exercises persistence and cross-tool updates.",
+   "scope": "componentlist.getkeyword and haskeyword.",
+   "links": [
+    "tools/casa-compat/componentlist_keyword_read_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_keyword_read.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_keyword_read.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_keyword_read.py"
+   ],
+   "source_revision": "5d69a948650dd925073d14348b2790c67ca470d5"
+  },
+  "keyword-writes-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "25 CASA 6.7.6-14 cases cover defaults, detached tools, types and errors, nested records, read-only reopen and persisted keywords; independent tests check concurrent writers, already-open readers and integer overflow.",
+   "scope": "componentlist.putkeyword.",
+   "links": [
+    "tools/casa-compat/componentlist_putkeyword_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_putkeyword.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_putkeyword.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_putkeyword.py"
+   ],
+   "source_revision": "c4dc397131e12e480778b02b42f182c828e8a1e2"
+  },
+  "convertshape-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "72 CASA 6.7.6-14 calls cover type checks, errors, string and byte units, and empty, populated and released lists. The component shape is left unchanged.",
+   "scope": "componentlist.convertshape placeholder.",
+   "links": [
+    "tools/simulation/componentlist_convertshape_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_convertshape.json",
+    "crates/casars-python/python/tests/test_componentlist_convertshape.py"
+   ],
+   "source_revision": "0f327126e2f5ba348c3faa5fb88225df7e5515bd"
+  },
+  "edit-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "78 CASA 6.7.6-14 calls cover indices, strict boolean arguments, errors and empty, populated and released lists; an additional index conversion is called once.",
+   "scope": "componentlist.edit placeholder.",
+   "links": [
+    "tools/simulation/componentlist_edit_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_edit.json",
+    "crates/casars-python/python/tests/test_componentlist_edit.py"
+   ],
+   "source_revision": "cf9a4e6192aa75986b72835fb93080b49c499b0b"
+  },
+  "replace-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "147 CASA 6.7.6-14 calls cover records, index vectors, errors and empty, populated and released lists; five isolated crash probes cover cycles and non-finite indices.",
+   "scope": "componentlist.replace placeholder.",
+   "links": [
+    "tools/simulation/componentlist_replace_oracle.py",
+    "tools/simulation/componentlist_replace_crashes_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_replace.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json",
+    "crates/casars-python/python/tests/test_componentlist_replace.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "a14325107afdadcc52a58e7312c7c43f6a20411b"
+  },
+  "setrefdirframe-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "47 CASA 6.7.6-14 cases cover frame names, prefixes, indices, argument errors and unaffected components. A CASA-created table records writable and read-only persistence; five isolated invalid-name cases record CASA assertions.",
+   "scope": "componentlist.setrefdirframe for shared direction frames.",
+   "links": [
+    "tools/simulation/componentlist_setrefdirframe_oracle.py",
+    "tools/simulation/componentlist_setrefdirframe_invalid_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_setrefdirframe.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "190e85bf30f31e18109abc39d8ff6c437c267306"
+  },
+  "setrefdir-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "34 CASA 6.7.6-14 calls cover angular quantities, normalization, indices, errors and unchanged components; a CASA-created table covers writable and read-only persistence. Five isolated probes record crashes or non-finite corruption. CASA also reads casa-rs updates with unrelated table values intact.",
+   "scope": "componentlist.setrefdir coordinates and safety.",
+   "links": [
+    "tools/simulation/componentlist_setrefdir_oracle.py",
+    "tools/simulation/componentlist_setrefdir_crashes_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setrefdir.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setrefdir_crashes.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setrefdir.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_setrefdir.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "5e4302e2db206b94c6410cc8054e64cba0ae1e2c"
+  },
+  "concatenate-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "21 CASA 6.7.6-14 cases cover table selection, missing files, invalid inputs, failed index conversions and partial mutation; CASA also reads a casa-rs concatenated table with repeated and reordered selections.",
+   "scope": "componentlist.concatenate with a table source.",
+   "links": [
+    "tools/simulation/componentlist_concatenate_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_concatenate.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_concatenate.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_concatenate.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "a58bb93b4c80d9bbcaad08b42caf9563b5fb22e5"
+  },
+  "convertfluxpol-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "12 CASA 6.7.6-14 table cases cover every source and target basis for one or all components, including complex values and nonzero complex errors. Twelve argument probes and an isolated empty-list crash cover error handling. CASA reads a casa-rs converted table with flux, errors, keyword and unrelated components intact.",
+   "scope": "componentlist.convertfluxpol and complex flux values.",
+   "links": [
+    "tools/simulation/componentlist_convertfluxpol_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_convertfluxpol.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "a297aeb7133d596b7f7f7f60127d545f51329318"
+  },
+  "setflux-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "31 CASA 6.7.6-14 argument cases, 12 NumPy cases, three complex-loss cases, three non-finite/overflow cases and two isolated crash probes cover flux assignment. CASA reads a casa-rs-updated table with array values, errors, keyword and unrelated direction errors intact.",
+   "scope": "componentlist.setflux values, errors and table persistence.",
+   "links": [
+    "tools/simulation/componentlist_setflux_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setflux.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setflux.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_setflux.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "c7812db83679f9c49e5397540c331895da3aa89d"
+  },
+  "setshape-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "36 CASA 6.7.6-14 setter cases, 11 optional-parameter cases, two non-finite cases and an isolated cyclic-input crash cover shape values, units and safety. CASA reads a casa-rs-written disk with shape and preserved direction errors and keyword intact.",
+   "scope": "componentlist.setshape and shape records.",
+   "links": [
+    "tools/simulation/componentlist_setshape_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setshape.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setshape.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_setshape.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "bf58ba339a8b951d5b93aa14585441d23f8dbeb8"
   }
  }
 }

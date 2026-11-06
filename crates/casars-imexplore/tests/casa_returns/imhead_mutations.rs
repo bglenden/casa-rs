@@ -235,6 +235,39 @@ fn imhead_edits_spectral_reference_frames() {
                 json!({"imagename": path, "mode": "get", "hdkey": "reffreqtype"}),
             );
             assert_eq!(value.to_plain_json(), *expected, "{index}: get");
+            if expected == "Undefined" {
+                for key in ["minpos", "maxpos"] {
+                    let value = returned(
+                        workspace.path(),
+                        "imhead",
+                        json!({"imagename": path, "mode": "get", "hdkey": key}),
+                    );
+                    assert!(
+                        matches!(value, CasaValue::String { value } if !value.is_empty()),
+                        "{index}: {key}"
+                    );
+                }
+                let listed = returned(
+                    workspace.path(),
+                    "imhead",
+                    json!({"imagename": path, "mode": "list"}),
+                );
+                assert!(
+                    matches!(entry(&listed, "minpos"), CasaValue::String { value } if !value.is_empty()),
+                    "{index}: list"
+                );
+                let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+                let pixel = [1.0, 1.0, 0.0, 0.0];
+                let world = image.coordinates().to_world(&pixel).unwrap();
+                let roundtrip = image.coordinates().to_pixel(&world).unwrap();
+                assert!(
+                    pixel
+                        .iter()
+                        .zip(roundtrip)
+                        .all(|(a, b)| (a - b).abs() < 1e-6),
+                    "{index}: coordinates"
+                );
+            }
         }
         let summary = returned(
             workspace.path(),

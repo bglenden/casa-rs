@@ -1,0 +1,224 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "which": null,
+      "result": true,
+      "labels": [
+        "existing",
+        "source0",
+        "source1",
+        "source2"
+      ]
+    },
+    {
+      "which": [],
+      "result": true,
+      "labels": [
+        "existing",
+        "source0",
+        "source1",
+        "source2"
+      ]
+    },
+    {
+      "which": [
+        -1
+      ],
+      "result": true,
+      "labels": [
+        "existing",
+        "source0",
+        "source1",
+        "source2"
+      ]
+    },
+    {
+      "which": [
+        -2,
+        1
+      ],
+      "result": true,
+      "labels": [
+        "existing",
+        "source0",
+        "source1",
+        "source2"
+      ]
+    },
+    {
+      "which": [
+        0
+      ],
+      "result": true,
+      "labels": [
+        "existing",
+        "source0"
+      ]
+    },
+    {
+      "which": [
+        1
+      ],
+      "result": true,
+      "labels": [
+        "existing",
+        "source0"
+      ]
+    },
+    {
+      "which": [
+        2,
+        0
+      ],
+      "result": true,
+      "labels": [
+        "existing",
+        "source0",
+        "source1"
+      ]
+    },
+    {
+      "which": [
+        0,
+        0
+      ],
+      "result": true,
+      "labels": [
+        "existing",
+        "source0",
+        "source1"
+      ]
+    },
+    {
+      "which": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "labels": [
+        "existing",
+        "source0",
+        "source1",
+        "source2"
+      ]
+    },
+    {
+      "which": [
+        0,
+        99
+      ],
+      "result": true,
+      "labels": [
+        "existing",
+        "source0"
+      ]
+    },
+    {
+      "which": [
+        99,
+        0
+      ],
+      "result": true,
+      "labels": [
+        "existing",
+        "source1"
+      ]
+    },
+    {
+      "which": [
+        99
+      ],
+      "result": true,
+      "labels": [
+        "existing"
+      ]
+    }
+  ],
+  "other": [
+    {
+      "value": null,
+      "result": false,
+      "labels": []
+    },
+    {
+      "value": [],
+      "result": false,
+      "labels": []
+    },
+    {
+      "value": 5,
+      "result": false,
+      "labels": []
+    },
+    {
+      "value": false,
+      "result": false,
+      "labels": []
+    },
+    {
+      "value": "",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Cannot read componentlist "
+      },
+      "labels": []
+    },
+    {
+      "value": "/no/such/componentlist",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Cannot read componentlist /no/such/componentlist"
+      },
+      "labels": []
+    }
+  ],
+  "pending": [
+    {
+      "which": null,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_concatenate> returned a result with an exception set"
+      },
+      "labels": [
+        "existing",
+        "source0",
+        "source1",
+        "source2"
+      ]
+    },
+    {
+      "which": 1267650600228229401496703205376,
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_concatenate> returned a result with an exception set"
+      },
+      "labels": [
+        "existing",
+        "source0",
+        "source1",
+        "source2"
+      ]
+    },
+    {
+      "which": [
+        1267650600228229401496703205376
+      ],
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_concatenate> returned a result with an exception set"
+      },
+      "labels": [
+        "existing",
+        "source0",
+        "source1",
+        "source2"
+      ]
+    }
+  ]
+}

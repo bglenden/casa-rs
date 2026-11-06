@@ -3100,6 +3100,12 @@ refuses such a value for an existing 32-bit keyword with
 `RuntimeError: ... does not fit the integer keyword NAME, which holds fewer
 bits`, rather than store a wrong number.
 
+`cl.putkeyword` uses the same CASA conversion: in CASA 6.7.6.14, writing
+`2**40` to either a new keyword or an existing 32-bit keyword stores `0`.
+casa-rs keeps a new value as a 64-bit integer and refuses an overflowing
+replacement of a 32-bit keyword, so neither call silently loses the value
+(#1053).
+
 ## `tb` slices with a wrong rank or a start outside the array abort the process
 
 - Date noted: 2026-10-30
@@ -3939,6 +3945,37 @@ The same cyclic argument also crashes CASA's `componentlist.sample`
 placeholder. `tools/casa-compat/componentlist_sample_oracle.py` records the
 isolated crash. casa-rs returns the placeholder's empty float array instead.
 
+## `componentlist.replace` crashes while converting ignored arguments
+
+- Date noted: 2026-11-06
+- Status: CASA crashes; casa-rs handles the inputs safely (#1053).
+- Owner decision: Correct CASA crashes as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_replace_crashes_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json`, CASA 6.7.6-14 on the Mac mini, with isolated processes and core dumps disabled.
+
+`cl.replace(0, record)` with a record containing itself, a cyclic list of
+`whichones`, and scalar NaN or infinity as `whichones` each terminate CASA's
+Python process with signal 11 before the placeholder can return. The method
+otherwise warns and returns `False`. casa-rs detects record cycles and returns
+the placeholder result; for cyclic or non-finite index arguments it raises a
+catchable `ValueError`, as for component selection (#1176). No component is
+changed.
+
+## Invalid component direction frames use an uninitialized reference
+
+- Date noted: 2026-11-06
+- Status: CASA uses an uninitialized frame after a parse failure; casa-rs rejects it before mutation (#1053).
+- Owner decision: Correct CASA crashes and corruption as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setrefdirframe_invalid_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json`, CASA 6.7.6-14 on the Mac mini.
+
+`componentlist.setrefdirframe(0, "bad")` logs that the direction frame was
+not changed, but the C++ code continues with `newFrame` uninitialized after
+`MDirection::getType` fails. On the tested CASA build, four invalid names and
+an invalid byte string each raise an `MDirection` assertion and leave the
+direction unchanged; an uninitialized value can behave differently in another
+build. casa-rs logs the
+parse failure and raises a predictable `RuntimeError` before changing the
+component. The error text differs from the observed CASA assertion.
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05
@@ -3952,3 +3989,87 @@ converts zero. CASA handles the same array correctly when passed without a
 record. casa-rs preserves `1.25 m` and converts it to `125 cm`, using the
 same one-element output shape. Its `getunit`, `getvalue` and scalar arithmetic
 still report CASA's wrong-holder error for the record.
+
+## Unsafe component reference-direction inputs
+
+- Date noted: 2026-11-06
+- Status: CASA crashes or corrupts component directions; casa-rs rejects the inputs before mutation (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setrefdir_oracle.py`, `tools/simulation/componentlist_setrefdir_crashes_oracle.py`, and their recorded CASA 6.7.6-14 fixtures. Crash cases run in isolated processes with core dumps disabled.
+
+On an empty list, `cl.setrefdir(-1, '1rad', '0.5rad')` terminates CASA with
+SIGSEGV, as does a cyclic quantity record. A non-finite coordinate returns
+`True` but replaces the direction with NaN. Passing `None` or an integer too
+large for the binding as the component index raises `SystemError` only after
+changing every component's direction. casa-rs rejects these inputs without
+changing any components, and reports the crashes as catchable errors.
+
+## Component-list concatenation copies the wrong components
+
+- Date noted: 2026-11-06
+- Status: CASA copies unintended rows; casa-rs copies the requested rows (#1053).
+- Owner decision: Correct CASA data loss and contradictions of evident intent as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_concatenate_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_concatenate.json`, CASA 6.7.6-14 on the Mac mini.
+
+For a source list labeled `source0`, `source1`, `source2`, CASA's
+`concatenate(source, [2, 0])` appends `source0`, `source1`; the source loop
+checks each requested index but copies the component at the index's position
+in the request. Duplicated or reordered requests can therefore silently
+replace the components the user asked for. casa-rs appends `source2`,
+`source0`. A request longer than the source list can also raise an assertion
+after appending some wrong rows; casa-rs appends every valid requested row.
+CASA also appends components before raising `SystemError` when
+the index-vector conversion leaves a Python exception pending (for example
+`which=None`); casa-rs reports the error without modifying the destination.
+
+## Unsafe component flux-polarisation conversion
+
+- Date noted: 2026-11-06
+- Status: CASA crashes on an empty list and mutates values before reporting failed index conversion; casa-rs rejects both inputs without mutation (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_convertfluxpol_oracle.py` and its CASA 6.7.6-14 fixture; the crash probe runs in an isolated process with core dumps disabled.
+
+`cl.convertfluxpol(-1, 'Linear')` on an empty list terminates CASA with
+SIGSEGV. With components present, passing `None` or an integer too large for
+the Python binding as the index raises `SystemError` after changing every
+component's flux representation. casa-rs raises catchable errors and leaves
+all component values unchanged.
+
+## Unsafe component flux updates
+
+- Date noted: 2026-11-06
+- Status: CASA aborts, crashes, or loses input values; casa-rs preserves the input or rejects it before mutation (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setflux_oracle.py` and its CASA 6.7.6-14 fixture. Crash cases run in isolated processes with core dumps disabled.
+
+For a component, `cl.setflux(0, 2, error=0.2)` aborts CASA because its
+four-element error vector is assigned a one-element array. casa-rs stores
+`[0.2, 0, 0, 0]`, preserving the supplied error. On an empty list,
+`cl.setflux(-1, 2)` terminates CASA with SIGSEGV. An index of `None` or an
+integer too large for the binding causes CASA to change every component and
+then raise `SystemError`; casa-rs reports a catchable error without mutation.
+
+CASA accepts complex flux values and four-element errors, silently discarding
+the imaginary parts; casa-rs rejects nonzero imaginary parts before mutation,
+because the Stokes record interface cannot return them. CASA also accepts NaN
+and infinity, and narrows a finite `1e200` to infinity when it temporarily
+stores the flux in single precision. casa-rs rejects non-finite inputs and
+retains finite double-precision values, consistent with the existing
+`addcomponent` precision decision above.
+
+## Component shape changes discard direction errors
+
+- Date noted: 2026-11-06
+- Status: CASA loses direction errors and can modify a component before reporting an argument error; casa-rs preserves them (#1053).
+- Owner decision: Correct CASA data corruption as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setshape_oracle.py` and its CASA 6.7.6-14 fixture.
+
+Given a component with nonzero direction errors, `setshape(0, ...)` copies
+only its direction and replaces both errors with zero. casa-rs preserves the
+original direction and both errors when changing the shape. Passing
+`optionalparms=None` can also update the shape before CASA raises
+`SystemError`; casa-rs reports the error without changing the component.
+Passing a cyclic `optionalparms` list terminates CASA with SIGSEGV; casa-rs
+rejects the cycle before changing the component.
+CASA accepts NaN as a Gaussian position angle or shape error and writes NaN;
+casa-rs rejects a non-finite shape or error before mutation.

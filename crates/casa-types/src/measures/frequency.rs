@@ -65,9 +65,12 @@ pub enum FrequencyRef {
     LGROUP,
     /// Cosmic microwave background.
     CMB,
+    /// An unspecified frequency frame, retained by casacore as code 64.
+    /// Only identity conversion is defined for this reference.
+    Undefined,
 }
 
-/// Total number of FrequencyRef variants.
+/// Number of physical reference frames, excluding casacore's extra code.
 const NUM_FREQ_REFS: usize = 9;
 
 impl FrequencyRef {
@@ -86,6 +89,7 @@ impl FrequencyRef {
             Self::GALACTO => 6,
             Self::LGROUP => 7,
             Self::CMB => 8,
+            Self::Undefined => 64,
         }
     }
 
@@ -101,11 +105,13 @@ impl FrequencyRef {
             6 => Some(Self::GALACTO),
             7 => Some(Self::LGROUP),
             8 => Some(Self::CMB),
+            64 => Some(Self::Undefined),
             _ => None,
         }
     }
 
-    /// All reference types in canonical order.
+    /// All physical reference types in canonical order. Casacore's extra
+    /// `Undefined` code is excluded from this list and its routing graph.
     pub const ALL: [FrequencyRef; NUM_FREQ_REFS] = [
         Self::REST,
         Self::LSRK,
@@ -130,6 +136,7 @@ impl FrequencyRef {
             Self::GALACTO => "GALACTO",
             Self::LGROUP => "LGROUP",
             Self::CMB => "CMB",
+            Self::Undefined => "Undefined",
         }
     }
 }
@@ -148,6 +155,7 @@ impl FromStr for FrequencyRef {
             "GALACTO" | "GALACTOCENTRIC" => Ok(Self::GALACTO),
             "LGROUP" => Ok(Self::LGROUP),
             "CMB" => Ok(Self::CMB),
+            "UNDEFINED" => Ok(Self::Undefined),
             _ => Err(MeasureError::UnknownRefType {
                 input: s.to_owned(),
             }),
@@ -630,6 +638,7 @@ fn freq_ref_index(r: FrequencyRef) -> usize {
         FrequencyRef::GALACTO => 6,
         FrequencyRef::LGROUP => 7,
         FrequencyRef::CMB => 8,
+        FrequencyRef::Undefined => 9,
     }
 }
 
@@ -639,8 +648,8 @@ pub(super) fn find_freq_path(
 ) -> Result<Vec<FrequencyRef>, MeasureError> {
     use std::collections::VecDeque;
 
-    let mut visited = [false; NUM_FREQ_REFS];
-    let mut parent: [Option<FrequencyRef>; NUM_FREQ_REFS] = [None; NUM_FREQ_REFS];
+    let mut visited = [false; NUM_FREQ_REFS + 1];
+    let mut parent: [Option<FrequencyRef>; NUM_FREQ_REFS + 1] = [None; NUM_FREQ_REFS + 1];
     let mut queue = VecDeque::new();
 
     visited[freq_ref_index(source)] = true;
@@ -852,6 +861,28 @@ mod tests {
         for input in ["", "L", "LSR", "G", " BAD"] {
             assert!(input.parse::<CasaFrequencyFrame>().is_err(), "{input}");
         }
+    }
+
+    #[test]
+    fn undefined_reference_round_trips_and_has_no_cross_frame_route() {
+        let undefined = FrequencyRef::Undefined;
+        assert_eq!("Undefined".parse::<FrequencyRef>().unwrap(), undefined);
+        assert_eq!(undefined.as_str(), "Undefined");
+        assert_eq!(undefined.casacore_code(), 64);
+        assert_eq!(FrequencyRef::from_casacore_code(64), Some(undefined));
+        let value = MFrequency::new(1.4e9, undefined);
+        let frame = MeasFrame::new();
+        assert_eq!(value.convert_to(undefined, &frame).unwrap().hz(), 1.4e9);
+        assert!(value.convert_to(FrequencyRef::LSRK, &frame).is_err());
+        assert!(
+            MFrequency::new(1.4e9, FrequencyRef::LSRK)
+                .convert_to(undefined, &frame)
+                .is_err()
+        );
+        let mut converter = MFrequencyConverter::new(undefined, FrequencyRef::LSRK);
+        assert!(converter.convert_hz(1.4e9, &frame).is_err());
+        let mut identity = MFrequencyConverter::new(undefined, undefined);
+        assert_eq!(identity.convert_hz(1.4e9, &frame).unwrap().hz(), 1.4e9);
     }
 
     #[test]
