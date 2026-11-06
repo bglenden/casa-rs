@@ -89,8 +89,10 @@ impl PyMeasures {
     ) -> PyResult<Py<PyAny>> {
         let mut lines = Vec::new();
         let result = py.detach(|| {
-            let mut state = self.lock();
-            work(&mut state, &mut lines)
+            casa_types::quanta::registry::global_registry().with_locked_units(|| {
+                let mut state = self.lock();
+                work(&mut state, &mut lines)
+            })
         });
         emit(py, LOGGER, &lines)?;
         result?.into_python(py)

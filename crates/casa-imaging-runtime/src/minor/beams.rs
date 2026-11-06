@@ -3,7 +3,9 @@
 
 use std::collections::BTreeMap;
 
-use casa_imaging_deconvolution::{FinalNormalState, ModelGeneration, RestoringBeam};
+use casa_imaging_deconvolution::{
+    CASA_TINY_PSF_BEAM_RAD, FinalNormalState, ModelGeneration, RestoringBeam,
+};
 
 use super::{MinorCycleRunError, PsfCache, normalise, plane_shape, psf_peak_value, read_psf};
 
@@ -11,9 +13,9 @@ use super::{MinorCycleRunError, PsfCache, normalise, plane_shape, psf_peak_value
 /// its centre, its domain's largest beam by area
 /// (`SIImageStore::makeImageBeamSet`), as the products do. CASA's cube takes the
 /// largest of each sub-cube its memory splits it into, so its answer depends on
-/// the machine; this is its answer for one. A domain with no fitted plane leaves
-/// them at a pixel. A plane is read again only when its beam changes, which is
-/// rarely.
+/// the machine; this is its answer for one. A domain with no fitted plane takes
+/// CASA's tiny circular beam. A plane is read again only when its beam changes,
+/// which is rarely.
 pub(super) fn settle_off_centre(
     normal: &FinalNormalState,
     base: &ModelGeneration,
@@ -38,18 +40,26 @@ pub(super) fn settle_off_centre(
         if preserve_main && key.domain == 0 {
             continue;
         }
-        let Some(beam) = largest.get(&key.domain).copied() else {
+        if !summary.off_centre() {
             continue;
+        }
+        let increment = base
+            .shape()
+            .direction(key.domain)
+            .expect("domain direction")
+            .increment_rad();
+        let beam = match largest.get(&key.domain).copied() {
+            Some(beam) => beam,
+            None => {
+                let width = CASA_TINY_PSF_BEAM_RAD / increment[0].abs();
+                RestoringBeam::new(width, width, 0.0)
+                    .map_err(casa_imaging_deconvolution::Error::from)?
+            }
         };
-        if summary.off_centre() && (summary.needs_domain_beam() || summary.beam() != beam) {
+        if summary.needs_domain_beam() || summary.beam() != beam {
             let shape = plane_shape(normal, *key);
             let psf = read_psf(normal, taylor, *key)?;
             let peak = psf_peak_value(&psf, shape)?;
-            let increment = base
-                .shape()
-                .direction(key.domain)
-                .expect("domain direction")
-                .increment_rad();
             let cell = [1.0, (increment[1] / increment[0]).abs()];
             *summary = summary.settle_domain_beam(&normalise(psf, peak), shape, beam, cell)?;
         }

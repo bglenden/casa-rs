@@ -18,6 +18,10 @@ CASA behaviours casa-rs follows for parity:
 [`datacolumn='corrected'` without `CORRECTED_DATA`](#tclean-images-data-when-corrected_data-is-missing-and-says-nothing),
 [W projection's sectioned grid edge](#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column).
 CASA behaviours casa-rs does not follow:
+[non-frequency component frequency units](#a-non-frequency-component-unit-corrupts-casas-spectrum),
+[nonconforming component flux conversion](#component-flux-conversion-can-relabel-incompatible-units-or-crash),
+[duplicate and empty component removals](#component-removal-can-lose-data-or-crash),
+[component labels containing invalid UTF-8](#casa-accepts-component-labels-it-cannot-return),
 [cyclic component-list type checks](#cyclic-component-list-type-checks-crash-casa),
 [complex quantity-array values](#casa-discards-the-values-of-bare-complex-quantity-arrays),
 [bare complex64 quantity values](#casa-discards-bare-numpy-complex64-quantity-values),
@@ -3851,6 +3855,73 @@ CASA also treats the complex64 value as zero in other quantity operations.
 casa-rs preserves both parts and raises `Wrong QuantumHolder to convert
 asQuantumDouble` rather than silently discarding them.
 
+## A non-frequency component unit corrupts CASA's spectrum
+
+- Date noted: 2026-11-06
+- Status: CASA changes the spectrum before raising and later aborts; casa-rs refuses the unit without changing the spectrum (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/casa-compat/componentlist_convertfrequnit_oracle.py` and `tools/casa-compat/componentlist_setfreq_oracle.py`, CASA 6.7.6-14 on the Mac mini, with failing cases isolated and core dumps disabled.
+
+After adding a component with frequency `1.4GHz`,
+`cl.convertfrequnit(0, 'm')` raises a `RuntimeError` in CASA, but it has
+already installed the incompatible unit. A subsequent `cl.getspectrum(0)`
+also raises, and closing the component list aborts the process. casa-rs
+checks the unit first, raises a catchable error and leaves the frequency,
+its record unit and the component list unchanged.
+
+`cl.setfreq(0, 1, 'm')` also changes the spectrum before raising; the next
+read raises and closing aborts. casa-rs rejects this unit before changing
+either the reference frequency or its record unit.
+
+The same failure occurs if a stored spectrum uses `MHz` and a later
+`qa.define('Hz', '1m')` makes the current frequency definition incompatible.
+casa-rs uses coherent Hz for the stored physical frequency in that case,
+retaining a readable record and allowing an attached table to be saved.
+
+## Component flux conversion can relabel incompatible units or crash
+
+- Date noted: 2026-11-06
+- Status: CASA silently changes the dimensions of a flux and crashes on an empty list; casa-rs refuses both without changing components (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/casa-compat/componentlist_convertfluxunit_oracle.py`, CASA 6.7.6-14 on the Mac mini; the empty-list call runs in an isolated process with core dumps disabled.
+
+A component-list table may hold a flux in `Jy.km/s`. Given such a component,
+CASA's `cl.convertfluxunit(-1, 'mJy')` reports success, scales the flux by
+unit factors and labels it `mJy`, despite the incompatible dimensions. It
+also modifies earlier components when the incompatible one is later in the
+list. casa-rs checks every selected source before changing any component and
+raises a catchable error if one does not conform. On an empty list, CASA's
+`cl.convertfluxunit(-1, 'mJy')` terminates with SIGSEGV; casa-rs raises a
+catchable error. A target with dimensions unlike Jy still returns `False`, as
+CASA does, before it examines the indices.
+
+## Component removal can lose data or crash
+
+- Date noted: 2026-11-05
+- Status: CASA loses a component on duplicate indices and crashes on an empty list; casa-rs preserves values and reports a catchable error (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/casa-compat/componentlist_removal_oracle.py`, CASA 6.7.6-14 on the Mac mini; empty-list calls run in isolated processes with core dumps disabled.
+
+With four components labeled `0`, `1`, `2`, `3`, CASA's
+`cl.remove([1, 1])` leaves `0`, `3`; `cl.recover()` appends two copies of
+`1`, so component `2` is lost. casa-rs treats repeated indices as one:
+it leaves `0`, `2`, `3` and recovers `1` once. On an empty list, CASA's
+`cl.remove()` and `cl.remove([-1])` both terminate the process with SIGSEGV;
+casa-rs raises a catchable `RuntimeError` without changing the list.
+
+## CASA accepts component labels it cannot return
+
+- Date noted: 2026-11-05
+- Status: CASA accepts an unreadable label; casa-rs rejects the input and preserves the previous label (#1053).
+- Owner decision: Correct CASA data corruption as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/casa-compat/componentlist_setlabel_oracle.py`, CASA 6.7.6-14 on the Mac mini.
+
+After adding a component, `cl.setlabel(0, b'\xff')` returns `True` in CASA,
+but `cl.getlabel(0)` then raises `UnicodeDecodeError`: the previous readable
+label has been replaced by bytes the Python binding cannot return. casa-rs
+raises `UnicodeDecodeError` before changing the label. Valid UTF-8 byte strings
+and text are accepted, and both implementations stop at the first NUL byte.
+
 ## Cyclic component-list type checks crash CASA
 
 - Date noted: 2026-11-05
@@ -3863,6 +3934,10 @@ terminates CASA's Python process with a segmentation fault before the
 placeholder can return. The method otherwise logs a warning and returns
 `False`. casa-rs detects cycles while inspecting the ignored argument and
 returns that same placeholder value without crashing.
+
+The same cyclic argument also crashes CASA's `componentlist.sample`
+placeholder. `tools/casa-compat/componentlist_sample_oracle.py` records the
+isolated crash. casa-rs returns the placeholder's empty float array instead.
 
 ## CASA discards zero-dimensional floating quantity-record values
 

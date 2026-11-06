@@ -1,0 +1,880 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "which": 0,
+      "unit": "MHz",
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "MHz",
+                "value": 1400.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": 1,
+      "unit": "Hz",
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "Hz",
+                "value": 2250000000.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "unit": "s-1",
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "s-1",
+                "value": 1400000000.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "omit_unit": true,
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "unit": {
+        "bytes": "kHz"
+      },
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "kHz",
+                "value": 1400000.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": 4294967296,
+      "unit": "MHz",
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "MHz",
+                "value": 1400.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": true,
+      "unit": "MHz",
+      "result": true,
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "MHz",
+                "value": 2250.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": -1,
+      "unit": "MHz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": 2,
+      "unit": "MHz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": null,
+      "unit": "MHz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": 9223372036854775808,
+      "unit": "MHz",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": 0.0,
+      "unit": "MHz",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      },
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": "0",
+      "unit": "MHz",
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      },
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "unit": null,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      },
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "unit": 2,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _unit must be a string"
+      },
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": 0,
+      "unit": "badunit!",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit!'"
+      },
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": -1,
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": 2,
+      "unit": "m",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "which": -1,
+      "unit": "badunit!",
+      "error": {
+        "type": "RuntimeError",
+        "message": "Unit::check Illegal unit string 'badunit!'"
+      },
+      "after": [
+        {
+          "label": "first",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "label": "second",
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.25
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    }
+  ],
+  "table": {
+    "in_memory": [
+      {
+        "label": "first",
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "MHz",
+              "value": 1400.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      {
+        "label": "second",
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 2.25
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    ],
+    "raw": {
+      "unit": "MHz",
+      "value": 1400.0
+    },
+    "table_hz": 1400000000.0,
+    "error_unit": "GHz",
+    "reopened": [
+      {
+        "label": "first",
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 1.4000000000000001
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      {
+        "label": "second",
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 2.25
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    ],
+    "changed_with_error": [
+      {
+        "label": "first",
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "kHz",
+              "value": 1400000.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      {
+        "label": "second",
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 2.25
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    ],
+    "error_after": {
+      "value": 1.5,
+      "unit": "MHz"
+    }
+  },
+  "nonconforming": {
+    "exit": -6,
+    "stdout": "convert=RuntimeError\nread=RuntimeError\n"
+  },
+  "redefined_units": [
+    {
+      "unit": "casaFreq",
+      "value": 1400.0
+    },
+    {
+      "unit": "casaFreq",
+      "value": 1400.0
+    },
+    {
+      "unit": "casaFreq",
+      "value": 2800.0
+    }
+  ],
+  "nonconforming_hz": {
+    "exit": -6,
+    "stdout": "read=RuntimeError\n"
+  },
+  "recovery": {
+    "removed": [
+      {
+        "label": "second",
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 2.25
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    ],
+    "recovered": [
+      {
+        "label": "second",
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "GHz",
+              "value": 2.25
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      },
+      {
+        "label": "first",
+        "spectrum": {
+          "frequency": {
+            "m0": {
+              "unit": "MHz",
+              "value": 1400.0
+            },
+            "refer": "LSRK",
+            "type": "frequency"
+          },
+          "type": "Constant"
+        }
+      }
+    ]
+  }
+}

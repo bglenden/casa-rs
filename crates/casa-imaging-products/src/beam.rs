@@ -2,8 +2,8 @@
 
 //! Product-facing projection of the deconvolver's PSF beam fit.
 
-use casa_imaging_deconvolution::PsfBeamFitError;
 pub use casa_imaging_deconvolution::RestoringBeam;
+use casa_imaging_deconvolution::{CASA_TINY_PSF_BEAM_RAD, PsfBeamFitError};
 use casa_imaging_model::FixedRestoringBeam;
 
 use crate::error::ProductsError;
@@ -65,7 +65,6 @@ pub(crate) fn fit_plane_beam(
 /// tiny beam `SIImageStore::makeImageBeamSet` stores instead of a beam of no
 /// area. A plane with no PSF keeps none.
 pub(crate) fn settle_beams(fits: &[PlaneBeam], planes: usize) -> Box<[Option<RestoringBeam>]> {
-    const TINY_BEAM_RAD: f64 = 1.0e-6 * std::f64::consts::PI / (180.0 * 3600.0);
     let mut settled = Vec::with_capacity(fits.len());
     for domain in fits.chunks(planes.max(1)) {
         let largest = domain
@@ -82,7 +81,7 @@ pub(crate) fn settle_beams(fits: &[PlaneBeam], planes: usize) -> Box<[Option<Res
             PlaneBeam::Fitted(beam) => Some(*beam),
             PlaneBeam::Blank => None,
             PlaneBeam::Refused => Some(largest.unwrap_or_else(|| {
-                RestoringBeam::new(TINY_BEAM_RAD, TINY_BEAM_RAD, 0.0)
+                RestoringBeam::new(CASA_TINY_PSF_BEAM_RAD, CASA_TINY_PSF_BEAM_RAD, 0.0)
                     .expect("a positive round beam")
             })),
         }));

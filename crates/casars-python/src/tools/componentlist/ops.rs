@@ -23,15 +23,16 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use casa_components::{ComponentList, ComponentListError, SkyComponent};
+use casa_components::{ComponentList, ComponentListError, Flux, SkyComponent};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
+use casa_types::measures::frequency::MFrequency;
 use casa_types::quanta::Unit;
 use casa_types::{RecordValue, Value};
 
 use super::add::AddComponent;
 use crate::convert::value::CasaValue;
-use crate::convert::{ConvertError, ConvertResult, quantity};
+use crate::convert::{ConvertError, ConvertResult, casacore_unit, quantity};
 use crate::tools::LogLine;
 
 /// The table a list is attached to.
@@ -50,6 +51,8 @@ pub(crate) struct State {
     list: ComponentList,
     selection: std::collections::BTreeSet<i64>,
     shape_units: BTreeMap<usize, [Unit; 3]>,
+    /// Removed components in request order; recovery appends them in reverse.
+    removed: Vec<(SkyComponent, Option<[Unit; 3]>)>,
     table: Option<Attached>,
     measures: Option<Arc<dyn MeasuresProvider>>,
 }
@@ -77,6 +80,7 @@ impl State {
         let list = std::mem::take(&mut self.list);
         self.selection.clear();
         self.shape_units.clear();
+        self.removed.clear();
         match self.table.take() {
             Some(Attached {
                 path,
@@ -243,6 +247,83 @@ impl State {
         }
     }
 
+    /// Remove components after validating all indices, keeping a recovery bin.
+    pub(crate) fn remove(
+        &mut self,
+        indices: &[i64],
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let requested: Vec<usize> = if indices == [-1] {
+            if self.list.is_empty() {
+                return Err(ConvertError::runtime(
+                    "componentlist.remove on an empty list would crash CASA (#1053)",
+                ));
+            }
+            (0..self.list.len()).collect()
+        } else {
+            if indices
+                .iter()
+                .any(|&index| index < 0 || index >= self.length())
+            {
+                let message = "Index out of range.\nA component number is less than one or greater than the list length\nNo components removed";
+                lines.push(LogLine::error(message));
+                return Err(ConvertError::runtime(message));
+            }
+            indices.iter().map(|&index| index as usize).collect()
+        };
+        let mut removed = std::collections::BTreeSet::new();
+        for index in requested {
+            // CASA loses a different component when the same index is repeated.
+            if removed.insert(index) {
+                self.removed.push((
+                    self.list.get(index).expect("validated index").clone(),
+                    self.shape_units.get(&index).cloned(),
+                ));
+            }
+        }
+        let sorted: Vec<usize> = removed.into_iter().collect();
+        let mut components = std::mem::take(&mut self.list).into_components();
+        let mut index = 0;
+        components.retain(|_| {
+            let keep = sorted.binary_search(&index).is_err();
+            index += 1;
+            keep
+        });
+        self.list = components.into();
+        let remap = |index: usize| -> Option<usize> {
+            match sorted.binary_search(&index) {
+                Ok(_) => None,
+                Err(before) => Some(index - before),
+            }
+        };
+        self.selection = std::mem::take(&mut self.selection)
+            .into_iter()
+            .filter_map(|index| remap(index as usize).map(|new| new as i64))
+            .collect();
+        self.shape_units = std::mem::take(&mut self.shape_units)
+            .into_iter()
+            .filter_map(|(index, units)| remap(index).map(|new| (new, units)))
+            .collect();
+        Ok(true)
+    }
+
+    /// Restore removed components in reverse removal order, without selecting them.
+    pub(crate) fn recover(&mut self) -> bool {
+        while let Some((component, units)) = self.removed.pop() {
+            if let Some(units) = units {
+                self.shape_units.insert(self.list.len(), units);
+            }
+            self.list.push(component);
+        }
+        false // CASA returns false even on success.
+    }
+
+    /// Forget the recovery bin; CASA returns false even on success.
+    pub(crate) fn purge(&mut self) -> bool {
+        self.removed.clear();
+        false
+    }
+
     /// `length()`.
     pub(crate) fn length(&self) -> i64 {
         i64::try_from(self.list.len()).unwrap_or(i64::MAX)
@@ -314,6 +395,121 @@ impl State {
                     self.length() - 1
                 ))
             })
+    }
+
+    /// Replace a label, using the index checks in casacore's `setLabel`.
+    pub(crate) fn setlabel(&mut self, which: i64, value: &str) -> ConvertResult<bool> {
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        component.set_label(value);
+        Ok(true)
+    }
+
+    /// Change the unit used in one component's spectrum record.
+    pub(crate) fn convertfrequnit(&mut self, which: i64, name: &str) -> ConvertResult<bool> {
+        let unit = casacore_unit(name).map_err(ConvertError::runtime)?;
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        component
+            .spectrum_mut()
+            .set_frequency_unit(unit)
+            .map_err(|error| ConvertError::runtime(error.to_string()))?;
+        Ok(true)
+    }
+
+    /// Replace one reference frequency, its record unit and retain its frame.
+    pub(crate) fn setfreq(&mut self, which: i64, value: f64, name: &str) -> ConvertResult<bool> {
+        let unit = casacore_unit(name).map_err(ConvertError::runtime)?;
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        let hz = value * unit.val().factor;
+        let spectrum = component.spectrum_mut();
+        // Validate before either field changes; CASA corrupts its spectrum
+        // for non-frequency units during its subsequent unit conversion.
+        spectrum
+            .set_frequency_unit(unit)
+            .map_err(|error| ConvertError::runtime(error.to_string()))?;
+        spectrum
+            .set_reference_frequency(MFrequency::new(hz, spectrum.reference_frequency().refer()));
+        Ok(true)
+    }
+
+    /// Convert selected component fluxes only after all source units conform.
+    pub(crate) fn convertfluxunit(
+        &mut self,
+        which: i64,
+        name: &str,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let target = casacore_unit(name).map_err(ConvertError::runtime)?;
+        let jy = casacore_unit("Jy").map_err(ConvertError::runtime)?;
+        if !target.conformant(&jy) {
+            lines.push(LogLine::error(
+                "The flux units must have the same dimensions as the Jansky\nFlux not changed on any components",
+            ));
+            return Ok(false);
+        }
+        let indices = if which == -1 {
+            if self.list.is_empty() {
+                return Err(ConvertError::runtime(
+                    "componentlist.convertfluxunit on an empty list would crash CASA (#1053)",
+                ));
+            }
+            (0..self.list.len()).collect::<Vec<_>>()
+        } else if which < 0 || which >= self.length() {
+            let message = "Index out of range.\nA component number is less than one or greater than the list length\nFlux not changed on any components";
+            lines.push(LogLine::error(message));
+            return Err(ConvertError::runtime(message));
+        } else {
+            vec![which as usize]
+        };
+        let mut converted = Vec::with_capacity(indices.len());
+        for &index in &indices {
+            let flux = self.list.get(index).expect("validated index").flux();
+            // CASA does nothing when the unit names already match, even if
+            // the unit's scale is zero; avoid a spurious zero divided by zero.
+            if flux.unit().name() == target.name() {
+                converted.push(flux.clone());
+                continue;
+            }
+            if !flux.unit().conformant(&target) {
+                return Err(ConvertError::runtime(format!(
+                    "non-conforming flux unit '{}' cannot be converted to '{}'",
+                    flux.unit().name(),
+                    target.name()
+                )));
+            }
+            let factor = flux.unit().val().factor / target.val().factor;
+            let values = flux.values().map(|value| value * factor);
+            let errors = flux.errors().map(|error| error * factor);
+            let result = Flux::new(values, target.name(), flux.polarisation())
+                .map_err(|error| ConvertError::runtime(error.to_string()))?
+                .with_errors(errors);
+            converted.push(result);
+        }
+        for (index, flux) in indices.into_iter().zip(converted) {
+            *self
+                .list
+                .get_mut(index)
+                .expect("validated index")
+                .flux_mut() = flux;
+        }
+        Ok(true)
     }
 
     /// The component `which`, for the methods CASA does not check: casacore's

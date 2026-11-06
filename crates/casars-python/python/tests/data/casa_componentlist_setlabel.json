@@ -1,0 +1,280 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "state": "empty",
+      "which": 0,
+      "value": "x",
+      "log": true,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "labels": []
+    },
+    {
+      "state": "populated",
+      "which": 0,
+      "value": "new",
+      "log": true,
+      "result": true,
+      "labels": [
+        "new",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 1,
+      "value": "αβ 🛰",
+      "log": false,
+      "result": true,
+      "labels": [
+        "first",
+        "αβ 🛰"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 1,
+      "value": "",
+      "log": true,
+      "result": true,
+      "labels": [
+        "first",
+        ""
+      ]
+    },
+    {
+      "state": "populated",
+      "which": -1,
+      "value": "x",
+      "log": true,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "labels": [
+        "first",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 2,
+      "value": "x",
+      "log": true,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert index < nelements()"
+      },
+      "labels": [
+        "first",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 4294967296,
+      "value": "wrapped",
+      "log": true,
+      "result": true,
+      "labels": [
+        "wrapped",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": true,
+      "value": "boolean index",
+      "log": true,
+      "result": true,
+      "labels": [
+        "first",
+        "boolean index"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": null,
+      "value": "x",
+      "log": true,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "labels": [
+        "first",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 9223372036854775808,
+      "value": "x",
+      "log": true,
+      "error": {
+        "type": "RuntimeError",
+        "message": "Failed AlwaysAssert which(i) >= 0"
+      },
+      "labels": [
+        "first",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 0.0,
+      "value": "x",
+      "log": true,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      },
+      "labels": [
+        "first",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": "0",
+      "value": "x",
+      "log": true,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      },
+      "labels": [
+        "first",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 0,
+      "value": null,
+      "log": true,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _value must be a string"
+      },
+      "labels": [
+        "first",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 0,
+      "value": 42,
+      "log": true,
+      "error": {
+        "type": "TypeError",
+        "message": "argument _value must be a string"
+      },
+      "labels": [
+        "first",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 0,
+      "value": {
+        "bytes": "bytes"
+      },
+      "log": true,
+      "result": true,
+      "labels": [
+        "bytes",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 0,
+      "value": {
+        "hex": "6100ff"
+      },
+      "log": true,
+      "result": true,
+      "labels": [
+        "a",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 0,
+      "value": "abc\u0000def",
+      "log": true,
+      "result": true,
+      "labels": [
+        "abc",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 0,
+      "value": "x",
+      "log": null,
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_setlabel', argument 4 of type 'bool'"
+      },
+      "labels": [
+        "first",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 0,
+      "value": "x",
+      "log": 1,
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_setlabel', argument 4 of type 'bool'"
+      },
+      "labels": [
+        "first",
+        "second"
+      ]
+    },
+    {
+      "state": "populated",
+      "which": 0,
+      "value": "x",
+      "log": "false",
+      "error": {
+        "type": "TypeError",
+        "message": "in method 'componentlist_setlabel', argument 4 of type 'bool'"
+      },
+      "labels": [
+        "first",
+        "second"
+      ]
+    }
+  ],
+  "table": {
+    "reopened": [
+      "first",
+      "changed"
+    ],
+    "readonly_memory": [
+      "temporary",
+      "changed"
+    ],
+    "after_readonly": [
+      "first",
+      "changed"
+    ]
+  },
+  "invalid_utf8": {
+    "set": true,
+    "read_error": "UnicodeDecodeError"
+  }
+}

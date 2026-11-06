@@ -156,12 +156,12 @@
    ]
   },
   "define": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Defines and redefines process-wide user units, including built-in overrides; coordinated unit state keeps conversions and other tool operations consistent during concurrent changes.",
    "evidence": [
     "signature",
-    "refusals"
+    "define-casa"
    ]
   },
   "div": {
@@ -768,6 +768,18 @@
     "crates/casars-python/python/tests/test_quanta_record_zero_dim.py"
    ],
    "source_revision": "56667e6a4ae6d0daca4ea89e2e68cac3a9d096d3"
+  },
+  "define-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "26 CASA 6.7.6-14 calls cover user definitions and redefinitions, shared instances, cached compounds, error handling, built-in overrides and FITS aliases.",
+   "scope": "quanta.define and the process-wide unit registry.",
+   "links": [
+    "tools/casa-compat/quanta_define_oracle.py",
+    "crates/casars-python/python/tests/data/casa_quanta_define.json",
+    "crates/casars-python/python/tests/test_quanta_define.py"
+   ],
+   "source_revision": "19c603abfee0f2446f6b8c2a5c8db151f0a7d4ee"
   }
  }
 }

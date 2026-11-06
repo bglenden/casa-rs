@@ -34,7 +34,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pyo3::exceptions::{PyOverflowError, PyRuntimeWarning, PySystemError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::PyString;
+use pyo3::types::{PyBool, PyBytes, PyString};
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, DoubleList, Variant};
@@ -143,7 +143,10 @@ impl PyComponentList {
         work: impl FnOnce(&mut State, &mut Vec<LogLine>) -> ConvertResult<CasaValue> + Send,
     ) -> PyResult<Py<PyAny>> {
         let mut lines = Vec::new();
-        let result = py.detach(|| work(&mut self.lock(), &mut lines));
+        let result = py.detach(|| {
+            casa_types::quanta::registry::global_registry()
+                .with_locked_units(|| work(&mut self.lock(), &mut lines))
+        });
         emit(py, LOGGER, &lines)?;
         result?.into_python(py)
     }
@@ -163,7 +166,10 @@ impl Drop for PyComponentList {
     fn drop(&mut self) {
         let state = self.state.get_mut().unwrap_or_else(PoisonError::into_inner);
         Python::attach(|py| {
-            if let Err(message) = py.detach(|| state.release()) {
+            if let Err(message) = py.detach(|| {
+                casa_types::quanta::registry::global_registry()
+                    .with_locked_units(|| state.release())
+            }) {
                 let category = py.get_type::<PyRuntimeWarning>();
                 let message = CString::new(message).unwrap_or_default();
                 if let Err(error) = PyErr::warn(py, category.as_any(), &message, 1) {
@@ -302,24 +308,82 @@ impl PyComponentList {
         stub("convertfluxpol")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Convert one or all components' flux values and errors to a Jy unit.
     #[pyo3(signature = (which, unit = None), text_signature = "($self, which, unit='Jy')")]
     fn convertfluxunit(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] unit: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("convertfluxunit")
+        let (which, pending) = match which.extract::<i64>() {
+            Ok(index) => (i64::from(index as i32), false),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => {
+                (-1, true)
+            }
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let unit: String = match unit {
+            None => "Jy".to_string(),
+            Some(value) if value.is_instance_of::<PyString>() => value.extract()?,
+            Some(value) if value.is_instance_of::<PyBytes>() => {
+                let bytes = value.cast::<PyBytes>()?.as_bytes();
+                let end = bytes
+                    .iter()
+                    .position(|&byte| byte == 0)
+                    .unwrap_or(bytes.len());
+                PyBytes::new(py, &bytes[..end])
+                    .call_method1("decode", ("utf-8",))?
+                    .extract()?
+            }
+            Some(_) => return Err(PyTypeError::new_err("argument _unit must be a string")),
+        };
+        let unit = unit.split('\0').next().unwrap_or_default().to_string();
+        let result = self.call(py, move |state, lines| {
+            state
+                .convertfluxunit(which, &unit, lines)
+                .map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_convertfluxunit> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Change the reference-frequency unit used in one component's records.
     #[pyo3(signature = (which, unit = None), text_signature = "($self, which, unit='GHz')")]
     fn convertfrequnit(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] unit: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("convertfrequnit")
+        let which = match which.extract::<i64>() {
+            Ok(index) => i64::from(index as i32),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => -1,
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let unit: String = match unit {
+            None => "GHz".to_string(),
+            Some(value) if value.is_instance_of::<PyString>() => value.extract()?,
+            Some(value) if value.is_instance_of::<PyBytes>() => {
+                let bytes = value.cast::<PyBytes>()?.as_bytes();
+                let end = bytes
+                    .iter()
+                    .position(|&byte| byte == 0)
+                    .unwrap_or(bytes.len());
+                PyBytes::new(py, &bytes[..end])
+                    .call_method1("decode", ("utf-8",))?
+                    .extract()?
+            }
+            Some(_) => return Err(PyTypeError::new_err("argument _unit must be a string")),
+        };
+        let unit = unit.split('\0').next().unwrap_or_default().to_string();
+        self.call(py, move |state, _| {
+            state.convertfrequnit(which, &unit).map(CasaValue::Bool)
+        })
     }
 
     /// Not yet implemented in casa-rs.
@@ -650,10 +714,10 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Discard all removed components.
     #[pyo3(signature = (), text_signature = "($self)")]
-    fn purge(&self) -> PyResult<Py<PyAny>> {
-        stub("purge")
+    fn purge(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |state, _| Ok(CasaValue::Bool(state.purge())))
     }
 
     /// Not yet implemented in casa-rs.
@@ -666,20 +730,47 @@ impl PyComponentList {
         stub("putkeyword")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Append removed components in reverse removal order.
     #[pyo3(signature = (log = None), text_signature = "($self, log=True)")]
-    fn recover(&self, log: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("recover")
+    fn recover(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<Py<PyAny>> {
+        if log.as_ref().is_some_and(|v| !v.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_recover', argument 2 of type 'bool'",
+            ));
+        }
+        self.call(py, |state, _| Ok(CasaValue::Bool(state.recover())))
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Remove components, keeping them available for recovery.
     #[pyo3(signature = (which = None, log = None), text_signature = "($self, which=[-1], log=True)")]
     fn remove(
         &self,
-        which: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] which: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("remove")
+        let (indices, pending) = match which {
+            Some(which) => selection::indices(&which)?,
+            None => (vec![-1], false),
+        };
+        if log.as_ref().is_some_and(|v| !v.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_remove', argument 3 of type 'bool'",
+            ));
+        }
+        let result = self.call(py, move |state, lines| {
+            state.remove(&indices, lines).map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_remove> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Attach the list to a new table `filename`, written at once (a list
@@ -703,19 +794,36 @@ impl PyComponentList {
         stub("replace")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder warns and returns an empty float array.
     #[pyo3(
         signature = (direction = None, pixellatsize = None, pixellongsize = None, frequency = None),
         text_signature = "($self, direction=[], pixellatsize=[], pixellongsize=[], frequency=[])"
     )]
     fn sample(
         &self,
+        py: Python<'_>,
         direction: Option<&Bound<'_, PyAny>>,
         pixellatsize: Option<&Bound<'_, PyAny>>,
         pixellongsize: Option<&Bound<'_, PyAny>>,
         frequency: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("sample")
+        let mut pending = false;
+        for value in [direction, pixellatsize, pixellongsize, frequency]
+            .into_iter()
+            .flatten()
+        {
+            pending |= placeholder::pending_integer_overflow(value)?;
+        }
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning("sample not implemented yet"));
+            Ok(CasaValue::floats(Vec::new()))
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_sample> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Select component indices.
@@ -757,16 +865,56 @@ impl PyComponentList {
         stub("setflux")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Change a component's reference frequency and its record unit.
     #[pyo3(signature = (which, value, unit = None, log = None), text_signature = "($self, which, value, unit='GHz', log=True)")]
     fn setfreq(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
         value: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] unit: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("setfreq")
+        let which = match which.extract::<i64>() {
+            Ok(index) => i64::from(index as i32),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => -1,
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        // CASA's double typemap passes -1 through to the operation when
+        // conversion fails, then reports a SystemError if it succeeded.
+        let converted = value.extract::<f64>();
+        let invalid_value = converted.is_err();
+        let value = converted.unwrap_or(-1.0);
+        let unit: String = match unit {
+            None => "GHz".to_string(),
+            Some(value) if value.is_instance_of::<PyString>() => value.extract()?,
+            Some(value) if value.is_instance_of::<PyBytes>() => {
+                let bytes = value.cast::<PyBytes>()?.as_bytes();
+                let end = bytes
+                    .iter()
+                    .position(|&byte| byte == 0)
+                    .unwrap_or(bytes.len());
+                PyBytes::new(py, &bytes[..end])
+                    .call_method1("decode", ("utf-8",))?
+                    .extract()?
+            }
+            Some(_) => return Err(PyTypeError::new_err("argument _unit must be a string")),
+        };
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_setfreq', argument 5 of type 'bool'",
+            ));
+        }
+        let unit = unit.split('\0').next().unwrap_or_default().to_string();
+        let result = self.call(py, move |state, _| {
+            state.setfreq(which, value, &unit).map(CasaValue::Bool)
+        })?;
+        if invalid_value {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_setfreq> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Not yet implemented in casa-rs.
@@ -780,15 +928,50 @@ impl PyComponentList {
         stub("setfreqframe")
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Replace the user label of one component.
     #[pyo3(signature = (which, value, log = None), text_signature = "($self, which, value, log=True)")]
     fn setlabel(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
         value: &Bound<'_, PyAny>,
-        log: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("setlabel")
+        let which = match which.extract::<i64>() {
+            Ok(index) => i64::from(index as i32),
+            Err(error) if which.is_none() || error.is_instance_of::<PyOverflowError>(py) => -1,
+            Err(_) => return Err(PyTypeError::new_err("argument _which must be an integer")),
+        };
+        let value: String = if value.is_instance_of::<PyString>() {
+            value.extract()?
+        } else if value.is_instance_of::<PyBytes>() {
+            let bytes = value.cast::<PyBytes>()?.as_bytes();
+            let end = bytes
+                .iter()
+                .position(|&byte| byte == 0)
+                .unwrap_or(bytes.len());
+            PyBytes::new(py, &bytes[..end])
+                .call_method1("decode", ("utf-8",))?
+                .extract()?
+        } else {
+            return Err(PyTypeError::new_err("argument _value must be a string"));
+        };
+        if log.as_ref().is_some_and(|v| !v.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_setlabel', argument 4 of type 'bool'",
+            ));
+        }
+        // The CASA wrapper passes a NUL-terminated C string to casacore.
+        let value = value.split('\0').next().unwrap_or_default().to_string();
+        self.call(py, move |state, lines| {
+            match state.setlabel(which, &value) {
+                Ok(result) => Ok(CasaValue::Bool(result)),
+                Err(error) => {
+                    lines.push(LogLine::error(format!("Exception Reported: {error}")));
+                    Err(error)
+                }
+            }
+        })
     }
 
     /// Not yet implemented in casa-rs.
