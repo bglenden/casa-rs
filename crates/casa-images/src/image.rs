@@ -1512,6 +1512,18 @@ impl<T: ImagePixel> PagedImage<T> {
         })
     }
 
+    /// Set an axis world unit, rescaling its coordinate values, and return its
+    /// previous unit. Call [`Self::save`] to persist the change.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the units, axis, or coordinate metadata are invalid.
+    pub fn set_axis_unit(&mut self, pixel_axis: usize, unit: &str) -> Result<String, ImageError> {
+        self.edit_coordinates(|record| {
+            CoordinateSystem::set_axis_unit_in_record(record, pixel_axis, unit)
+        })
+    }
+
     fn edit_coordinates<R>(
         &mut self,
         edit: impl FnOnce(

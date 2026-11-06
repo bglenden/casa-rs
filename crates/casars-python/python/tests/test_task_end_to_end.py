@@ -249,6 +249,9 @@ def test_imhead_put_accepts_rest_frequency_quantity_record(tmp_path: Path) -> No
     assert tasks.imhead(str(image), mode="get", hdkey="restfreq") == {"value": 1.5e9, "unit": "Hz"}
     assert tasks.imhead(str(image), mode="put", hdkey="crval4", hdvalue={"value": 1.5, "unit": "GHz"}) is None
     assert tasks.imhead(str(image), mode="get", hdkey="crval4") == {"value": 1.5e9, "unit": "Hz"}
+    assert tasks.imhead(str(image), mode="put", hdkey="cunit1", hdvalue="deg") is None
+    assert tasks.imhead(str(image), mode="get", hdkey="cunit1") == "deg"
+    assert tasks.imhead(str(image), mode="get", hdkey="restfreq") == {"value": 1.5e9, "unit": "Hz"}
 
 
 def test_msconvert_converts_both_ways_and_reports_its_losses(

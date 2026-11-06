@@ -4,6 +4,218 @@
 
 use super::*;
 
+#[test]
+fn imhead_edits_axis_units_and_rescales_coordinate_values() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let oracle: Value =
+        serde_json::from_slice(&std::fs::read(fixture.join("axis_unit_expected.json")).unwrap())
+            .unwrap();
+    assert_eq!(oracle["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for (index, case) in oracle["cases"].as_array().unwrap().iter().enumerate() {
+        let path = workspace.path().join(format!("axis-unit-{index}.im"));
+        copy_tree(
+            &fixture.join(format!("{}.im", case["image"].as_str().unwrap())),
+            &path,
+        );
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "put", "hdkey": case["key"], "hdvalue": case["value"]
+            }),
+        );
+        if case.get("error").is_some() {
+            assert!(
+                matches!(reply, Some(TaskReply::Failed { .. })),
+                "{index}: {reply:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    reply,
+                    Some(TaskReply::Succeeded {
+                        value: CasaValue::None,
+                        ..
+                    })
+                ),
+                "{index}: {reply:?}"
+            );
+            let value = returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "get", "hdkey": case["key"]}),
+            );
+            assert_header_value_near(&value.to_plain_json(), &case["get"], index);
+            let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+            let history = image.history().unwrap();
+            assert_eq!(
+                history[history.len() - 3],
+                case["history"][0],
+                "{index}: history"
+            );
+        }
+        let summary = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "summary"}),
+        )
+        .to_plain_json();
+        for key in [
+            "axisnames",
+            "axisunits",
+            "incr",
+            "refpix",
+            "refval",
+            "shape",
+        ] {
+            assert_header_value_near(&summary[key], &case["after"][key], index);
+        }
+        if let Some(expected) = case.get("restfreq") {
+            let value = returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "get", "hdkey": "restfreq"}),
+            );
+            assert_header_value_near(&value.to_plain_json(), expected, index);
+            let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+            let system = image.coordinates();
+            let frequencies = (0..system.n_coordinates())
+                .find_map(|i| match system.coordinate(i) {
+                    casa_coordinates::CoordinateModel::Spectral(spectral) => {
+                        Some(spectral.rest_frequencies())
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert_header_value_near(&json!(frequencies), &case["frequencies"], index);
+        }
+    }
+}
+
+#[test]
+fn imhead_refuses_unit_spellings_not_supported_by_the_coordinate_reader() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("unit-spelling.im");
+    copy_tree(&fixture, &path);
+    let before = returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": path, "mode": "summary"}),
+    );
+    for unit in ["deg^1", "deg**1", "arcsec*1"] {
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "put", "hdkey": "cunit1", "hdvalue": unit
+            }),
+        );
+        assert!(
+            matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("#977")),
+            "{unit}"
+        );
+    }
+    let after = returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": path, "mode": "summary"}),
+    );
+    assert_eq!(before, after);
+}
+
+#[test]
+fn imhead_validates_unit_axis_before_value_type() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("unit-errors.im");
+    copy_tree(&fixture, &path);
+    for (key, expected) in [("cunit3", "polarization axis"), ("cunit5", "invalid axis")] {
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "put", "hdkey": key, "hdvalue": 42
+            }),
+        );
+        assert!(
+            matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains(expected)),
+            "{key}"
+        );
+    }
+}
+
+#[test]
+fn imhead_refuses_non_hz_spectral_units_without_mutation() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let workspace = tempfile::tempdir().unwrap();
+    for (source, key, unit) in [
+        ("normal", "cunit4", "GHz"),
+        ("ghz", "cunit4", "MHz"),
+        ("transposed", "cunit2", "GHz"),
+    ] {
+        let path = workspace.path().join(format!("{source}.im"));
+        copy_tree(&fixture.join(format!("{source}.im")), &path);
+        let before = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "summary"}),
+        );
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "put", "hdkey": key, "hdvalue": unit
+            }),
+        );
+        assert!(
+            matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("#977")),
+            "{source}"
+        );
+        let after = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "summary"}),
+        );
+        assert_eq!(before, after, "{source}");
+    }
+}
+
+#[test]
+fn imhead_spectral_unit_conversion_to_hz_remains_correct_for_fits_export() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/ghz.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let image = workspace.path().join("spectral.im");
+    let fits = workspace.path().join("spectral.fits");
+    copy_tree(&fixture, &image);
+    let value = returned(
+        workspace.path(),
+        "imhead",
+        json!({
+            "imagename": image, "mode": "put", "hdkey": "cunit4", "hdvalue": "Hz"
+        }),
+    );
+    assert_eq!(value, CasaValue::None);
+    casa_images::analysis::export_fits(&image, &fits, false, false).unwrap();
+    let bytes = std::fs::read(fits).unwrap();
+    let card = bytes
+        .as_chunks::<80>()
+        .0
+        .iter()
+        .find(|card| card.starts_with(b"RESTFRQ "))
+        .unwrap();
+    let number = std::str::from_utf8(&card[10..])
+        .unwrap()
+        .split('/')
+        .next()
+        .unwrap()
+        .trim()
+        .parse::<f64>()
+        .unwrap();
+    assert_eq!(number, 1.4e9);
+}
+
 fn assert_header_value_near(actual: &Value, expected: &Value, case: usize) {
     match (actual, expected) {
         (Value::Number(a), Value::Number(b)) => {

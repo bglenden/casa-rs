@@ -1395,13 +1395,46 @@ pub fn imhead_put_axis_name(
     hdkey: &str,
     hdvalue: &ParameterValue,
 ) -> Result<ImageHeaderSummary, ImageError> {
-    let path = path.as_ref();
+    imhead_put_axis_text(path.as_ref(), hdkey, hdvalue, "ctype")
+}
+
+/// Set a CASA `cunitN` axis unit and rescale its coordinate values.
+///
+/// # Errors
+///
+/// Returns an error for invalid units, unsupported axes, malformed metadata,
+/// or image I/O failure. History I/O may fail after the metadata is saved.
+pub fn imhead_put_axis_unit(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    imhead_put_axis_text(path.as_ref(), hdkey, hdvalue, "cunit")
+}
+
+fn imhead_put_axis_text(
+    path: &Path,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+    prefix: &str,
+) -> Result<ImageHeaderSummary, ImageError> {
     validate_imhead_image(path)?;
     let key = hdkey.to_ascii_lowercase();
     let axis = key
-        .strip_prefix("ctype")
+        .strip_prefix(prefix)
         .and_then(imhead_axis_index)
         .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    if prefix == "cunit" {
+        let summary = imhead(path)?;
+        let header = summary.axes.get(axis).ok_or_else(|| {
+            ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}"))
+        })?;
+        if header.coordinate_type == "Stokes" {
+            return Err(ImageError::InvalidMetadata(
+                "A polarization axis cannot have a unit".into(),
+            ));
+        }
+    }
     let ParameterValue::String(name) = hdvalue else {
         return Err(ImageError::InvalidMetadata(format!(
             "{key} value must be a string"
@@ -1409,15 +1442,19 @@ pub fn imhead_put_axis_name(
     };
     if name.contains('\0') {
         return Err(ImageError::InvalidMetadata(
-            "Axis names containing NUL are not supported (#977)".into(),
+            "Axis names and units containing NUL are not supported (#977)".into(),
         ));
     }
     let mut image = AnyPagedImage::open(path)?;
-    let old = match &mut image {
-        AnyPagedImage::Float32(image) => image.set_axis_name(axis, name)?,
-        AnyPagedImage::Float64(image) => image.set_axis_name(axis, name)?,
-        AnyPagedImage::Complex32(image) => image.set_axis_name(axis, name)?,
-        AnyPagedImage::Complex64(image) => image.set_axis_name(axis, name)?,
+    let old = match (&mut image, prefix) {
+        (AnyPagedImage::Float32(image), "cunit") => image.set_axis_unit(axis, name)?,
+        (AnyPagedImage::Float64(image), "cunit") => image.set_axis_unit(axis, name)?,
+        (AnyPagedImage::Complex32(image), "cunit") => image.set_axis_unit(axis, name)?,
+        (AnyPagedImage::Complex64(image), "cunit") => image.set_axis_unit(axis, name)?,
+        (AnyPagedImage::Float32(image), _) => image.set_axis_name(axis, name)?,
+        (AnyPagedImage::Float64(image), _) => image.set_axis_name(axis, name)?,
+        (AnyPagedImage::Complex32(image), _) => image.set_axis_name(axis, name)?,
+        (AnyPagedImage::Complex64(image), _) => image.set_axis_name(axis, name)?,
     };
     image.save()?;
     drop(image);

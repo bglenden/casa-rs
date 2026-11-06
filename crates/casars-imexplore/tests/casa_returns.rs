@@ -1035,7 +1035,7 @@ fn imhead_put_of_an_empty_bunit_clears_it() {
     let (output, reply) = json_run(
         workspace.path(),
         "imhead",
-        json!({"imagename": image, "mode": "put", "hdkey": "cunit1", "hdvalue": "M31"}),
+        json!({"imagename": image, "mode": "put", "hdkey": "reffreqtype", "hdvalue": "M31"}),
     );
     assert_eq!(output.status.code(), Some(2));
     let Some(TaskReply::Failed {

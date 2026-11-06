@@ -74,6 +74,7 @@ fn run_imhead(
             let key = hdkey.to_ascii_lowercase();
             let reference_pixel = mode == "put" && key.starts_with("crpix");
             let axis_name = mode == "put" && key.starts_with("ctype");
+            let axis_unit = mode == "put" && key.starts_with("cunit");
             let rest_frequency = mode == "put" && key == "restfreq";
             let axis_quantity =
                 mode == "put" && (key.starts_with("cdelt") || key.starts_with("crval"));
@@ -81,6 +82,7 @@ fn run_imhead(
                 && !(mode == "put" && key == "imtype")
                 && !reference_pixel
                 && !axis_name
+                && !axis_unit
                 && !rest_frequency
                 && !axis_quantity
                 && !casa_images::analysis::imhead_is_custom_key(&hdkey)
@@ -108,6 +110,8 @@ fn run_imhead(
                 casa_images::analysis::imhead_put_reference_pixel(&path, &hdkey, &hdvalue)
             } else if axis_name {
                 casa_images::analysis::imhead_put_axis_name(&path, &hdkey, &hdvalue)
+            } else if axis_unit {
+                casa_images::analysis::imhead_put_axis_unit(&path, &hdkey, &hdvalue)
             } else if rest_frequency {
                 casa_images::analysis::imhead_put_rest_frequency(&path, &hdvalue)
             } else if axis_quantity {
