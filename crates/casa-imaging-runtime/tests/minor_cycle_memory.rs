@@ -407,7 +407,7 @@ fn automatic_memory_cases() -> impl Iterator<Item = (AutomaticMemoryCase, usize,
     cases
         .into_iter()
         .map(|case| (case, 1, false))
-        .chain([(full_stokes.clone(), 4, false), (full_stokes, 4, true)])
+        .chain([(full_stokes, 4, false), (full_stokes, 4, true)])
 }
 
 /// CASA's automatic mask of every channel (#980): preparing a minor cycle
