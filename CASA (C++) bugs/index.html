@@ -906,6 +906,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#mem-reuses-the-first-mask-tile-for-its-alpha-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MEM reuses the first mask tile for its alpha update
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#matrixcleaner-counts-the-iteration-that-stops-it" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1029,6 +1040,7 @@ CASA behaviours casa-rs does not follow:
 <a href="#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero">a Taylor run with no weight on its first correlation</a>,
 <a href="#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes">odd-size scale convolutions</a>,
 <a href="#matrixcleaners-step-residual-forgets-earlier-steps">MatrixCleaner's step residual</a>,
+<a href="#mem-reuses-the-first-mask-tile-for-its-alpha-update">MEM masks on tiled images</a>,
 <a href="#the-analytic-pb-ignores-a-failed-topixel">an unplaceable PB pointing</a>,
 <a href="#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames">the cube density's two uvw frames</a>,
 <a href="#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite">continuum <code>briggsabs</code> at robust 0 and noise 0</a>,
@@ -1326,6 +1338,24 @@ dirty gridding numerical floor. On the full
 <code>niter=500</code>, <code>cycleniter=50</code> heavy row, the same CASA-compatible mode reduced the
 CASA/casa-rs product differences to <code>.model</code> RMS <code>1.71e-7</code>, <code>.residual</code> RMS
 <code>5.68e-5</code>, and <code>.image</code> RMS <code>5.87e-5</code>.</p>
+<h2 id="mem-reuses-the-first-mask-tile-for-its-alpha-update">MEM reuses the first mask tile for its alpha update<a class="headerlink" href="#mem-reuses-the-first-mask-tile-for-its-alpha-update" title="Permanent link">&para;</a></h2>
+<p>CASA 6.7.6.14's no-prior <code>EntropyI::formGDG</code> advances its model and residual
+lattice iterators but does not advance its mask iterator. Its separate
+<code>formGDGStep</code> does advance the mask. Consequently the alpha update reads the
+first mask tile repeatedly, even when the model and residual have advanced to
+later tiles. For a 512 × 512 image whose 256 × 128 first tile is outside an
+81 × 81 box mask, an instrumented CASA run gives a zero alpha-update gradient
+matrix, although its step matrix has a nonzero chi-square gradient. On the
+<code>refim_eptwochan.ms</code> two-iteration test, the original CASA model differs from
+the native model by 0.164 normalized RMS; an offset box gives 0.164 as well.</p>
+<p>A local CASA probe replaced only that Gram-matrix calculation with
+<code>formGDGStep</code>, which computes the same matrix while advancing the mask. The
+probe is identical to unmodified CASA for a 200 × 200 single-tile box, and
+its 512 × 512 centred and offset box models agree with casa-rs within
+2.2e-7 normalized RMS; the other image products also pass their normal
+tolerances. This is evidence for the cause, not a replacement CASA reference.
+casa-rs reads each pixel's actual mask for both calculations, rather than
+reproducing a result that depends on the image's storage tile layout (#1060).</p>
 <h2 id="matrixcleaner-counts-the-iteration-that-stops-it">MatrixCleaner counts the iteration that stops it<a class="headerlink" href="#matrixcleaner-counts-the-iteration-that-stops-it" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-10-09</li>
@@ -4785,6 +4815,11 @@ otherwise warns and returns <code>False</code>. casa-rs detects record cycles an
 the placeholder result; for cyclic or non-finite index arguments it raises a
 catchable <code>ValueError</code>, as for component selection (#1176). No component is
 changed.</p>
+<p><code>componentlist.asciitocomponentlist('a', 'b', direction=record)</code> likewise
+crashes while converting a self-referential record, even though CASA's
+placeholder ignores that record. <code>tools/simulation/componentlist_ascii_oracle.py</code>
+records the crash in an isolated process. casa-rs returns the placeholder's
+zero and warning without reading a file or changing the list.</p>
 <h2 id="invalid-component-direction-frames-use-an-uninitialized-reference">Invalid component direction frames use an uninitialized reference<a class="headerlink" href="#invalid-component-direction-frames-use-an-uninitialized-reference" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-06</li>
@@ -4800,6 +4835,33 @@ direction unchanged; an uninitialized value can behave differently in another
 build. casa-rs logs the
 parse failure and raises a predictable <code>RuntimeError</code> before changing the
 component. The error text differs from the observed CASA assertion.</p>
+<h2 id="aw-projection-chooses-frequency-cells-from-averaged-channel-widths">AW projection chooses frequency cells from averaged channel widths<a class="headerlink" href="#aw-projection-chooses-frequency-cells-from-averaged-channel-widths" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-05</li>
+<li>Status: CASA 6.7.6.14 divergence; casa-rs uses the actual channel frequency (#1121).</li>
+<li>Affected code: <code>MSSelection::getChanFreqList</code>, <code>CFBuffer::initMaps</code> and
+  <code>AWVisResampler</code>.</li>
+</ul>
+<p>CASA constructs its per-channel AW convolution-cell map from the first
+selected channel frequency and the average channel width, rather than each
+selected channel's <code>CHAN_FREQ</code>. For irregular channel centres this can pick a
+cell on the other side of a frequency boundary. In a controlled three-channel
+VLA fixture with centres 1349.88, 1350.01 and 1350.15 MHz, widths of 100 kHz,
+and cache cells at 1200 and 1500 MHz, CASA maps the second channel using
+1349.98 MHz. That selects the 1200 MHz cell even though its actual 1350.01 MHz
+centre is closer to the 1500 MHz cell.</p>
+<p>A CASA control using 125 kHz widths maps that channel to the latter cell. Its
+start was adjusted to keep the output coordinates identical; the visibilities,
+weights, flags, selected channels and output grid were otherwise the same.
+The two CASA results differ by 0.104 normalized RMS in the PSF and 0.158 in the
+primary beam. On that control, casa-rs agrees with CASA on all compared
+products, masks and metadata, with worst normalized RMS 5.50e-7. The width
+metadata really differs between the controls; the comparison isolates the
+cell-selection effect on this natural-weighted fixture rather than asserting
+that channel widths are generally interchangeable. The per-row frame conversion
+can itself move a channel across a cell boundary, so casa-rs recovers the stored
+channel frequency for AW cell selection while retaining the converted frequency
+for UV placement. Rounding near an exact cell tie remains permitted.</p>
 <h2 id="casa-discards-zero-dimensional-floating-quantity-record-values">CASA discards zero-dimensional floating quantity-record values<a class="headerlink" href="#casa-discards-zero-dimensional-floating-quantity-record-values" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-05</li>
@@ -4947,6 +5009,18 @@ preserves an existing frequency error instead of resetting it to zero.</p>
 integer exactly. A self-referential input record terminates CASA with SIGSEGV;
 casa-rs raises a catchable <code>ValueError</code> before conversion. Array-valued and
 nested measure offsets remain explicitly unimplemented in casa-rs (#1053).</p>
+<h2 id="extra-measure-value-inspection-can-crash-on-cyclic-input">Extra-measure value inspection can crash on cyclic input<a class="headerlink" href="#extra-measure-value-inspection-can-crash-on-cyclic-input" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-06</li>
+<li>Status: CASA crashes; casa-rs rejects the cyclic record (#1053).</li>
+<li>Owner decision: Correct CASA crashes as a class; see <code>docs/simulation/owner-decisions-20261105.md</code>.</li>
+<li>Evidence: <code>tools/simulation/measures_addxvalue_oracle.py</code> and its CASA 6.7.6-14 fixture; the cyclic-input probe runs in an isolated process with core dumps disabled.</li>
+</ul>
+<p>Passing a self-referential dictionary to <code>measures.addxvalue</code> terminates
+CASA with SIGSEGV while converting the input record. casa-rs raises a
+catchable <code>ValueError</code> before conversion. Excessively nested records are
+also refused, and offset, multivalued and unsupported measure kinds are
+explicitly unimplemented (#1053).</p>
 
 
 

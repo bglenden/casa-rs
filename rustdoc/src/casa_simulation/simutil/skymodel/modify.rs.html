@@ -435,156 +435,153 @@
 <a href=#435 id=435 data-nosnippet>435</a>                refval: ModelValue::Model(in_unit(coordinate.reference_value()[<span class="number">0</span>])),
 <a href=#436 id=436 data-nosnippet>436</a>                refpix: coordinate.reference_pixel()[<span class="number">0</span>],
 <a href=#437 id=437 data-nosnippet>437</a>                width: ModelValue::Model(in_unit(coordinate.increment()[<span class="number">0</span>])),
-<a href=#438 id=438 data-nosnippet>438</a>                rest_frequency: ModelValue::Model(Quantity::with_unit(
-<a href=#439 id=439 data-nosnippet>439</a>                    coordinate.rest_frequency(),
-<a href=#440 id=440 data-nosnippet>440</a>                    unit(<span class="string">"Hz"</span>),
-<a href=#441 id=441 data-nosnippet>441</a>                )),
-<a href=#442 id=442 data-nosnippet>442</a>            }
-<a href=#443 id=443 data-nosnippet>443</a>        }
-<a href=#444 id=444 data-nosnippet>444</a>        <span class="prelude-val">None </span>=&gt; {
-<a href=#445 id=445 data-nosnippet>445</a>            <span class="kw">let </span>axis = axes.assign_unused(<span class="number">3</span>, <span class="string">"Spectral"</span>)<span class="question-mark">?</span>;
-<a href=#446 id=446 data-nosnippet>446</a>            <span class="kw">let </span>unset = ModelValue::Given(String::new());
-<a href=#447 id=447 data-nosnippet>447</a>            ModelSpectrum {
-<a href=#448 id=448 data-nosnippet>448</a>                nchan: shape[axis],
-<a href=#449 id=449 data-nosnippet>449</a>                refval: unset.clone(),
-<a href=#450 id=450 data-nosnippet>450</a>                refpix: <span class="number">0.0</span>,
-<a href=#451 id=451 data-nosnippet>451</a>                width: unset.clone(),
-<a href=#452 id=452 data-nosnippet>452</a>                rest_frequency: unset,
-<a href=#453 id=453 data-nosnippet>453</a>            }
-<a href=#454 id=454 data-nosnippet>454</a>        }
-<a href=#455 id=455 data-nosnippet>455</a>    };
-<a href=#456 id=456 data-nosnippet>456</a>    <span class="kw">let </span>frequency = |text: <span class="kw-2">&amp;</span>str| {
-<a href=#457 id=457 data-nosnippet>457</a>        qa::is_quantity(text)
-<a href=#458 id=458 data-nosnippet>458</a>            &amp;&amp; qa::read(text).is_ok_and(|value| qa::conforms(<span class="kw-2">&amp;</span>value, <span class="string">"Hz"</span>) &amp;&amp; value.value() &gt;= <span class="number">0.0</span>)
-<a href=#459 id=459 data-nosnippet>459</a>    };
-<a href=#460 id=460 data-nosnippet>460</a>    <span class="kw">let </span>valid = |value: <span class="kw-2">&amp;</span>ModelValue| <span class="kw">match </span>value {
-<a href=#461 id=461 data-nosnippet>461</a>        ModelValue::Model(value) =&gt; qa::conforms(value, <span class="string">"Hz"</span>),
-<a href=#462 id=462 data-nosnippet>462</a>        ModelValue::Given(text) =&gt; qa::is_quantity(text) &amp;&amp; frequency(text),
-<a href=#463 id=463 data-nosnippet>463</a>    };
-<a href=#464 id=464 data-nosnippet>464</a>    <span class="kw">if </span>frequency(<span class="kw-2">&amp;</span>overrides.incenter) {
-<a href=#465 id=465 data-nosnippet>465</a>        spectrum.refval = ModelValue::Given(overrides.incenter.clone());
-<a href=#466 id=466 data-nosnippet>466</a>        spectrum.refpix = (spectrum.nchan <span class="kw">as </span>f64 * <span class="number">0.5</span>).floor();
-<a href=#467 id=467 data-nosnippet>467</a>        spectrum.rest_frequency = ModelValue::Given(overrides.incenter.clone());
-<a href=#468 id=468 data-nosnippet>468</a>    } <span class="kw">else if </span>!valid(<span class="kw-2">&amp;</span>spectrum.refval) {
-<a href=#469 id=469 data-nosnippet>469</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SkyModelError::Model(
-<a href=#470 id=470 data-nosnippet>470</a>            <span class="string">"Unable to determine model frequency.  Valid 'incenter' parameter must be provided."
-<a href=#471 id=471 data-nosnippet>471</a>                </span>.to_string(),
-<a href=#472 id=472 data-nosnippet>472</a>        ));
-<a href=#473 id=473 data-nosnippet>473</a>    }
-<a href=#474 id=474 data-nosnippet>474</a>    <span class="kw">if </span>frequency(<span class="kw-2">&amp;</span>overrides.inwidth) {
-<a href=#475 id=475 data-nosnippet>475</a>        spectrum.width = ModelValue::Given(overrides.inwidth.clone());
-<a href=#476 id=476 data-nosnippet>476</a>    } <span class="kw">else if </span>!valid(<span class="kw-2">&amp;</span>spectrum.width) {
-<a href=#477 id=477 data-nosnippet>477</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SkyModelError::Model(
-<a href=#478 id=478 data-nosnippet>478</a>            <span class="string">"Unable to determine model channel or bandwidth.  Valid 'inwidth' parameter must be provided."
-<a href=#479 id=479 data-nosnippet>479</a>                </span>.to_string(),
-<a href=#480 id=480 data-nosnippet>480</a>        ));
-<a href=#481 id=481 data-nosnippet>481</a>    }
-<a href=#482 id=482 data-nosnippet>482</a>    <span class="prelude-val">Ok</span>(spectrum)
-<a href=#483 id=483 data-nosnippet>483</a>}
-<a href=#484 id=484 data-nosnippet>484</a>
-<a href=#485 id=485 data-nosnippet>485</a><span class="doccomment">/// The model's Stokes axis and its planes, or the first unclaimed axis,
-<a href=#486 id=486 data-nosnippet>486</a>/// labelled by its length: `IQUV`, `IQV`, `IQ` or `I`.
-<a href=#487 id=487 data-nosnippet>487</a></span><span class="kw">fn </span>stokes_axis(
-<a href=#488 id=488 data-nosnippet>488</a>    coordinates: <span class="kw-2">&amp;</span>CoordinateSystem,
-<a href=#489 id=489 data-nosnippet>489</a>    shape: <span class="kw-2">&amp;</span>[usize; <span class="number">4</span>],
-<a href=#490 id=490 data-nosnippet>490</a>    axes: <span class="kw-2">&amp;mut </span>AxisMap,
-<a href=#491 id=491 data-nosnippet>491</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(String, Vec&lt;StokesType&gt;), SkyModelError&gt; {
-<a href=#492 id=492 data-nosnippet>492</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>((index, pixel_axes)) = pixel_axes(coordinates, CoordinateType::Stokes) {
-<a href=#493 id=493 data-nosnippet>493</a>        <span class="kw">let </span>CoordinateModel::Stokes(coordinate) = coordinates.coordinate(index) <span class="kw">else </span>{
-<a href=#494 id=494 data-nosnippet>494</a>            <span class="macro">unreachable!</span>(<span class="string">"the coordinate found is a Stokes coordinate"</span>);
-<a href=#495 id=495 data-nosnippet>495</a>        };
-<a href=#496 id=496 data-nosnippet>496</a>        axes.assign(<span class="number">2</span>, pixel_axes[<span class="number">0</span>]);
-<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">if </span>shape[pixel_axes[<span class="number">0</span>]] &gt; <span class="number">4 </span>{
-<a href=#498 id=498 data-nosnippet>498</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SkyModelError::Model(
-<a href=#499 id=499 data-nosnippet>499</a>                <span class="string">"you appear to have more than 4 Stokes components - please edit your header and/or parameters"
-<a href=#500 id=500 data-nosnippet>500</a>                    </span>.to_string(),
-<a href=#501 id=501 data-nosnippet>501</a>            ));
-<a href=#502 id=502 data-nosnippet>502</a>        }
-<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span>types = coordinate.stokes().to_vec();
-<a href=#504 id=504 data-nosnippet>504</a>        <span class="kw">let </span>names = types.iter().map(|stokes| stokes.name()).collect();
-<a href=#505 id=505 data-nosnippet>505</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((names, types));
-<a href=#506 id=506 data-nosnippet>506</a>    }
-<a href=#507 id=507 data-nosnippet>507</a>    <span class="kw">let </span>axis = axes.assign_unused(<span class="number">2</span>, <span class="string">"Stokes"</span>)<span class="question-mark">?</span>;
-<a href=#508 id=508 data-nosnippet>508</a>    <span class="kw">let </span>planes = shape[axis];
-<a href=#509 id=509 data-nosnippet>509</a>    <span class="kw">if </span>planes &gt; <span class="number">4 </span>{
-<a href=#510 id=510 data-nosnippet>510</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SkyModelError::Model(<span class="macro">format!</span>(
-<a href=#511 id=511 data-nosnippet>511</a>            <span class="string">"you have {planes} Stokes parameters in your potential Stokes axis {axis}.  something is wrong."
-<a href=#512 id=512 data-nosnippet>512</a>        </span>)));
-<a href=#513 id=513 data-nosnippet>513</a>    }
-<a href=#514 id=514 data-nosnippet>514</a>    <span class="kw">let </span>names = <span class="kw">match </span>planes {
-<a href=#515 id=515 data-nosnippet>515</a>        <span class="number">4 </span>=&gt; <span class="string">"IQUV"</span>,
-<a href=#516 id=516 data-nosnippet>516</a>        <span class="number">3 </span>=&gt; <span class="string">"IQV"</span>,
-<a href=#517 id=517 data-nosnippet>517</a>        <span class="number">2 </span>=&gt; <span class="string">"IQ"</span>,
-<a href=#518 id=518 data-nosnippet>518</a>        <span class="kw">_ </span>=&gt; <span class="string">"I"</span>,
-<a href=#519 id=519 data-nosnippet>519</a>    };
-<a href=#520 id=520 data-nosnippet>520</a>    <span class="kw">if </span>planes == <span class="number">2 </span>|| planes == <span class="number">3 </span>{
-<a href=#521 id=521 data-nosnippet>521</a>        <span class="macro">tracing::warn!</span>(
-<a href=#522 id=522 data-nosnippet>522</a>            <span class="string">"setting {names} Stokes parameters from the 4th axis of you model.  If that's not what you want, then edit the header"
-<a href=#523 id=523 data-nosnippet>523</a>        </span>);
-<a href=#524 id=524 data-nosnippet>524</a>    }
-<a href=#525 id=525 data-nosnippet>525</a>    <span class="kw">let </span>types = names
-<a href=#526 id=526 data-nosnippet>526</a>        .chars()
-<a href=#527 id=527 data-nosnippet>527</a>        .map(|name| StokesType::from_name(<span class="kw-2">&amp;</span>name.to_string()).expect(<span class="string">"I, Q, U and V are Stokes"</span>))
-<a href=#528 id=528 data-nosnippet>528</a>        .collect();
-<a href=#529 id=529 data-nosnippet>529</a>    <span class="prelude-val">Ok</span>((names.to_string(), types))
-<a href=#530 id=530 data-nosnippet>530</a>}
-<a href=#531 id=531 data-nosnippet>531</a>
-<a href=#532 id=532 data-nosnippet>532</a><span class="doccomment">/// The new image's coordinate system: the direction read back from its
-<a href=#533 id=533 data-nosnippet>533</a>/// string, the cell in radians, the Stokes planes, and an LSRK spectral
-<a href=#534 id=534 data-nosnippet>534</a>/// axis.
-<a href=#535 id=535 data-nosnippet>535</a></span><span class="kw">fn </span>model_coordinates(
-<a href=#536 id=536 data-nosnippet>536</a>    direction: <span class="kw-2">&amp;</span>ModelDirection,
-<a href=#537 id=537 data-nosnippet>537</a>    cell: <span class="kw-2">&amp;</span>[Quantity; <span class="number">2</span>],
-<a href=#538 id=538 data-nosnippet>538</a>    spectrum: <span class="kw-2">&amp;</span>ModelSpectrum,
-<a href=#539 id=539 data-nosnippet>539</a>    stokes: Vec&lt;StokesType&gt;,
-<a href=#540 id=540 data-nosnippet>540</a>) -&gt; <span class="prelude-ty">Result</span>&lt;CoordinateSystem, SkyModelError&gt; {
-<a href=#541 id=541 data-nosnippet>541</a>    <span class="kw">let </span>(refer, crval) = direction::direction_measure(<span class="kw-2">&amp;</span>direction.refdir)<span class="question-mark">?</span>;
-<a href=#542 id=542 data-nosnippet>542</a>    <span class="kw">let </span>cdelt = [
-<a href=#543 id=543 data-nosnippet>543</a>        qa::value_in(<span class="kw-2">&amp;</span>cell[<span class="number">0</span>], <span class="string">"rad"</span>)<span class="question-mark">?</span>,
-<a href=#544 id=544 data-nosnippet>544</a>        qa::value_in(<span class="kw-2">&amp;</span>cell[<span class="number">1</span>], <span class="string">"rad"</span>)<span class="question-mark">?</span>,
-<a href=#545 id=545 data-nosnippet>545</a>    ];
-<a href=#546 id=546 data-nosnippet>546</a>    <span class="kw">let </span>hz = |value: <span class="kw-2">&amp;</span>ModelValue| -&gt; <span class="prelude-ty">Result</span>&lt;f64, SkyModelError&gt; {
-<a href=#547 id=547 data-nosnippet>547</a>        <span class="prelude-val">Ok</span>(qa::value_in(<span class="kw-2">&amp;</span>value.quantity()<span class="question-mark">?</span>, <span class="string">"Hz"</span>)<span class="question-mark">?</span>)
-<a href=#548 id=548 data-nosnippet>548</a>    };
-<a href=#549 id=549 data-nosnippet>549</a>    <span class="kw">let </span>width = hz(<span class="kw-2">&amp;</span>spectrum.width)<span class="question-mark">?</span>;
-<a href=#550 id=550 data-nosnippet>550</a>    check_increments(<span class="kw-2">&amp;</span>[cdelt[<span class="number">0</span>], cdelt[<span class="number">1</span>], width])<span class="question-mark">?</span>;
-<a href=#551 id=551 data-nosnippet>551</a>    <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new().with_obs_info(shape_obs_info());
-<a href=#552 id=552 data-nosnippet>552</a>    coordinates.add_coordinate(DirectionCoordinate::new(
-<a href=#553 id=553 data-nosnippet>553</a>        refer,
-<a href=#554 id=554 data-nosnippet>554</a>        direction.projection.clone(),
-<a href=#555 id=555 data-nosnippet>555</a>        crval,
-<a href=#556 id=556 data-nosnippet>556</a>        cdelt,
-<a href=#557 id=557 data-nosnippet>557</a>        direction.refpix,
-<a href=#558 id=558 data-nosnippet>558</a>    ));
-<a href=#559 id=559 data-nosnippet>559</a>    coordinates.add_coordinate(StokesCoordinate::new(stokes));
-<a href=#560 id=560 data-nosnippet>560</a>    coordinates.add_coordinate(SpectralCoordinate::new(
-<a href=#561 id=561 data-nosnippet>561</a>        FrequencyRef::LSRK,
-<a href=#562 id=562 data-nosnippet>562</a>        hz(<span class="kw-2">&amp;</span>spectrum.refval)<span class="question-mark">?</span>,
-<a href=#563 id=563 data-nosnippet>563</a>        width,
-<a href=#564 id=564 data-nosnippet>564</a>        spectrum.refpix,
-<a href=#565 id=565 data-nosnippet>565</a>        hz(<span class="kw-2">&amp;</span>spectrum.rest_frequency)<span class="question-mark">?</span>,
-<a href=#566 id=566 data-nosnippet>566</a>    ));
-<a href=#567 id=567 data-nosnippet>567</a>    <span class="prelude-val">Ok</span>(coordinates)
-<a href=#568 id=568 data-nosnippet>568</a>}
-<a href=#569 id=569 data-nosnippet>569</a>
-<a href=#570 id=570 data-nosnippet>570</a><span class="doccomment">/// Refuse a zero (or non-finite) increment, as CASA's coordinate setters
-<a href=#571 id=571 data-nosnippet>571</a>/// do: wcslib cannot invert the axis, and CASA could not open the image.
-<a href=#572 id=572 data-nosnippet>572</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>check_increments(increments: <span class="kw-2">&amp;</span>[f64]) -&gt; <span class="prelude-ty">Result</span>&lt;(), SkyModelError&gt; {
-<a href=#573 id=573 data-nosnippet>573</a>    <span class="kw">if </span>increments
-<a href=#574 id=574 data-nosnippet>574</a>        .iter()
-<a href=#575 id=575 data-nosnippet>575</a>        .all(|increment| increment.is_finite() &amp;&amp; <span class="kw-2">*</span>increment != <span class="number">0.0</span>)
-<a href=#576 id=576 data-nosnippet>576</a>    {
-<a href=#577 id=577 data-nosnippet>577</a>        <span class="prelude-val">Ok</span>(())
-<a href=#578 id=578 data-nosnippet>578</a>    } <span class="kw">else </span>{
-<a href=#579 id=579 data-nosnippet>579</a>        <span class="prelude-val">Err</span>(SkyModelError::Model(
-<a href=#580 id=580 data-nosnippet>580</a>            <span class="string">"wcs wcsset_error: Linear transformation matrix is singular"</span>.to_string(),
-<a href=#581 id=581 data-nosnippet>581</a>        ))
-<a href=#582 id=582 data-nosnippet>582</a>    }
-<a href=#583 id=583 data-nosnippet>583</a>}
-<a href=#584 id=584 data-nosnippet>584</a>
-<a href=#585 id=585 data-nosnippet>585</a><span class="doccomment">/// casacore's unit `name`.
-<a href=#586 id=586 data-nosnippet>586</a></span><span class="kw">fn </span>unit(name: <span class="kw-2">&amp;</span>str) -&gt; casa_types::quanta::Unit {
-<a href=#587 id=587 data-nosnippet>587</a>    casa_types::quanta::casacore::casacore_unit(name)
-<a href=#588 id=588 data-nosnippet>588</a>        .unwrap_or_else(|<span class="kw">_</span>| casa_types::quanta::Unit::dimensionless())
-<a href=#589 id=589 data-nosnippet>589</a>}
+<a href=#438 id=438 data-nosnippet>438</a>                rest_frequency: ModelValue::Model(in_unit(coordinate.rest_frequency())),
+<a href=#439 id=439 data-nosnippet>439</a>            }
+<a href=#440 id=440 data-nosnippet>440</a>        }
+<a href=#441 id=441 data-nosnippet>441</a>        <span class="prelude-val">None </span>=&gt; {
+<a href=#442 id=442 data-nosnippet>442</a>            <span class="kw">let </span>axis = axes.assign_unused(<span class="number">3</span>, <span class="string">"Spectral"</span>)<span class="question-mark">?</span>;
+<a href=#443 id=443 data-nosnippet>443</a>            <span class="kw">let </span>unset = ModelValue::Given(String::new());
+<a href=#444 id=444 data-nosnippet>444</a>            ModelSpectrum {
+<a href=#445 id=445 data-nosnippet>445</a>                nchan: shape[axis],
+<a href=#446 id=446 data-nosnippet>446</a>                refval: unset.clone(),
+<a href=#447 id=447 data-nosnippet>447</a>                refpix: <span class="number">0.0</span>,
+<a href=#448 id=448 data-nosnippet>448</a>                width: unset.clone(),
+<a href=#449 id=449 data-nosnippet>449</a>                rest_frequency: unset,
+<a href=#450 id=450 data-nosnippet>450</a>            }
+<a href=#451 id=451 data-nosnippet>451</a>        }
+<a href=#452 id=452 data-nosnippet>452</a>    };
+<a href=#453 id=453 data-nosnippet>453</a>    <span class="kw">let </span>frequency = |text: <span class="kw-2">&amp;</span>str| {
+<a href=#454 id=454 data-nosnippet>454</a>        qa::is_quantity(text)
+<a href=#455 id=455 data-nosnippet>455</a>            &amp;&amp; qa::read(text).is_ok_and(|value| qa::conforms(<span class="kw-2">&amp;</span>value, <span class="string">"Hz"</span>) &amp;&amp; value.value() &gt;= <span class="number">0.0</span>)
+<a href=#456 id=456 data-nosnippet>456</a>    };
+<a href=#457 id=457 data-nosnippet>457</a>    <span class="kw">let </span>valid = |value: <span class="kw-2">&amp;</span>ModelValue| <span class="kw">match </span>value {
+<a href=#458 id=458 data-nosnippet>458</a>        ModelValue::Model(value) =&gt; qa::conforms(value, <span class="string">"Hz"</span>),
+<a href=#459 id=459 data-nosnippet>459</a>        ModelValue::Given(text) =&gt; qa::is_quantity(text) &amp;&amp; frequency(text),
+<a href=#460 id=460 data-nosnippet>460</a>    };
+<a href=#461 id=461 data-nosnippet>461</a>    <span class="kw">if </span>frequency(<span class="kw-2">&amp;</span>overrides.incenter) {
+<a href=#462 id=462 data-nosnippet>462</a>        spectrum.refval = ModelValue::Given(overrides.incenter.clone());
+<a href=#463 id=463 data-nosnippet>463</a>        spectrum.refpix = (spectrum.nchan <span class="kw">as </span>f64 * <span class="number">0.5</span>).floor();
+<a href=#464 id=464 data-nosnippet>464</a>        spectrum.rest_frequency = ModelValue::Given(overrides.incenter.clone());
+<a href=#465 id=465 data-nosnippet>465</a>    } <span class="kw">else if </span>!valid(<span class="kw-2">&amp;</span>spectrum.refval) {
+<a href=#466 id=466 data-nosnippet>466</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SkyModelError::Model(
+<a href=#467 id=467 data-nosnippet>467</a>            <span class="string">"Unable to determine model frequency.  Valid 'incenter' parameter must be provided."
+<a href=#468 id=468 data-nosnippet>468</a>                </span>.to_string(),
+<a href=#469 id=469 data-nosnippet>469</a>        ));
+<a href=#470 id=470 data-nosnippet>470</a>    }
+<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">if </span>frequency(<span class="kw-2">&amp;</span>overrides.inwidth) {
+<a href=#472 id=472 data-nosnippet>472</a>        spectrum.width = ModelValue::Given(overrides.inwidth.clone());
+<a href=#473 id=473 data-nosnippet>473</a>    } <span class="kw">else if </span>!valid(<span class="kw-2">&amp;</span>spectrum.width) {
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SkyModelError::Model(
+<a href=#475 id=475 data-nosnippet>475</a>            <span class="string">"Unable to determine model channel or bandwidth.  Valid 'inwidth' parameter must be provided."
+<a href=#476 id=476 data-nosnippet>476</a>                </span>.to_string(),
+<a href=#477 id=477 data-nosnippet>477</a>        ));
+<a href=#478 id=478 data-nosnippet>478</a>    }
+<a href=#479 id=479 data-nosnippet>479</a>    <span class="prelude-val">Ok</span>(spectrum)
+<a href=#480 id=480 data-nosnippet>480</a>}
+<a href=#481 id=481 data-nosnippet>481</a>
+<a href=#482 id=482 data-nosnippet>482</a><span class="doccomment">/// The model's Stokes axis and its planes, or the first unclaimed axis,
+<a href=#483 id=483 data-nosnippet>483</a>/// labelled by its length: `IQUV`, `IQV`, `IQ` or `I`.
+<a href=#484 id=484 data-nosnippet>484</a></span><span class="kw">fn </span>stokes_axis(
+<a href=#485 id=485 data-nosnippet>485</a>    coordinates: <span class="kw-2">&amp;</span>CoordinateSystem,
+<a href=#486 id=486 data-nosnippet>486</a>    shape: <span class="kw-2">&amp;</span>[usize; <span class="number">4</span>],
+<a href=#487 id=487 data-nosnippet>487</a>    axes: <span class="kw-2">&amp;mut </span>AxisMap,
+<a href=#488 id=488 data-nosnippet>488</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(String, Vec&lt;StokesType&gt;), SkyModelError&gt; {
+<a href=#489 id=489 data-nosnippet>489</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>((index, pixel_axes)) = pixel_axes(coordinates, CoordinateType::Stokes) {
+<a href=#490 id=490 data-nosnippet>490</a>        <span class="kw">let </span>CoordinateModel::Stokes(coordinate) = coordinates.coordinate(index) <span class="kw">else </span>{
+<a href=#491 id=491 data-nosnippet>491</a>            <span class="macro">unreachable!</span>(<span class="string">"the coordinate found is a Stokes coordinate"</span>);
+<a href=#492 id=492 data-nosnippet>492</a>        };
+<a href=#493 id=493 data-nosnippet>493</a>        axes.assign(<span class="number">2</span>, pixel_axes[<span class="number">0</span>]);
+<a href=#494 id=494 data-nosnippet>494</a>        <span class="kw">if </span>shape[pixel_axes[<span class="number">0</span>]] &gt; <span class="number">4 </span>{
+<a href=#495 id=495 data-nosnippet>495</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(SkyModelError::Model(
+<a href=#496 id=496 data-nosnippet>496</a>                <span class="string">"you appear to have more than 4 Stokes components - please edit your header and/or parameters"
+<a href=#497 id=497 data-nosnippet>497</a>                    </span>.to_string(),
+<a href=#498 id=498 data-nosnippet>498</a>            ));
+<a href=#499 id=499 data-nosnippet>499</a>        }
+<a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">let </span>types = coordinate.stokes().to_vec();
+<a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">let </span>names = types.iter().map(|stokes| stokes.name()).collect();
+<a href=#502 id=502 data-nosnippet>502</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((names, types));
+<a href=#503 id=503 data-nosnippet>503</a>    }
+<a href=#504 id=504 data-nosnippet>504</a>    <span class="kw">let </span>axis = axes.assign_unused(<span class="number">2</span>, <span class="string">"Stokes"</span>)<span class="question-mark">?</span>;
+<a href=#505 id=505 data-nosnippet>505</a>    <span class="kw">let </span>planes = shape[axis];
+<a href=#506 id=506 data-nosnippet>506</a>    <span class="kw">if </span>planes &gt; <span class="number">4 </span>{
+<a href=#507 id=507 data-nosnippet>507</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(SkyModelError::Model(<span class="macro">format!</span>(
+<a href=#508 id=508 data-nosnippet>508</a>            <span class="string">"you have {planes} Stokes parameters in your potential Stokes axis {axis}.  something is wrong."
+<a href=#509 id=509 data-nosnippet>509</a>        </span>)));
+<a href=#510 id=510 data-nosnippet>510</a>    }
+<a href=#511 id=511 data-nosnippet>511</a>    <span class="kw">let </span>names = <span class="kw">match </span>planes {
+<a href=#512 id=512 data-nosnippet>512</a>        <span class="number">4 </span>=&gt; <span class="string">"IQUV"</span>,
+<a href=#513 id=513 data-nosnippet>513</a>        <span class="number">3 </span>=&gt; <span class="string">"IQV"</span>,
+<a href=#514 id=514 data-nosnippet>514</a>        <span class="number">2 </span>=&gt; <span class="string">"IQ"</span>,
+<a href=#515 id=515 data-nosnippet>515</a>        <span class="kw">_ </span>=&gt; <span class="string">"I"</span>,
+<a href=#516 id=516 data-nosnippet>516</a>    };
+<a href=#517 id=517 data-nosnippet>517</a>    <span class="kw">if </span>planes == <span class="number">2 </span>|| planes == <span class="number">3 </span>{
+<a href=#518 id=518 data-nosnippet>518</a>        <span class="macro">tracing::warn!</span>(
+<a href=#519 id=519 data-nosnippet>519</a>            <span class="string">"setting {names} Stokes parameters from the 4th axis of you model.  If that's not what you want, then edit the header"
+<a href=#520 id=520 data-nosnippet>520</a>        </span>);
+<a href=#521 id=521 data-nosnippet>521</a>    }
+<a href=#522 id=522 data-nosnippet>522</a>    <span class="kw">let </span>types = names
+<a href=#523 id=523 data-nosnippet>523</a>        .chars()
+<a href=#524 id=524 data-nosnippet>524</a>        .map(|name| StokesType::from_name(<span class="kw-2">&amp;</span>name.to_string()).expect(<span class="string">"I, Q, U and V are Stokes"</span>))
+<a href=#525 id=525 data-nosnippet>525</a>        .collect();
+<a href=#526 id=526 data-nosnippet>526</a>    <span class="prelude-val">Ok</span>((names.to_string(), types))
+<a href=#527 id=527 data-nosnippet>527</a>}
+<a href=#528 id=528 data-nosnippet>528</a>
+<a href=#529 id=529 data-nosnippet>529</a><span class="doccomment">/// The new image's coordinate system: the direction read back from its
+<a href=#530 id=530 data-nosnippet>530</a>/// string, the cell in radians, the Stokes planes, and an LSRK spectral
+<a href=#531 id=531 data-nosnippet>531</a>/// axis.
+<a href=#532 id=532 data-nosnippet>532</a></span><span class="kw">fn </span>model_coordinates(
+<a href=#533 id=533 data-nosnippet>533</a>    direction: <span class="kw-2">&amp;</span>ModelDirection,
+<a href=#534 id=534 data-nosnippet>534</a>    cell: <span class="kw-2">&amp;</span>[Quantity; <span class="number">2</span>],
+<a href=#535 id=535 data-nosnippet>535</a>    spectrum: <span class="kw-2">&amp;</span>ModelSpectrum,
+<a href=#536 id=536 data-nosnippet>536</a>    stokes: Vec&lt;StokesType&gt;,
+<a href=#537 id=537 data-nosnippet>537</a>) -&gt; <span class="prelude-ty">Result</span>&lt;CoordinateSystem, SkyModelError&gt; {
+<a href=#538 id=538 data-nosnippet>538</a>    <span class="kw">let </span>(refer, crval) = direction::direction_measure(<span class="kw-2">&amp;</span>direction.refdir)<span class="question-mark">?</span>;
+<a href=#539 id=539 data-nosnippet>539</a>    <span class="kw">let </span>cdelt = [
+<a href=#540 id=540 data-nosnippet>540</a>        qa::value_in(<span class="kw-2">&amp;</span>cell[<span class="number">0</span>], <span class="string">"rad"</span>)<span class="question-mark">?</span>,
+<a href=#541 id=541 data-nosnippet>541</a>        qa::value_in(<span class="kw-2">&amp;</span>cell[<span class="number">1</span>], <span class="string">"rad"</span>)<span class="question-mark">?</span>,
+<a href=#542 id=542 data-nosnippet>542</a>    ];
+<a href=#543 id=543 data-nosnippet>543</a>    <span class="kw">let </span>hz = |value: <span class="kw-2">&amp;</span>ModelValue| -&gt; <span class="prelude-ty">Result</span>&lt;f64, SkyModelError&gt; {
+<a href=#544 id=544 data-nosnippet>544</a>        <span class="prelude-val">Ok</span>(qa::value_in(<span class="kw-2">&amp;</span>value.quantity()<span class="question-mark">?</span>, <span class="string">"Hz"</span>)<span class="question-mark">?</span>)
+<a href=#545 id=545 data-nosnippet>545</a>    };
+<a href=#546 id=546 data-nosnippet>546</a>    <span class="kw">let </span>width = hz(<span class="kw-2">&amp;</span>spectrum.width)<span class="question-mark">?</span>;
+<a href=#547 id=547 data-nosnippet>547</a>    check_increments(<span class="kw-2">&amp;</span>[cdelt[<span class="number">0</span>], cdelt[<span class="number">1</span>], width])<span class="question-mark">?</span>;
+<a href=#548 id=548 data-nosnippet>548</a>    <span class="kw">let </span><span class="kw-2">mut </span>coordinates = CoordinateSystem::new().with_obs_info(shape_obs_info());
+<a href=#549 id=549 data-nosnippet>549</a>    coordinates.add_coordinate(DirectionCoordinate::new(
+<a href=#550 id=550 data-nosnippet>550</a>        refer,
+<a href=#551 id=551 data-nosnippet>551</a>        direction.projection.clone(),
+<a href=#552 id=552 data-nosnippet>552</a>        crval,
+<a href=#553 id=553 data-nosnippet>553</a>        cdelt,
+<a href=#554 id=554 data-nosnippet>554</a>        direction.refpix,
+<a href=#555 id=555 data-nosnippet>555</a>    ));
+<a href=#556 id=556 data-nosnippet>556</a>    coordinates.add_coordinate(StokesCoordinate::new(stokes));
+<a href=#557 id=557 data-nosnippet>557</a>    coordinates.add_coordinate(SpectralCoordinate::new(
+<a href=#558 id=558 data-nosnippet>558</a>        FrequencyRef::LSRK,
+<a href=#559 id=559 data-nosnippet>559</a>        hz(<span class="kw-2">&amp;</span>spectrum.refval)<span class="question-mark">?</span>,
+<a href=#560 id=560 data-nosnippet>560</a>        width,
+<a href=#561 id=561 data-nosnippet>561</a>        spectrum.refpix,
+<a href=#562 id=562 data-nosnippet>562</a>        hz(<span class="kw-2">&amp;</span>spectrum.rest_frequency)<span class="question-mark">?</span>,
+<a href=#563 id=563 data-nosnippet>563</a>    ));
+<a href=#564 id=564 data-nosnippet>564</a>    <span class="prelude-val">Ok</span>(coordinates)
+<a href=#565 id=565 data-nosnippet>565</a>}
+<a href=#566 id=566 data-nosnippet>566</a>
+<a href=#567 id=567 data-nosnippet>567</a><span class="doccomment">/// Refuse a zero (or non-finite) increment, as CASA's coordinate setters
+<a href=#568 id=568 data-nosnippet>568</a>/// do: wcslib cannot invert the axis, and CASA could not open the image.
+<a href=#569 id=569 data-nosnippet>569</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>check_increments(increments: <span class="kw-2">&amp;</span>[f64]) -&gt; <span class="prelude-ty">Result</span>&lt;(), SkyModelError&gt; {
+<a href=#570 id=570 data-nosnippet>570</a>    <span class="kw">if </span>increments
+<a href=#571 id=571 data-nosnippet>571</a>        .iter()
+<a href=#572 id=572 data-nosnippet>572</a>        .all(|increment| increment.is_finite() &amp;&amp; <span class="kw-2">*</span>increment != <span class="number">0.0</span>)
+<a href=#573 id=573 data-nosnippet>573</a>    {
+<a href=#574 id=574 data-nosnippet>574</a>        <span class="prelude-val">Ok</span>(())
+<a href=#575 id=575 data-nosnippet>575</a>    } <span class="kw">else </span>{
+<a href=#576 id=576 data-nosnippet>576</a>        <span class="prelude-val">Err</span>(SkyModelError::Model(
+<a href=#577 id=577 data-nosnippet>577</a>            <span class="string">"wcs wcsset_error: Linear transformation matrix is singular"</span>.to_string(),
+<a href=#578 id=578 data-nosnippet>578</a>        ))
+<a href=#579 id=579 data-nosnippet>579</a>    }
+<a href=#580 id=580 data-nosnippet>580</a>}
+<a href=#581 id=581 data-nosnippet>581</a>
+<a href=#582 id=582 data-nosnippet>582</a><span class="doccomment">/// casacore's unit `name`.
+<a href=#583 id=583 data-nosnippet>583</a></span><span class="kw">fn </span>unit(name: <span class="kw-2">&amp;</span>str) -&gt; casa_types::quanta::Unit {
+<a href=#584 id=584 data-nosnippet>584</a>    casa_types::quanta::casacore::casacore_unit(name)
+<a href=#585 id=585 data-nosnippet>585</a>        .unwrap_or_else(|<span class="kw">_</span>| casa_types::quanta::Unit::dimensionless())
+<a href=#586 id=586 data-nosnippet>586</a>}
 </code></pre></div></section></main></body></html>

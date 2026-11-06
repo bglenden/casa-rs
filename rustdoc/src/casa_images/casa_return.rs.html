@@ -80,7 +80,7 @@
 <a href=#80 id=80 data-nosnippet>80</a>        </span>(
 <a href=#81 id=81 data-nosnippet>81</a>            <span class="string">"hasmask"</span>,
 <a href=#82 id=82 data-nosnippet>82</a>            CasaValue::Bool {
-<a href=#83 id=83 data-nosnippet>83</a>                value: summary.default_mask.is_some(),
+<a href=#83 id=83 data-nosnippet>83</a>                value: summary.has_mask || summary.default_mask.is_some(),
 <a href=#84 id=84 data-nosnippet>84</a>            },
 <a href=#85 id=85 data-nosnippet>85</a>        ),
 <a href=#86 id=86 data-nosnippet>86</a>        (<span class="string">"imagetype"</span>, CasaValue::string(summary.image_type.clone())),
@@ -369,133 +369,134 @@
 <a href=#369 id=369 data-nosnippet>369</a>            spectral: <span class="prelude-val">None</span>,
 <a href=#370 id=370 data-nosnippet>370</a>            image_type: <span class="string">"Intensity"</span>.into(),
 <a href=#371 id=371 data-nosnippet>371</a>            default_mask: <span class="prelude-val">None</span>,
-<a href=#372 id=372 data-nosnippet>372</a>            masks: Vec::new(),
-<a href=#373 id=373 data-nosnippet>373</a>            regions: Vec::new(),
-<a href=#374 id=374 data-nosnippet>374</a>            restoring_beam: <span class="prelude-val">Some</span>(Box::new(RestoringBeamSummary {
-<a href=#375 id=375 data-nosnippet>375</a>                major_arcsec: <span class="number">3.0</span>,
-<a href=#376 id=376 data-nosnippet>376</a>                minor_arcsec: <span class="number">2.0</span>,
-<a href=#377 id=377 data-nosnippet>377</a>                position_angle_deg: <span class="number">10.0</span>,
-<a href=#378 id=378 data-nosnippet>378</a>                major: BeamQuantity {
-<a href=#379 id=379 data-nosnippet>379</a>                    value: <span class="number">3.0</span>,
-<a href=#380 id=380 data-nosnippet>380</a>                    unit: <span class="string">"arcsec"</span>.into(),
-<a href=#381 id=381 data-nosnippet>381</a>                },
-<a href=#382 id=382 data-nosnippet>382</a>                minor: BeamQuantity {
-<a href=#383 id=383 data-nosnippet>383</a>                    value: <span class="number">2.0</span>,
-<a href=#384 id=384 data-nosnippet>384</a>                    unit: <span class="string">"arcsec"</span>.into(),
-<a href=#385 id=385 data-nosnippet>385</a>                },
-<a href=#386 id=386 data-nosnippet>386</a>                position_angle: BeamQuantity {
-<a href=#387 id=387 data-nosnippet>387</a>                    value: <span class="number">10.0</span>,
-<a href=#388 id=388 data-nosnippet>388</a>                    unit: <span class="string">"deg"</span>.into(),
-<a href=#389 id=389 data-nosnippet>389</a>                },
-<a href=#390 id=390 data-nosnippet>390</a>                wrapped_position_angle: BeamQuantity {
-<a href=#391 id=391 data-nosnippet>391</a>                    value: <span class="number">10.0</span>,
-<a href=#392 id=392 data-nosnippet>392</a>                    unit: <span class="string">"deg"</span>.into(),
-<a href=#393 id=393 data-nosnippet>393</a>                },
-<a href=#394 id=394 data-nosnippet>394</a>            })),
-<a href=#395 id=395 data-nosnippet>395</a>            has_multiple_beams: <span class="bool-val">false</span>,
-<a href=#396 id=396 data-nosnippet>396</a>            per_plane_beams: <span class="prelude-val">None</span>,
-<a href=#397 id=397 data-nosnippet>397</a>            extrema: <span class="prelude-val">None</span>,
-<a href=#398 id=398 data-nosnippet>398</a>            axes: <span class="macro">vec!</span>[
-<a href=#399 id=399 data-nosnippet>399</a>                axis(<span class="number">0</span>, <span class="string">"Right Ascension"</span>, <span class="string">"rad"</span>),
-<a href=#400 id=400 data-nosnippet>400</a>                axis(<span class="number">1</span>, <span class="string">"Declination"</span>, <span class="string">"rad"</span>),
-<a href=#401 id=401 data-nosnippet>401</a>            ],
-<a href=#402 id=402 data-nosnippet>402</a>        }
-<a href=#403 id=403 data-nosnippet>403</a>    }
-<a href=#404 id=404 data-nosnippet>404</a>
-<a href=#405 id=405 data-nosnippet>405</a>    <span class="attr">#[test]
-<a href=#406 id=406 data-nosnippet>406</a>    </span><span class="kw">fn </span>imstat_returns_casas_keys_in_casas_order_with_its_dtypes() {
-<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">let </span>summary = ImageStatisticsSummary {
-<a href=#408 id=408 data-nosnippet>408</a>            imagename: <span class="string">"ramp.im"</span>.into(),
-<a href=#409 id=409 data-nosnippet>409</a>            blc: <span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>],
-<a href=#410 id=410 data-nosnippet>410</a>            trc: <span class="macro">vec!</span>[<span class="number">15</span>, <span class="number">15</span>, <span class="number">0</span>, <span class="number">7</span>],
-<a href=#411 id=411 data-nosnippet>411</a>            npts: <span class="number">2048.0</span>,
-<a href=#412 id=412 data-nosnippet>412</a>            min: <span class="number">0.0</span>,
-<a href=#413 id=413 data-nosnippet>413</a>            max: <span class="number">20.47</span>,
-<a href=#414 id=414 data-nosnippet>414</a>            sum: <span class="number">1.0</span>,
-<a href=#415 id=415 data-nosnippet>415</a>            sumsq: <span class="number">2.0</span>,
-<a href=#416 id=416 data-nosnippet>416</a>            mean: <span class="number">3.0</span>,
-<a href=#417 id=417 data-nosnippet>417</a>            rms: <span class="number">4.0</span>,
-<a href=#418 id=418 data-nosnippet>418</a>            sigma: <span class="number">5.0</span>,
-<a href=#419 id=419 data-nosnippet>419</a>            median: <span class="number">6.0</span>,
-<a href=#420 id=420 data-nosnippet>420</a>            minpos: <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]),
-<a href=#421 id=421 data-nosnippet>421</a>            maxpos: <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[<span class="number">15</span>, <span class="number">15</span>, <span class="number">0</span>, <span class="number">7</span>]),
-<a href=#422 id=422 data-nosnippet>422</a>            flux: <span class="prelude-val">Some</span>(<span class="number">1.5</span>),
-<a href=#423 id=423 data-nosnippet>423</a>            units: <span class="string">"Jy/beam"</span>.into(),
-<a href=#424 id=424 data-nosnippet>424</a>        };
-<a href=#425 id=425 data-nosnippet>425</a>        <span class="kw">let </span>record = imstat_record(<span class="kw-2">&amp;</span>summary);
-<a href=#426 id=426 data-nosnippet>426</a>        <span class="macro">assert_eq!</span>(
-<a href=#427 id=427 data-nosnippet>427</a>            keys(<span class="kw-2">&amp;</span>record),
-<a href=#428 id=428 data-nosnippet>428</a>            [
-<a href=#429 id=429 data-nosnippet>429</a>                <span class="string">"blc"</span>, <span class="string">"flux"</span>, <span class="string">"max"</span>, <span class="string">"maxpos"</span>, <span class="string">"mean"</span>, <span class="string">"median"</span>, <span class="string">"min"</span>, <span class="string">"minpos"</span>, <span class="string">"npts"</span>, <span class="string">"rms"</span>,
-<a href=#430 id=430 data-nosnippet>430</a>                <span class="string">"sigma"</span>, <span class="string">"sum"</span>, <span class="string">"sumsq"</span>, <span class="string">"trc"
-<a href=#431 id=431 data-nosnippet>431</a>            </span>]
-<a href=#432 id=432 data-nosnippet>432</a>        );
-<a href=#433 id=433 data-nosnippet>433</a>        <span class="kw">let </span>plain = record.to_plain_json();
-<a href=#434 id=434 data-nosnippet>434</a>        <span class="macro">assert_eq!</span>(plain[<span class="string">"npts"</span>], <span class="macro">serde_json::json!</span>([<span class="number">2048.0</span>]));
-<a href=#435 id=435 data-nosnippet>435</a>        <span class="macro">assert_eq!</span>(plain[<span class="string">"trc"</span>], <span class="macro">serde_json::json!</span>([<span class="number">15</span>, <span class="number">15</span>, <span class="number">0</span>, <span class="number">7</span>]));
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">let </span>unbeamed = ImageStatisticsSummary {
-<a href=#437 id=437 data-nosnippet>437</a>            flux: <span class="prelude-val">None</span>,
-<a href=#438 id=438 data-nosnippet>438</a>            ..summary
-<a href=#439 id=439 data-nosnippet>439</a>        };
-<a href=#440 id=440 data-nosnippet>440</a>        <span class="macro">assert!</span>(!keys(<span class="kw-2">&amp;</span>imstat_record(<span class="kw-2">&amp;</span>unbeamed)).contains(<span class="kw-2">&amp;</span><span class="string">"flux"</span>.to_string()));
-<a href=#441 id=441 data-nosnippet>441</a>    }
-<a href=#442 id=442 data-nosnippet>442</a>
-<a href=#443 id=443 data-nosnippet>443</a>    <span class="attr">#[test]
-<a href=#444 id=444 data-nosnippet>444</a>    </span><span class="kw">fn </span>imhead_summary_and_list_follow_casas_records() {
-<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw">let </span>summary = imhead_summary_record(<span class="kw-2">&amp;</span>header());
-<a href=#446 id=446 data-nosnippet>446</a>        <span class="macro">assert_eq!</span>(
-<a href=#447 id=447 data-nosnippet>447</a>            keys(<span class="kw-2">&amp;</span>summary),
-<a href=#448 id=448 data-nosnippet>448</a>            [
-<a href=#449 id=449 data-nosnippet>449</a>                <span class="string">"axisnames"</span>,
-<a href=#450 id=450 data-nosnippet>450</a>                <span class="string">"axisunits"</span>,
-<a href=#451 id=451 data-nosnippet>451</a>                <span class="string">"defaultmask"</span>,
-<a href=#452 id=452 data-nosnippet>452</a>                <span class="string">"hasmask"</span>,
-<a href=#453 id=453 data-nosnippet>453</a>                <span class="string">"imagetype"</span>,
-<a href=#454 id=454 data-nosnippet>454</a>                <span class="string">"incr"</span>,
-<a href=#455 id=455 data-nosnippet>455</a>                <span class="string">"masks"</span>,
-<a href=#456 id=456 data-nosnippet>456</a>                <span class="string">"messages"</span>,
-<a href=#457 id=457 data-nosnippet>457</a>                <span class="string">"ndim"</span>,
-<a href=#458 id=458 data-nosnippet>458</a>                <span class="string">"refpix"</span>,
-<a href=#459 id=459 data-nosnippet>459</a>                <span class="string">"refval"</span>,
-<a href=#460 id=460 data-nosnippet>460</a>                <span class="string">"restoringbeam"</span>,
-<a href=#461 id=461 data-nosnippet>461</a>                <span class="string">"shape"</span>,
-<a href=#462 id=462 data-nosnippet>462</a>                <span class="string">"tileshape"</span>,
-<a href=#463 id=463 data-nosnippet>463</a>                <span class="string">"unit"
-<a href=#464 id=464 data-nosnippet>464</a>            </span>]
-<a href=#465 id=465 data-nosnippet>465</a>        );
-<a href=#466 id=466 data-nosnippet>466</a>        <span class="kw">let </span>plain = summary.to_plain_json();
-<a href=#467 id=467 data-nosnippet>467</a>        <span class="macro">assert_eq!</span>(
-<a href=#468 id=468 data-nosnippet>468</a>            plain[<span class="string">"restoringbeam"</span>][<span class="string">"positionangle"</span>],
-<a href=#469 id=469 data-nosnippet>469</a>            <span class="macro">serde_json::json!</span>({<span class="string">"unit"</span>: <span class="string">"deg"</span>, <span class="string">"value"</span>: <span class="number">10.0</span>})
-<a href=#470 id=470 data-nosnippet>470</a>        );
-<a href=#471 id=471 data-nosnippet>471</a>        <span class="kw">let </span>list = imhead_list_record(<span class="kw-2">&amp;</span>header());
-<a href=#472 id=472 data-nosnippet>472</a>        <span class="macro">assert_eq!</span>(
-<a href=#473 id=473 data-nosnippet>473</a>            keys(<span class="kw-2">&amp;</span>list),
-<a href=#474 id=474 data-nosnippet>474</a>            [
-<a href=#475 id=475 data-nosnippet>475</a>                <span class="string">"beammajor"</span>,
-<a href=#476 id=476 data-nosnippet>476</a>                <span class="string">"beamminor"</span>,
-<a href=#477 id=477 data-nosnippet>477</a>                <span class="string">"beampa"</span>,
-<a href=#478 id=478 data-nosnippet>478</a>                <span class="string">"bunit"</span>,
-<a href=#479 id=479 data-nosnippet>479</a>                <span class="string">"cdelt1"</span>,
-<a href=#480 id=480 data-nosnippet>480</a>                <span class="string">"cdelt2"</span>,
-<a href=#481 id=481 data-nosnippet>481</a>                <span class="string">"crpix1"</span>,
-<a href=#482 id=482 data-nosnippet>482</a>                <span class="string">"crpix2"</span>,
-<a href=#483 id=483 data-nosnippet>483</a>                <span class="string">"crval1"</span>,
-<a href=#484 id=484 data-nosnippet>484</a>                <span class="string">"crval2"</span>,
-<a href=#485 id=485 data-nosnippet>485</a>                <span class="string">"ctype1"</span>,
-<a href=#486 id=486 data-nosnippet>486</a>                <span class="string">"ctype2"</span>,
-<a href=#487 id=487 data-nosnippet>487</a>                <span class="string">"cunit1"</span>,
-<a href=#488 id=488 data-nosnippet>488</a>                <span class="string">"cunit2"</span>,
-<a href=#489 id=489 data-nosnippet>489</a>                <span class="string">"date-obs"</span>,
-<a href=#490 id=490 data-nosnippet>490</a>                <span class="string">"imtype"</span>,
-<a href=#491 id=491 data-nosnippet>491</a>                <span class="string">"masks"</span>,
-<a href=#492 id=492 data-nosnippet>492</a>                <span class="string">"object"</span>,
-<a href=#493 id=493 data-nosnippet>493</a>                <span class="string">"observer"</span>,
-<a href=#494 id=494 data-nosnippet>494</a>                <span class="string">"shape"</span>,
-<a href=#495 id=495 data-nosnippet>495</a>                <span class="string">"telescope"
-<a href=#496 id=496 data-nosnippet>496</a>            </span>]
-<a href=#497 id=497 data-nosnippet>497</a>        );
-<a href=#498 id=498 data-nosnippet>498</a>        <span class="macro">assert_eq!</span>(list.to_plain_json()[<span class="string">"ctype2"</span>], <span class="string">"Declination"</span>);
-<a href=#499 id=499 data-nosnippet>499</a>    }
-<a href=#500 id=500 data-nosnippet>500</a>}
+<a href=#372 id=372 data-nosnippet>372</a>            has_mask: <span class="bool-val">false</span>,
+<a href=#373 id=373 data-nosnippet>373</a>            masks: Vec::new(),
+<a href=#374 id=374 data-nosnippet>374</a>            regions: Vec::new(),
+<a href=#375 id=375 data-nosnippet>375</a>            restoring_beam: <span class="prelude-val">Some</span>(Box::new(RestoringBeamSummary {
+<a href=#376 id=376 data-nosnippet>376</a>                major_arcsec: <span class="number">3.0</span>,
+<a href=#377 id=377 data-nosnippet>377</a>                minor_arcsec: <span class="number">2.0</span>,
+<a href=#378 id=378 data-nosnippet>378</a>                position_angle_deg: <span class="number">10.0</span>,
+<a href=#379 id=379 data-nosnippet>379</a>                major: BeamQuantity {
+<a href=#380 id=380 data-nosnippet>380</a>                    value: <span class="number">3.0</span>,
+<a href=#381 id=381 data-nosnippet>381</a>                    unit: <span class="string">"arcsec"</span>.into(),
+<a href=#382 id=382 data-nosnippet>382</a>                },
+<a href=#383 id=383 data-nosnippet>383</a>                minor: BeamQuantity {
+<a href=#384 id=384 data-nosnippet>384</a>                    value: <span class="number">2.0</span>,
+<a href=#385 id=385 data-nosnippet>385</a>                    unit: <span class="string">"arcsec"</span>.into(),
+<a href=#386 id=386 data-nosnippet>386</a>                },
+<a href=#387 id=387 data-nosnippet>387</a>                position_angle: BeamQuantity {
+<a href=#388 id=388 data-nosnippet>388</a>                    value: <span class="number">10.0</span>,
+<a href=#389 id=389 data-nosnippet>389</a>                    unit: <span class="string">"deg"</span>.into(),
+<a href=#390 id=390 data-nosnippet>390</a>                },
+<a href=#391 id=391 data-nosnippet>391</a>                wrapped_position_angle: BeamQuantity {
+<a href=#392 id=392 data-nosnippet>392</a>                    value: <span class="number">10.0</span>,
+<a href=#393 id=393 data-nosnippet>393</a>                    unit: <span class="string">"deg"</span>.into(),
+<a href=#394 id=394 data-nosnippet>394</a>                },
+<a href=#395 id=395 data-nosnippet>395</a>            })),
+<a href=#396 id=396 data-nosnippet>396</a>            has_multiple_beams: <span class="bool-val">false</span>,
+<a href=#397 id=397 data-nosnippet>397</a>            per_plane_beams: <span class="prelude-val">None</span>,
+<a href=#398 id=398 data-nosnippet>398</a>            extrema: <span class="prelude-val">None</span>,
+<a href=#399 id=399 data-nosnippet>399</a>            axes: <span class="macro">vec!</span>[
+<a href=#400 id=400 data-nosnippet>400</a>                axis(<span class="number">0</span>, <span class="string">"Right Ascension"</span>, <span class="string">"rad"</span>),
+<a href=#401 id=401 data-nosnippet>401</a>                axis(<span class="number">1</span>, <span class="string">"Declination"</span>, <span class="string">"rad"</span>),
+<a href=#402 id=402 data-nosnippet>402</a>            ],
+<a href=#403 id=403 data-nosnippet>403</a>        }
+<a href=#404 id=404 data-nosnippet>404</a>    }
+<a href=#405 id=405 data-nosnippet>405</a>
+<a href=#406 id=406 data-nosnippet>406</a>    <span class="attr">#[test]
+<a href=#407 id=407 data-nosnippet>407</a>    </span><span class="kw">fn </span>imstat_returns_casas_keys_in_casas_order_with_its_dtypes() {
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">let </span>summary = ImageStatisticsSummary {
+<a href=#409 id=409 data-nosnippet>409</a>            imagename: <span class="string">"ramp.im"</span>.into(),
+<a href=#410 id=410 data-nosnippet>410</a>            blc: <span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>],
+<a href=#411 id=411 data-nosnippet>411</a>            trc: <span class="macro">vec!</span>[<span class="number">15</span>, <span class="number">15</span>, <span class="number">0</span>, <span class="number">7</span>],
+<a href=#412 id=412 data-nosnippet>412</a>            npts: <span class="number">2048.0</span>,
+<a href=#413 id=413 data-nosnippet>413</a>            min: <span class="number">0.0</span>,
+<a href=#414 id=414 data-nosnippet>414</a>            max: <span class="number">20.47</span>,
+<a href=#415 id=415 data-nosnippet>415</a>            sum: <span class="number">1.0</span>,
+<a href=#416 id=416 data-nosnippet>416</a>            sumsq: <span class="number">2.0</span>,
+<a href=#417 id=417 data-nosnippet>417</a>            mean: <span class="number">3.0</span>,
+<a href=#418 id=418 data-nosnippet>418</a>            rms: <span class="number">4.0</span>,
+<a href=#419 id=419 data-nosnippet>419</a>            sigma: <span class="number">5.0</span>,
+<a href=#420 id=420 data-nosnippet>420</a>            median: <span class="number">6.0</span>,
+<a href=#421 id=421 data-nosnippet>421</a>            minpos: <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>]),
+<a href=#422 id=422 data-nosnippet>422</a>            maxpos: <span class="prelude-val">Some</span>(<span class="macro">vec!</span>[<span class="number">15</span>, <span class="number">15</span>, <span class="number">0</span>, <span class="number">7</span>]),
+<a href=#423 id=423 data-nosnippet>423</a>            flux: <span class="prelude-val">Some</span>(<span class="number">1.5</span>),
+<a href=#424 id=424 data-nosnippet>424</a>            units: <span class="string">"Jy/beam"</span>.into(),
+<a href=#425 id=425 data-nosnippet>425</a>        };
+<a href=#426 id=426 data-nosnippet>426</a>        <span class="kw">let </span>record = imstat_record(<span class="kw-2">&amp;</span>summary);
+<a href=#427 id=427 data-nosnippet>427</a>        <span class="macro">assert_eq!</span>(
+<a href=#428 id=428 data-nosnippet>428</a>            keys(<span class="kw-2">&amp;</span>record),
+<a href=#429 id=429 data-nosnippet>429</a>            [
+<a href=#430 id=430 data-nosnippet>430</a>                <span class="string">"blc"</span>, <span class="string">"flux"</span>, <span class="string">"max"</span>, <span class="string">"maxpos"</span>, <span class="string">"mean"</span>, <span class="string">"median"</span>, <span class="string">"min"</span>, <span class="string">"minpos"</span>, <span class="string">"npts"</span>, <span class="string">"rms"</span>,
+<a href=#431 id=431 data-nosnippet>431</a>                <span class="string">"sigma"</span>, <span class="string">"sum"</span>, <span class="string">"sumsq"</span>, <span class="string">"trc"
+<a href=#432 id=432 data-nosnippet>432</a>            </span>]
+<a href=#433 id=433 data-nosnippet>433</a>        );
+<a href=#434 id=434 data-nosnippet>434</a>        <span class="kw">let </span>plain = record.to_plain_json();
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="macro">assert_eq!</span>(plain[<span class="string">"npts"</span>], <span class="macro">serde_json::json!</span>([<span class="number">2048.0</span>]));
+<a href=#436 id=436 data-nosnippet>436</a>        <span class="macro">assert_eq!</span>(plain[<span class="string">"trc"</span>], <span class="macro">serde_json::json!</span>([<span class="number">15</span>, <span class="number">15</span>, <span class="number">0</span>, <span class="number">7</span>]));
+<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">let </span>unbeamed = ImageStatisticsSummary {
+<a href=#438 id=438 data-nosnippet>438</a>            flux: <span class="prelude-val">None</span>,
+<a href=#439 id=439 data-nosnippet>439</a>            ..summary
+<a href=#440 id=440 data-nosnippet>440</a>        };
+<a href=#441 id=441 data-nosnippet>441</a>        <span class="macro">assert!</span>(!keys(<span class="kw-2">&amp;</span>imstat_record(<span class="kw-2">&amp;</span>unbeamed)).contains(<span class="kw-2">&amp;</span><span class="string">"flux"</span>.to_string()));
+<a href=#442 id=442 data-nosnippet>442</a>    }
+<a href=#443 id=443 data-nosnippet>443</a>
+<a href=#444 id=444 data-nosnippet>444</a>    <span class="attr">#[test]
+<a href=#445 id=445 data-nosnippet>445</a>    </span><span class="kw">fn </span>imhead_summary_and_list_follow_casas_records() {
+<a href=#446 id=446 data-nosnippet>446</a>        <span class="kw">let </span>summary = imhead_summary_record(<span class="kw-2">&amp;</span>header());
+<a href=#447 id=447 data-nosnippet>447</a>        <span class="macro">assert_eq!</span>(
+<a href=#448 id=448 data-nosnippet>448</a>            keys(<span class="kw-2">&amp;</span>summary),
+<a href=#449 id=449 data-nosnippet>449</a>            [
+<a href=#450 id=450 data-nosnippet>450</a>                <span class="string">"axisnames"</span>,
+<a href=#451 id=451 data-nosnippet>451</a>                <span class="string">"axisunits"</span>,
+<a href=#452 id=452 data-nosnippet>452</a>                <span class="string">"defaultmask"</span>,
+<a href=#453 id=453 data-nosnippet>453</a>                <span class="string">"hasmask"</span>,
+<a href=#454 id=454 data-nosnippet>454</a>                <span class="string">"imagetype"</span>,
+<a href=#455 id=455 data-nosnippet>455</a>                <span class="string">"incr"</span>,
+<a href=#456 id=456 data-nosnippet>456</a>                <span class="string">"masks"</span>,
+<a href=#457 id=457 data-nosnippet>457</a>                <span class="string">"messages"</span>,
+<a href=#458 id=458 data-nosnippet>458</a>                <span class="string">"ndim"</span>,
+<a href=#459 id=459 data-nosnippet>459</a>                <span class="string">"refpix"</span>,
+<a href=#460 id=460 data-nosnippet>460</a>                <span class="string">"refval"</span>,
+<a href=#461 id=461 data-nosnippet>461</a>                <span class="string">"restoringbeam"</span>,
+<a href=#462 id=462 data-nosnippet>462</a>                <span class="string">"shape"</span>,
+<a href=#463 id=463 data-nosnippet>463</a>                <span class="string">"tileshape"</span>,
+<a href=#464 id=464 data-nosnippet>464</a>                <span class="string">"unit"
+<a href=#465 id=465 data-nosnippet>465</a>            </span>]
+<a href=#466 id=466 data-nosnippet>466</a>        );
+<a href=#467 id=467 data-nosnippet>467</a>        <span class="kw">let </span>plain = summary.to_plain_json();
+<a href=#468 id=468 data-nosnippet>468</a>        <span class="macro">assert_eq!</span>(
+<a href=#469 id=469 data-nosnippet>469</a>            plain[<span class="string">"restoringbeam"</span>][<span class="string">"positionangle"</span>],
+<a href=#470 id=470 data-nosnippet>470</a>            <span class="macro">serde_json::json!</span>({<span class="string">"unit"</span>: <span class="string">"deg"</span>, <span class="string">"value"</span>: <span class="number">10.0</span>})
+<a href=#471 id=471 data-nosnippet>471</a>        );
+<a href=#472 id=472 data-nosnippet>472</a>        <span class="kw">let </span>list = imhead_list_record(<span class="kw-2">&amp;</span>header());
+<a href=#473 id=473 data-nosnippet>473</a>        <span class="macro">assert_eq!</span>(
+<a href=#474 id=474 data-nosnippet>474</a>            keys(<span class="kw-2">&amp;</span>list),
+<a href=#475 id=475 data-nosnippet>475</a>            [
+<a href=#476 id=476 data-nosnippet>476</a>                <span class="string">"beammajor"</span>,
+<a href=#477 id=477 data-nosnippet>477</a>                <span class="string">"beamminor"</span>,
+<a href=#478 id=478 data-nosnippet>478</a>                <span class="string">"beampa"</span>,
+<a href=#479 id=479 data-nosnippet>479</a>                <span class="string">"bunit"</span>,
+<a href=#480 id=480 data-nosnippet>480</a>                <span class="string">"cdelt1"</span>,
+<a href=#481 id=481 data-nosnippet>481</a>                <span class="string">"cdelt2"</span>,
+<a href=#482 id=482 data-nosnippet>482</a>                <span class="string">"crpix1"</span>,
+<a href=#483 id=483 data-nosnippet>483</a>                <span class="string">"crpix2"</span>,
+<a href=#484 id=484 data-nosnippet>484</a>                <span class="string">"crval1"</span>,
+<a href=#485 id=485 data-nosnippet>485</a>                <span class="string">"crval2"</span>,
+<a href=#486 id=486 data-nosnippet>486</a>                <span class="string">"ctype1"</span>,
+<a href=#487 id=487 data-nosnippet>487</a>                <span class="string">"ctype2"</span>,
+<a href=#488 id=488 data-nosnippet>488</a>                <span class="string">"cunit1"</span>,
+<a href=#489 id=489 data-nosnippet>489</a>                <span class="string">"cunit2"</span>,
+<a href=#490 id=490 data-nosnippet>490</a>                <span class="string">"date-obs"</span>,
+<a href=#491 id=491 data-nosnippet>491</a>                <span class="string">"imtype"</span>,
+<a href=#492 id=492 data-nosnippet>492</a>                <span class="string">"masks"</span>,
+<a href=#493 id=493 data-nosnippet>493</a>                <span class="string">"object"</span>,
+<a href=#494 id=494 data-nosnippet>494</a>                <span class="string">"observer"</span>,
+<a href=#495 id=495 data-nosnippet>495</a>                <span class="string">"shape"</span>,
+<a href=#496 id=496 data-nosnippet>496</a>                <span class="string">"telescope"
+<a href=#497 id=497 data-nosnippet>497</a>            </span>]
+<a href=#498 id=498 data-nosnippet>498</a>        );
+<a href=#499 id=499 data-nosnippet>499</a>        <span class="macro">assert_eq!</span>(list.to_plain_json()[<span class="string">"ctype2"</span>], <span class="string">"Declination"</span>);
+<a href=#500 id=500 data-nosnippet>500</a>    }
+<a href=#501 id=501 data-nosnippet>501</a>}
 </code></pre></div></section></main></body></html>

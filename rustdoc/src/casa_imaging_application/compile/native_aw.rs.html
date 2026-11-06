@@ -141,7 +141,7 @@
 <a href=#141 id=141 data-nosnippet>141</a>/// (`survey`), in increasing CF frequency.
 <a href=#142 id=142 data-nosnippet>142</a></span><span class="kw">fn </span>frequency_groups(
 <a href=#143 id=143 data-nosnippet>143</a>    (store, survey): (usize, <span class="kw-2">&amp;</span>Survey),
-<a href=#144 id=144 data-nosnippet>144</a>    spectral: <span class="kw-2">&amp;</span>PreparedSpectralAxis,
+<a href=#144 id=144 data-nosnippet>144</a>    spectral: <span class="kw-2">&amp;</span>PreparedSpectralAxis&lt;<span class="lifetime">'_</span>&gt;,
 <a href=#145 id=145 data-nosnippet>145</a>) -&gt; Vec&lt;NativeAwFrequencyGroup&gt; {
 <a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">let </span><span class="kw-2">mut </span>frequencies = survey
 <a href=#147 id=147 data-nosnippet>147</a>        .spectral_windows

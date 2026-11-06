@@ -107,156 +107,158 @@
 <a href=#107 id=107 data-nosnippet>107</a>        outcome,
 <a href=#108 id=108 data-nosnippet>108</a>        peak_no_mask,
 <a href=#109 id=109 data-nosnippet>109</a>        terms,
-<a href=#110 id=110 data-nosnippet>110</a>        trace,
-<a href=#111 id=111 data-nosnippet>111</a>        charge,
-<a href=#112 id=112 data-nosnippet>112</a>    })
-<a href=#113 id=113 data-nosnippet>113</a>}
-<a href=#114 id=114 data-nosnippet>114</a>
-<a href=#115 id=115 data-nosnippet>115</a><span class="doccomment">/// CASA measures the mask and entry peaks over the whole polarization group;
-<a href=#116 id=116 data-nosnippet>116</a>/// Clark's component support remains the first polarization's mask.
-<a href=#117 id=117 data-nosnippet>117</a></span><span class="kw">fn </span>combine_statistics&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#118 id=118 data-nosnippet>118</a>    statistics: <span class="kw">impl </span>IntoIterator&lt;Item = <span class="kw-2">&amp;</span><span class="lifetime">'a </span>PlaneStatistics&gt;,
-<a href=#119 id=119 data-nosnippet>119</a>) -&gt; PlaneStatistics {
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="kw">let </span><span class="kw-2">mut </span>statistics = statistics.into_iter();
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">let </span><span class="kw-2">mut </span>combined = <span class="kw-2">*</span>statistics.next().expect(<span class="string">"a polarization group is nonempty"</span>);
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">for </span>other <span class="kw">in </span>statistics {
-<a href=#123 id=123 data-nosnippet>123</a>        combined.mask_sum = combined.mask_sum.saturating_add(other.mask_sum);
-<a href=#124 id=124 data-nosnippet>124</a>        combined.peak_in_mask = combined.peak_in_mask.max(other.peak_in_mask);
-<a href=#125 id=125 data-nosnippet>125</a>        combined.peak_no_mask = combined.peak_no_mask.max(other.peak_no_mask);
-<a href=#126 id=126 data-nosnippet>126</a>    }
-<a href=#127 id=127 data-nosnippet>127</a>    combined
-<a href=#128 id=128 data-nosnippet>128</a>}
-<a href=#129 id=129 data-nosnippet>129</a>
-<a href=#130 id=130 data-nosnippet>130</a><span class="doccomment">/// The zero-valued residual and PSF of a polarization with no data. CASA's
-<a href=#131 id=131 data-nosnippet>131</a>/// joint Clark uses the first polarization's mask even when that plane is blank.
-<a href=#132 id=132 data-nosnippet>132</a></span><span class="kw">fn </span>blank_plane&lt;<span class="lifetime">'a</span>&gt;(inputs: <span class="kw-2">&amp;</span>Inputs&lt;<span class="lifetime">'a</span>&gt;, key: PlaneKey) -&gt; PlaneData&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">let </span>shape = plane_shape(inputs.normal, key);
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="kw">let </span>mask = inputs
-<a href=#135 id=135 data-nosnippet>135</a>        .masks
-<a href=#136 id=136 data-nosnippet>136</a>        .get(key.domain)
-<a href=#137 id=137 data-nosnippet>137</a>        .and_then(|m| {
-<a href=#138 id=138 data-nosnippet>138</a>            m.plane(
-<a href=#139 id=139 data-nosnippet>139</a>                key.channel - inputs.normal.slab().core_range().start,
-<a href=#140 id=140 data-nosnippet>140</a>                key.polarization,
-<a href=#141 id=141 data-nosnippet>141</a>            )
-<a href=#142 id=142 data-nosnippet>142</a>        })
-<a href=#143 id=143 data-nosnippet>143</a>        .expect(<span class="string">"mask for every plane"</span>);
-<a href=#144 id=144 data-nosnippet>144</a>    PlaneData {
-<a href=#145 id=145 data-nosnippet>145</a>        shape,
-<a href=#146 id=146 data-nosnippet>146</a>        residual: <span class="macro">vec!</span>[<span class="macro">vec!</span>[<span class="number">0.0</span>; shape.len()]],
-<a href=#147 id=147 data-nosnippet>147</a>        psf: <span class="macro">vec!</span>[<span class="macro">vec!</span>[<span class="number">0.0</span>; shape.len()]],
-<a href=#148 id=148 data-nosnippet>148</a>        support: Support::new(shape, mask.to_vec()),
-<a href=#149 id=149 data-nosnippet>149</a>        valid: Support::new(shape, <span class="macro">vec!</span>[<span class="bool-val">false</span>; shape.len()]),
-<a href=#150 id=150 data-nosnippet>150</a>        response: <span class="prelude-val">None</span>,
-<a href=#151 id=151 data-nosnippet>151</a>    }
-<a href=#152 id=152 data-nosnippet>152</a>}
-<a href=#153 id=153 data-nosnippet>153</a>
-<a href=#154 id=154 data-nosnippet>154</a><span class="kw">fn </span>group_trace(
-<a href=#155 id=155 data-nosnippet>155</a>    components: <span class="kw-2">&amp;</span>[Component],
-<a href=#156 id=156 data-nosnippet>156</a>    planes: <span class="kw-2">&amp;</span>[PlaneData&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#157 id=157 data-nosnippet>157</a>    keys: <span class="kw-2">&amp;</span>[PlaneKey],
-<a href=#158 id=158 data-nosnippet>158</a>) -&gt; Vec&lt;TracedComponent&gt; {
-<a href=#159 id=159 data-nosnippet>159</a>    components
-<a href=#160 id=160 data-nosnippet>160</a>        .iter()
-<a href=#161 id=161 data-nosnippet>161</a>        .map(|component| {
-<a href=#162 id=162 data-nosnippet>162</a>            <span class="kw">let </span>key = keys[component.term];
-<a href=#163 id=163 data-nosnippet>163</a>            TracedComponent {
-<a href=#164 id=164 data-nosnippet>164</a>                cell: ModelCell::new(
-<a href=#165 id=165 data-nosnippet>165</a>                    key.domain,
-<a href=#166 id=166 data-nosnippet>166</a>                    key.channel,
-<a href=#167 id=167 data-nosnippet>167</a>                    key.polarization,
-<a href=#168 id=168 data-nosnippet>168</a>                    planes[component.term].shape.pixel(component.index),
-<a href=#169 id=169 data-nosnippet>169</a>                ),
-<a href=#170 id=170 data-nosnippet>170</a>                flux: component.flux,
-<a href=#171 id=171 data-nosnippet>171</a>                scale_px: <span class="number">0.0</span>,
-<a href=#172 id=172 data-nosnippet>172</a>            }
-<a href=#173 id=173 data-nosnippet>173</a>        })
-<a href=#174 id=174 data-nosnippet>174</a>        .collect()
-<a href=#175 id=175 data-nosnippet>175</a>}
-<a href=#176 id=176 data-nosnippet>176</a>
-<a href=#177 id=177 data-nosnippet>177</a><span class="kw">type </span>PlaneMeasurement = (PlaneKey, PlaneStatistics);
-<a href=#178 id=178 data-nosnippet>178</a><span class="kw">type </span>GroupInputs&lt;<span class="lifetime">'a</span>&gt; = (<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[PlaneMeasurement], <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Vec&lt;PlaneMeasurement&gt;);
-<a href=#179 id=179 data-nosnippet>179</a>
-<a href=#180 id=180 data-nosnippet>180</a><span class="doccomment">/// Solve the valid polarization groups and leave wholly blank channels as rows.
-<a href=#181 id=181 data-nosnippet>181</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>solve_groups(
-<a href=#182 id=182 data-nosnippet>182</a>    inputs: <span class="kw-2">&amp;</span>Inputs&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#183 id=183 data-nosnippet>183</a>    admission: (<span class="kw-2">&amp;</span>HostResources, <span class="kw-2">&amp;</span>ResourcePolicy),
-<a href=#184 id=184 data-nosnippet>184</a>    (planes, blank): GroupInputs&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#185 id=185 data-nosnippet>185</a>    cache: <span class="kw-2">&amp;</span>PsfCache,
-<a href=#186 id=186 data-nosnippet>186</a>    controls: <span class="kw-2">&amp;</span>CycleControls,
-<a href=#187 id=187 data-nosnippet>187</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
-<a href=#188 id=188 data-nosnippet>188</a>    results: <span class="kw-2">&amp;mut </span>Vec&lt;(PlaneKey, PlaneStatistics, Solved)&gt;,
-<a href=#189 id=189 data-nosnippet>189</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), MinorCycleRunError&gt; {
-<a href=#190 id=190 data-nosnippet>190</a>    <span class="kw">let </span>n_pol = inputs.normal.polarization_count();
-<a href=#191 id=191 data-nosnippet>191</a>    <span class="kw">let </span><span class="kw-2">mut </span>ordered = Vec::with_capacity(planes.len() + blank.len());
-<a href=#192 id=192 data-nosnippet>192</a>    ordered.extend_from_slice(planes);
-<a href=#193 id=193 data-nosnippet>193</a>    ordered.extend_from_slice(blank);
-<a href=#194 id=194 data-nosnippet>194</a>    ordered.sort_unstable_by_key(|(key, <span class="kw">_</span>)| (key.domain, key.channel, key.polarization));
-<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">let </span><span class="kw-2">mut </span>groups = Vec::with_capacity(ordered.len() / n_pol);
-<a href=#196 id=196 data-nosnippet>196</a>    blank.clear();
-<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">for </span>chunk <span class="kw">in </span>ordered.chunks_exact(n_pol) {
-<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">if </span>chunk
-<a href=#199 id=199 data-nosnippet>199</a>            .iter()
-<a href=#200 id=200 data-nosnippet>200</a>            .any(|(key, <span class="kw">_</span>)| holds_data(inputs.normal, <span class="bool-val">false</span>, <span class="kw-2">*</span>key))
-<a href=#201 id=201 data-nosnippet>201</a>        {
-<a href=#202 id=202 data-nosnippet>202</a>            groups.push(PolarizedSlot {
-<a href=#203 id=203 data-nosnippet>203</a>                keys: std::array::from_fn(|p| chunk[p.min(n_pol - <span class="number">1</span>)].<span class="number">0</span>),
-<a href=#204 id=204 data-nosnippet>204</a>                stats: std::array::from_fn(|p| chunk[p.min(n_pol - <span class="number">1</span>)].<span class="number">1</span>),
-<a href=#205 id=205 data-nosnippet>205</a>                solved: <span class="prelude-val">None</span>,
-<a href=#206 id=206 data-nosnippet>206</a>            });
-<a href=#207 id=207 data-nosnippet>207</a>        } <span class="kw">else </span>{
-<a href=#208 id=208 data-nosnippet>208</a>            blank.push((
-<a href=#209 id=209 data-nosnippet>209</a>                chunk[<span class="number">0</span>].<span class="number">0</span>,
-<a href=#210 id=210 data-nosnippet>210</a>                combine_statistics(chunk.iter().map(|(<span class="kw">_</span>, stats)| stats)),
-<a href=#211 id=211 data-nosnippet>211</a>            ));
-<a href=#212 id=212 data-nosnippet>212</a>        }
-<a href=#213 id=213 data-nosnippet>213</a>    }
-<a href=#214 id=214 data-nosnippet>214</a>    team.for_each_mut(<span class="kw-2">&amp;mut </span>groups, |<span class="kw">_</span>, group| {
-<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw">let </span>summary = cache
-<a href=#216 id=216 data-nosnippet>216</a>            .summaries
-<a href=#217 id=217 data-nosnippet>217</a>            .get(<span class="kw-2">&amp;</span>group.keys[<span class="number">0</span>])
-<a href=#218 id=218 data-nosnippet>218</a>            .copied()
-<a href=#219 id=219 data-nosnippet>219</a>            .unwrap_or_else(|| {
-<a href=#220 id=220 data-nosnippet>220</a>                cache
-<a href=#221 id=221 data-nosnippet>221</a>                    .summaries
-<a href=#222 id=222 data-nosnippet>222</a>                    .iter()
-<a href=#223 id=223 data-nosnippet>223</a>                    .filter(|(key, <span class="kw">_</span>)| key.domain == group.keys[<span class="number">0</span>].domain)
-<a href=#224 id=224 data-nosnippet>224</a>                    .map(|(<span class="kw">_</span>, summary)| <span class="kw-2">*</span>summary)
-<a href=#225 id=225 data-nosnippet>225</a>                    .max_by(|a, b| {
-<a href=#226 id=226 data-nosnippet>226</a>                        (a.beam().major_fwhm_rad() * a.beam().minor_fwhm_rad())
-<a href=#227 id=227 data-nosnippet>227</a>                            .total_cmp(<span class="kw-2">&amp;</span>(b.beam().major_fwhm_rad() * b.beam().minor_fwhm_rad()))
-<a href=#228 id=228 data-nosnippet>228</a>                    })
-<a href=#229 id=229 data-nosnippet>229</a>                    .expect(<span class="string">"a group with data has a measured PSF"</span>)
-<a href=#230 id=230 data-nosnippet>230</a>            });
-<a href=#231 id=231 data-nosnippet>231</a>        group.solved = <span class="prelude-val">Some</span>(<span class="kw">match </span>n_pol {
-<a href=#232 id=232 data-nosnippet>232</a>            <span class="number">2 </span>=&gt; solve::&lt;<span class="number">2</span>&gt;(
-<a href=#233 id=233 data-nosnippet>233</a>                inputs,
-<a href=#234 id=234 data-nosnippet>234</a>                admission,
-<a href=#235 id=235 data-nosnippet>235</a>                <span class="kw-2">&amp;</span>group.keys[..n_pol],
-<a href=#236 id=236 data-nosnippet>236</a>                <span class="kw-2">&amp;</span>group.stats[..n_pol],
-<a href=#237 id=237 data-nosnippet>237</a>                <span class="kw-2">&amp;</span>summary,
-<a href=#238 id=238 data-nosnippet>238</a>                controls,
-<a href=#239 id=239 data-nosnippet>239</a>            )<span class="question-mark">?</span>,
-<a href=#240 id=240 data-nosnippet>240</a>            <span class="number">4 </span>=&gt; solve::&lt;<span class="number">4</span>&gt;(
-<a href=#241 id=241 data-nosnippet>241</a>                inputs,
-<a href=#242 id=242 data-nosnippet>242</a>                admission,
-<a href=#243 id=243 data-nosnippet>243</a>                <span class="kw-2">&amp;</span>group.keys[..n_pol],
-<a href=#244 id=244 data-nosnippet>244</a>                <span class="kw-2">&amp;</span>group.stats[..n_pol],
-<a href=#245 id=245 data-nosnippet>245</a>                <span class="kw-2">&amp;</span>summary,
-<a href=#246 id=246 data-nosnippet>246</a>                controls,
-<a href=#247 id=247 data-nosnippet>247</a>            )<span class="question-mark">?</span>,
-<a href=#248 id=248 data-nosnippet>248</a>            <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(),
-<a href=#249 id=249 data-nosnippet>249</a>        });
-<a href=#250 id=250 data-nosnippet>250</a>        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, MinorCycleRunError&gt;(())
-<a href=#251 id=251 data-nosnippet>251</a>    })<span class="question-mark">?</span>;
-<a href=#252 id=252 data-nosnippet>252</a>    results.extend(groups.into_iter().map(|<span class="kw-2">mut </span>group| {
-<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span>stats = combine_statistics(group.stats[..n_pol].iter());
-<a href=#254 id=254 data-nosnippet>254</a>        (
-<a href=#255 id=255 data-nosnippet>255</a>            group.keys[<span class="number">0</span>],
-<a href=#256 id=256 data-nosnippet>256</a>            stats,
-<a href=#257 id=257 data-nosnippet>257</a>            group.solved.take().expect(<span class="string">"every group solved"</span>),
-<a href=#258 id=258 data-nosnippet>258</a>        )
-<a href=#259 id=259 data-nosnippet>259</a>    }));
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="prelude-val">Ok</span>(())
-<a href=#261 id=261 data-nosnippet>261</a>}
+<a href=#110 id=110 data-nosnippet>110</a>        dense: <span class="prelude-val">None</span>,
+<a href=#111 id=111 data-nosnippet>111</a>        mem_alpha: <span class="prelude-val">None</span>,
+<a href=#112 id=112 data-nosnippet>112</a>        trace,
+<a href=#113 id=113 data-nosnippet>113</a>        charge,
+<a href=#114 id=114 data-nosnippet>114</a>    })
+<a href=#115 id=115 data-nosnippet>115</a>}
+<a href=#116 id=116 data-nosnippet>116</a>
+<a href=#117 id=117 data-nosnippet>117</a><span class="doccomment">/// CASA measures the mask and entry peaks over the whole polarization group;
+<a href=#118 id=118 data-nosnippet>118</a>/// Clark's component support remains the first polarization's mask.
+<a href=#119 id=119 data-nosnippet>119</a></span><span class="kw">fn </span>combine_statistics&lt;<span class="lifetime">'a</span>&gt;(
+<a href=#120 id=120 data-nosnippet>120</a>    statistics: <span class="kw">impl </span>IntoIterator&lt;Item = <span class="kw-2">&amp;</span><span class="lifetime">'a </span>PlaneStatistics&gt;,
+<a href=#121 id=121 data-nosnippet>121</a>) -&gt; PlaneStatistics {
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">let </span><span class="kw-2">mut </span>statistics = statistics.into_iter();
+<a href=#123 id=123 data-nosnippet>123</a>    <span class="kw">let </span><span class="kw-2">mut </span>combined = <span class="kw-2">*</span>statistics.next().expect(<span class="string">"a polarization group is nonempty"</span>);
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="kw">for </span>other <span class="kw">in </span>statistics {
+<a href=#125 id=125 data-nosnippet>125</a>        combined.mask_sum = combined.mask_sum.saturating_add(other.mask_sum);
+<a href=#126 id=126 data-nosnippet>126</a>        combined.peak_in_mask = combined.peak_in_mask.max(other.peak_in_mask);
+<a href=#127 id=127 data-nosnippet>127</a>        combined.peak_no_mask = combined.peak_no_mask.max(other.peak_no_mask);
+<a href=#128 id=128 data-nosnippet>128</a>    }
+<a href=#129 id=129 data-nosnippet>129</a>    combined
+<a href=#130 id=130 data-nosnippet>130</a>}
+<a href=#131 id=131 data-nosnippet>131</a>
+<a href=#132 id=132 data-nosnippet>132</a><span class="doccomment">/// The zero-valued residual and PSF of a polarization with no data. CASA's
+<a href=#133 id=133 data-nosnippet>133</a>/// joint Clark uses the first polarization's mask even when that plane is blank.
+<a href=#134 id=134 data-nosnippet>134</a></span><span class="kw">fn </span>blank_plane&lt;<span class="lifetime">'a</span>&gt;(inputs: <span class="kw-2">&amp;</span>Inputs&lt;<span class="lifetime">'a</span>&gt;, key: PlaneKey) -&gt; PlaneData&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">let </span>shape = plane_shape(inputs.normal, key);
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">let </span>mask = inputs
+<a href=#137 id=137 data-nosnippet>137</a>        .masks
+<a href=#138 id=138 data-nosnippet>138</a>        .get(key.domain)
+<a href=#139 id=139 data-nosnippet>139</a>        .and_then(|m| {
+<a href=#140 id=140 data-nosnippet>140</a>            m.plane(
+<a href=#141 id=141 data-nosnippet>141</a>                key.channel - inputs.normal.slab().core_range().start,
+<a href=#142 id=142 data-nosnippet>142</a>                key.polarization,
+<a href=#143 id=143 data-nosnippet>143</a>            )
+<a href=#144 id=144 data-nosnippet>144</a>        })
+<a href=#145 id=145 data-nosnippet>145</a>        .expect(<span class="string">"mask for every plane"</span>);
+<a href=#146 id=146 data-nosnippet>146</a>    PlaneData {
+<a href=#147 id=147 data-nosnippet>147</a>        shape,
+<a href=#148 id=148 data-nosnippet>148</a>        residual: <span class="macro">vec!</span>[<span class="macro">vec!</span>[<span class="number">0.0</span>; shape.len()]],
+<a href=#149 id=149 data-nosnippet>149</a>        psf: <span class="macro">vec!</span>[<span class="macro">vec!</span>[<span class="number">0.0</span>; shape.len()]],
+<a href=#150 id=150 data-nosnippet>150</a>        support: Support::new(shape, mask.to_vec()),
+<a href=#151 id=151 data-nosnippet>151</a>        valid: Support::new(shape, <span class="macro">vec!</span>[<span class="bool-val">false</span>; shape.len()]),
+<a href=#152 id=152 data-nosnippet>152</a>        response: <span class="prelude-val">None</span>,
+<a href=#153 id=153 data-nosnippet>153</a>    }
+<a href=#154 id=154 data-nosnippet>154</a>}
+<a href=#155 id=155 data-nosnippet>155</a>
+<a href=#156 id=156 data-nosnippet>156</a><span class="kw">fn </span>group_trace(
+<a href=#157 id=157 data-nosnippet>157</a>    components: <span class="kw-2">&amp;</span>[Component],
+<a href=#158 id=158 data-nosnippet>158</a>    planes: <span class="kw-2">&amp;</span>[PlaneData&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#159 id=159 data-nosnippet>159</a>    keys: <span class="kw-2">&amp;</span>[PlaneKey],
+<a href=#160 id=160 data-nosnippet>160</a>) -&gt; Vec&lt;TracedComponent&gt; {
+<a href=#161 id=161 data-nosnippet>161</a>    components
+<a href=#162 id=162 data-nosnippet>162</a>        .iter()
+<a href=#163 id=163 data-nosnippet>163</a>        .map(|component| {
+<a href=#164 id=164 data-nosnippet>164</a>            <span class="kw">let </span>key = keys[component.term];
+<a href=#165 id=165 data-nosnippet>165</a>            TracedComponent {
+<a href=#166 id=166 data-nosnippet>166</a>                cell: ModelCell::new(
+<a href=#167 id=167 data-nosnippet>167</a>                    key.domain,
+<a href=#168 id=168 data-nosnippet>168</a>                    key.channel,
+<a href=#169 id=169 data-nosnippet>169</a>                    key.polarization,
+<a href=#170 id=170 data-nosnippet>170</a>                    planes[component.term].shape.pixel(component.index),
+<a href=#171 id=171 data-nosnippet>171</a>                ),
+<a href=#172 id=172 data-nosnippet>172</a>                flux: component.flux,
+<a href=#173 id=173 data-nosnippet>173</a>                scale_px: <span class="number">0.0</span>,
+<a href=#174 id=174 data-nosnippet>174</a>            }
+<a href=#175 id=175 data-nosnippet>175</a>        })
+<a href=#176 id=176 data-nosnippet>176</a>        .collect()
+<a href=#177 id=177 data-nosnippet>177</a>}
+<a href=#178 id=178 data-nosnippet>178</a>
+<a href=#179 id=179 data-nosnippet>179</a><span class="kw">type </span>PlaneMeasurement = (PlaneKey, PlaneStatistics);
+<a href=#180 id=180 data-nosnippet>180</a><span class="kw">type </span>GroupInputs&lt;<span class="lifetime">'a</span>&gt; = (<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[PlaneMeasurement], <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Vec&lt;PlaneMeasurement&gt;);
+<a href=#181 id=181 data-nosnippet>181</a>
+<a href=#182 id=182 data-nosnippet>182</a><span class="doccomment">/// Solve the valid polarization groups and leave wholly blank channels as rows.
+<a href=#183 id=183 data-nosnippet>183</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>solve_groups(
+<a href=#184 id=184 data-nosnippet>184</a>    inputs: <span class="kw-2">&amp;</span>Inputs&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#185 id=185 data-nosnippet>185</a>    admission: (<span class="kw-2">&amp;</span>HostResources, <span class="kw-2">&amp;</span>ResourcePolicy),
+<a href=#186 id=186 data-nosnippet>186</a>    (planes, blank): GroupInputs&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#187 id=187 data-nosnippet>187</a>    cache: <span class="kw-2">&amp;</span>PsfCache,
+<a href=#188 id=188 data-nosnippet>188</a>    controls: <span class="kw-2">&amp;</span>CycleControls,
+<a href=#189 id=189 data-nosnippet>189</a>    team: <span class="kw-2">&amp;</span>WorkerTeam,
+<a href=#190 id=190 data-nosnippet>190</a>    results: <span class="kw-2">&amp;mut </span>Vec&lt;(PlaneKey, PlaneStatistics, Solved)&gt;,
+<a href=#191 id=191 data-nosnippet>191</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), MinorCycleRunError&gt; {
+<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">let </span>n_pol = inputs.normal.polarization_count();
+<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">let </span><span class="kw-2">mut </span>ordered = Vec::with_capacity(planes.len() + blank.len());
+<a href=#194 id=194 data-nosnippet>194</a>    ordered.extend_from_slice(planes);
+<a href=#195 id=195 data-nosnippet>195</a>    ordered.extend_from_slice(blank);
+<a href=#196 id=196 data-nosnippet>196</a>    ordered.sort_unstable_by_key(|(key, <span class="kw">_</span>)| (key.domain, key.channel, key.polarization));
+<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">let </span><span class="kw-2">mut </span>groups = Vec::with_capacity(ordered.len() / n_pol);
+<a href=#198 id=198 data-nosnippet>198</a>    blank.clear();
+<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">for </span>chunk <span class="kw">in </span>ordered.chunks_exact(n_pol) {
+<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw">if </span>chunk
+<a href=#201 id=201 data-nosnippet>201</a>            .iter()
+<a href=#202 id=202 data-nosnippet>202</a>            .any(|(key, <span class="kw">_</span>)| holds_data(inputs.normal, <span class="bool-val">false</span>, <span class="kw-2">*</span>key))
+<a href=#203 id=203 data-nosnippet>203</a>        {
+<a href=#204 id=204 data-nosnippet>204</a>            groups.push(PolarizedSlot {
+<a href=#205 id=205 data-nosnippet>205</a>                keys: std::array::from_fn(|p| chunk[p.min(n_pol - <span class="number">1</span>)].<span class="number">0</span>),
+<a href=#206 id=206 data-nosnippet>206</a>                stats: std::array::from_fn(|p| chunk[p.min(n_pol - <span class="number">1</span>)].<span class="number">1</span>),
+<a href=#207 id=207 data-nosnippet>207</a>                solved: <span class="prelude-val">None</span>,
+<a href=#208 id=208 data-nosnippet>208</a>            });
+<a href=#209 id=209 data-nosnippet>209</a>        } <span class="kw">else </span>{
+<a href=#210 id=210 data-nosnippet>210</a>            blank.push((
+<a href=#211 id=211 data-nosnippet>211</a>                chunk[<span class="number">0</span>].<span class="number">0</span>,
+<a href=#212 id=212 data-nosnippet>212</a>                combine_statistics(chunk.iter().map(|(<span class="kw">_</span>, stats)| stats)),
+<a href=#213 id=213 data-nosnippet>213</a>            ));
+<a href=#214 id=214 data-nosnippet>214</a>        }
+<a href=#215 id=215 data-nosnippet>215</a>    }
+<a href=#216 id=216 data-nosnippet>216</a>    team.for_each_mut(<span class="kw-2">&amp;mut </span>groups, |<span class="kw">_</span>, group| {
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">let </span>summary = cache
+<a href=#218 id=218 data-nosnippet>218</a>            .summaries
+<a href=#219 id=219 data-nosnippet>219</a>            .get(<span class="kw-2">&amp;</span>group.keys[<span class="number">0</span>])
+<a href=#220 id=220 data-nosnippet>220</a>            .copied()
+<a href=#221 id=221 data-nosnippet>221</a>            .unwrap_or_else(|| {
+<a href=#222 id=222 data-nosnippet>222</a>                cache
+<a href=#223 id=223 data-nosnippet>223</a>                    .summaries
+<a href=#224 id=224 data-nosnippet>224</a>                    .iter()
+<a href=#225 id=225 data-nosnippet>225</a>                    .filter(|(key, <span class="kw">_</span>)| key.domain == group.keys[<span class="number">0</span>].domain)
+<a href=#226 id=226 data-nosnippet>226</a>                    .map(|(<span class="kw">_</span>, summary)| <span class="kw-2">*</span>summary)
+<a href=#227 id=227 data-nosnippet>227</a>                    .max_by(|a, b| {
+<a href=#228 id=228 data-nosnippet>228</a>                        (a.beam().major_fwhm_rad() * a.beam().minor_fwhm_rad())
+<a href=#229 id=229 data-nosnippet>229</a>                            .total_cmp(<span class="kw-2">&amp;</span>(b.beam().major_fwhm_rad() * b.beam().minor_fwhm_rad()))
+<a href=#230 id=230 data-nosnippet>230</a>                    })
+<a href=#231 id=231 data-nosnippet>231</a>                    .expect(<span class="string">"a group with data has a measured PSF"</span>)
+<a href=#232 id=232 data-nosnippet>232</a>            });
+<a href=#233 id=233 data-nosnippet>233</a>        group.solved = <span class="prelude-val">Some</span>(<span class="kw">match </span>n_pol {
+<a href=#234 id=234 data-nosnippet>234</a>            <span class="number">2 </span>=&gt; solve::&lt;<span class="number">2</span>&gt;(
+<a href=#235 id=235 data-nosnippet>235</a>                inputs,
+<a href=#236 id=236 data-nosnippet>236</a>                admission,
+<a href=#237 id=237 data-nosnippet>237</a>                <span class="kw-2">&amp;</span>group.keys[..n_pol],
+<a href=#238 id=238 data-nosnippet>238</a>                <span class="kw-2">&amp;</span>group.stats[..n_pol],
+<a href=#239 id=239 data-nosnippet>239</a>                <span class="kw-2">&amp;</span>summary,
+<a href=#240 id=240 data-nosnippet>240</a>                controls,
+<a href=#241 id=241 data-nosnippet>241</a>            )<span class="question-mark">?</span>,
+<a href=#242 id=242 data-nosnippet>242</a>            <span class="number">4 </span>=&gt; solve::&lt;<span class="number">4</span>&gt;(
+<a href=#243 id=243 data-nosnippet>243</a>                inputs,
+<a href=#244 id=244 data-nosnippet>244</a>                admission,
+<a href=#245 id=245 data-nosnippet>245</a>                <span class="kw-2">&amp;</span>group.keys[..n_pol],
+<a href=#246 id=246 data-nosnippet>246</a>                <span class="kw-2">&amp;</span>group.stats[..n_pol],
+<a href=#247 id=247 data-nosnippet>247</a>                <span class="kw-2">&amp;</span>summary,
+<a href=#248 id=248 data-nosnippet>248</a>                controls,
+<a href=#249 id=249 data-nosnippet>249</a>            )<span class="question-mark">?</span>,
+<a href=#250 id=250 data-nosnippet>250</a>            <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(),
+<a href=#251 id=251 data-nosnippet>251</a>        });
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, MinorCycleRunError&gt;(())
+<a href=#253 id=253 data-nosnippet>253</a>    })<span class="question-mark">?</span>;
+<a href=#254 id=254 data-nosnippet>254</a>    results.extend(groups.into_iter().map(|<span class="kw-2">mut </span>group| {
+<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw">let </span>stats = combine_statistics(group.stats[..n_pol].iter());
+<a href=#256 id=256 data-nosnippet>256</a>        (
+<a href=#257 id=257 data-nosnippet>257</a>            group.keys[<span class="number">0</span>],
+<a href=#258 id=258 data-nosnippet>258</a>            stats,
+<a href=#259 id=259 data-nosnippet>259</a>            group.solved.take().expect(<span class="string">"every group solved"</span>),
+<a href=#260 id=260 data-nosnippet>260</a>        )
+<a href=#261 id=261 data-nosnippet>261</a>    }));
+<a href=#262 id=262 data-nosnippet>262</a>    <span class="prelude-val">Ok</span>(())
+<a href=#263 id=263 data-nosnippet>263</a>}
 </code></pre></div></section></main></body></html>

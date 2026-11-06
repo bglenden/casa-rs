@@ -1315,43 +1315,44 @@
 <a href=#1315 id=1315 data-nosnippet>1315</a>
 <a href=#1316 id=1316 data-nosnippet>1316</a>        <span class="kw">let </span>world = cs.to_world(<span class="kw-2">&amp;</span>[<span class="number">128.0</span>, <span class="number">128.0</span>, <span class="number">0.0</span>, <span class="number">2.0</span>]).unwrap();
 <a href=#1317 id=1317 data-nosnippet>1317</a>        <span class="macro">assert_eq!</span>(world.len(), <span class="number">4</span>);
-<a href=#1318 id=1318 data-nosnippet>1318</a>        <span class="macro">assert!</span>((world[<span class="number">3</span>] - <span class="number">1.150345e11</span>).abs() &lt; <span class="number">10.0</span>);
-<a href=#1319 id=1319 data-nosnippet>1319</a>
-<a href=#1320 id=1320 data-nosnippet>1320</a>        <span class="kw">let </span>pixel = cs.to_pixel(<span class="kw-2">&amp;</span>[<span class="number">4.02298</span>, <span class="number">0.08843</span>, <span class="number">1.0</span>, <span class="number">1.150345e11</span>]).unwrap();
-<a href=#1321 id=1321 data-nosnippet>1321</a>        <span class="macro">assert!</span>((pixel[<span class="number">3</span>] - <span class="number">2.0</span>).abs() &lt; <span class="number">1e-10</span>);
-<a href=#1322 id=1322 data-nosnippet>1322</a>    }
-<a href=#1323 id=1323 data-nosnippet>1323</a>
-<a href=#1324 id=1324 data-nosnippet>1324</a>    <span class="attr">#[test]
-<a href=#1325 id=1325 data-nosnippet>1325</a>    </span><span class="kw">fn </span>from_record_applies_casa_style_spectral_conversion_state() {
-<a href=#1326 id=1326 data-nosnippet>1326</a>        <span class="kw">let </span>cs =
-<a href=#1327 id=1327 data-nosnippet>1327</a>            CoordinateSystem::from_record(<span class="kw-2">&amp;</span>casa_style_coords_with_tabular_spectral_conversion())
-<a href=#1328 id=1328 data-nosnippet>1328</a>                .unwrap();
-<a href=#1329 id=1329 data-nosnippet>1329</a>
-<a href=#1330 id=1330 data-nosnippet>1330</a>        <span class="kw">let </span>expected = MFrequency::new(<span class="number">1.15022e11</span>, FrequencyRef::LSRD)
-<a href=#1331 id=1331 data-nosnippet>1331</a>            .convert_to(
-<a href=#1332 id=1332 data-nosnippet>1332</a>                FrequencyRef::LSRK,
-<a href=#1333 id=1333 data-nosnippet>1333</a>                <span class="kw-2">&amp;</span>MeasFrame::new()
-<a href=#1334 id=1334 data-nosnippet>1334</a>                    .with_direction(MDirection::from_angles(
-<a href=#1335 id=1335 data-nosnippet>1335</a>                        -<span class="number">2.8940293347227444</span>,
-<a href=#1336 id=1336 data-nosnippet>1336</a>                        <span class="number">0.3784702849718404</span>,
-<a href=#1337 id=1337 data-nosnippet>1337</a>                        DirectionRef::J2000,
-<a href=#1338 id=1338 data-nosnippet>1338</a>                    ))
-<a href=#1339 id=1339 data-nosnippet>1339</a>                    .with_position(MPosition::new_wgs84(
-<a href=#1340 id=1340 data-nosnippet>1340</a>                        -<span class="number">2.1200320498502676</span>,
-<a href=#1341 id=1341 data-nosnippet>1341</a>                        <span class="number">0.7123949192959743</span>,
-<a href=#1342 id=1342 data-nosnippet>1342</a>                        <span class="number">1021.0</span>,
-<a href=#1343 id=1343 data-nosnippet>1343</a>                    ))
-<a href=#1344 id=1344 data-nosnippet>1344</a>                    .with_epoch(MEpoch::from_mjd(<span class="number">50_919.14846423176</span>, EpochRef::UTC)),
-<a href=#1345 id=1345 data-nosnippet>1345</a>            )
-<a href=#1346 id=1346 data-nosnippet>1346</a>            .unwrap()
-<a href=#1347 id=1347 data-nosnippet>1347</a>            .hz();
-<a href=#1348 id=1348 data-nosnippet>1348</a>
-<a href=#1349 id=1349 data-nosnippet>1349</a>        <span class="kw">let </span>world = cs.to_world(<span class="kw-2">&amp;</span>[<span class="number">128.0</span>, <span class="number">128.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]).unwrap();
-<a href=#1350 id=1350 data-nosnippet>1350</a>        <span class="macro">assert_eq!</span>(world.len(), <span class="number">4</span>);
-<a href=#1351 id=1351 data-nosnippet>1351</a>        <span class="macro">assert!</span>((world[<span class="number">3</span>] - expected).abs() &lt; <span class="number">1.0</span>);
-<a href=#1352 id=1352 data-nosnippet>1352</a>
-<a href=#1353 id=1353 data-nosnippet>1353</a>        <span class="kw">let </span>pixel = cs.to_pixel(<span class="kw-2">&amp;</span>[<span class="number">4.02298</span>, <span class="number">0.08843</span>, <span class="number">1.0</span>, expected]).unwrap();
-<a href=#1354 id=1354 data-nosnippet>1354</a>        <span class="macro">assert!</span>((pixel[<span class="number">3</span>] - <span class="number">0.0</span>).abs() &lt; <span class="number">1e-6</span>);
-<a href=#1355 id=1355 data-nosnippet>1355</a>    }
-<a href=#1356 id=1356 data-nosnippet>1356</a>}
+<a href=#1318 id=1318 data-nosnippet>1318</a>        <span class="comment">// Casacore reconstructs a spectral lookup on consecutive channels.
+<a href=#1319 id=1319 data-nosnippet>1319</a>        </span><span class="macro">assert!</span>((world[<span class="number">3</span>] - <span class="number">1.1504075e11</span>).abs() &lt; <span class="number">10.0</span>);
+<a href=#1320 id=1320 data-nosnippet>1320</a>
+<a href=#1321 id=1321 data-nosnippet>1321</a>        <span class="kw">let </span>pixel = cs.to_pixel(<span class="kw-2">&amp;</span>[<span class="number">4.02298</span>, <span class="number">0.08843</span>, <span class="number">1.0</span>, <span class="number">1.1504075e11</span>]).unwrap();
+<a href=#1322 id=1322 data-nosnippet>1322</a>        <span class="macro">assert!</span>((pixel[<span class="number">3</span>] - <span class="number">2.0</span>).abs() &lt; <span class="number">1e-10</span>);
+<a href=#1323 id=1323 data-nosnippet>1323</a>    }
+<a href=#1324 id=1324 data-nosnippet>1324</a>
+<a href=#1325 id=1325 data-nosnippet>1325</a>    <span class="attr">#[test]
+<a href=#1326 id=1326 data-nosnippet>1326</a>    </span><span class="kw">fn </span>from_record_applies_casa_style_spectral_conversion_state() {
+<a href=#1327 id=1327 data-nosnippet>1327</a>        <span class="kw">let </span>cs =
+<a href=#1328 id=1328 data-nosnippet>1328</a>            CoordinateSystem::from_record(<span class="kw-2">&amp;</span>casa_style_coords_with_tabular_spectral_conversion())
+<a href=#1329 id=1329 data-nosnippet>1329</a>                .unwrap();
+<a href=#1330 id=1330 data-nosnippet>1330</a>
+<a href=#1331 id=1331 data-nosnippet>1331</a>        <span class="kw">let </span>expected = MFrequency::new(<span class="number">1.15022e11</span>, FrequencyRef::LSRD)
+<a href=#1332 id=1332 data-nosnippet>1332</a>            .convert_to(
+<a href=#1333 id=1333 data-nosnippet>1333</a>                FrequencyRef::LSRK,
+<a href=#1334 id=1334 data-nosnippet>1334</a>                <span class="kw-2">&amp;</span>MeasFrame::new()
+<a href=#1335 id=1335 data-nosnippet>1335</a>                    .with_direction(MDirection::from_angles(
+<a href=#1336 id=1336 data-nosnippet>1336</a>                        -<span class="number">2.8940293347227444</span>,
+<a href=#1337 id=1337 data-nosnippet>1337</a>                        <span class="number">0.3784702849718404</span>,
+<a href=#1338 id=1338 data-nosnippet>1338</a>                        DirectionRef::J2000,
+<a href=#1339 id=1339 data-nosnippet>1339</a>                    ))
+<a href=#1340 id=1340 data-nosnippet>1340</a>                    .with_position(MPosition::new_wgs84(
+<a href=#1341 id=1341 data-nosnippet>1341</a>                        -<span class="number">2.1200320498502676</span>,
+<a href=#1342 id=1342 data-nosnippet>1342</a>                        <span class="number">0.7123949192959743</span>,
+<a href=#1343 id=1343 data-nosnippet>1343</a>                        <span class="number">1021.0</span>,
+<a href=#1344 id=1344 data-nosnippet>1344</a>                    ))
+<a href=#1345 id=1345 data-nosnippet>1345</a>                    .with_epoch(MEpoch::from_mjd(<span class="number">50_919.14846423176</span>, EpochRef::UTC)),
+<a href=#1346 id=1346 data-nosnippet>1346</a>            )
+<a href=#1347 id=1347 data-nosnippet>1347</a>            .unwrap()
+<a href=#1348 id=1348 data-nosnippet>1348</a>            .hz();
+<a href=#1349 id=1349 data-nosnippet>1349</a>
+<a href=#1350 id=1350 data-nosnippet>1350</a>        <span class="kw">let </span>world = cs.to_world(<span class="kw-2">&amp;</span>[<span class="number">128.0</span>, <span class="number">128.0</span>, <span class="number">0.0</span>, <span class="number">0.0</span>]).unwrap();
+<a href=#1351 id=1351 data-nosnippet>1351</a>        <span class="macro">assert_eq!</span>(world.len(), <span class="number">4</span>);
+<a href=#1352 id=1352 data-nosnippet>1352</a>        <span class="macro">assert!</span>((world[<span class="number">3</span>] - expected).abs() &lt; <span class="number">1.0</span>);
+<a href=#1353 id=1353 data-nosnippet>1353</a>
+<a href=#1354 id=1354 data-nosnippet>1354</a>        <span class="kw">let </span>pixel = cs.to_pixel(<span class="kw-2">&amp;</span>[<span class="number">4.02298</span>, <span class="number">0.08843</span>, <span class="number">1.0</span>, expected]).unwrap();
+<a href=#1355 id=1355 data-nosnippet>1355</a>        <span class="macro">assert!</span>((pixel[<span class="number">3</span>] - <span class="number">0.0</span>).abs() &lt; <span class="number">1e-6</span>);
+<a href=#1356 id=1356 data-nosnippet>1356</a>    }
+<a href=#1357 id=1357 data-nosnippet>1357</a>}
 </code></pre></div></section></main></body></html>

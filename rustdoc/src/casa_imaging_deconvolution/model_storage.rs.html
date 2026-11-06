@@ -93,7 +93,7 @@
 <a href=#93 id=93 data-nosnippet>93</a>}
 <a href=#94 id=94 data-nosnippet>94</a>
 <a href=#95 id=95 data-nosnippet>95</a><span class="doccomment">/// `left + right`, rounded to the lifecycle's arithmetic precision.
-<a href=#96 id=96 data-nosnippet>96</a></span><span class="kw">fn </span>add_with_precision(precision: NumericPrecision, left: f64, right: f64) -&gt; f64 {
+<a href=#96 id=96 data-nosnippet>96</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>add_with_precision(precision: NumericPrecision, left: f64, right: f64) -&gt; f64 {
 <a href=#97 id=97 data-nosnippet>97</a>    <span class="kw">match </span>precision {
 <a href=#98 id=98 data-nosnippet>98</a>        NumericPrecision::F32 =&gt; f64::from((left <span class="kw">as </span>f32) + (right <span class="kw">as </span>f32)),
 <a href=#99 id=99 data-nosnippet>99</a>        NumericPrecision::F64 =&gt; left + right,

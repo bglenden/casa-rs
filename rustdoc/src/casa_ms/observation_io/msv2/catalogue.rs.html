@@ -673,65 +673,71 @@
 <a href=#673 id=673 data-nosnippet>673</a>}
 <a href=#674 id=674 data-nosnippet>674</a>
 <a href=#675 id=675 data-nosnippet>675</a><span class="doccomment">/// Every `DATA_DESCRIPTION` row's spectral setup.
-<a href=#676 id=676 data-nosnippet>676</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>spectral_setups(ms: <span class="kw-2">&amp;</span>MeasurementSet) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;SpectralSetup&gt;, ObservationError&gt; {
-<a href=#677 id=677 data-nosnippet>677</a>    <span class="kw">let </span>descriptions = ms.data_description().map_err(storage)<span class="question-mark">?</span>;
-<a href=#678 id=678 data-nosnippet>678</a>    <span class="kw">let </span>windows = ms.spectral_window().map_err(storage)<span class="question-mark">?</span>;
-<a href=#679 id=679 data-nosnippet>679</a>    <span class="kw">let </span>frequency_refs = <span class="kw">crate</span>::columns::frequency_columns::ChanFreqColumn::new(windows.table());
-<a href=#680 id=680 data-nosnippet>680</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(window_table) = ms.subtable(SubtableId::SpectralWindow) {
-<a href=#681 id=681 data-nosnippet>681</a>        require_units(window_table, <span class="string">"CHAN_FREQ"</span>, <span class="string">"Hz"</span>)<span class="question-mark">?</span>;
-<a href=#682 id=682 data-nosnippet>682</a>        require_units(window_table, <span class="string">"CHAN_WIDTH"</span>, <span class="string">"Hz"</span>)<span class="question-mark">?</span>;
-<a href=#683 id=683 data-nosnippet>683</a>    }
-<a href=#684 id=684 data-nosnippet>684</a>    <span class="kw">let </span>polarizations = ms.polarization().map_err(storage)<span class="question-mark">?</span>;
-<a href=#685 id=685 data-nosnippet>685</a>    (<span class="number">0</span>..descriptions.row_count())
-<a href=#686 id=686 data-nosnippet>686</a>        .map(|row| {
-<a href=#687 id=687 data-nosnippet>687</a>            <span class="kw">let </span>window = usize::try_from(descriptions.spectral_window_id(row).map_err(storage)<span class="question-mark">?</span>)
-<a href=#688 id=688 data-nosnippet>688</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="string">"negative SPECTRAL_WINDOW_ID"</span>))<span class="question-mark">?</span>;
-<a href=#689 id=689 data-nosnippet>689</a>            <span class="kw">let </span>polarization = usize::try_from(descriptions.polarization_id(row).map_err(storage)<span class="question-mark">?</span>)
-<a href=#690 id=690 data-nosnippet>690</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="string">"negative POLARIZATION_ID"</span>))<span class="question-mark">?</span>;
-<a href=#691 id=691 data-nosnippet>691</a>            <span class="kw">let </span>frequency_frame = frequency_refs
-<a href=#692 id=692 data-nosnippet>692</a>                .frequency_reference(window)
-<a href=#693 id=693 data-nosnippet>693</a>                .map_err(storage)<span class="question-mark">?</span>;
-<a href=#694 id=694 data-nosnippet>694</a>            <span class="kw">let </span>correlations = polarizations
-<a href=#695 id=695 data-nosnippet>695</a>                .corr_type(polarization)
-<a href=#696 id=696 data-nosnippet>696</a>                .map_err(storage)<span class="question-mark">?
-<a href=#697 id=697 data-nosnippet>697</a>                </span>.into_iter()
-<a href=#698 id=698 data-nosnippet>698</a>                .map(|code| {
-<a href=#699 id=699 data-nosnippet>699</a>                    Correlation::from_casacore_code(code)
-<a href=#700 id=700 data-nosnippet>700</a>                        .ok_or_else(|| invalid(<span class="macro">format!</span>(<span class="string">"unknown CORR_TYPE {code}"</span>)))
-<a href=#701 id=701 data-nosnippet>701</a>                })
-<a href=#702 id=702 data-nosnippet>702</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#703 id=703 data-nosnippet>703</a>            <span class="prelude-val">Ok</span>(SpectralSetup {
-<a href=#704 id=704 data-nosnippet>704</a>                spectral_window_id: window <span class="kw">as </span>u32,
-<a href=#705 id=705 data-nosnippet>705</a>                spectral_window: windows.name(window).map_err(storage)<span class="question-mark">?</span>,
-<a href=#706 id=706 data-nosnippet>706</a>                frequencies_hz: windows.chan_freq(window).map_err(storage)<span class="question-mark">?</span>,
-<a href=#707 id=707 data-nosnippet>707</a>                frequency_frame,
-<a href=#708 id=708 data-nosnippet>708</a>                channel_widths_hz: windows.chan_width(window).map_err(storage)<span class="question-mark">?</span>,
-<a href=#709 id=709 data-nosnippet>709</a>                correlations,
-<a href=#710 id=710 data-nosnippet>710</a>            })
-<a href=#711 id=711 data-nosnippet>711</a>        })
-<a href=#712 id=712 data-nosnippet>712</a>        .collect()
-<a href=#713 id=713 data-nosnippet>713</a>}
-<a href=#714 id=714 data-nosnippet>714</a>
-<a href=#715 id=715 data-nosnippet>715</a><span class="attr">#[cfg(test)]
-<a href=#716 id=716 data-nosnippet>716</a></span><span class="kw">mod </span>tests {
-<a href=#717 id=717 data-nosnippet>717</a>    <span class="kw">use </span><span class="kw">super</span>::scheduled_uid;
-<a href=#718 id=718 data-nosnippet>718</a>
-<a href=#719 id=719 data-nosnippet>719</a>    <span class="attr">#[test]
-<a href=#720 id=720 data-nosnippet>720</a>    </span><span class="kw">fn </span>schedule_lines_name_their_uids_as_xradio_reads_them() {
-<a href=#721 id=721 data-nosnippet>721</a>        <span class="kw">let </span>lines = [
-<a href=#722 id=722 data-nosnippet>722</a>            <span class="string">"[SchedulingBlock uid://A001/X3571/X122,"</span>,
-<a href=#723 id=723 data-nosnippet>723</a>            <span class="string">"ExecBlock uid://A002/X1003af4/X75a3]"</span>,
-<a href=#724 id=724 data-nosnippet>724</a>        ];
-<a href=#725 id=725 data-nosnippet>725</a>        <span class="macro">assert_eq!</span>(
-<a href=#726 id=726 data-nosnippet>726</a>            scheduled_uid(lines[<span class="number">0</span>], <span class="string">"SchedulingBlock"</span>).as_deref(),
-<a href=#727 id=727 data-nosnippet>727</a>            <span class="prelude-val">Some</span>(<span class="string">"uid://A001/X3571/X122"</span>)
-<a href=#728 id=728 data-nosnippet>728</a>        );
-<a href=#729 id=729 data-nosnippet>729</a>        <span class="macro">assert_eq!</span>(
-<a href=#730 id=730 data-nosnippet>730</a>            scheduled_uid(lines[<span class="number">1</span>], <span class="string">"ExecBlock"</span>).as_deref(),
-<a href=#731 id=731 data-nosnippet>731</a>            <span class="prelude-val">Some</span>(<span class="string">"uid://A002/X1003af4/X75a3"</span>)
-<a href=#732 id=732 data-nosnippet>732</a>        );
-<a href=#733 id=733 data-nosnippet>733</a>        <span class="macro">assert_eq!</span>(scheduled_uid(<span class="string">"default"</span>, <span class="string">"ExecBlock"</span>), <span class="prelude-val">None</span>);
-<a href=#734 id=734 data-nosnippet>734</a>        <span class="macro">assert_eq!</span>(scheduled_uid(<span class="string">"ExecBlock "</span>, <span class="string">"ExecBlock"</span>), <span class="prelude-val">None</span>);
-<a href=#735 id=735 data-nosnippet>735</a>    }
-<a href=#736 id=736 data-nosnippet>736</a>}
+<a href=#676 id=676 data-nosnippet>676</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>spectral_setups(
+<a href=#677 id=677 data-nosnippet>677</a>    ms: <span class="kw-2">&amp;</span>MeasurementSet,
+<a href=#678 id=678 data-nosnippet>678</a>    visibility_frequency_frame: bool,
+<a href=#679 id=679 data-nosnippet>679</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;SpectralSetup&gt;, ObservationError&gt; {
+<a href=#680 id=680 data-nosnippet>680</a>    <span class="kw">let </span>descriptions = ms.data_description().map_err(storage)<span class="question-mark">?</span>;
+<a href=#681 id=681 data-nosnippet>681</a>    <span class="kw">let </span>windows = ms.spectral_window().map_err(storage)<span class="question-mark">?</span>;
+<a href=#682 id=682 data-nosnippet>682</a>    <span class="kw">let </span>frequency_refs = <span class="kw">crate</span>::columns::frequency_columns::ChanFreqColumn::new(windows.table());
+<a href=#683 id=683 data-nosnippet>683</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(window_table) = ms.subtable(SubtableId::SpectralWindow) {
+<a href=#684 id=684 data-nosnippet>684</a>        require_units(window_table, <span class="string">"CHAN_FREQ"</span>, <span class="string">"Hz"</span>)<span class="question-mark">?</span>;
+<a href=#685 id=685 data-nosnippet>685</a>        require_units(window_table, <span class="string">"CHAN_WIDTH"</span>, <span class="string">"Hz"</span>)<span class="question-mark">?</span>;
+<a href=#686 id=686 data-nosnippet>686</a>    }
+<a href=#687 id=687 data-nosnippet>687</a>    <span class="kw">let </span>polarizations = ms.polarization().map_err(storage)<span class="question-mark">?</span>;
+<a href=#688 id=688 data-nosnippet>688</a>    (<span class="number">0</span>..descriptions.row_count())
+<a href=#689 id=689 data-nosnippet>689</a>        .map(|row| {
+<a href=#690 id=690 data-nosnippet>690</a>            <span class="kw">let </span>window = usize::try_from(descriptions.spectral_window_id(row).map_err(storage)<span class="question-mark">?</span>)
+<a href=#691 id=691 data-nosnippet>691</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="string">"negative SPECTRAL_WINDOW_ID"</span>))<span class="question-mark">?</span>;
+<a href=#692 id=692 data-nosnippet>692</a>            <span class="kw">let </span>polarization = usize::try_from(descriptions.polarization_id(row).map_err(storage)<span class="question-mark">?</span>)
+<a href=#693 id=693 data-nosnippet>693</a>                .map_err(|<span class="kw">_</span>| invalid(<span class="string">"negative POLARIZATION_ID"</span>))<span class="question-mark">?</span>;
+<a href=#694 id=694 data-nosnippet>694</a>            <span class="kw">let </span>frequency_frame = <span class="kw">if </span>visibility_frequency_frame {
+<a href=#695 id=695 data-nosnippet>695</a>                frequency_refs.visibility_frequency_reference(window)
+<a href=#696 id=696 data-nosnippet>696</a>            } <span class="kw">else </span>{
+<a href=#697 id=697 data-nosnippet>697</a>                frequency_refs.frequency_reference(window)
+<a href=#698 id=698 data-nosnippet>698</a>            }
+<a href=#699 id=699 data-nosnippet>699</a>            .map_err(storage)<span class="question-mark">?</span>;
+<a href=#700 id=700 data-nosnippet>700</a>            <span class="kw">let </span>correlations = polarizations
+<a href=#701 id=701 data-nosnippet>701</a>                .corr_type(polarization)
+<a href=#702 id=702 data-nosnippet>702</a>                .map_err(storage)<span class="question-mark">?
+<a href=#703 id=703 data-nosnippet>703</a>                </span>.into_iter()
+<a href=#704 id=704 data-nosnippet>704</a>                .map(|code| {
+<a href=#705 id=705 data-nosnippet>705</a>                    Correlation::from_casacore_code(code)
+<a href=#706 id=706 data-nosnippet>706</a>                        .ok_or_else(|| invalid(<span class="macro">format!</span>(<span class="string">"unknown CORR_TYPE {code}"</span>)))
+<a href=#707 id=707 data-nosnippet>707</a>                })
+<a href=#708 id=708 data-nosnippet>708</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#709 id=709 data-nosnippet>709</a>            <span class="prelude-val">Ok</span>(SpectralSetup {
+<a href=#710 id=710 data-nosnippet>710</a>                spectral_window_id: window <span class="kw">as </span>u32,
+<a href=#711 id=711 data-nosnippet>711</a>                spectral_window: windows.name(window).map_err(storage)<span class="question-mark">?</span>,
+<a href=#712 id=712 data-nosnippet>712</a>                frequencies_hz: windows.chan_freq(window).map_err(storage)<span class="question-mark">?</span>,
+<a href=#713 id=713 data-nosnippet>713</a>                frequency_frame,
+<a href=#714 id=714 data-nosnippet>714</a>                channel_widths_hz: windows.chan_width(window).map_err(storage)<span class="question-mark">?</span>,
+<a href=#715 id=715 data-nosnippet>715</a>                correlations,
+<a href=#716 id=716 data-nosnippet>716</a>            })
+<a href=#717 id=717 data-nosnippet>717</a>        })
+<a href=#718 id=718 data-nosnippet>718</a>        .collect()
+<a href=#719 id=719 data-nosnippet>719</a>}
+<a href=#720 id=720 data-nosnippet>720</a>
+<a href=#721 id=721 data-nosnippet>721</a><span class="attr">#[cfg(test)]
+<a href=#722 id=722 data-nosnippet>722</a></span><span class="kw">mod </span>tests {
+<a href=#723 id=723 data-nosnippet>723</a>    <span class="kw">use </span><span class="kw">super</span>::scheduled_uid;
+<a href=#724 id=724 data-nosnippet>724</a>
+<a href=#725 id=725 data-nosnippet>725</a>    <span class="attr">#[test]
+<a href=#726 id=726 data-nosnippet>726</a>    </span><span class="kw">fn </span>schedule_lines_name_their_uids_as_xradio_reads_them() {
+<a href=#727 id=727 data-nosnippet>727</a>        <span class="kw">let </span>lines = [
+<a href=#728 id=728 data-nosnippet>728</a>            <span class="string">"[SchedulingBlock uid://A001/X3571/X122,"</span>,
+<a href=#729 id=729 data-nosnippet>729</a>            <span class="string">"ExecBlock uid://A002/X1003af4/X75a3]"</span>,
+<a href=#730 id=730 data-nosnippet>730</a>        ];
+<a href=#731 id=731 data-nosnippet>731</a>        <span class="macro">assert_eq!</span>(
+<a href=#732 id=732 data-nosnippet>732</a>            scheduled_uid(lines[<span class="number">0</span>], <span class="string">"SchedulingBlock"</span>).as_deref(),
+<a href=#733 id=733 data-nosnippet>733</a>            <span class="prelude-val">Some</span>(<span class="string">"uid://A001/X3571/X122"</span>)
+<a href=#734 id=734 data-nosnippet>734</a>        );
+<a href=#735 id=735 data-nosnippet>735</a>        <span class="macro">assert_eq!</span>(
+<a href=#736 id=736 data-nosnippet>736</a>            scheduled_uid(lines[<span class="number">1</span>], <span class="string">"ExecBlock"</span>).as_deref(),
+<a href=#737 id=737 data-nosnippet>737</a>            <span class="prelude-val">Some</span>(<span class="string">"uid://A002/X1003af4/X75a3"</span>)
+<a href=#738 id=738 data-nosnippet>738</a>        );
+<a href=#739 id=739 data-nosnippet>739</a>        <span class="macro">assert_eq!</span>(scheduled_uid(<span class="string">"default"</span>, <span class="string">"ExecBlock"</span>), <span class="prelude-val">None</span>);
+<a href=#740 id=740 data-nosnippet>740</a>        <span class="macro">assert_eq!</span>(scheduled_uid(<span class="string">"ExecBlock "</span>, <span class="string">"ExecBlock"</span>), <span class="prelude-val">None</span>);
+<a href=#741 id=741 data-nosnippet>741</a>    }
+<a href=#742 id=742 data-nosnippet>742</a>}
 </code></pre></div></section></main></body></html>

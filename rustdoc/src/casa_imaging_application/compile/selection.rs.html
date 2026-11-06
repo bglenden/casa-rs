@@ -778,103 +778,126 @@
 <a href=#778 id=778 data-nosnippet>778</a>        <span class="macro">assert!</span>(corrected(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">2</span>]));
 <a href=#779 id=779 data-nosnippet>779</a>    }
 <a href=#780 id=780 data-nosnippet>780</a>
-<a href=#781 id=781 data-nosnippet>781</a>    <span class="attr">#[test]
-<a href=#782 id=782 data-nosnippet>782</a>    </span><span class="kw">fn </span>channels_past_the_window_are_refused() {
-<a href=#783 id=783 data-nosnippet>783</a>        <span class="kw">let </span>request = request(<span class="macro">json!</span>({ <span class="string">"channel_start"</span>: <span class="number">1</span>, <span class="string">"channel_count"</span>: <span class="number">2 </span>}));
-<a href=#784 id=784 data-nosnippet>784</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#785 id=785 data-nosnippet>785</a>            selected_channels(<span class="kw-2">&amp;</span>request, <span class="kw-2">&amp;</span>WindowChannels::new(), <span class="number">0</span>, <span class="kw-2">&amp;</span>[<span class="number">1.0e9</span>, <span class="number">1.1e9</span>]),
-<a href=#786 id=786 data-nosnippet>786</a>            <span class="prelude-val">Err</span>(PrepareError::ChannelRange {
-<a href=#787 id=787 data-nosnippet>787</a>                spw_id: <span class="number">0</span>,
-<a href=#788 id=788 data-nosnippet>788</a>                start: <span class="number">1</span>,
-<a href=#789 id=789 data-nosnippet>789</a>                count: <span class="number">2</span>,
-<a href=#790 id=790 data-nosnippet>790</a>                channels: <span class="number">2</span>,
-<a href=#791 id=791 data-nosnippet>791</a>            })
-<a href=#792 id=792 data-nosnippet>792</a>        ));
-<a href=#793 id=793 data-nosnippet>793</a>    }
-<a href=#794 id=794 data-nosnippet>794</a>
-<a href=#795 id=795 data-nosnippet>795</a>    <span class="doccomment">/// The messages of the warnings an event logs.
-<a href=#796 id=796 data-nosnippet>796</a>    </span><span class="attr">#[derive(Clone, Default)]
-<a href=#797 id=797 data-nosnippet>797</a>    </span><span class="kw">struct </span>Warnings(Arc&lt;Mutex&lt;Vec&lt;String&gt;&gt;&gt;);
-<a href=#798 id=798 data-nosnippet>798</a>
-<a href=#799 id=799 data-nosnippet>799</a>    <span class="kw">impl </span>tracing::field::Visit <span class="kw">for </span>Warnings {
-<a href=#800 id=800 data-nosnippet>800</a>        <span class="kw">fn </span>record_debug(<span class="kw-2">&amp;mut </span><span class="self">self</span>, field: <span class="kw-2">&amp;</span>tracing::field::Field, value: <span class="kw-2">&amp;</span><span class="kw">dyn </span>std::fmt::Debug) {
-<a href=#801 id=801 data-nosnippet>801</a>            <span class="kw">if </span>field.name() == <span class="string">"message" </span>{
-<a href=#802 id=802 data-nosnippet>802</a>                <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"warnings"</span>).push(<span class="macro">format!</span>(<span class="string">"{value:?}"</span>));
-<a href=#803 id=803 data-nosnippet>803</a>            }
-<a href=#804 id=804 data-nosnippet>804</a>        }
-<a href=#805 id=805 data-nosnippet>805</a>    }
-<a href=#806 id=806 data-nosnippet>806</a>
-<a href=#807 id=807 data-nosnippet>807</a>    <span class="kw">impl</span>&lt;S: tracing::Subscriber&gt; Layer&lt;S&gt; <span class="kw">for </span>Warnings {
-<a href=#808 id=808 data-nosnippet>808</a>        <span class="kw">fn </span>on_event(<span class="kw-2">&amp;</span><span class="self">self</span>, event: <span class="kw-2">&amp;</span>tracing::Event&lt;<span class="lifetime">'_</span>&gt;, <span class="kw">_</span>: Context&lt;<span class="lifetime">'_</span>, S&gt;) {
-<a href=#809 id=809 data-nosnippet>809</a>            <span class="kw">if </span><span class="kw-2">*</span>event.metadata().level() == tracing::Level::WARN {
-<a href=#810 id=810 data-nosnippet>810</a>                event.record(<span class="kw-2">&amp;mut </span><span class="self">self</span>.clone());
-<a href=#811 id=811 data-nosnippet>811</a>            }
-<a href=#812 id=812 data-nosnippet>812</a>        }
-<a href=#813 id=813 data-nosnippet>813</a>    }
-<a href=#814 id=814 data-nosnippet>814</a>
-<a href=#815 id=815 data-nosnippet>815</a>    <span class="doccomment">/// The column `requested` images in an observation holding `columns`,
-<a href=#816 id=816 data-nosnippet>816</a>    /// and the warnings choosing it logs.
-<a href=#817 id=817 data-nosnippet>817</a>    </span><span class="kw">fn </span>chosen(
-<a href=#818 id=818 data-nosnippet>818</a>        columns: <span class="kw-2">&amp;</span>[OwnerVisibilityColumn],
-<a href=#819 id=819 data-nosnippet>819</a>        requested: <span class="prelude-ty">Option</span>&lt;DataColumn&gt;,
-<a href=#820 id=820 data-nosnippet>820</a>    ) -&gt; (<span class="prelude-ty">Result</span>&lt;OwnerVisibilityColumn, PrepareError&gt;, Vec&lt;String&gt;) {
-<a href=#821 id=821 data-nosnippet>821</a>        <span class="kw">let </span>warnings = Warnings::default();
-<a href=#822 id=822 data-nosnippet>822</a>        <span class="kw">let </span>chosen = tracing::subscriber::with_default(
-<a href=#823 id=823 data-nosnippet>823</a>            tracing_subscriber::registry().with(warnings.clone()),
-<a href=#824 id=824 data-nosnippet>824</a>            || visibility_column(|column| columns.contains(<span class="kw-2">&amp;</span>column), requested),
-<a href=#825 id=825 data-nosnippet>825</a>        );
-<a href=#826 id=826 data-nosnippet>826</a>        (chosen, warnings.<span class="number">0</span>.lock().expect(<span class="string">"warnings"</span>).clone())
-<a href=#827 id=827 data-nosnippet>827</a>    }
-<a href=#828 id=828 data-nosnippet>828</a>
-<a href=#829 id=829 data-nosnippet>829</a>    <span class="attr">#[test]
-<a href=#830 id=830 data-nosnippet>830</a>    </span><span class="kw">fn </span>an_observation_without_visibilities_has_no_column_to_image() {
-<a href=#831 id=831 data-nosnippet>831</a>        <span class="kw">for </span>requested <span class="kw">in </span>[<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(DataColumn::Corrected)] {
-<a href=#832 id=832 data-nosnippet>832</a>            <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#833 id=833 data-nosnippet>833</a>                chosen(<span class="kw-2">&amp;</span>[], requested).<span class="number">0</span>,
-<a href=#834 id=834 data-nosnippet>834</a>                <span class="prelude-val">Err</span>(PrepareError::NoVisibilityColumn)
-<a href=#835 id=835 data-nosnippet>835</a>            ));
-<a href=#836 id=836 data-nosnippet>836</a>        }
-<a href=#837 id=837 data-nosnippet>837</a>        <span class="comment">// An explicit DATA is not checked here; reading the missing column
-<a href=#838 id=838 data-nosnippet>838</a>        // refuses it later, as before.
-<a href=#839 id=839 data-nosnippet>839</a>        </span><span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#840 id=840 data-nosnippet>840</a>            chosen(<span class="kw-2">&amp;</span>[], <span class="prelude-val">Some</span>(DataColumn::Data)).<span class="number">0</span>,
-<a href=#841 id=841 data-nosnippet>841</a>            <span class="prelude-val">Ok</span>(OwnerVisibilityColumn::Data)
-<a href=#842 id=842 data-nosnippet>842</a>        ));
-<a href=#843 id=843 data-nosnippet>843</a>    }
-<a href=#844 id=844 data-nosnippet>844</a>
-<a href=#845 id=845 data-nosnippet>845</a>    <span class="attr">#[test]
-<a href=#846 id=846 data-nosnippet>846</a>    </span><span class="kw">fn </span>corrected_falls_back_to_data_with_a_warning_when_the_ms_has_no_corrected_data() {
-<a href=#847 id=847 data-nosnippet>847</a>        <span class="kw">let </span>(column, warnings) =
-<a href=#848 id=848 data-nosnippet>848</a>            chosen(<span class="kw-2">&amp;</span>[OwnerVisibilityColumn::Data], <span class="prelude-val">Some</span>(DataColumn::Corrected));
-<a href=#849 id=849 data-nosnippet>849</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(column, <span class="prelude-val">Ok</span>(OwnerVisibilityColumn::Data)));
-<a href=#850 id=850 data-nosnippet>850</a>        <span class="macro">assert_eq!</span>(
-<a href=#851 id=851 data-nosnippet>851</a>            warnings,
-<a href=#852 id=852 data-nosnippet>852</a>            [<span class="string">"CORRECTED_DATA column does not exist. Using DATA column instead"</span>]
-<a href=#853 id=853 data-nosnippet>853</a>        );
-<a href=#854 id=854 data-nosnippet>854</a>    }
-<a href=#855 id=855 data-nosnippet>855</a>
-<a href=#856 id=856 data-nosnippet>856</a>    <span class="attr">#[test]
-<a href=#857 id=857 data-nosnippet>857</a>    </span><span class="kw">fn </span>an_unspecified_column_falls_back_to_data_without_a_warning() {
-<a href=#858 id=858 data-nosnippet>858</a>        <span class="kw">let </span>(column, warnings) = chosen(<span class="kw-2">&amp;</span>[OwnerVisibilityColumn::Data], <span class="prelude-val">None</span>);
-<a href=#859 id=859 data-nosnippet>859</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(column, <span class="prelude-val">Ok</span>(OwnerVisibilityColumn::Data)));
-<a href=#860 id=860 data-nosnippet>860</a>        <span class="macro">assert!</span>(warnings.is_empty(), <span class="string">"{warnings:?}"</span>);
-<a href=#861 id=861 data-nosnippet>861</a>    }
-<a href=#862 id=862 data-nosnippet>862</a>
-<a href=#863 id=863 data-nosnippet>863</a>    <span class="attr">#[test]
-<a href=#864 id=864 data-nosnippet>864</a>    </span><span class="kw">fn </span>corrected_images_corrected_data_when_the_ms_has_it() {
-<a href=#865 id=865 data-nosnippet>865</a>        <span class="kw">let </span>both = [
-<a href=#866 id=866 data-nosnippet>866</a>            OwnerVisibilityColumn::Data,
-<a href=#867 id=867 data-nosnippet>867</a>            OwnerVisibilityColumn::CorrectedData,
-<a href=#868 id=868 data-nosnippet>868</a>        ];
-<a href=#869 id=869 data-nosnippet>869</a>        <span class="kw">for </span>requested <span class="kw">in </span>[<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(DataColumn::Corrected)] {
-<a href=#870 id=870 data-nosnippet>870</a>            <span class="kw">let </span>(column, warnings) = chosen(<span class="kw-2">&amp;</span>both, requested);
-<a href=#871 id=871 data-nosnippet>871</a>            <span class="macro">assert!</span>(<span class="macro">matches!</span>(column, <span class="prelude-val">Ok</span>(OwnerVisibilityColumn::CorrectedData)));
-<a href=#872 id=872 data-nosnippet>872</a>            <span class="macro">assert!</span>(warnings.is_empty(), <span class="string">"{warnings:?}"</span>);
-<a href=#873 id=873 data-nosnippet>873</a>        }
-<a href=#874 id=874 data-nosnippet>874</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#875 id=875 data-nosnippet>875</a>            chosen(<span class="kw-2">&amp;</span>both, <span class="prelude-val">Some</span>(DataColumn::Data)).<span class="number">0</span>,
-<a href=#876 id=876 data-nosnippet>876</a>            <span class="prelude-val">Ok</span>(OwnerVisibilityColumn::Data)
-<a href=#877 id=877 data-nosnippet>877</a>        ));
-<a href=#878 id=878 data-nosnippet>878</a>    }
-<a href=#879 id=879 data-nosnippet>879</a>}
+<a href=#781 id=781 data-nosnippet>781</a>    <span class="doccomment">/// MVC chooses an output cube size independently of the input SPW
+<a href=#782 id=782 data-nosnippet>782</a>    /// selector; a six-channel input can make three output planes.
+<a href=#783 id=783 data-nosnippet>783</a>    </span><span class="attr">#[test]
+<a href=#784 id=784 data-nosnippet>784</a>    </span><span class="kw">fn </span>mvc_output_channel_count_does_not_select_input_channels() {
+<a href=#785 id=785 data-nosnippet>785</a>        <span class="kw">let </span>frequencies = [<span class="number">1.0e9</span>, <span class="number">1.1e9</span>, <span class="number">1.2e9</span>, <span class="number">1.3e9</span>, <span class="number">1.4e9</span>, <span class="number">1.5e9</span>];
+<a href=#786 id=786 data-nosnippet>786</a>        <span class="kw">let </span><span class="kw-2">mut </span>request = request(<span class="macro">json!</span>({}));
+<a href=#787 id=787 data-nosnippet>787</a>        request.mvc_output_channels = std::num::NonZeroUsize::new(<span class="number">3</span>);
+<a href=#788 id=788 data-nosnippet>788</a>        <span class="macro">assert_eq!</span>(request.cube_output_channel_count(), <span class="prelude-val">Some</span>(<span class="number">3</span>));
+<a href=#789 id=789 data-nosnippet>789</a>        <span class="macro">assert_eq!</span>(
+<a href=#790 id=790 data-nosnippet>790</a>            selected_channels(<span class="kw-2">&amp;</span>request, <span class="kw-2">&amp;</span>WindowChannels::new(), <span class="number">0</span>, <span class="kw-2">&amp;</span>frequencies).unwrap(),
+<a href=#791 id=791 data-nosnippet>791</a>            [<span class="number">0</span>, <span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>, <span class="number">5</span>]
+<a href=#792 id=792 data-nosnippet>792</a>        );
+<a href=#793 id=793 data-nosnippet>793</a>        request.channel_start = <span class="prelude-val">Some</span>(<span class="number">1</span>);
+<a href=#794 id=794 data-nosnippet>794</a>        request.channel_count = <span class="prelude-val">Some</span>(<span class="number">2</span>);
+<a href=#795 id=795 data-nosnippet>795</a>        <span class="macro">assert_eq!</span>(
+<a href=#796 id=796 data-nosnippet>796</a>            selected_channels(<span class="kw-2">&amp;</span>request, <span class="kw-2">&amp;</span>WindowChannels::new(), <span class="number">0</span>, <span class="kw-2">&amp;</span>frequencies).unwrap(),
+<a href=#797 id=797 data-nosnippet>797</a>            [<span class="number">1</span>, <span class="number">2</span>]
+<a href=#798 id=798 data-nosnippet>798</a>        );
+<a href=#799 id=799 data-nosnippet>799</a>        <span class="macro">assert_eq!</span>(request.cube_output_channel_count(), <span class="prelude-val">Some</span>(<span class="number">3</span>));
+<a href=#800 id=800 data-nosnippet>800</a>        request.mvc_output_channels = <span class="prelude-val">None</span>;
+<a href=#801 id=801 data-nosnippet>801</a>        <span class="macro">assert_eq!</span>(request.cube_output_channel_count(), <span class="prelude-val">Some</span>(<span class="number">2</span>));
+<a href=#802 id=802 data-nosnippet>802</a>    }
+<a href=#803 id=803 data-nosnippet>803</a>
+<a href=#804 id=804 data-nosnippet>804</a>    <span class="attr">#[test]
+<a href=#805 id=805 data-nosnippet>805</a>    </span><span class="kw">fn </span>channels_past_the_window_are_refused() {
+<a href=#806 id=806 data-nosnippet>806</a>        <span class="kw">let </span>request = request(<span class="macro">json!</span>({ <span class="string">"channel_start"</span>: <span class="number">1</span>, <span class="string">"channel_count"</span>: <span class="number">2 </span>}));
+<a href=#807 id=807 data-nosnippet>807</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#808 id=808 data-nosnippet>808</a>            selected_channels(<span class="kw-2">&amp;</span>request, <span class="kw-2">&amp;</span>WindowChannels::new(), <span class="number">0</span>, <span class="kw-2">&amp;</span>[<span class="number">1.0e9</span>, <span class="number">1.1e9</span>]),
+<a href=#809 id=809 data-nosnippet>809</a>            <span class="prelude-val">Err</span>(PrepareError::ChannelRange {
+<a href=#810 id=810 data-nosnippet>810</a>                spw_id: <span class="number">0</span>,
+<a href=#811 id=811 data-nosnippet>811</a>                start: <span class="number">1</span>,
+<a href=#812 id=812 data-nosnippet>812</a>                count: <span class="number">2</span>,
+<a href=#813 id=813 data-nosnippet>813</a>                channels: <span class="number">2</span>,
+<a href=#814 id=814 data-nosnippet>814</a>            })
+<a href=#815 id=815 data-nosnippet>815</a>        ));
+<a href=#816 id=816 data-nosnippet>816</a>    }
+<a href=#817 id=817 data-nosnippet>817</a>
+<a href=#818 id=818 data-nosnippet>818</a>    <span class="doccomment">/// The messages of the warnings an event logs.
+<a href=#819 id=819 data-nosnippet>819</a>    </span><span class="attr">#[derive(Clone, Default)]
+<a href=#820 id=820 data-nosnippet>820</a>    </span><span class="kw">struct </span>Warnings(Arc&lt;Mutex&lt;Vec&lt;String&gt;&gt;&gt;);
+<a href=#821 id=821 data-nosnippet>821</a>
+<a href=#822 id=822 data-nosnippet>822</a>    <span class="kw">impl </span>tracing::field::Visit <span class="kw">for </span>Warnings {
+<a href=#823 id=823 data-nosnippet>823</a>        <span class="kw">fn </span>record_debug(<span class="kw-2">&amp;mut </span><span class="self">self</span>, field: <span class="kw-2">&amp;</span>tracing::field::Field, value: <span class="kw-2">&amp;</span><span class="kw">dyn </span>std::fmt::Debug) {
+<a href=#824 id=824 data-nosnippet>824</a>            <span class="kw">if </span>field.name() == <span class="string">"message" </span>{
+<a href=#825 id=825 data-nosnippet>825</a>                <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"warnings"</span>).push(<span class="macro">format!</span>(<span class="string">"{value:?}"</span>));
+<a href=#826 id=826 data-nosnippet>826</a>            }
+<a href=#827 id=827 data-nosnippet>827</a>        }
+<a href=#828 id=828 data-nosnippet>828</a>    }
+<a href=#829 id=829 data-nosnippet>829</a>
+<a href=#830 id=830 data-nosnippet>830</a>    <span class="kw">impl</span>&lt;S: tracing::Subscriber&gt; Layer&lt;S&gt; <span class="kw">for </span>Warnings {
+<a href=#831 id=831 data-nosnippet>831</a>        <span class="kw">fn </span>on_event(<span class="kw-2">&amp;</span><span class="self">self</span>, event: <span class="kw-2">&amp;</span>tracing::Event&lt;<span class="lifetime">'_</span>&gt;, <span class="kw">_</span>: Context&lt;<span class="lifetime">'_</span>, S&gt;) {
+<a href=#832 id=832 data-nosnippet>832</a>            <span class="kw">if </span><span class="kw-2">*</span>event.metadata().level() == tracing::Level::WARN {
+<a href=#833 id=833 data-nosnippet>833</a>                event.record(<span class="kw-2">&amp;mut </span><span class="self">self</span>.clone());
+<a href=#834 id=834 data-nosnippet>834</a>            }
+<a href=#835 id=835 data-nosnippet>835</a>        }
+<a href=#836 id=836 data-nosnippet>836</a>    }
+<a href=#837 id=837 data-nosnippet>837</a>
+<a href=#838 id=838 data-nosnippet>838</a>    <span class="doccomment">/// The column `requested` images in an observation holding `columns`,
+<a href=#839 id=839 data-nosnippet>839</a>    /// and the warnings choosing it logs.
+<a href=#840 id=840 data-nosnippet>840</a>    </span><span class="kw">fn </span>chosen(
+<a href=#841 id=841 data-nosnippet>841</a>        columns: <span class="kw-2">&amp;</span>[OwnerVisibilityColumn],
+<a href=#842 id=842 data-nosnippet>842</a>        requested: <span class="prelude-ty">Option</span>&lt;DataColumn&gt;,
+<a href=#843 id=843 data-nosnippet>843</a>    ) -&gt; (<span class="prelude-ty">Result</span>&lt;OwnerVisibilityColumn, PrepareError&gt;, Vec&lt;String&gt;) {
+<a href=#844 id=844 data-nosnippet>844</a>        <span class="kw">let </span>warnings = Warnings::default();
+<a href=#845 id=845 data-nosnippet>845</a>        <span class="kw">let </span>chosen = tracing::subscriber::with_default(
+<a href=#846 id=846 data-nosnippet>846</a>            tracing_subscriber::registry().with(warnings.clone()),
+<a href=#847 id=847 data-nosnippet>847</a>            || visibility_column(|column| columns.contains(<span class="kw-2">&amp;</span>column), requested),
+<a href=#848 id=848 data-nosnippet>848</a>        );
+<a href=#849 id=849 data-nosnippet>849</a>        (chosen, warnings.<span class="number">0</span>.lock().expect(<span class="string">"warnings"</span>).clone())
+<a href=#850 id=850 data-nosnippet>850</a>    }
+<a href=#851 id=851 data-nosnippet>851</a>
+<a href=#852 id=852 data-nosnippet>852</a>    <span class="attr">#[test]
+<a href=#853 id=853 data-nosnippet>853</a>    </span><span class="kw">fn </span>an_observation_without_visibilities_has_no_column_to_image() {
+<a href=#854 id=854 data-nosnippet>854</a>        <span class="kw">for </span>requested <span class="kw">in </span>[<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(DataColumn::Corrected)] {
+<a href=#855 id=855 data-nosnippet>855</a>            <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#856 id=856 data-nosnippet>856</a>                chosen(<span class="kw-2">&amp;</span>[], requested).<span class="number">0</span>,
+<a href=#857 id=857 data-nosnippet>857</a>                <span class="prelude-val">Err</span>(PrepareError::NoVisibilityColumn)
+<a href=#858 id=858 data-nosnippet>858</a>            ));
+<a href=#859 id=859 data-nosnippet>859</a>        }
+<a href=#860 id=860 data-nosnippet>860</a>        <span class="comment">// An explicit DATA is not checked here; reading the missing column
+<a href=#861 id=861 data-nosnippet>861</a>        // refuses it later, as before.
+<a href=#862 id=862 data-nosnippet>862</a>        </span><span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#863 id=863 data-nosnippet>863</a>            chosen(<span class="kw-2">&amp;</span>[], <span class="prelude-val">Some</span>(DataColumn::Data)).<span class="number">0</span>,
+<a href=#864 id=864 data-nosnippet>864</a>            <span class="prelude-val">Ok</span>(OwnerVisibilityColumn::Data)
+<a href=#865 id=865 data-nosnippet>865</a>        ));
+<a href=#866 id=866 data-nosnippet>866</a>    }
+<a href=#867 id=867 data-nosnippet>867</a>
+<a href=#868 id=868 data-nosnippet>868</a>    <span class="attr">#[test]
+<a href=#869 id=869 data-nosnippet>869</a>    </span><span class="kw">fn </span>corrected_falls_back_to_data_with_a_warning_when_the_ms_has_no_corrected_data() {
+<a href=#870 id=870 data-nosnippet>870</a>        <span class="kw">let </span>(column, warnings) =
+<a href=#871 id=871 data-nosnippet>871</a>            chosen(<span class="kw-2">&amp;</span>[OwnerVisibilityColumn::Data], <span class="prelude-val">Some</span>(DataColumn::Corrected));
+<a href=#872 id=872 data-nosnippet>872</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(column, <span class="prelude-val">Ok</span>(OwnerVisibilityColumn::Data)));
+<a href=#873 id=873 data-nosnippet>873</a>        <span class="macro">assert_eq!</span>(
+<a href=#874 id=874 data-nosnippet>874</a>            warnings,
+<a href=#875 id=875 data-nosnippet>875</a>            [<span class="string">"CORRECTED_DATA column does not exist. Using DATA column instead"</span>]
+<a href=#876 id=876 data-nosnippet>876</a>        );
+<a href=#877 id=877 data-nosnippet>877</a>    }
+<a href=#878 id=878 data-nosnippet>878</a>
+<a href=#879 id=879 data-nosnippet>879</a>    <span class="attr">#[test]
+<a href=#880 id=880 data-nosnippet>880</a>    </span><span class="kw">fn </span>an_unspecified_column_falls_back_to_data_without_a_warning() {
+<a href=#881 id=881 data-nosnippet>881</a>        <span class="kw">let </span>(column, warnings) = chosen(<span class="kw-2">&amp;</span>[OwnerVisibilityColumn::Data], <span class="prelude-val">None</span>);
+<a href=#882 id=882 data-nosnippet>882</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(column, <span class="prelude-val">Ok</span>(OwnerVisibilityColumn::Data)));
+<a href=#883 id=883 data-nosnippet>883</a>        <span class="macro">assert!</span>(warnings.is_empty(), <span class="string">"{warnings:?}"</span>);
+<a href=#884 id=884 data-nosnippet>884</a>    }
+<a href=#885 id=885 data-nosnippet>885</a>
+<a href=#886 id=886 data-nosnippet>886</a>    <span class="attr">#[test]
+<a href=#887 id=887 data-nosnippet>887</a>    </span><span class="kw">fn </span>corrected_images_corrected_data_when_the_ms_has_it() {
+<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw">let </span>both = [
+<a href=#889 id=889 data-nosnippet>889</a>            OwnerVisibilityColumn::Data,
+<a href=#890 id=890 data-nosnippet>890</a>            OwnerVisibilityColumn::CorrectedData,
+<a href=#891 id=891 data-nosnippet>891</a>        ];
+<a href=#892 id=892 data-nosnippet>892</a>        <span class="kw">for </span>requested <span class="kw">in </span>[<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(DataColumn::Corrected)] {
+<a href=#893 id=893 data-nosnippet>893</a>            <span class="kw">let </span>(column, warnings) = chosen(<span class="kw-2">&amp;</span>both, requested);
+<a href=#894 id=894 data-nosnippet>894</a>            <span class="macro">assert!</span>(<span class="macro">matches!</span>(column, <span class="prelude-val">Ok</span>(OwnerVisibilityColumn::CorrectedData)));
+<a href=#895 id=895 data-nosnippet>895</a>            <span class="macro">assert!</span>(warnings.is_empty(), <span class="string">"{warnings:?}"</span>);
+<a href=#896 id=896 data-nosnippet>896</a>        }
+<a href=#897 id=897 data-nosnippet>897</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#898 id=898 data-nosnippet>898</a>            chosen(<span class="kw-2">&amp;</span>both, <span class="prelude-val">Some</span>(DataColumn::Data)).<span class="number">0</span>,
+<a href=#899 id=899 data-nosnippet>899</a>            <span class="prelude-val">Ok</span>(OwnerVisibilityColumn::Data)
+<a href=#900 id=900 data-nosnippet>900</a>        ));
+<a href=#901 id=901 data-nosnippet>901</a>    }
+<a href=#902 id=902 data-nosnippet>902</a>}
 </code></pre></div></section></main></body></html>

@@ -507,24 +507,25 @@
 <a href=#507 id=507 data-nosnippet>507</a>            flags: row.flags,
 <a href=#508 id=508 data-nosnippet>508</a>            row_flag: row.row_flag,
 <a href=#509 id=509 data-nosnippet>509</a>            context: RowContext {
-<a href=#510 id=510 data-nosnippet>510</a>                original_uvw_m: <span class="prelude-val">None</span>,
-<a href=#511 id=511 data-nosnippet>511</a>                time_s: <span class="number">0.0</span>,
-<a href=#512 id=512 data-nosnippet>512</a>                antennas: row.antennas,
-<a href=#513 id=513 data-nosnippet>513</a>                antenna_types: [<span class="number">0</span>, <span class="number">0</span>],
-<a href=#514 id=514 data-nosnippet>514</a>                parallactic_angle_rad: [<span class="number">0.0</span>, <span class="number">0.0</span>],
-<a href=#515 id=515 data-nosnippet>515</a>                field: <span class="number">0</span>,
-<a href=#516 id=516 data-nosnippet>516</a>                spectral_window: <span class="number">0</span>,
-<a href=#517 id=517 data-nosnippet>517</a>            },
-<a href=#518 id=518 data-nosnippet>518</a>        };
-<a href=#519 id=519 data-nosnippet>519</a>        <span class="self">self</span>.model.resampler.predict_row(
-<a href=#520 id=520 data-nosnippet>520</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.model.operator,
-<a href=#521 id=521 data-nosnippet>521</a>            <span class="kw-2">&amp;mut </span>workspace.backend,
-<a href=#522 id=522 data-nosnippet>522</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.grids,
-<a href=#523 id=523 data-nosnippet>523</a>            <span class="kw-2">&amp;</span>native,
-<a href=#524 id=524 data-nosnippet>524</a>            <span class="kw-2">&amp;mut </span>workspace.scratch,
-<a href=#525 id=525 data-nosnippet>525</a>            out,
-<a href=#526 id=526 data-nosnippet>526</a>        )<span class="question-mark">?</span>;
-<a href=#527 id=527 data-nosnippet>527</a>        <span class="prelude-val">Ok</span>(())
-<a href=#528 id=528 data-nosnippet>528</a>    }
-<a href=#529 id=529 data-nosnippet>529</a>}
+<a href=#510 id=510 data-nosnippet>510</a>                native_frequency_ratio: <span class="number">1.0</span>,
+<a href=#511 id=511 data-nosnippet>511</a>                original_uvw_m: <span class="prelude-val">None</span>,
+<a href=#512 id=512 data-nosnippet>512</a>                time_s: <span class="number">0.0</span>,
+<a href=#513 id=513 data-nosnippet>513</a>                antennas: row.antennas,
+<a href=#514 id=514 data-nosnippet>514</a>                antenna_types: [<span class="number">0</span>, <span class="number">0</span>],
+<a href=#515 id=515 data-nosnippet>515</a>                parallactic_angle_rad: [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#516 id=516 data-nosnippet>516</a>                field: <span class="number">0</span>,
+<a href=#517 id=517 data-nosnippet>517</a>                spectral_window: <span class="number">0</span>,
+<a href=#518 id=518 data-nosnippet>518</a>            },
+<a href=#519 id=519 data-nosnippet>519</a>        };
+<a href=#520 id=520 data-nosnippet>520</a>        <span class="self">self</span>.model.resampler.predict_row(
+<a href=#521 id=521 data-nosnippet>521</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.model.operator,
+<a href=#522 id=522 data-nosnippet>522</a>            <span class="kw-2">&amp;mut </span>workspace.backend,
+<a href=#523 id=523 data-nosnippet>523</a>            <span class="kw-2">&amp;</span><span class="self">self</span>.grids,
+<a href=#524 id=524 data-nosnippet>524</a>            <span class="kw-2">&amp;</span>native,
+<a href=#525 id=525 data-nosnippet>525</a>            <span class="kw-2">&amp;mut </span>workspace.scratch,
+<a href=#526 id=526 data-nosnippet>526</a>            out,
+<a href=#527 id=527 data-nosnippet>527</a>        )<span class="question-mark">?</span>;
+<a href=#528 id=528 data-nosnippet>528</a>        <span class="prelude-val">Ok</span>(())
+<a href=#529 id=529 data-nosnippet>529</a>    }
+<a href=#530 id=530 data-nosnippet>530</a>}
 </code></pre></div></section></main></body></html>

@@ -3,7 +3,7 @@
 <a href="struct.CoordinateSystem.html" title="struct casa_coordinates::coordinate_system::CoordinateSystem"><code>CoordinateSystem</code></a> concatenates them in order: the first coordinate’s
 axes come first, then the second’s, and so on.</p>
 <p>Corresponds to C++ <code>CoordinateSystem</code>.</p>
-</div></details><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-CoordinateSystem" class="impl"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#112-885">Source</a><a href="#impl-CoordinateSystem" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.CoordinateSystem.html" title="struct casa_coordinates::coordinate_system::CoordinateSystem">CoordinateSystem</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.set_direction_reference_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#122-193">Source</a><h4 class="code-header">pub fn <a href="#method.set_direction_reference_in_record" class="fn">set_direction_reference_in_record</a>(
+</div></details><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-CoordinateSystem" class="impl"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#333-1162">Source</a><a href="#impl-CoordinateSystem" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.CoordinateSystem.html" title="struct casa_coordinates::coordinate_system::CoordinateSystem">CoordinateSystem</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.set_direction_reference_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#343-414">Source</a><h4 class="code-header">pub fn <a href="#method.set_direction_reference_in_record" class="fn">set_direction_reference_in_record</a>(
     record: &amp;mut RecordValue,
     reference: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.str.html">str</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;(Self, <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;), <a class="enum" href="../error/enum.CoordinateError.html" title="enum casa_coordinates::error::CoordinateError">CoordinateError</a>&gt;</h4></section></summary><div class="docblock"><p>Set the first direction coordinate’s native reference frame while
@@ -12,7 +12,7 @@ retaining its reference-conversion frame and stored axis maps.</p>
 conversion requires unavailable context are rejected (#977).</p>
 <h5 id="errors"><a class="doc-anchor" href="#errors">§</a>Errors</h5>
 <p>Returns an error for an unknown or unsupported frame or coordinate.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.set_stokes_types_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#203-272">Source</a><h4 class="code-header">pub fn <a href="#method.set_stokes_types_in_record" class="fn">set_stokes_types_in_record</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.set_stokes_types_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#424-493">Source</a><h4 class="code-header">pub fn <a href="#method.set_stokes_types_in_record" class="fn">set_stokes_types_in_record</a>(
     record: &amp;mut RecordValue,
     pixel_axis: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
     names: &amp;[<a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>],
@@ -21,16 +21,17 @@ conversion requires unavailable context are rejected (#977).</p>
 polarization coordinates are refused (#977).</p>
 <h5 id="errors-1"><a class="doc-anchor" href="#errors-1">§</a>Errors</h5>
 <p>Returns an error for an invalid axis, count, Stokes name, or record.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.set_direction_projection_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#283-349">Source</a><h4 class="code-header">pub fn <a href="#method.set_direction_projection_in_record" class="fn">set_direction_projection_in_record</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.set_direction_projection_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#505-572">Source</a><h4 class="code-header">pub fn <a href="#method.set_direction_projection_in_record" class="fn">set_direction_projection_in_record</a>(
     record: &amp;mut RecordValue,
     projection: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.str.html">str</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;(Self, <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;), <a class="enum" href="../error/enum.CoordinateError.html" title="enum casa_coordinates::error::CoordinateError">CoordinateError</a>&gt;</h4></section></summary><div class="docblock"><p>Change the first direction coordinate’s projection, preserving axis maps.</p>
-<p>Returns the old projection when it changed. Zenithal projections with
-standard poles are supported; other transitions are refused (#977).</p>
+<p>Returns the old projection when it changed. Supports standard zenithal
+projections and CAR, SFL, MER, and AIT when no frame conversion or
+nonzero projection parameters are present.</p>
 <h5 id="errors-2"><a class="doc-anchor" href="#errors-2">§</a>Errors</h5>
 <p>Returns an error for an unknown or unsupported projection, or invalid
 direction metadata. The input record is unchanged on error.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.set_spectral_reference_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#360-414">Source</a><h4 class="code-header">pub fn <a href="#method.set_spectral_reference_in_record" class="fn">set_spectral_reference_in_record</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.set_spectral_reference_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#583-637">Source</a><h4 class="code-header">pub fn <a href="#method.set_spectral_reference_in_record" class="fn">set_spectral_reference_in_record</a>(
     record: &amp;mut RecordValue,
     reference: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.str.html">str</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;(Self, <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/1.99.1/alloc/string/struct.String.html" title="struct alloc::string::String">String</a>&gt;), <a class="enum" href="../error/enum.CoordinateError.html" title="enum casa_coordinates::error::CoordinateError">CoordinateError</a>&gt;</h4></section></summary><div class="docblock"><p>Set the native spectral reference frame and reset its conversion frame.</p>
@@ -39,7 +40,7 @@ Unrelated coordinate metadata and axis maps are retained.</p>
 <h5 id="errors-3"><a class="doc-anchor" href="#errors-3">§</a>Errors</h5>
 <p>Returns an error for an invalid frame, missing spectral coordinate,
 or malformed metadata.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.set_axis_unit_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#426-553">Source</a><h4 class="code-header">pub fn <a href="#method.set_axis_unit_in_record" class="fn">set_axis_unit_in_record</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.set_axis_unit_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#647-797">Source</a><h4 class="code-header">pub fn <a href="#method.set_axis_unit_in_record" class="fn">set_axis_unit_in_record</a>(
     record: &amp;mut RecordValue,
     pixel_axis: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
     unit: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.str.html">str</a>,
@@ -48,10 +49,8 @@ or malformed metadata.</p>
 maps are preserved; the original record changes only on success.</p>
 <h5 id="errors-4"><a class="doc-anchor" href="#errors-4">§</a>Errors</h5>
 <p>Returns an error for an invalid axis or unit, nonconformant units,
-malformed metadata, or a coordinate layout not yet supported.
-Tabular coordinates and non-Hz spectral target units are currently
-unsupported (#977).</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.set_rest_frequency_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#563-595">Source</a><h4 class="code-header">pub fn <a href="#method.set_rest_frequency_in_record" class="fn">set_rest_frequency_in_record</a>(
+malformed metadata, or a coordinate layout not yet supported.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.set_rest_frequency_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#807-839">Source</a><h4 class="code-header">pub fn <a href="#method.set_rest_frequency_in_record" class="fn">set_rest_frequency_in_record</a>(
     record: &amp;mut RecordValue,
     value: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;(Self, <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>), <a class="enum" href="../error/enum.CoordinateError.html" title="enum casa_coordinates::error::CoordinateError">CoordinateError</a>&gt;</h4></section></summary><div class="docblock"><p>Set the active rest frequency in the spectral coordinate’s stored unit.</p>
@@ -60,7 +59,7 @@ remain intact. Returns the updated system and previous active value.</p>
 <h5 id="errors-5"><a class="doc-anchor" href="#errors-5">§</a>Errors</h5>
 <p>Returns an error for missing or malformed spectral metadata, or a
 non-positive or non-finite frequency.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.set_axis_name_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#604-666">Source</a><h4 class="code-header">pub fn <a href="#method.set_axis_name_in_record" class="fn">set_axis_name_in_record</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.set_axis_name_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#848-910">Source</a><h4 class="code-header">pub fn <a href="#method.set_axis_name_in_record" class="fn">set_axis_name_in_record</a>(
     record: &amp;mut RecordValue,
     pixel_axis: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
     name: &amp;<a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.str.html">str</a>,
@@ -69,8 +68,8 @@ non-positive or non-finite frequency.</p>
 record is changed only after the updated system parses successfully.</p>
 <h5 id="errors-6"><a class="doc-anchor" href="#errors-6">§</a>Errors</h5>
 <p>Returns an error for an invalid axis or unsupported coordinate record.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.pixel_axis_type" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#669-680">Source</a><h4 class="code-header">pub fn <a href="#method.pixel_axis_type" class="fn">pixel_axis_type</a>(&amp;self, pixel_axis: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="enum" href="../coordinate/enum.CoordinateType.html" title="enum casa_coordinates::coordinate::CoordinateType">CoordinateType</a>&gt;</h4></section></summary><div class="docblock"><p>Return the coordinate type owning a zero-based pixel axis.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.set_reference_pixel_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#693-699">Source</a><h4 class="code-header">pub fn <a href="#method.set_reference_pixel_in_record" class="fn">set_reference_pixel_in_record</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.pixel_axis_type" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#913-924">Source</a><h4 class="code-header">pub fn <a href="#method.pixel_axis_type" class="fn">pixel_axis_type</a>(&amp;self, pixel_axis: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.99.1/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="enum" href="../coordinate/enum.CoordinateType.html" title="enum casa_coordinates::coordinate::CoordinateType">CoordinateType</a>&gt;</h4></section></summary><div class="docblock"><p>Return the coordinate type owning a zero-based pixel axis.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.set_reference_pixel_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#937-943">Source</a><h4 class="code-header">pub fn <a href="#method.set_reference_pixel_in_record" class="fn">set_reference_pixel_in_record</a>(
     record: &amp;mut RecordValue,
     pixel_axis: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
     value: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
@@ -82,7 +81,7 @@ successfully. As in casacore, a polarization-axis update is a no-op.</p>
 <h5 id="errors-7"><a class="doc-anchor" href="#errors-7">§</a>Errors</h5>
 <p>Returns an error for an invalid axis, non-finite value, malformed
 record, or unsupported axis layout.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.set_increment_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#708-714">Source</a><h4 class="code-header">pub fn <a href="#method.set_increment_in_record" class="fn">set_increment_in_record</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.set_increment_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#952-958">Source</a><h4 class="code-header">pub fn <a href="#method.set_increment_in_record" class="fn">set_increment_in_record</a>(
     record: &amp;mut RecordValue,
     pixel_axis: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
     value: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,
@@ -91,7 +90,7 @@ A polarization-coordinate update is a no-op, as in casacore.</p>
 <h5 id="errors-8"><a class="doc-anchor" href="#errors-8">§</a>Errors</h5>
 <p>Returns an error for an invalid axis or value, malformed metadata, or
 an unsupported coordinate layout.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.set_reference_value_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#723-729">Source</a><h4 class="code-header">pub fn <a href="#method.set_reference_value_in_record" class="fn">set_reference_value_in_record</a>(
+</div></details><details class="toggle method-toggle" open><summary><section id="method.set_reference_value_in_record" class="method"><a class="src rightside" href="../../src/casa_coordinates/coordinate_system/edit.rs.html#967-973">Source</a><h4 class="code-header">pub fn <a href="#method.set_reference_value_in_record" class="fn">set_reference_value_in_record</a>(
     record: &amp;mut RecordValue,
     pixel_axis: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.usize.html">usize</a>,
     value: <a class="primitive" href="https://doc.rust-lang.org/1.99.1/std/primitive.f64.html">f64</a>,

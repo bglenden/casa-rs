@@ -1005,6 +1005,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#frequency-frames-20261106" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        frequency-frames-20261106
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2450,6 +2461,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#ascii-placeholder-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ascii-placeholder-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2682,6 +2704,17 @@
     <span class="md-ellipsis">
       
         getoffset-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#addxvalue-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        addxvalue-casa
       
     </span>
   </a>
@@ -5097,6 +5130,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#frequency-frames-20261106" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        frequency-frames-20261106
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6542,6 +6586,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#ascii-placeholder-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ascii-placeholder-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6774,6 +6829,17 @@
     <span class="md-ellipsis">
       
         getoffset-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#addxvalue-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        addxvalue-casa
       
     </span>
   </a>
@@ -9133,8 +9199,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>'LSRK'</code></td>
 <td><code>'LSRK'</code>; <code>outframe</code> → <code>outframe</code></td>
 <td>Implemented</td>
-<td>The spectral frame written. <a href="#simobserve-behavior-observation">observation</a><br>Catalog domain: <code>string</code></td>
-<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a></td>
+<td>The spectral frame written. LSRK, TOPO and BARY are compared with CASA; other frames remain untested against the task. <a href="#simobserve-behavior-observation">observation</a><br>Catalog domain: <code>string</code></td>
+<td><a href="#simobserve-evidence-signature">signature</a>, <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-frequency-frames-20261106">frequency-frames-20261106</a></td>
 </tr>
 <tr>
 <td><code>thermalnoise</code></td>
@@ -9250,8 +9316,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><a id="simobserve-behavior-observation"></a></p>
 <h5 id="observation-and-prediction">Observation and prediction<a class="headerlink" href="#observation-and-prediction" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — obsmode 'int', 'sd' and '' (corrupting an existing MeasurementSet), outframe, and the prediction of the model and calibrator.</p>
-<p>outframe other than LSRK is not compared.</p>
-<p>Evidence: <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>.</p>
+<p>outframe LSRK, TOPO and BARY are compared; other frames are not yet compared against CASA.</p>
+<p>Evidence: <a href="#simobserve-evidence-task-tests">task-tests</a>, <a href="#simobserve-evidence-parity-20261103">parity-20261103</a>, <a href="#simobserve-evidence-frequency-frames-20261106">frequency-frames-20261106</a>.</p>
 <p><a id="simobserve-behavior-noise"></a></p>
 <h5 id="thermal-noise-and-leakage">Thermal noise and leakage<a class="headerlink" href="#thermal-noise-and-leakage" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — thermalnoise 'tsys-atm', 'tsys-manual' and '' with user_pwv, t_ground, t_sky, tau0, seed, leakage and correlator.</p>
@@ -9431,6 +9497,16 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li>Revision: <code>17c8206388b05beaf30c3c4ffadb4aedfa2c4e97</code>; CASA: <code>casatasks 6.7.6.14, casatools 6.7.6-14</code>.</li>
 <li>Command: <code>CASAPY tools/simulation/simobserve_casa_suite.py --test-file CASA6/casatasks/tests/tasks/test_task_simobserve.py --casatestdata LOCAL_COPY --casars-bin TARGET/release/simobserve --out OUT --only testBad_comp_nchan testBad_sdant test_noProject (bg-mac-mini)</code>.</li>
 <li>Receipt: <code>resources/casa-compat/evidence/simobserve-refusals-1099-20261104.json</code>.</li>
+</ul>
+<p><a id="simobserve-evidence-frequency-frames-20261106"></a></p>
+<h5 id="frequency-frames-20261106">frequency-frames-20261106<a class="headerlink" href="#frequency-frames-20261106" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-paired task runs — passed.</strong> TOPO and BARY each agree with CASA on frequency-reference codes and channel frequencies; DATA NRMS is 1.04e-6 over 73,500 samples in each case (limit 1e-3). A separate existing LSRK pointing-file case also passed with the extended comparator. simobserve interferometric image-model predictions with TOPO and BARY output frequency frames, including MeasurementSet metadata.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/49e280a16f1072ef67ed7995a21c1a951effa144/tools/simulation/simobserve_parity.py">tools/simulation/simobserve_parity.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/49e280a16f1072ef67ed7995a21c1a951effa144/tools/simulation/test_simobserve_parity.py">tools/simulation/test_simobserve_parity.py</a></li>
+<li>Revision: <code>54a3ef4961ace31269764c9f4f0818c028bbdd0c</code>; CASA: <code>casatasks 6.7.6.14, casatools 6.7.6-14</code>.</li>
+<li>Command: <code>CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata LOCAL_COPY --only frame_topo frame_bary (bg-mac-mini, CPU)</code>.</li>
+<li>Receipt: <code>resources/casa-compat/evidence/simobserve-frequency-frames-20261106.json</code>.</li>
 </ul>
 <h3 id="split">split<a class="headerlink" href="#split" title="Permanent link">&para;</a></h3>
 <ul>
@@ -10243,7 +10319,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <p><a id="tclean-behavior-gridders"></a></p>
 <h5 id="gridder-weighting-and-beam-combinations">Gridder, weighting and beam combinations<a class="headerlink" href="#gridder-weighting-and-beam-combinations" title="Permanent link">&para;</a></h5>
 <p><strong>Partial</strong> — standard/W/mosaic/AW, rectangular geometry, facets, normtype, beam terms and density weighting.</p>
-<p>Rectangular standard/W/mosaic and uvtaper were implemented in #970. AW remains square/equal-cell, and images MFS, MT-MFS and cubes whose selected windows hold one channel each (each plane its own weight image, issue 719; a window of several, issue 1121); it reads tclean's aterm, psterm, wbawp, conjbeams and any positive wprojplanes (#980), and an imported CASA cache must already exist: where cfcache names a missing directory CASA fills it, casa-rs refuses (aw_cf_source=native-evla generates its own). Odd cells an older CASA wrote (test_mosaic_mtmfs's staged caches) are read about CASA's convOrigin, shape/2+1; on those cases the PSF agrees to 1e-7 but CASA's weight image is 0.8% above casa-rs's in scale, and CASA's second call into the same image leaves weight.tt1 and weight.tt2 undivided by sumwt; both are open (#980). Mosaic per-field density weighting (mosweight) is implemented, continuum and a cube's per-channel density (BriggsCubeWeightor multiField, #818); W/AW facets and additional gridders/weightings remain incomplete. Native CF generation is verified separately from CASA cache oracles. The native write_pb default is True. Homogeneous ALMA-labelled 7m arrays select ACA; legacy VLA PB now covers all named bands and NVSS frequency gaps. Fresh ordinary-default W/Hogbom20 CPU64/CPU32 runs pass all seven products, with PB NRMS zero. EVLA/VLA mosaics grid with CASA's common EVLA primary beam (HetArrayConvFunc COMMONPB, PBMath1DEVLA) at the first buffer's LSRK frequencies and MosaicFT's sector edges; conjbeams on one-plane mosaics grids with CASA's widened, resampled conjugate cell (#980). Moving/nonconstant FIELD directions, mixed dish classes, unsupported telescopes and remaining EVLA bands are unfinished. Explicit GPU W/AW remains refused. CASA Float channel-frequency narrowing is now matched in shared Taylor factors. All five fresh mosaic/native-AW MT-MFS rows pass the owner-approved scoped weak weight.tt1 rule and retained original recorded checks; 3 override only raw weight.tt1 relative-error failures. Exact guards and 1e-6 matrix-scale limits remain. Full metadata is separate. Existing #690 odd-sumwt scaling remains distinct. Legacy VLA cube PB takes CASA's channel-zero aperture scaled per channel: both T1.5 VLA cube rows give .pb NRMS 0.0 at 9768bb1, 3016f1b and 2628d8b (pre-candidate 0.0136); independent review pending. Cube Briggs density cells now use CASA's negated u and v (2628d8b): all 3,056,967 point-cube-briggs (row, channel) weights match CASA's to 1.35e-7, where 7 exact Float ties previously read a neighbouring cell.</p>
+<p>Rectangular standard/W/mosaic and uvtaper were implemented in #970. AW remains square/equal-cell, and images MFS, MT-MFS and cubes whose selected windows hold one channel each; multi-channel cubes also run with nearest interpolation in the data or LSRK frame (each plane its own weight image, issue 719; tracked TOPO/BARY, rest, linear and cubic cases wait for issue 1121); it reads tclean's aterm, psterm, wbawp, conjbeams and any positive wprojplanes (#980), and an imported CASA cache must already exist: where cfcache names a missing directory CASA fills it, casa-rs refuses (aw_cf_source=native-evla generates its own). Odd cells an older CASA wrote (test_mosaic_mtmfs's staged caches) are read about CASA's convOrigin, shape/2+1; on those cases the PSF agrees to 1e-7 but CASA's weight image is 0.8% above casa-rs's in scale, and CASA's second call into the same image leaves weight.tt1 and weight.tt2 undivided by sumwt; both are open (#980). Mosaic per-field density weighting (mosweight) is implemented, continuum and a cube's per-channel density (BriggsCubeWeightor multiField, #818); W/AW facets and additional gridders/weightings remain incomplete. Native CF generation is verified separately from CASA cache oracles. The native write_pb default is True. Homogeneous ALMA-labelled 7m arrays select ACA; legacy VLA PB now covers all named bands and NVSS frequency gaps. Fresh ordinary-default W/Hogbom20 CPU64/CPU32 runs pass all seven products, with PB NRMS zero. EVLA/VLA mosaics grid with CASA's common EVLA primary beam (HetArrayConvFunc COMMONPB, PBMath1DEVLA) at the first buffer's LSRK frequencies and MosaicFT's sector edges; conjbeams on one-plane mosaics grids with CASA's widened, resampled conjugate cell (#980). Moving/nonconstant FIELD directions, mixed dish classes, unsupported telescopes and remaining EVLA bands are unfinished. Explicit GPU W/AW remains refused. CASA Float channel-frequency narrowing is now matched in shared Taylor factors. All five fresh mosaic/native-AW MT-MFS rows pass the owner-approved scoped weak weight.tt1 rule and retained original recorded checks; 3 override only raw weight.tt1 relative-error failures. Exact guards and 1e-6 matrix-scale limits remain. Full metadata is separate. Existing #690 odd-sumwt scaling remains distinct. Legacy VLA cube PB takes CASA's channel-zero aperture scaled per channel: both T1.5 VLA cube rows give .pb NRMS 0.0 at 9768bb1, 3016f1b and 2628d8b (pre-candidate 0.0136); independent review pending. Cube Briggs density cells now use CASA's negated u and v (2628d8b): all 3,056,967 point-cube-briggs (row, channel) weights match CASA's to 1.35e-7, where 7 exact Float ties previously read a neighbouring cell.</p>
 <p>Evidence: <a href="#tclean-evidence-reader">reader</a>, <a href="#tclean-evidence-additions">additions</a>, <a href="#tclean-evidence-representative">representative</a>, <a href="#tclean-evidence-default-products">default-products</a>, <a href="#tclean-evidence-compensated-current">compensated-current</a>, <a href="#tclean-evidence-taylor-pb-mfs">taylor-pb-mfs</a>, <a href="#tclean-evidence-approved-comparisons-restart">approved-comparisons-restart</a>, <a href="#tclean-evidence-cloud-continuation">cloud-continuation</a>.</p>
 <p><a id="tclean-behavior-deconvolution"></a></p>
 <h5 id="deconvolution-masks-and-stopping">Deconvolution, masks and stopping<a class="headerlink" href="#deconvolution-masks-and-stopping" title="Permanent link">&para;</a></h5>
@@ -10991,9 +11067,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">53</td>
+<td style="text-align: right;">54</td>
 <td style="text-align: right;">3</td>
-<td style="text-align: right;">5</td>
+<td style="text-align: right;">4</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -11028,8 +11104,8 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td style="text-align: right;">48</td>
 <td>yes</td>
 <td style="text-align: right;">24</td>
-<td style="text-align: right;">6</td>
-<td style="text-align: right;">18</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">17</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -11111,7 +11187,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 53, Partial: 3, Not implemented: 5, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 54, Partial: 3, Not implemented: 4, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -11140,9 +11216,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>asciitocomponentlist</code></td>
 <td><code>filename, asciifile, refer='J2000', format='ST', direction={}, spectrum={}, flux={}, log=True</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented (#1053)</td>
+<td>Matches CASA's placeholder: validates arguments, warns and returns zero without reading a file, creating a table or changing the list. Cyclic records are handled safely.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-ascii-placeholder-casa">ascii-placeholder-casa</a></td>
 </tr>
 <tr>
 <td><code>close</code></td>
@@ -11995,10 +12071,19 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/5a3fb213684683baa61766c828d559a5a88d15a5/crates/casars-python/python/tests/test_componentlist_setstokesspectrum.py">crates/casars-python/python/tests/test_componentlist_setstokesspectrum.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/5a3fb213684683baa61766c828d559a5a88d15a5/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
 </ul>
+<p><a id="componentlist-evidence-ascii-placeholder-casa"></a></p>
+<h5 id="ascii-placeholder-casa">ascii-placeholder-casa<a class="headerlink" href="#ascii-placeholder-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 57 CASA 6.7.6-14 calls cover empty, populated and closed lists, accepted and rejected arguments, and integer overflow. An isolated cyclic-record probe crashes CASA; casa-rs safely returns the placeholder result. componentlist.asciitocomponentlist placeholder behavior and Python argument conversion.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/fc0f6d90156354fbd8cdc29d222c6ff67390f32e/tools/simulation/componentlist_ascii_oracle.py">tools/simulation/componentlist_ascii_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/fc0f6d90156354fbd8cdc29d222c6ff67390f32e/crates/casars-python/python/tests/data/casa_componentlist_ascii.json">crates/casars-python/python/tests/data/casa_componentlist_ascii.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/fc0f6d90156354fbd8cdc29d222c6ff67390f32e/crates/casars-python/python/tests/test_componentlist_ascii.py">crates/casars-python/python/tests/test_componentlist_ascii.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/fc0f6d90156354fbd8cdc29d222c6ff67390f32e/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
+</ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 24, Partial: 6, Not implemented: 18, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 24, Partial: 7, Not implemented: 17, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -12013,9 +12098,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>addxvalue</code></td>
 <td><code>a</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#measures-evidence-signature">signature</a>, <a href="#measures-evidence-refusals">refusals</a></td>
+<td>Partial (#1053)</td>
+<td>Returns direction cosines or the position vector for scalar supported records, and an empty record for epoch and frequency. Measure offsets, multivalued records and unsupported measure kinds are refused explicitly; cyclic or excessively deep records are rejected safely.</td>
+<td><a href="#measures-evidence-signature">signature</a>, <a href="#measures-evidence-addxvalue-casa">addxvalue-casa</a></td>
 </tr>
 <tr>
 <td><code>asbaseline</code></td>
@@ -12488,6 +12573,15 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/7848842f91fc5eba9fab6c621ae5abd3f062644a/crates/casars-python/python/tests/data/casa_measures_getoffset.json">crates/casars-python/python/tests/data/casa_measures_getoffset.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/7848842f91fc5eba9fab6c621ae5abd3f062644a/crates/casars-python/python/tests/test_measures_getoffset.py">crates/casars-python/python/tests/test_measures_getoffset.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/7848842f91fc5eba9fab6c621ae5abd3f062644a/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
+</ul>
+<p><a id="measures-evidence-addxvalue-casa"></a></p>
+<h5 id="addxvalue-casa">addxvalue-casa<a class="headerlink" href="#addxvalue-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 28 CASA 6.7.6-14 calls cover directions, ITRF and WGS84 positions, empty, malformed and other supported measures; an isolated cyclic-record probe crashes CASA, while casa-rs rejects it safely. measures.addxvalue for scalar directions, positions, epoch and frequency records.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a960cd5c5fea86dea9badc358b58397374b11c2a/tools/simulation/measures_addxvalue_oracle.py">tools/simulation/measures_addxvalue_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a960cd5c5fea86dea9badc358b58397374b11c2a/crates/casars-python/python/tests/data/casa_measures_addxvalue.json">crates/casars-python/python/tests/data/casa_measures_addxvalue.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a960cd5c5fea86dea9badc358b58397374b11c2a/crates/casars-python/python/tests/test_measures_addxvalue.py">crates/casars-python/python/tests/test_measures_addxvalue.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/a960cd5c5fea86dea9badc358b58397374b11c2a/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
 </ul>
 <h3 id="quanta">quanta<a class="headerlink" href="#quanta" title="Permanent link">&para;</a></h3>
 <h4 id="quanta-method-implementation">quanta method implementation<a class="headerlink" href="#quanta-method-implementation" title="Permanent link">&para;</a></h4>
