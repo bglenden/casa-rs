@@ -955,6 +955,9 @@ fn imhead_extrema_match_casa_with_masks_ties_and_complex_pixels() {
 #[path = "casa_returns/imhead_date_edits.rs"]
 mod imhead_date_edits;
 
+#[path = "casa_returns/imhead_restfreq_add.rs"]
+mod imhead_restfreq_add;
+
 #[path = "casa_returns/imhead_mutations.rs"]
 mod imhead_mutations;
 

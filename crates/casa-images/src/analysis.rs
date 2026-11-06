@@ -1384,6 +1384,30 @@ pub fn imhead_put_rest_frequency(
     imhead(path)
 }
 
+/// Add a rest frequency if the image does not already have a positive one.
+///
+/// # Errors
+///
+/// Returns an error if a rest frequency exists, or if the quantity or image
+/// cannot be updated. History I/O may fail after the metadata is saved.
+pub fn imhead_add_rest_frequency(
+    path: impl AsRef<Path>,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    let summary = imhead(path)?;
+    if summary
+        .spectral
+        .as_ref()
+        .is_some_and(|spectral| spectral.rest_frequency > 0.0)
+    {
+        return Err(ImageError::InvalidMetadata(
+            "Rest frequency already exists; it may be modified but not added".into(),
+        ));
+    }
+    imhead_put_rest_frequency(path, hdvalue)
+}
+
 /// Set CASA's observation date from a time quantity or date string.
 ///
 /// # Errors
