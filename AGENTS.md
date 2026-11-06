@@ -117,6 +117,10 @@ locations are in `docs/agent-reference.md`.
   message: subject; what changed and why; `Work issue: #N` (or
   `Work source: <reason>`); `Evidence:`; `Decisions:`; `Review:` if there
   was one. Use `Closes #N` only when merge should close the issue.
+- Keep PR descriptions readable: lead with a crisp status summary and a
+  list of open issues or limitations, then organize supporting details to
+  follow those points. Group evidence and decisions by topic; avoid a single
+  dense inventory of changes or test cases.
 - One agent per issue. Before starting, look for a claim (an open PR, or a
   status comment naming a branch), then claim it in the status comment.
   Never push to another agent's branch; coordinate on the issue.
