@@ -422,12 +422,12 @@
    ]
   },
   "setfreqframe": {
-   "status": "Not implemented",
+   "status": "Partial",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Relabels one component frequency in any of the nine supported frames without converting the frequency value; accepts CASA frame prefixes and preserves the record unit and error. Undefined is refused because the measure model cannot represent it.",
    "evidence": [
     "signature",
-    "refusals"
+    "setfreqframe-casa"
    ]
   },
   "setlabel": {
@@ -906,6 +906,19 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "4643a1a41bec39b8641b713ef4037cdedd6136db"
+  },
+  "setfreqframe-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "56 CASA 6.7.6-14 calls compare frame names, prefixes, indices and argument errors; a table case covers frame, frequency and error persistence. Undefined is not yet implemented.",
+   "scope": "componentlist.setfreqframe.",
+   "links": [
+    "tools/casa-compat/componentlist_setfreqframe_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setfreqframe.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_setfreqframe.py"
+   ],
+   "source_revision": "b649c4559abd40c025f6ab7f004070a1f39d85a7"
   }
  }
 }
