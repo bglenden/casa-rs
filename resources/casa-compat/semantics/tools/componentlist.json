@@ -86,12 +86,12 @@
    ]
   },
   "convertshape": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Matches CASA's placeholder: validates arguments, warns and returns False without changing shape units.",
    "evidence": [
     "signature",
-    "refusals"
+    "convertshape-casa"
    ]
   },
   "deselect": {
@@ -967,6 +967,18 @@
     "crates/casars-python/python/tests/test_componentlist_putkeyword.py"
    ],
    "source_revision": "c4dc397131e12e480778b02b42f182c828e8a1e2"
+  },
+  "convertshape-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "72 CASA 6.7.6-14 calls cover type checks, errors, string and byte units, and empty, populated and released lists. The component shape is left unchanged.",
+   "scope": "componentlist.convertshape placeholder.",
+   "links": [
+    "tools/simulation/componentlist_convertshape_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_convertshape.json",
+    "crates/casars-python/python/tests/test_componentlist_convertshape.py"
+   ],
+   "source_revision": "0f327126e2f5ba348c3faa5fb88225df7e5515bd"
   }
  }
 }
