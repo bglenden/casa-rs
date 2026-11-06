@@ -3,6 +3,7 @@
 //! with.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use casa_tables::{LockMode, LockOptions, LockType, Table, TableError, TableOptions};
@@ -156,6 +157,8 @@ pub(super) struct Open {
     /// The modify counter the last `datachanged()` saw (casacore starts a
     /// table at 0).
     pub(super) last_modify_counter: u32,
+    keyword_epoch: Arc<AtomicU64>,
+    seen_keyword_epoch: u64,
 }
 
 impl Open {
@@ -171,6 +174,10 @@ impl Open {
         let options = LockOptions::new(lock.mode)
             .with_inspection_interval(lock.interval)
             .read_only(!writable);
+        // Register before opening, so a concurrent keyword write during the
+        // open is observed on this handle's next read.
+        let keyword_epoch = super::registry::keyword_epoch(path);
+        let seen_keyword_epoch = keyword_epoch.load(Ordering::Acquire);
         let table = Table::open_with_lock(TableOptions::new(path), options)?;
         let name = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         Ok(Self {
@@ -179,6 +186,8 @@ impl Open {
             writable,
             lock,
             last_modify_counter: 0,
+            keyword_epoch,
+            seen_keyword_epoch,
         })
     }
 }
@@ -248,13 +257,27 @@ impl State {
 
     /// What every read starts with, as casacore's `TableProxy::syncTable`:
     /// the read lock, when the lock options read-lock, taken again if it was
-    /// released, which also reloads what another process has written since
-    /// (a write lock already held is kept).
+    /// released. Refresh an already-held lock after a component-list keyword
+    /// write in this process; a write lock and its changes are kept.
     pub(super) fn synchronize(&mut self) -> Result<(), Fail> {
-        if let Some(open) = self.open.as_mut()
-            && open.lock.reads_lock()
-        {
-            open.table.lock(LockType::Read, 0)?;
+        if let Some(open) = self.open.as_mut() {
+            if open.lock.reads_lock() {
+                open.table.lock(LockType::Read, 0)?;
+            }
+            let epoch = open.keyword_epoch.load(Ordering::Acquire);
+            if epoch != open.seen_keyword_epoch {
+                let already_locked = open.table.has_lock(LockType::Read);
+                if !already_locked && !open.table.lock(LockType::Read, 0)? {
+                    return Err(Fail::Runtime(
+                        "Cannot lock table to refresh keywords".into(),
+                    ));
+                }
+                open.table.resync_locked()?;
+                if !already_locked {
+                    open.table.unlock_metadata_only()?;
+                }
+                open.seen_keyword_epoch = epoch;
+            }
         }
         Ok(())
     }

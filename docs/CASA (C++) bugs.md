@@ -3100,6 +3100,12 @@ refuses such a value for an existing 32-bit keyword with
 `RuntimeError: ... does not fit the integer keyword NAME, which holds fewer
 bits`, rather than store a wrong number.
 
+`cl.putkeyword` uses the same CASA conversion: in CASA 6.7.6.14, writing
+`2**40` to either a new keyword or an existing 32-bit keyword stores `0`.
+casa-rs keeps a new value as a 64-bit integer and refuses an overflowing
+replacement of a 32-bit keyword, so neither call silently loses the value
+(#1053).
+
 ## `tb` slices with a wrong rank or a start outside the array abort the process
 
 - Date noted: 2026-10-30
