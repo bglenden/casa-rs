@@ -3960,6 +3960,22 @@ the placeholder result; for cyclic or non-finite index arguments it raises a
 catchable `ValueError`, as for component selection (#1176). No component is
 changed.
 
+## Invalid component direction frames use an uninitialized reference
+
+- Date noted: 2026-11-06
+- Status: CASA uses an uninitialized frame after a parse failure; casa-rs rejects it before mutation (#1053).
+- Owner decision: Correct CASA crashes and corruption as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setrefdirframe_invalid_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json`, CASA 6.7.6-14 on the Mac mini.
+
+`componentlist.setrefdirframe(0, "bad")` logs that the direction frame was
+not changed, but the C++ code continues with `newFrame` uninitialized after
+`MDirection::getType` fails. On the tested CASA build, four invalid names and
+an invalid byte string each raise an `MDirection` assertion and leave the
+direction unchanged; an uninitialized value can behave differently in another
+build. casa-rs logs the
+parse failure and raises a predictable `RuntimeError` before changing the
+component. The error text differs from the observed CASA assertion.
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05

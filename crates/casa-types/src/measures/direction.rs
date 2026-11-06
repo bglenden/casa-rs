@@ -396,6 +396,15 @@ impl MDirection {
         self.refer
     }
 
+    /// Relabel this direction's reference frame without converting its value.
+    ///
+    /// The direction cosines are preserved exactly. This is the operation
+    /// casacore's `MDirection::set(Ref)` performs; it is distinct from a
+    /// physical frame conversion.
+    pub fn set_reference(&mut self, refer: DirectionRef) {
+        self.refer = refer;
+    }
+
     /// Returns the direction as (longitude, latitude) in radians.
     ///
     /// Longitude is in [0, 2π), latitude in [−π/2, π/2].
@@ -2026,6 +2035,15 @@ mod tests {
     use crate::measures::epoch::MEpoch;
     use crate::measures::position::MPosition;
     use crate::measures::provider::test_measures;
+
+    #[test]
+    fn relabeling_a_direction_keeps_its_cosines_exactly() {
+        let mut direction = MDirection::from_angles(1.234, -0.321, DirectionRef::J2000);
+        let before = direction.cosines().map(f64::to_bits);
+        direction.set_reference(DirectionRef::GALACTIC);
+        assert_eq!(direction.cosines().map(f64::to_bits), before);
+        assert_eq!(direction.refer(), DirectionRef::GALACTIC);
+    }
 
     fn close(a: f64, b: f64, tol: f64) -> bool {
         (a - b).abs() < tol
