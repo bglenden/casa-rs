@@ -1017,6 +1017,7 @@ CASA behaviours casa-rs follows for parity:
 <a href="#tclean-images-data-when-corrected_data-is-missing-and-says-nothing"><code>datacolumn='corrected'</code> without <code>CORRECTED_DATA</code></a>,
 <a href="#w-projection-grids-a-support-the-grids-edge-cuts-and-never-its-last-row-and-column">W projection's sectioned grid edge</a>.
 CASA behaviours casa-rs does not follow:
+<a href="#a-non-frequency-component-unit-corrupts-casas-spectrum">non-frequency component frequency units</a>,
 <a href="#component-flux-conversion-can-relabel-incompatible-units-or-crash">nonconforming component flux conversion</a>,
 <a href="#component-removal-can-lose-data-or-crash">duplicate and empty component removals</a>,
 <a href="#casa-accepts-component-labels-it-cannot-return">component labels containing invalid UTF-8</a>,
@@ -4689,6 +4690,23 @@ while an equivalent Python complex or NumPy complex128 value raises an error.
 CASA also treats the complex64 value as zero in other quantity operations.
 casa-rs preserves both parts and raises <code>Wrong QuantumHolder to convert
 asQuantumDouble</code> rather than silently discarding them.</p>
+<h2 id="a-non-frequency-component-unit-corrupts-casas-spectrum">A non-frequency component unit corrupts CASA's spectrum<a class="headerlink" href="#a-non-frequency-component-unit-corrupts-casas-spectrum" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-06</li>
+<li>Status: CASA changes the spectrum before raising and later aborts; casa-rs refuses the unit without changing the spectrum (#1053).</li>
+<li>Owner decision: Correct CASA crashes and data corruption as classes; see <code>docs/simulation/owner-decisions-20261105.md</code>.</li>
+<li>Evidence: <code>tools/casa-compat/componentlist_convertfrequnit_oracle.py</code>, CASA 6.7.6-14 on the Mac mini, with the failing case isolated and core dumps disabled.</li>
+</ul>
+<p>After adding a component with frequency <code>1.4GHz</code>,
+<code>cl.convertfrequnit(0, 'm')</code> raises a <code>RuntimeError</code> in CASA, but it has
+already installed the incompatible unit. A subsequent <code>cl.getspectrum(0)</code>
+also raises, and closing the component list aborts the process. casa-rs
+checks the unit first, raises a catchable error and leaves the frequency,
+its record unit and the component list unchanged.</p>
+<p>The same failure occurs if a stored spectrum uses <code>MHz</code> and a later
+<code>qa.define('Hz', '1m')</code> makes the current frequency definition incompatible.
+casa-rs uses coherent Hz for the stored physical frequency in that case,
+retaining a readable record and allowing an attached table to be saved.</p>
 <h2 id="component-flux-conversion-can-relabel-incompatible-units-or-crash">Component flux conversion can relabel incompatible units or crash<a class="headerlink" href="#component-flux-conversion-can-relabel-incompatible-units-or-crash" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-06</li>
