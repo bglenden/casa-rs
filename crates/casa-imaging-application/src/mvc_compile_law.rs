@@ -485,6 +485,60 @@ fn mvc_native_run_publishes_both_families() {
     assert_eq!(outcome.summary.products.len(), names.len());
 }
 
+/// A test-only backing with the same samples and no reported resident charge.
+/// Comparing it with the real resident owner isolates the model's charge from
+/// the other projection workspace. It is not used for a live memory bound.
+#[derive(Debug)]
+struct UnchargedModelFactory;
+
+#[derive(Debug)]
+struct UnchargedModel(Vec<casa_imaging_model::ModelSample>);
+
+impl casa_imaging_deconvolution::ModelStorageFactory for UnchargedModelFactory {
+    fn create(
+        &self,
+        count: usize,
+    ) -> Result<
+        Box<dyn casa_imaging_deconvolution::ModelSampleStorage>,
+        casa_imaging_deconvolution::ModelLifecycleError,
+    > {
+        let zero = casa_imaging_model::ModelSample::valid(
+            casa_imaging_model::ModelValue::new(0.0).unwrap(),
+        );
+        Ok(Box::new(UnchargedModel(vec![zero; count])))
+    }
+}
+
+impl casa_imaging_deconvolution::ModelSampleStorage for UnchargedModel {
+    fn sample_count(&self) -> usize {
+        self.0.len()
+    }
+    fn read(
+        &self,
+        start: usize,
+        out: &mut [casa_imaging_model::ModelSample],
+    ) -> Result<(), casa_imaging_deconvolution::ModelLifecycleError> {
+        out.copy_from_slice(&self.0[start..start + out.len()]);
+        Ok(())
+    }
+    fn write(
+        &mut self,
+        start: usize,
+        samples: &[casa_imaging_model::ModelSample],
+    ) -> Result<(), casa_imaging_deconvolution::ModelLifecycleError> {
+        self.0[start..start + samples.len()].copy_from_slice(samples);
+        Ok(())
+    }
+    fn apply_updates(
+        &self,
+        _updates: &[casa_imaging_deconvolution::ModelSampleUpdate],
+        _precision: casa_imaging_model::NumericPrecision,
+        _bound: f64,
+    ) -> Result<f64, casa_imaging_deconvolution::ModelLifecycleError> {
+        unreachable!("the projection creates an initial model without updates")
+    }
+}
+
 /// The cube model owner receives canonical channel planes formed from the
 /// Taylor model and each channel's real PB. Its separate admission remains
 /// held with the resulting model (#1069).
@@ -581,6 +635,22 @@ fn mvc_projected_model_uses_each_cube_frequency_and_beam_under_admission() {
     )
     .unwrap();
     assert!(projected.reservation.memory() >= projected.value.resident_bytes());
+    let uncharged_lifecycle = ModelLifecycle::new(
+        &cube,
+        ModelStoragePlan::new(std::sync::Arc::new(UnchargedModelFactory), 1 << 16).unwrap(),
+    );
+    let mut uncharged_inputs = projection_inputs();
+    uncharged_inputs.cube_lifecycle = &uncharged_lifecycle;
+    let uncharged = crate::mvc::project_mvc_model(
+        uncharged_inputs,
+        (&context.host, &context.policy, &context.cancel),
+    )
+    .unwrap();
+    assert_eq!(
+        projected.reservation.memory() - uncharged.reservation.memory(),
+        projected.value.resident_bytes(),
+        "the actual model owner adds its resident bytes to admission"
+    );
     let inputs = ContinuumProductInputs::from_major_cycle(&cube, &cube_completion);
     let planned = PlannedContinuumGeneration::new(&inputs, &controls).unwrap();
     for channel in 0..3 {
@@ -601,8 +671,13 @@ fn mvc_projected_model_uses_each_cube_frequency_and_beam_under_admission() {
                 .value()
                 .value() as f32;
             assert_eq!(actual, expected, "channel {channel}, pixel {point}");
+            let uncharged_actual = uncharged.value.read_samples(index..index + 1).unwrap()[0]
+                .value()
+                .value() as f32;
+            assert_eq!(uncharged_actual, actual);
         }
     }
+    drop(uncharged);
     for channel in 0..3 {
         let transposed = channel * cells + 20 * 64 + 10;
         assert_eq!(
