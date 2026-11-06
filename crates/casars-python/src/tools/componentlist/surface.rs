@@ -211,7 +211,7 @@ const METHODS: &[Method] = &[
         "replace",
         &[WHICH, param("list", K::Record, Required), WHICH_ALL_ONES],
         R::Bool,
-        No,
+        Yes,
     ),
     method(
         "sample",

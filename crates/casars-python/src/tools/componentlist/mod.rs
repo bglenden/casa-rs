@@ -27,6 +27,7 @@ mod add;
 mod keywords;
 mod ops;
 mod placeholder;
+mod replace_args;
 mod selection;
 pub(crate) mod surface;
 
@@ -35,7 +36,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pyo3::exceptions::{PyOverflowError, PyRuntimeWarning, PySystemError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyString};
+use pyo3::types::{PyBool, PyBytes, PyDict, PyString};
 
 use crate::convert::value::CasaValue;
 use crate::convert::{ConvertResult, DoubleList, Variant};
@@ -862,15 +863,41 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// CASA's placeholder warns and returns false without replacing anything.
     #[pyo3(signature = (which, list, whichones = None), text_signature = "($self, which, list, whichones=[-1])")]
     fn replace(
         &self,
+        py: Python<'_>,
         which: &Bound<'_, PyAny>,
         list: &Bound<'_, PyAny>,
-        whichones: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] whichones: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("replace")
+        let index = which.extract::<i64>();
+        let mut pending = which.is_none()
+            || index
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.is_instance_of::<PyOverflowError>(py));
+        if index.is_err() && !pending {
+            return Err(PyTypeError::new_err("argument _which must be an integer"));
+        }
+        if !list.is_instance_of::<PyDict>() {
+            return Err(PyTypeError::new_err("_list is not a dictionary"));
+        }
+        pending |= replace_args::record_pending(list)?;
+        if let Some(whichones) = whichones {
+            pending |= replace_args::indices_pending(&whichones)?;
+        }
+        let result = self.call(py, |_, lines| {
+            lines.push(LogLine::warning("replace not implemented yet"));
+            Ok(CasaValue::Bool(false))
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_replace> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// CASA's placeholder warns and returns an empty float array.

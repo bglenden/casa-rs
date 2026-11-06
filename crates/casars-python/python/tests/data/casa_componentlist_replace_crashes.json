@@ -1,0 +1,30 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "case": "record_cycle",
+      "returncode": -11,
+      "output": ""
+    },
+    {
+      "case": "indices_cycle",
+      "returncode": -11,
+      "output": ""
+    },
+    {
+      "case": "nan",
+      "returncode": -11,
+      "output": ""
+    },
+    {
+      "case": "inf",
+      "returncode": -11,
+      "output": ""
+    },
+    {
+      "case": "-inf",
+      "returncode": -11,
+      "output": ""
+    }
+  ]
+}

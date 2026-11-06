@@ -3945,6 +3945,21 @@ The same cyclic argument also crashes CASA's `componentlist.sample`
 placeholder. `tools/casa-compat/componentlist_sample_oracle.py` records the
 isolated crash. casa-rs returns the placeholder's empty float array instead.
 
+## `componentlist.replace` crashes while converting ignored arguments
+
+- Date noted: 2026-11-06
+- Status: CASA crashes; casa-rs handles the inputs safely (#1053).
+- Owner decision: Correct CASA crashes as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_replace_crashes_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json`, CASA 6.7.6-14 on the Mac mini, with isolated processes and core dumps disabled.
+
+`cl.replace(0, record)` with a record containing itself, a cyclic list of
+`whichones`, and scalar NaN or infinity as `whichones` each terminate CASA's
+Python process with signal 11 before the placeholder can return. The method
+otherwise warns and returns `False`. casa-rs detects record cycles and returns
+the placeholder result; for cyclic or non-finite index arguments it raises a
+catchable `ValueError`, as for component selection (#1176). No component is
+changed.
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05
