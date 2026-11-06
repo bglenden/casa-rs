@@ -1,0 +1,819 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "state": "empty",
+      "args": [
+        0
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        -1
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        1099511627776
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        true
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_convertshape> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        1267650600228229401496703205376
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_convertshape> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        1.5
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        "0"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        [
+          0
+        ]
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        "rad",
+        "deg",
+        "arcsec"
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        "",
+        "bad",
+        "bad"
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        {
+          "bytes": [
+            255
+          ]
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        "a\u0000b"
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "empty",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "majoraxis": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _majoraxis must be a string"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "minoraxis": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _minoraxis must be a string"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "positionangle": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _positionangle must be a string"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        5
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _majoraxis must be a string"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        "m",
+        []
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _minoraxis must be a string"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0,
+        "m",
+        "m",
+        true
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _positionangle must be a string"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        1.5,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        null,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _majoraxis must be a string"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        1267650600228229401496703205376,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _majoraxis must be a string"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        null,
+        "rad"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_convertshape> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "empty",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "majoraxis": "rad",
+        "positionangle": "bad"
+      },
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        -1
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        1099511627776
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        true
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_convertshape> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        1267650600228229401496703205376
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_convertshape> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        1.5
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        "0"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        [
+          0
+        ]
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "rad",
+        "deg",
+        "arcsec"
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "",
+        "bad",
+        "bad"
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        {
+          "bytes": [
+            255
+          ]
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "a\u0000b"
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "populated",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "majoraxis": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _majoraxis must be a string"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "minoraxis": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _minoraxis must be a string"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "positionangle": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _positionangle must be a string"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        5
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _majoraxis must be a string"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "m",
+        []
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _minoraxis must be a string"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0,
+        "m",
+        "m",
+        true
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _positionangle must be a string"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        1.5,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        null,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _majoraxis must be a string"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        1267650600228229401496703205376,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _majoraxis must be a string"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        null,
+        "rad"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_convertshape> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "populated",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "majoraxis": "rad",
+        "positionangle": "bad"
+      },
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        -1
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        1099511627776
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        true
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_convertshape> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        1267650600228229401496703205376
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_convertshape> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        1.5
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        "0"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        [
+          0
+        ]
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        "rad",
+        "deg",
+        "arcsec"
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        "",
+        "bad",
+        "bad"
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        {
+          "bytes": [
+            255
+          ]
+        }
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        "a\u0000b"
+      ],
+      "kwargs": {},
+      "result": false
+    },
+    {
+      "state": "closed",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "majoraxis": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _majoraxis must be a string"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "minoraxis": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _minoraxis must be a string"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "positionangle": null
+      },
+      "error": {
+        "type": "TypeError",
+        "message": "argument _positionangle must be a string"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        5
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _majoraxis must be a string"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        "m",
+        []
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _minoraxis must be a string"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0,
+        "m",
+        "m",
+        true
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _positionangle must be a string"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        1.5,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        null,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _majoraxis must be a string"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        1267650600228229401496703205376,
+        null
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "TypeError",
+        "message": "argument _majoraxis must be a string"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        null,
+        "rad"
+      ],
+      "kwargs": {},
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_convertshape> returned a result with an exception set"
+      }
+    },
+    {
+      "state": "closed",
+      "args": [
+        0
+      ],
+      "kwargs": {
+        "majoraxis": "rad",
+        "positionangle": "bad"
+      },
+      "result": false
+    }
+  ],
+  "index_once": {
+    "result": false,
+    "calls": 1
+  }
+}
