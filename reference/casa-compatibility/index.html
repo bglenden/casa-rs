@@ -2219,6 +2219,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#sample-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sample-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6041,6 +6052,17 @@
     <span class="md-ellipsis">
       
         removal-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sample-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        sample-casa
       
     </span>
   </a>
@@ -10464,9 +10486,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">35</td>
+<td style="text-align: right;">36</td>
 <td style="text-align: right;">0</td>
-<td style="text-align: right;">26</td>
+<td style="text-align: right;">25</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10584,7 +10606,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 35, Partial: 0, Not implemented: 26, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 36, Partial: 0, Not implemented: 25, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -10900,9 +10922,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>sample</code></td>
 <td><code>direction=[], pixellatsize=[], pixellongsize=[], frequency=[]</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented</td>
+<td>Matches CASA's placeholder: warns and returns an empty float64 array without numerical sampling. Cyclic arguments return safely rather than crashing.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-sample-casa">sample-casa</a></td>
 </tr>
 <tr>
 <td><code>select</code></td>
@@ -11253,6 +11275,15 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/61b8a7091c2c9e34933eca41448a7cad1e8cf2d1/crates/casars-python/python/tests/data/casa_componentlist_removal.json">crates/casars-python/python/tests/data/casa_componentlist_removal.json</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/61b8a7091c2c9e34933eca41448a7cad1e8cf2d1/crates/casars-python/python/tests/test_componentlist_removal.py">crates/casars-python/python/tests/test_componentlist_removal.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/61b8a7091c2c9e34933eca41448a7cad1e8cf2d1/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
+</ul>
+<p><a id="componentlist-evidence-sample-casa"></a></p>
+<h5 id="sample-casa">sample-casa<a class="headerlink" href="#sample-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 78 CASA 6.7.6-14 calls cover argument conversion and empty, populated and released lists; an isolated cyclic argument crashes CASA. componentlist.sample placeholder.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/903b541567638789bd6fa270d7b801244f49ad07/tools/casa-compat/componentlist_sample_oracle.py">tools/casa-compat/componentlist_sample_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/903b541567638789bd6fa270d7b801244f49ad07/crates/casars-python/python/tests/data/casa_componentlist_sample.json">crates/casars-python/python/tests/data/casa_componentlist_sample.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/903b541567638789bd6fa270d7b801244f49ad07/crates/casars-python/python/tests/test_componentlist_sample.py">crates/casars-python/python/tests/test_componentlist_sample.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/903b541567638789bd6fa270d7b801244f49ad07/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>

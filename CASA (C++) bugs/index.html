@@ -4725,6 +4725,9 @@ terminates CASA's Python process with a segmentation fault before the
 placeholder can return. The method otherwise logs a warning and returns
 <code>False</code>. casa-rs detects cycles while inspecting the ignored argument and
 returns that same placeholder value without crashing.</p>
+<p>The same cyclic argument also crashes CASA's <code>componentlist.sample</code>
+placeholder. <code>tools/casa-compat/componentlist_sample_oracle.py</code> records the
+isolated crash. casa-rs returns the placeholder's empty float array instead.</p>
 <h2 id="casa-discards-zero-dimensional-floating-quantity-record-values">CASA discards zero-dimensional floating quantity-record values<a class="headerlink" href="#casa-discards-zero-dimensional-floating-quantity-record-values" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Date noted: 2026-11-05</li>
