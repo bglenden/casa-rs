@@ -138,6 +138,10 @@ pub fn python_repr(value: &ParameterValue) -> String {
             format!("array([], shape={shape:?}, dtype={dtype:?})")
         }
         ParameterValue::ScalarArray(value) => format!("array({})", python_repr(value)),
+        ParameterValue::NumpyScalar { dtype, value } => {
+            let name = format!("{dtype:?}").to_ascii_lowercase();
+            format!("np.{name}({})", python_repr(value))
+        }
         ParameterValue::String(value) => {
             format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
         }

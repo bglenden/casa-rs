@@ -12,8 +12,33 @@ pub fn casa_variant_integer(value: i64) -> i32 {
 }
 
 use crate::{
-    CasaFloat, CasaValue, ComplexDtype, EmptyArrayType, FloatDtype, IntDtype, ParameterValue,
+    CasaFloat, CasaValue, ComplexDtype, EmptyArrayType, FloatDtype, IntDtype, NumpyScalarType,
+    ParameterValue,
 };
+
+/// Convert a top-level NumPy scalar with CASA's task-parameter rules.
+///
+/// # Errors
+/// Returns an error for scalar dtypes CASA does not accept at the top level.
+pub fn casa_numpy_scalar_root(value: &ParameterValue) -> Result<ParameterValue, &'static str> {
+    match value {
+        ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Int32 | NumpyScalarType::Float32,
+            value,
+        } => Ok(value.as_ref().clone()),
+        ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Int64,
+            value,
+        } => match value.as_ref() {
+            ParameterValue::Integer(value) => Ok(ParameterValue::Float(*value as f64)),
+            _ => Err("NumPy scalar dtype and value do not match (#977)"),
+        },
+        ParameterValue::NumpyScalar { .. } => {
+            Err("NumPy scalar dtype is not accepted by CASA at the top level")
+        }
+        _ => Ok(value.clone()),
+    }
+}
 
 /// Convert a zero-dimensional NumPy array as CASA's variant bridge does.
 /// Numeric values become empty arrays; a string becomes a one-element array.
@@ -102,6 +127,7 @@ pub fn parameter_value_to_casacore(value: &ParameterValue) -> Result<Value, &'st
                 }
             }
             ParameterValue::ScalarArray(value) => Value::Array(scalar_parameter_array(value)?),
+            ParameterValue::NumpyScalar { dtype: NumpyScalarType::Complex128, value } => convert(value, depth)?,
             ParameterValue::String(value) if !value.contains('\0') => {
                 Value::Scalar(ScalarValue::String(value.clone()))
             }
@@ -122,6 +148,7 @@ pub fn parameter_value_to_casacore(value: &ParameterValue) -> Result<Value, &'st
             ParameterValue::Table(fields) => Value::Record(RecordValue::new(
                 fields
                     .iter()
+                    .filter(|(_, value)| !matches!(value, ParameterValue::NumpyScalar { dtype, .. } if *dtype != NumpyScalarType::Complex128))
                     .map(|(key, value)| {
                         if key.contains('\0') {
                             return Err("record field contains NUL (#977)");
@@ -319,7 +346,11 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
         let mut flat = Vec::new();
         let mut shape = Vec::new();
         flatten(values, 0, &mut shape, &mut None, &mut flat)?;
-        return match parameter_array_to_casa(&flat)? {
+        let converted = parameter_array_to_casa(&flat)?;
+        if converted.shape().iter().product::<usize>() != flat.len() {
+            return Err("nested arrays with ignored scalar elements are unsupported (#977)");
+        }
+        return match converted {
             ArrayValue::Bool(v) => Ok(ArrayValue::Bool(
                 v.into_shape_with_order(shape).expect("rectangular array"),
             )),
@@ -337,6 +368,30 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
             )),
             _ => unreachable!("parameter arrays use supported primitive types"),
         };
+    }
+    if values.iter().any(|value| {
+        matches!(
+            value,
+            ParameterValue::NumpyScalar { .. } | ParameterValue::ScalarArray(_)
+        )
+    }) {
+        let converted = values
+            .iter()
+            .filter_map(|value| match value {
+                ParameterValue::ScalarArray(_) => None,
+                ParameterValue::NumpyScalar { dtype, value } => match dtype {
+                    NumpyScalarType::Int8
+                    | NumpyScalarType::Int16
+                    | NumpyScalarType::Int32
+                    | NumpyScalarType::Int64
+                    | NumpyScalarType::Float32
+                    | NumpyScalarType::Complex128 => Some(value.as_ref().clone()),
+                    _ => None,
+                },
+                value => Some(value.clone()),
+            })
+            .collect::<Vec<_>>();
+        return parameter_array_to_casa(&converted);
     }
     let mut rank = 0u8;
     for value in values {

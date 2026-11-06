@@ -15,6 +15,7 @@ def main():
     samples = [('bool', True), ('int64', 4), ('float64', 1.5),
                ('complex128', [1, 2]), ('U3', 'abc')]
     cases = []
+    list_cases = {}
     with tempfile.TemporaryDirectory(prefix='imhead-zero-dim-') as temp:
         for index, (dtype, value) in enumerate(samples):
             path = Path(temp) / f'{index}.im'; shutil.copytree(root / 'normal.im', path)
@@ -24,8 +25,13 @@ def main():
             got = imhead(str(path), mode='get', hdkey='custom')['value']
             cases.append({'input_dtype': dtype, 'input': value, 'dtype': str(got.dtype),
                           'shape': list(got.shape), 'values': got.tolist()})
+        path = Path(temp) / 'lists.im'; shutil.copytree(root / 'normal.im', path)
+        imhead(str(path), mode='put', hdkey='custom', hdvalue={
+            'mixed': [1, np.array(2), 3], 'empty': [np.array(4)]})
+        for key, got in imhead(str(path), mode='get', hdkey='custom').items():
+            list_cases[key] = {'dtype': str(got.dtype), 'shape': list(got.shape), 'values': got.tolist()}
     (root / 'zero_dim_expected.json').write_text(json.dumps(
-        {'casa_version': version_string(), 'cases': cases}, indent=2) + '\n')
+        {'casa_version': version_string(), 'cases': cases, 'list_cases': list_cases}, indent=2) + '\n')
 
 
 if __name__ == '__main__':

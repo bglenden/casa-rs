@@ -66,7 +66,8 @@ pub fn project_provider_invocation_with_originals(
             let sent = given
                 .filter(|_| is_quantity(session, name))
                 .map(|given| match given {
-                    ParameterValue::ScalarArray(value) => value.as_ref(),
+                    ParameterValue::ScalarArray(value)
+                    | ParameterValue::NumpyScalar { value, .. } => value.as_ref(),
                     other => other,
                 })
                 .or(path_original)
@@ -175,6 +176,33 @@ mod tests {
         let projected = request(&tclean);
         assert_eq!(projected.values["threshold"], serde_json::json!(0.001));
         assert!(!projected.typed_values.contains_key("threshold"));
+    }
+
+    #[test]
+    fn numpy_scalars_preserve_dtype_in_variant_and_unwrap_other_domains() {
+        use casa_provider_contracts::NumpyScalarType;
+        let scalar = ParameterValue::NumpyScalar {
+            dtype: NumpyScalarType::Float32,
+            value: Box::new(ParameterValue::Float(0.5)),
+        };
+        let mut imhead =
+            ParameterSession::defaults(builtin_surface_bundle("imhead").unwrap()).unwrap();
+        imhead
+            .set("imagename", ParameterValue::String("image.im".into()))
+            .unwrap();
+        imhead.set("hdvalue", scalar.clone()).unwrap();
+        assert_eq!(request(&imhead).typed_values.get("hdvalue"), Some(&scalar));
+        assert_eq!(
+            crate::parse_profile(&imhead.render_sparse().unwrap())
+                .unwrap()
+                .parameters
+                .get("hdvalue"),
+            Some(&scalar)
+        );
+        let mut tclean =
+            ParameterSession::defaults(builtin_surface_bundle("tclean").unwrap()).unwrap();
+        tclean.set("threshold", scalar).unwrap();
+        assert_eq!(request(&tclean).values["threshold"], serde_json::json!(0.5));
     }
 
     #[test]

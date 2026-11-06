@@ -101,6 +101,28 @@ pub enum EmptyArrayType {
     String,
 }
 
+/// A NumPy scalar type whose conversion can depend on its surrounding value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NumpyScalarType {
+    Bool,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    #[serde(rename = "uint8")]
+    UInt8,
+    #[serde(rename = "uint16")]
+    UInt16,
+    #[serde(rename = "uint32")]
+    UInt32,
+    #[serde(rename = "uint64")]
+    UInt64,
+    Float32,
+    Complex64,
+    Complex128,
+}
+
 /// Typed parameter value used before provider adaptation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
@@ -121,6 +143,11 @@ pub enum ParameterValue {
     },
     /// A zero-dimensional NumPy array, retaining its scalar value.
     ScalarArray(Box<ParameterValue>),
+    /// A NumPy scalar, including its native dtype and scalar value.
+    NumpyScalar {
+        dtype: NumpyScalarType,
+        value: Box<ParameterValue>,
+    },
     String(String),
     Array(Vec<ParameterValue>),
     Table(BTreeMap<String, ParameterValue>),
@@ -156,6 +183,7 @@ impl ParameterValue {
             }
             Self::EmptyArray { .. } => Value::Array(Vec::new()),
             Self::ScalarArray(value) => value.to_plain_json(),
+            Self::NumpyScalar { value, .. } => value.to_plain_json(),
             Self::String(value) => Value::String(value.clone()),
             Self::Array(values) => Value::Array(values.iter().map(Self::to_plain_json).collect()),
             Self::Table(values) => Value::Object(
@@ -170,7 +198,10 @@ impl ParameterValue {
     /// Whether this value requires typed rather than plain JSON transport.
     pub fn requires_typed_transport(&self) -> bool {
         match self {
-            Self::Complex(_) | Self::EmptyArray { .. } | Self::ScalarArray(_) => true,
+            Self::Complex(_)
+            | Self::EmptyArray { .. }
+            | Self::ScalarArray(_)
+            | Self::NumpyScalar { .. } => true,
             Self::Float(value) if !value.is_finite() => true,
             Self::Array(values) => values.iter().any(Self::requires_typed_transport),
             Self::Table(values) => values.values().any(Self::requires_typed_transport),
@@ -184,6 +215,7 @@ impl ParameterValue {
             Self::Array(values) => 1 + values.iter().map(Self::nesting_depth).max().unwrap_or(0),
             Self::Table(values) => 1 + values.values().map(Self::nesting_depth).max().unwrap_or(0),
             Self::ScalarArray(value) => 1 + value.nesting_depth(),
+            Self::NumpyScalar { value, .. } => 1 + value.nesting_depth(),
             _ => 0,
         }
     }
@@ -484,6 +516,9 @@ fn collect_selector_capabilities(
             }
         }
         ParameterValue::ScalarArray(value) => collect_selector_capabilities(grammar, value, used),
+        ParameterValue::NumpyScalar { value, .. } => {
+            collect_selector_capabilities(grammar, value, used)
+        }
         ParameterValue::Bool(_)
         | ParameterValue::Integer(_)
         | ParameterValue::Float(_)
@@ -1695,6 +1730,26 @@ fn validate_variant_value(value: &ParameterValue) -> Result<(), String> {
     }
     fn validate(value: &ParameterValue) -> Result<(), String> {
         match value {
+            ParameterValue::NumpyScalar { dtype, value } => {
+                use NumpyScalarType as N;
+                let fits_f32 = |value: f64| value.is_nan() || f64::from(value as f32) == value;
+                let valid = match (dtype, value.as_ref()) {
+                    (N::Bool, ParameterValue::Bool(_)) => true,
+                    (N::Int8, ParameterValue::Integer(v)) => i8::try_from(*v).is_ok(),
+                    (N::Int16, ParameterValue::Integer(v)) => i16::try_from(*v).is_ok(),
+                    (N::Int32, ParameterValue::Integer(v)) => i32::try_from(*v).is_ok(),
+                    (N::Int64, ParameterValue::Integer(_)) => true,
+                    (N::UInt8, ParameterValue::Integer(v)) => u8::try_from(*v).is_ok(),
+                    (N::UInt16, ParameterValue::Integer(v)) => u16::try_from(*v).is_ok(),
+                    (N::UInt32, ParameterValue::Integer(v)) => u32::try_from(*v).is_ok(),
+                    (N::UInt64, ParameterValue::Integer(v)) => *v >= 0,
+                    (N::Float32, ParameterValue::Float(value)) => fits_f32(*value),
+                    (N::Complex64, ParameterValue::Complex(value)) => value.iter().all(|part| fits_f32(part.0)),
+                    (N::Complex128, ParameterValue::Complex(_)) => true,
+                    _ => false,
+                };
+                if valid { Ok(()) } else { Err("NumPy scalar dtype and value do not match (#977)".into()) }
+            }
             ParameterValue::ScalarArray(value)
                 if !matches!(value.as_ref(), ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) | ParameterValue::Complex(_) | ParameterValue::String(_)) =>
             {
@@ -2020,6 +2075,7 @@ fn numeric_values(value: &ParameterValue) -> Vec<f64> {
         ParameterValue::Array(values) => values.iter().flat_map(numeric_values).collect(),
         ParameterValue::Table(values) => values.values().flat_map(numeric_values).collect(),
         ParameterValue::ScalarArray(value) => numeric_values(value),
+        ParameterValue::NumpyScalar { value, .. } => numeric_values(value),
         ParameterValue::Bool(_)
         | ParameterValue::Complex(_)
         | ParameterValue::EmptyArray { .. } => Vec::new(),

@@ -30,6 +30,26 @@ def test_zero_dimensional_optional_values_match_scalar_states(
     assert array[name] == plain[name]
 
 
+@pytest.mark.parametrize("name", ["phasecenter", "start", "width", "psfphasecenter"])
+def test_malformed_numpy_scalar_profile_is_rejected_before_number_as_text(
+    tmp_path: Path, name: str,
+) -> None:
+    payload = {"kind": "numpy_scalar", "value": {"dtype": "int8", "value": {"kind": "integer", "value": 1000}}}
+    profile = f'''[casars]
+format = 1
+surface = "tclean"
+kind = "task"
+contract = 41
+
+[parameters]
+
+[typed_parameters]
+{name} = '{json.dumps(payload)}'
+'''
+    with pytest.raises((TypeError, ValueError), match="invalid value"):
+        TaskParameters("tclean", base_source="file", profile_toml=profile, workspace=tmp_path)
+
+
 def test_catalog_and_definition_are_projected_from_rust() -> None:
     catalog = parameters.catalog()
     assert len(catalog["surfaces"]) == 27

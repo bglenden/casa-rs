@@ -493,6 +493,68 @@ def test_imhead_zero_dim_direct_array_matches_casa_error_on_get(tmp_path: Path, 
         tasks.imhead(str(image), mode="get", hdkey="custom")
 
 
+def test_imhead_ignores_zero_dim_arrays_inside_flat_lists(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    source = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "zero-dim-list.im"
+    shutil.copytree(source, image)
+    values = {"mixed": [1, np.array(2), 3], "empty": [np.array(4)]}
+    assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue=values) is None
+    result = tasks.imhead(str(image), mode="get", hdkey="custom")
+    expected = json.loads((source.parent / "zero_dim_expected.json").read_text())["list_cases"]
+    for key, record in expected.items():
+        assert result[key].dtype == np.dtype(record["dtype"])
+        assert result[key].shape == tuple(record["shape"])
+        assert result[key].tolist() == record["values"]
+
+
+def test_imhead_numpy_scalars_match_casa_by_context(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    oracle = json.loads((root / "numpy_scalar_expected.json").read_text())
+    for index, case in enumerate(oracle["cases"]):
+        value = complex(*case["input"]) if case["dtype"].startswith("complex") else case["input"]
+        scalar = getattr(np, case["dtype"])(value)
+        if case["dtype"] not in ("float64", "str_"):
+            params = TaskParameters("imhead", workspace=tmp_path)
+            params.set_many({"imagename": str(tmp_path / "placeholder.im"), "hdvalue": {"value": scalar}})
+            snapshot = params["hdvalue"]["value"]
+            assert isinstance(snapshot, np.generic) and snapshot.dtype == scalar.dtype and snapshot == scalar
+            profile = params.save(tmp_path / f"scalar-{index}.toml")
+            restored = TaskParameters.load("imhead", profile, workspace=tmp_path)["hdvalue"]["value"]
+            assert isinstance(restored, np.generic) and restored.dtype == scalar.dtype and restored == scalar
+        for context in ("root", "record", "list"):
+            image = tmp_path / f"scalar-{index}-{context}.im"
+            shutil.copytree(root / "normal.im", image)
+            given = scalar if context == "root" else {"value": scalar if context == "record" else [scalar, 2]}
+            expected = case[context]
+            if "error" in expected:
+                with pytest.raises((TypeError, ValueError, tasks.TaskExecutionError)):
+                    tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue=given)
+                continue
+            assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue=given) is None
+            got = tasks.imhead(str(image), mode="get", hdkey="custom")
+            if context == "root":
+                assert type(got) is type(expected["value"]) and got == expected["value"]
+            elif context == "record":
+                entry = expected["value"]
+                assert ("value" in got) == entry["present"]
+                if entry["present"]:
+                    expected_value = complex(*entry["value"]) if case["dtype"].startswith("complex") else entry["value"]
+                    assert got["value"] == expected_value
+            else:
+                got = got["value"]
+                assert got.dtype == np.dtype(expected["value"]["dtype"])
+                values = [[z.real, z.imag] for z in got] if got.dtype.kind == "c" else got.tolist()
+                assert values == expected["value"]["values"]
+
+
 def test_imhead_large_integer_record_uses_casa_conversion(tmp_path: Path) -> None:
     import numpy as np
 

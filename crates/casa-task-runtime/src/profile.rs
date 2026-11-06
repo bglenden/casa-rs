@@ -534,6 +534,7 @@ fn required_value_is_complete(value: &ParameterValue) -> bool {
         }
         ParameterValue::EmptyArray { .. } => false,
         ParameterValue::ScalarArray(value) => required_value_is_complete(value),
+        ParameterValue::NumpyScalar { value, .. } => required_value_is_complete(value),
         ParameterValue::Bool(_)
         | ParameterValue::Integer(_)
         | ParameterValue::Float(_)
@@ -665,7 +666,8 @@ fn render_toml_value(value: &ParameterValue) -> Result<String, ProfileError> {
         )),
         ParameterValue::Complex(_)
         | ParameterValue::EmptyArray { .. }
-        | ParameterValue::ScalarArray(_) => Err(ProfileError::Contract(
+        | ParameterValue::ScalarArray(_)
+        | ParameterValue::NumpyScalar { .. } => Err(ProfileError::Contract(
             "this value requires typed parameter encoding".into(),
         )),
         ParameterValue::String(value) => Ok(quote_string(value)),

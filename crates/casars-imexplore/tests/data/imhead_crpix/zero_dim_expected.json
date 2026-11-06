@@ -51,5 +51,24 @@
         "abc"
       ]
     }
-  ]
+  ],
+  "list_cases": {
+    "empty": {
+      "dtype": "bool",
+      "shape": [
+        0
+      ],
+      "values": []
+    },
+    "mixed": {
+      "dtype": "int64",
+      "shape": [
+        2
+      ],
+      "values": [
+        1,
+        3
+      ]
+    }
+  }
 }

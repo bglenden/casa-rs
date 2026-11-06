@@ -21,7 +21,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 5 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
 | [Tclean](#surface-tclean)<br><code>tclean</code> | task | 41 | <code>imager</code> | 114 | Make dirty and deconvolved images of a MeasurementSet, as CASA's tclean does. |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 8 | <code>simobserve</code> | 38 | Simulate an observation of a sky model: CASA's simobserve |
-| [Image Header](#surface-imhead)<br><code>imhead</code> | task | 38 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
+| [Image Header](#surface-imhead)<br><code>imhead</code> | task | 39 | <code>image_analysis</code> | 5 | Inspect or update CASA image header metadata. |
 | [Image Statistics](#surface-imstat)<br><code>imstat</code> | task | 4 | <code>image_analysis</code> | 20 | Compute CASA image statistics over optional pixel, region, and channel selections. |
 | [Image Moments](#surface-immoments)<br><code>immoments</code> | task | 5 | <code>image_analysis</code> | 13 | Create CASA-style image moment maps |
 | [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 5 | <code>image_analysis</code> | 12 | Export CASA images to FITS |
@@ -397,7 +397,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Image Header (<code>imhead</code>)
 
 - Kind: `task`
-- Contract version: `38`
+- Contract version: `39`
 - Category: Images
 - Provider family: `image_analysis`
 - Summary: Inspect or update CASA image header metadata.
@@ -405,7 +405,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
 | <code>imagename</code> | <code>image.input.imagename@r1</code> | <code>array&lt;path (image)&gt;</code> | <code>""</code>; required | Input | Input CASA image path<br><em>Surface:</em> Canonical imagename maps to provider field image_path. |
-| <code>mode</code> | <code>imhead.mode@r32</code> | <code>choice (7 values)</code> | <code>"summary"</code>; optional | Header | Header operation mode. |
+| <code>mode</code> | <code>imhead.mode@r33</code> | <code>choice (7 values)</code> | <code>"summary"</code>; optional | Header | Header operation mode. |
 | <code>hdkey</code> | <code>parameter.hdkey@r2</code> | <code>string</code> | <code>""</code>; optional | Header | Header keyword to update when mode is put. |
 | <code>hdvalue</code> | <code>parameter.hdvalue@r3</code> | <code>variant</code> | <code>""</code>; optional | Header | Header value to write for add or put. |
 | <code>verbose</code> | <code>parameter.verbose@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Verbose logging. |

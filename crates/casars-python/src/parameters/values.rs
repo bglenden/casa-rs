@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_provider_contracts::{EmptyArrayType, ParameterValue};
+use casa_provider_contracts::{EmptyArrayType, NumpyScalarType, ParameterValue};
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -47,14 +47,39 @@ pub(crate) fn parameter_value(value: &Bound<'_, PyAny>) -> PyResult<ParameterVal
     if value.is_instance_of::<PyFloat>() {
         return value.extract::<f64>().map(ParameterValue::Float);
     }
+    if let Ok(text) = value.cast::<PyString>() {
+        return Ok(ParameterValue::String(text.to_str()?.to_owned()));
+    }
+    if value.hasattr("dtype")? && value.is_instance(&py.import("numpy")?.getattr("generic")?)? {
+        let dtype = value.getattr("dtype")?;
+        let kind: String = dtype.getattr("kind")?.extract()?;
+        let size: usize = dtype.getattr("itemsize")?.extract()?;
+        let dtype = match (kind.as_str(), size) {
+            ("b", _) => NumpyScalarType::Bool,
+            ("i", 1) => NumpyScalarType::Int8,
+            ("i", 2) => NumpyScalarType::Int16,
+            ("i", 4) => NumpyScalarType::Int32,
+            ("i", 8) => NumpyScalarType::Int64,
+            ("u", 1) => NumpyScalarType::UInt8,
+            ("u", 2) => NumpyScalarType::UInt16,
+            ("u", 4) => NumpyScalarType::UInt32,
+            ("u", 8) => NumpyScalarType::UInt64,
+            ("f", 4) => NumpyScalarType::Float32,
+            ("c", 8) => NumpyScalarType::Complex64,
+            ("c", 16) => NumpyScalarType::Complex128,
+            _ => return Err(PyTypeError::new_err("unsupported NumPy parameter dtype")),
+        };
+        let scalar = parameter_value(&value.call_method0("item")?)?;
+        return Ok(ParameterValue::NumpyScalar {
+            dtype,
+            value: Box::new(scalar),
+        });
+    }
     if let Ok(value) = value.cast::<PyComplex>() {
         return Ok(ParameterValue::Complex([
             casa_provider_contracts::CasaFloat(value.real()),
             casa_provider_contracts::CasaFloat(value.imag()),
         ]));
-    }
-    if let Ok(text) = value.cast::<PyString>() {
-        return Ok(ParameterValue::String(text.to_str()?.to_owned()));
     }
     if value.is_instance(PATH_LIKE.import(py, "os", "PathLike")?)? {
         let path = py.import("os")?.call_method1("fspath", (value,))?;
@@ -142,6 +167,7 @@ impl Serialize for NativeValue<'_> {
             ParameterValue::Complex(value) => value.serialize(serializer),
             ParameterValue::EmptyArray { .. } => serializer.serialize_seq(Some(0))?.end(),
             ParameterValue::ScalarArray(value) => NativeValue(value).serialize(serializer),
+            ParameterValue::NumpyScalar { value, .. } => NativeValue(value).serialize(serializer),
             ParameterValue::String(value) => serializer.serialize_str(value),
             ParameterValue::Array(values) => {
                 let mut sequence = serializer.serialize_seq(Some(values.len()))?;
@@ -186,6 +212,12 @@ pub(crate) fn value_to_python<'py>(
         ParameterValue::ScalarArray(value) => py
             .import("numpy")?
             .call_method1("array", (value_to_python(py, value)?,))?,
+        ParameterValue::NumpyScalar { dtype, value } => {
+            let name = format!("{dtype:?}").to_ascii_lowercase();
+            py.import("numpy")?
+                .getattr(name.as_str())?
+                .call1((value_to_python(py, value)?,))?
+        }
         ParameterValue::Array(values) => {
             let list = PyList::empty(py);
             for value in values {

@@ -57,6 +57,10 @@ pub(crate) enum TaggedValue {
     ScalarArray {
         value: Box<TaggedValue>,
     },
+    NumpyScalar {
+        dtype: casa_provider_contracts::NumpyScalarType,
+        value: Box<TaggedValue>,
+    },
     String {
         value: String,
     },
@@ -89,6 +93,10 @@ impl From<&ParameterValue> for TaggedValue {
                 shape: shape.clone(),
             },
             ParameterValue::ScalarArray(value) => Self::ScalarArray {
+                value: Box::new(Self::from(value.as_ref())),
+            },
+            ParameterValue::NumpyScalar { dtype, value } => Self::NumpyScalar {
+                dtype: *dtype,
                 value: Box::new(Self::from(value.as_ref())),
             },
             ParameterValue::String(value) => Self::String {

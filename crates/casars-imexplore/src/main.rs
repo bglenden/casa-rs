@@ -44,6 +44,11 @@ fn run_imhead(
     task: &TaskInvocation<'_>,
     default_logging: bool,
 ) -> Result<TaskSuccess, TaskFailure> {
+    let operation_value = task
+        .value("hdvalue")
+        .map(casa_provider_contracts::casa_numpy_scalar_root)
+        .transpose()
+        .map_err(|error| TaskFailure::validation(error).at("hdvalue"))?;
     let path = task.input_path("imagename")?;
     let mode = task.required_text("mode")?.to_ascii_lowercase();
     if mode == "history" {
@@ -109,41 +114,42 @@ fn run_imhead(
                 .value("hdvalue")
                 .cloned()
                 .unwrap_or_else(|| ParameterValue::String(String::new()));
+            let value = operation_value.as_ref().unwrap_or(&hdvalue);
             let mut write_task_history = true;
             let summary = if beam_key {
-                casa_images::analysis::imhead_change_beam(&path, &mode, &hdkey, &hdvalue).map(
+                casa_images::analysis::imhead_change_beam(&path, &mode, &hdkey, value).map(
                     |(summary, write_history)| {
                         write_task_history = write_history;
                         summary
                     },
                 )
             } else if reference_pixel {
-                casa_images::analysis::imhead_put_reference_pixel(&path, &hdkey, &hdvalue)
+                casa_images::analysis::imhead_put_reference_pixel(&path, &hdkey, value)
             } else if axis_name {
-                casa_images::analysis::imhead_put_axis_name(&path, &hdkey, &hdvalue)
+                casa_images::analysis::imhead_put_axis_name(&path, &hdkey, value)
             } else if axis_unit {
-                casa_images::analysis::imhead_put_axis_unit(&path, &hdkey, &hdvalue)
+                casa_images::analysis::imhead_put_axis_unit(&path, &hdkey, value)
             } else if rest_frequency {
                 if mode == "add" {
-                    casa_images::analysis::imhead_add_rest_frequency(&path, &hdvalue)
+                    casa_images::analysis::imhead_add_rest_frequency(&path, value)
                 } else {
-                    casa_images::analysis::imhead_put_rest_frequency(&path, &hdvalue)
+                    casa_images::analysis::imhead_put_rest_frequency(&path, value)
                 }
             } else if observation_date {
-                casa_images::analysis::imhead_put_observation_date(&path, &hdkey, &hdvalue)
+                casa_images::analysis::imhead_put_observation_date(&path, &hdkey, value)
             } else if spectral_reference {
-                casa_images::analysis::imhead_put_spectral_reference(&path, &hdkey, &hdvalue)
+                casa_images::analysis::imhead_put_spectral_reference(&path, &hdkey, value)
             } else if direction_reference {
-                casa_images::analysis::imhead_put_direction_reference(&path, &hdkey, &hdvalue)
+                casa_images::analysis::imhead_put_direction_reference(&path, &hdkey, value)
             } else if projection {
-                casa_images::analysis::imhead_put_projection(&path, &hdkey, &hdvalue)
+                casa_images::analysis::imhead_put_projection(&path, &hdkey, value)
             } else if axis_quantity {
-                casa_images::analysis::imhead_put_axis_quantity(&path, &hdkey, &hdvalue)
+                casa_images::analysis::imhead_put_axis_quantity(&path, &hdkey, value)
             } else if casa_images::analysis::imhead_is_custom_key(&hdkey) {
-                casa_images::analysis::imhead_custom_value_change(&path, &mode, &hdkey, &hdvalue)
+                casa_images::analysis::imhead_custom_value_change(&path, &mode, &hdkey, value)
             } else if mode == "del" {
                 imhead_add_delete(&path, &mode, &hdkey, "")
-            } else if let ParameterValue::String(value) = &hdvalue {
+            } else if let ParameterValue::String(value) = value {
                 if mode == "put" {
                     imhead_put(&path, &hdkey, value)
                 } else {
@@ -277,7 +283,8 @@ fn history_value(value: &ParameterValue) -> String {
         ParameterValue::Float(value) => casa_provider_contracts::python_float(*value),
         ParameterValue::Complex(_)
         | ParameterValue::EmptyArray { .. }
-        | ParameterValue::ScalarArray(_) => casa_provider_contracts::python_repr(value),
+        | ParameterValue::ScalarArray(_)
+        | ParameterValue::NumpyScalar { .. } => casa_provider_contracts::python_repr(value),
         ParameterValue::Array(_) | ParameterValue::Table(_) => {
             casa_provider_contracts::python_repr(value)
         }

@@ -16,6 +16,7 @@ pub fn normalize_value(
     value: &ParameterValue,
     concept: &ParameterConcept,
 ) -> Result<ParameterValue, NormalizationError> {
+    validate_wrapped_values(value)?;
     reject_forbidden_strings(value, names_project(&concept.normalization))?;
     let value = if reads_numbers_as_text(&concept.normalization) {
         number_as_text(value)
@@ -28,6 +29,20 @@ pub fn normalize_value(
         .map_err(NormalizationError::Type)?;
     validate_constraints(&normalized, &concept.base_constraints)?;
     Ok(normalized)
+}
+
+// NumberAsText and other normalization must not erase malformed typed values
+// before their scalar dtype and nesting invariants have been checked.
+fn validate_wrapped_values(value: &ParameterValue) -> Result<(), NormalizationError> {
+    match value {
+        ParameterValue::ScalarArray(_) | ParameterValue::NumpyScalar { .. } => {
+            validate_parameter_value(value, &ParameterType::Variant)
+                .map_err(NormalizationError::Type)
+        }
+        ParameterValue::Array(values) => values.iter().try_for_each(validate_wrapped_values),
+        ParameterValue::Table(values) => values.values().try_for_each(validate_wrapped_values),
+        _ => Ok(()),
+    }
 }
 
 /// Whether `rule` reads a number given for text as its text.
@@ -50,6 +65,7 @@ fn number_as_text(value: &ParameterValue) -> ParameterValue {
         ParameterValue::ScalarArray(value) => {
             ParameterValue::ScalarArray(Box::new(number_as_text(value)))
         }
+        ParameterValue::NumpyScalar { value, .. } => number_as_text(value),
         other => other.clone(),
     }
 }
@@ -94,6 +110,7 @@ fn reject_forbidden_strings(
             }
         }
         ParameterValue::ScalarArray(value) => reject_forbidden_strings(value, project)?,
+        ParameterValue::NumpyScalar { value, .. } => reject_forbidden_strings(value, project)?,
         ParameterValue::Bool(_)
         | ParameterValue::Integer(_)
         | ParameterValue::Float(_)
@@ -130,14 +147,18 @@ fn normalize_domain(
     value: &ParameterValue,
     domain: &ParameterType,
 ) -> Result<ParameterValue, NormalizationError> {
-    if matches!(value, ParameterValue::ScalarArray(_)) {
+    if matches!(
+        value,
+        ParameterValue::ScalarArray(_) | ParameterValue::NumpyScalar { .. }
+    ) {
         validate_parameter_value(value, &ParameterType::Variant)
             .map_err(NormalizationError::Type)?;
     }
     if !matches!(
         domain,
         ParameterType::Variant | ParameterType::Optional { .. }
-    ) && let ParameterValue::ScalarArray(scalar) = value
+    ) && let ParameterValue::ScalarArray(scalar)
+    | ParameterValue::NumpyScalar { value: scalar, .. } = value
     {
         return normalize_domain(scalar, domain);
     }
@@ -676,6 +697,7 @@ fn numeric_values(value: &ParameterValue) -> Vec<f64> {
         ParameterValue::Array(values) => values.iter().flat_map(numeric_values).collect(),
         ParameterValue::Table(values) => values.values().flat_map(numeric_values).collect(),
         ParameterValue::ScalarArray(value) => numeric_values(value),
+        ParameterValue::NumpyScalar { value, .. } => numeric_values(value),
         ParameterValue::Bool(_)
         | ParameterValue::Complex(_)
         | ParameterValue::EmptyArray { .. } => Vec::new(),
@@ -713,6 +735,16 @@ fn values_semantically_equal(left: &ParameterValue, right: &ParameterValue) -> b
         (ParameterValue::ScalarArray(left), ParameterValue::ScalarArray(right)) => {
             values_semantically_equal(left, right)
         }
+        (
+            ParameterValue::NumpyScalar {
+                dtype: ld,
+                value: left,
+            },
+            ParameterValue::NumpyScalar {
+                dtype: rd,
+                value: right,
+            },
+        ) => ld == rd && values_semantically_equal(left, right),
         (
             ParameterValue::EmptyArray {
                 dtype: ld,
@@ -827,6 +859,16 @@ mod tests {
             ParameterValue::Integer(16),
         ))));
         assert!(super::normalize_domain(&nested, &ParameterType::Integer).is_err());
+        let invalid_numpy = ParameterValue::NumpyScalar {
+            dtype: casa_provider_contracts::NumpyScalarType::Int8,
+            value: Box::new(ParameterValue::Integer(1000)),
+        };
+        assert!(super::normalize_domain(&invalid_numpy, &ParameterType::Integer).is_err());
+        let invalid_float = ParameterValue::NumpyScalar {
+            dtype: casa_provider_contracts::NumpyScalarType::Float32,
+            value: Box::new(ParameterValue::Float(1e300)),
+        };
+        assert!(super::normalize_domain(&invalid_float, &ParameterType::Float).is_err());
     }
 
     #[test]
