@@ -26,7 +26,7 @@ use std::sync::Arc;
 use casa_components::{ComponentList, ComponentListError, Flux, SkyComponent};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
-use casa_types::measures::frequency::MFrequency;
+use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::quanta::Unit;
 use casa_types::{RecordValue, Value};
 
@@ -449,6 +449,36 @@ impl State {
         Ok(true)
     }
 
+    /// Relabel a frequency without converting its physical value.
+    /// `None` denotes CASA's valid but unsupported Undefined frame.
+    pub(crate) fn setfreqframe(
+        &mut self,
+        which: i64,
+        name: &str,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<Option<bool>> {
+        let Some(frame) = frequency_frame(name) else {
+            lines.push(LogLine::error(
+                "Could not parse the 'frame' string: Frequency frame not changed",
+            ));
+            return Ok(Some(false));
+        };
+        if which < 0 {
+            return Err(ConvertError::runtime("Failed AlwaysAssert which(i) >= 0"));
+        }
+        let component = usize::try_from(which)
+            .ok()
+            .and_then(|index| self.list.get_mut(index))
+            .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
+        let Some(frame) = frame else {
+            return Ok(None);
+        };
+        let spectrum = component.spectrum_mut();
+        spectrum
+            .set_reference_frequency(MFrequency::new(spectrum.reference_frequency().hz(), frame));
+        Ok(Some(true))
+    }
+
     /// Convert selected component fluxes only after all source units conform.
     pub(crate) fn convertfluxunit(
         &mut self,
@@ -573,6 +603,27 @@ impl State {
 fn absolute(filename: &str) -> ConvertResult<PathBuf> {
     std::path::absolute(filename)
         .map_err(|error| ConvertError::runtime(format!("cannot resolve {filename}: {error}")))
+}
+
+/// CASA accepts an unambiguous prefix or a name beginning with a complete
+/// frame name. The outer option means a unique match; the inner one marks
+/// CASA's Undefined reference, which this measure model cannot yet store.
+fn frequency_frame(name: &str) -> Option<Option<FrequencyRef>> {
+    if name.is_empty() {
+        return None;
+    }
+    let name = name.to_ascii_uppercase();
+    let choices = FrequencyRef::ALL
+        .into_iter()
+        .map(|frame| (frame.as_str(), Some(frame)))
+        .chain(std::iter::once(("UNDEFINED", None)));
+    let mut matches = choices
+        .filter(|(candidate, _)| candidate.starts_with(&name) || name.starts_with(candidate));
+    let (_, matched) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(matched)
 }
 
 /// Whether `path` is a table with a `Shape_Parameters` column, the test
