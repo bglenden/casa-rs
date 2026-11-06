@@ -143,7 +143,7 @@ const METHODS: &[Method] = &[
     of_one("getfreqframe", R::Text, Yes),
     of_one("getfrequnit", R::Text, Yes),
     of_one("getfreqvalue", R::Float, Yes),
-    method("getkeyword", &[KEYWORD], R::Record, No),
+    method("getkeyword", &[KEYWORD], R::Any, Yes),
     of_one("getlabel", R::Text, Yes),
     of_one("getrefdir", R::Record, Yes),
     method(
@@ -169,7 +169,7 @@ const METHODS: &[Method] = &[
     ),
     of_one("getshape", R::Record, Yes),
     of_one("getspectrum", R::Record, Yes),
-    method("haskeyword", &[KEYWORD], R::Bool, No),
+    method("haskeyword", &[KEYWORD], R::Bool, Yes),
     method("indices", &[], R::Ints, Yes),
     method(
         "iscomponentlist",
