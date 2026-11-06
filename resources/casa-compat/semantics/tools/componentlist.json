@@ -413,12 +413,12 @@
    ]
   },
   "setfreq": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Changes one component reference frequency and record unit while preserving its frame and independent frequency error. Non-frequency units are rejected before mutation.",
    "evidence": [
     "signature",
-    "refusals"
+    "setfreq-casa"
    ]
   },
   "setfreqframe": {
@@ -892,6 +892,20 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "dfe21eb091b0181bc84d113cb65198ffe4c4a7ce"
+  },
+  "setfreq-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "24 CASA 6.7.6-14 calls compare frequency changes, argument conversions and errors; separate cases cover a BARY-frame table, redefined Hz and an isolated invalid-unit crash.",
+   "scope": "componentlist.setfreq.",
+   "links": [
+    "tools/casa-compat/componentlist_setfreq_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setfreq.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setfreq.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_setfreq.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "4643a1a41bec39b8641b713ef4037cdedd6136db"
   }
  }
 }
