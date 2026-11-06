@@ -458,12 +458,12 @@
    ]
   },
   "setshape": {
-   "status": "Not implemented",
+   "status": "Implemented",
    "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "scope": "Sets Point, Gaussian or Disk shapes and angular errors while preserving the reference direction and its errors. Retains supplied shape units in memory and CASA table units after reopening. Rejects non-finite values and cyclic or failed argument conversions before unsafe mutation; unsupported names and limb-darkened disks return false as in CASA.",
    "evidence": [
     "signature",
-    "refusals"
+    "setshape-casa"
    ]
   },
   "setspectrum": {
@@ -1080,6 +1080,20 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "c7812db83679f9c49e5397540c331895da3aa89d"
+  },
+  "setshape-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "36 CASA 6.7.6-14 setter cases, 11 optional-parameter cases, two non-finite cases and an isolated cyclic-input crash cover shape values, units and safety. CASA reads a casa-rs-written disk with shape and preserved direction errors and keyword intact.",
+   "scope": "componentlist.setshape and shape records.",
+   "links": [
+    "tools/simulation/componentlist_setshape_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_setshape.json",
+    "crates/casars-python/python/tests/data/casa_componentlist_setshape.cl.tgz",
+    "crates/casars-python/python/tests/test_componentlist_setshape.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "bf58ba339a8b951d5b93aa14585441d23f8dbeb8"
   }
  }
 }
