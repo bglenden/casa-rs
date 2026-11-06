@@ -262,17 +262,20 @@ const METHODS: &[Method] = &[
         R::Bool,
         Yes,
     ),
-    method(
-        "setrefdir",
-        &[
-            param("which", K::Int, Int(1)),
-            param("ra", K::Any, Empty),
-            param("dec", K::Any, Empty),
-            LOG,
-        ],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "setrefdir",
+            &[
+                param("which", K::Int, Int(1)),
+                param("ra", K::Any, Empty),
+                param("dec", K::Any, Empty),
+                LOG,
+            ],
+            R::Bool,
+            Yes,
+        )
+    },
     Method {
         mutating: true,
         ..method(

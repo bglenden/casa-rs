@@ -26,14 +26,14 @@ use std::sync::Arc;
 use casa_components::{ComponentList, ComponentListError, Flux, SkyComponent};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
-use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
-use casa_types::quanta::Unit;
+use casa_types::quanta::{Dimension, Unit, UnitDim};
 use casa_types::{RecordValue, Value};
 
 use super::add::AddComponent;
 use crate::convert::value::CasaValue;
-use crate::convert::{ConvertError, ConvertResult, casacore_unit, quantity};
+use crate::convert::{ConvertError, ConvertResult, Variant, casacore_unit, quantity};
 use crate::tools::LogLine;
 
 /// The table a list is attached to.
@@ -418,6 +418,61 @@ impl State {
             .and_then(|index| self.list.get_mut(index))
             .ok_or_else(|| ConvertError::runtime("Failed AlwaysAssert index < nelements()"))?;
         component.set_label(value);
+        Ok(true)
+    }
+
+    /// Set direction coordinates while preserving each component's frame.
+    pub(crate) fn setrefdir(
+        &mut self,
+        which: i64,
+        ra: &Variant,
+        dec: &Variant,
+        pending: bool,
+        lines: &mut Vec<LogLine>,
+    ) -> ConvertResult<bool> {
+        let ra = quantity(ra)?;
+        let dec = quantity(dec)?;
+        for angle in [&dec, &ra] {
+            if angle.unit().val().dim != UnitDim::basis(Dimension::Angle) {
+                return Err(ConvertError::runtime(format!(
+                    "Quantum::cos illegal unit type '{}'",
+                    angle.unit().name()
+                )));
+            }
+        }
+        let (ra, dec) = (ra.get_si_value(), dec.get_si_value());
+        if !ra.is_finite() || !dec.is_finite() {
+            return Err(ConvertError::runtime(
+                "non-finite component direction refused (CASA writes NaN: #1053)",
+            ));
+        }
+        if pending {
+            return Ok(false);
+        }
+        if which == -1 && self.list.is_empty() {
+            return Err(ConvertError::runtime(
+                "Cannot set directions of an empty list (CASA crashes: #1053)",
+            ));
+        }
+        if which < -1 || which >= self.length() {
+            let message = "Index out of range.\nA component number is less than one or greater than the list length\nDirection not changed on any components";
+            lines.push(LogLine::error(message));
+            return Err(ConvertError::runtime(message));
+        }
+        let indices: Vec<usize> = if which == -1 {
+            (0..self.list.len()).collect()
+        } else {
+            vec![which as usize]
+        };
+        for index in indices {
+            let shape = self
+                .list
+                .get_mut(index)
+                .expect("validated index")
+                .shape_mut();
+            let direction = MDirection::from_angles(ra, dec, shape.reference_direction().refer());
+            shape.set_reference_direction(direction);
+        }
         Ok(true)
     }
 
