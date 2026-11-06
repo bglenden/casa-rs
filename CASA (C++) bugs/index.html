@@ -4875,6 +4875,22 @@ and infinity, and narrows a finite <code>1e200</code> to infinity when it tempor
 stores the flux in single precision. casa-rs rejects non-finite inputs and
 retains finite double-precision values, consistent with the existing
 <code>addcomponent</code> precision decision above.</p>
+<h2 id="component-shape-changes-discard-direction-errors">Component shape changes discard direction errors<a class="headerlink" href="#component-shape-changes-discard-direction-errors" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-06</li>
+<li>Status: CASA loses direction errors and can modify a component before reporting an argument error; casa-rs preserves them (#1053).</li>
+<li>Owner decision: Correct CASA data corruption as a class; see <code>docs/simulation/owner-decisions-20261105.md</code>.</li>
+<li>Evidence: <code>tools/simulation/componentlist_setshape_oracle.py</code> and its CASA 6.7.6-14 fixture.</li>
+</ul>
+<p>Given a component with nonzero direction errors, <code>setshape(0, ...)</code> copies
+only its direction and replaces both errors with zero. casa-rs preserves the
+original direction and both errors when changing the shape. Passing
+<code>optionalparms=None</code> can also update the shape before CASA raises
+<code>SystemError</code>; casa-rs reports the error without changing the component.
+Passing a cyclic <code>optionalparms</code> list terminates CASA with SIGSEGV; casa-rs
+rejects the cycle before changing the component.
+CASA accepts NaN as a Gaussian position angle or shape error and writes NaN;
+casa-rs rejects a non-finite shape or error before mutation.</p>
 
 
 
