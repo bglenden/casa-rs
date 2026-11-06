@@ -67,12 +67,22 @@ pub fn project_provider_invocation_with_originals(
                 .filter(|_| is_quantity(session, name))
                 .or(path_original)
                 .unwrap_or(value);
-            Some((name.clone(), sent.to_plain_json()))
+            Some((name.clone(), sent.clone()))
         })
-        .collect();
+        .collect::<BTreeMap<_, _>>();
+    let mut plain = serde_json::Map::new();
+    let mut typed_values = BTreeMap::new();
+    for (name, value) in values {
+        if value.contains_complex() {
+            typed_values.insert(name, value);
+        } else {
+            plain.insert(name, value.to_plain_json());
+        }
+    }
     let request = TaskRunRequest {
         surface: session.bundle().surface.id().to_string(),
-        values,
+        values: plain,
+        typed_values,
     };
     let stdin = serde_json::to_string(&request)
         .map_err(|error| ProviderInvocationError::Request(error.to_string()))?;
@@ -134,6 +144,43 @@ mod tests {
     fn request(session: &ParameterSession) -> TaskRunRequest {
         let invocation = project_provider_invocation(session).unwrap();
         serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn complex_record_uses_typed_transport_and_roundtrips_profile() {
+        use casa_provider_contracts::CasaFloat;
+        let mut session =
+            ParameterSession::defaults(builtin_surface_bundle("imhead").unwrap()).unwrap();
+        session
+            .set("imagename", ParameterValue::String("image.im".into()))
+            .unwrap();
+        session
+            .set("mode", ParameterValue::String("add".into()))
+            .unwrap();
+        session
+            .set("hdkey", ParameterValue::String("custom".into()))
+            .unwrap();
+        let record = ParameterValue::Table(BTreeMap::from([
+            (
+                "value".into(),
+                ParameterValue::Complex([CasaFloat(1.0), CasaFloat(f64::INFINITY)]),
+            ),
+            (
+                "ordinary".into(),
+                ParameterValue::Table(BTreeMap::from([(
+                    "kind".into(),
+                    ParameterValue::String("complex".into()),
+                )])),
+            ),
+        ]));
+        session.set("hdvalue", record.clone()).unwrap();
+        let request = request(&session);
+        assert!(!request.values.contains_key("hdvalue"));
+        assert_eq!(request.typed_values.get("hdvalue"), Some(&record));
+        let profile = session.render_sparse().unwrap();
+        assert!(profile.contains("[typed_parameters]"));
+        let parsed = crate::parse_profile(&profile).unwrap();
+        assert_eq!(parsed.parameters.get("hdvalue"), Some(&record));
     }
 
     #[test]

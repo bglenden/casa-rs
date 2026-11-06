@@ -90,7 +90,10 @@ fn reject_forbidden_strings(
                 reject_forbidden_strings(value, project)?;
             }
         }
-        ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) => {}
+        ParameterValue::Bool(_)
+        | ParameterValue::Integer(_)
+        | ParameterValue::Float(_)
+        | ParameterValue::Complex(_) => {}
     }
     Ok(())
 }
@@ -653,7 +656,7 @@ fn numeric_values(value: &ParameterValue) -> Vec<f64> {
             .unwrap_or_default(),
         ParameterValue::Array(values) => values.iter().flat_map(numeric_values).collect(),
         ParameterValue::Table(values) => values.values().flat_map(numeric_values).collect(),
-        ParameterValue::Bool(_) => Vec::new(),
+        ParameterValue::Bool(_) | ParameterValue::Complex(_) => Vec::new(),
     }
 }
 
@@ -671,6 +674,16 @@ fn values_semantically_equal(left: &ParameterValue, right: &ParameterValue) -> b
         (ParameterValue::Float(left), ParameterValue::Float(right)) => {
             let scale = left.abs().max(right.abs()).max(1.0);
             (left - right).abs() <= scale * 1.0e-12
+        }
+        (ParameterValue::Complex(left), ParameterValue::Complex(right)) => {
+            left.iter().zip(right).all(|(left, right)| {
+                let (left, right) = (left.0, right.0);
+                left == right
+                    || (left.is_nan() && right.is_nan())
+                    || (left.is_finite()
+                        && right.is_finite()
+                        && (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1.0e-12)
+            })
         }
         (ParameterValue::Integer(left), ParameterValue::Integer(right)) => left == right,
         (ParameterValue::Integer(left), ParameterValue::Float(right))
@@ -747,6 +760,28 @@ impl NormalizationError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn complex_semantic_equality_handles_nested_and_nonfinite_components() {
+        use casa_provider_contracts::{CasaFloat, ParameterValue};
+        let complex = |real, imag| ParameterValue::Complex([CasaFloat(real), CasaFloat(imag)]);
+        assert!(super::values_semantically_equal(
+            &complex(1.0, -0.0),
+            &complex(1.0, 0.0)
+        ));
+        assert!(super::values_semantically_equal(
+            &complex(f64::NAN, f64::INFINITY),
+            &complex(f64::NAN, f64::INFINITY)
+        ));
+        assert!(!super::values_semantically_equal(
+            &complex(1.0, f64::INFINITY),
+            &complex(1.0, f64::NEG_INFINITY)
+        ));
+        let nested = ParameterValue::Table(std::collections::BTreeMap::from([(
+            "value".into(),
+            complex(2.0, -3.0),
+        )]));
+        assert!(super::values_semantically_equal(&nested, &nested));
+    }
     use casa_provider_contracts::{
         CELL_CONCEPT_ID, IMSIZE_CONCEPT_ID, ParameterConceptId, ParameterDocs, ParameterRole,
         PersistenceClass, SelectorGrammar, SemanticRevision, UnitDimension,

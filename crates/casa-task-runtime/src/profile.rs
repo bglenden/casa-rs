@@ -54,7 +54,11 @@ pub fn parse_profile(source: &str) -> Result<ParameterProfile, ProfileError> {
         message: "profile root must be a TOML table".to_string(),
         location: Some(SourceLocation { line: 1, column: 1 }),
     })?;
-    reject_unknown_keys(root.keys(), ["casars", "parameters"], "profile root")?;
+    reject_unknown_keys(
+        root.keys(),
+        ["casars", "parameters", "typed_parameters"],
+        "profile root",
+    )?;
 
     let header = root
         .get("casars")
@@ -94,6 +98,30 @@ pub fn parse_profile(source: &str) -> Result<ParameterProfile, ProfileError> {
         parameters.insert(name.clone(), from_toml(value)?);
         if let Some(location) = locate_key(source, name, true) {
             locations.insert(name.clone(), location);
+        }
+    }
+    if let Some(typed) = root.get("typed_parameters") {
+        let typed = typed.as_table().ok_or_else(|| ProfileError::Parse {
+            message: "[typed_parameters] must be a table".into(),
+            location: None,
+        })?;
+        for (name, value) in typed {
+            if parameters.contains_key(name) {
+                return Err(ProfileError::Parse {
+                    message: format!("parameter {name:?} occurs in both parameter tables"),
+                    location: None,
+                });
+            }
+            let text = value.as_str().ok_or_else(|| ProfileError::Parse {
+                message: format!("typed parameter {name:?} must contain JSON text"),
+                location: None,
+            })?;
+            let value: ParameterValue =
+                serde_json::from_str(text).map_err(|error| ProfileError::Parse {
+                    message: format!("invalid typed parameter {name:?}: {error}"),
+                    location: None,
+                })?;
+            parameters.insert(name.clone(), value);
         }
     }
 
@@ -504,7 +532,10 @@ fn required_value_is_complete(value: &ParameterValue) -> bool {
         ParameterValue::Table(values) => {
             !values.is_empty() && values.values().all(required_value_is_complete)
         }
-        ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) => true,
+        ParameterValue::Bool(_)
+        | ParameterValue::Integer(_)
+        | ParameterValue::Float(_)
+        | ParameterValue::Complex(_) => true,
     }
 }
 
@@ -542,13 +573,26 @@ pub fn render_sparse_profile(
     let mut lines = profile_header(bundle);
     lines.push(String::new());
     lines.push("[parameters]".to_string());
+    let mut typed = Vec::new();
     for binding in bindings {
         let Some(value) = resolved.get(&binding.name) else {
             continue;
         };
         if sparse.contains_key(&binding.name) {
-            lines.push(format!("{} = {}", binding.name, render_toml_value(value)?));
+            if value.contains_complex() {
+                let json = serde_json::to_string(value).map_err(|error| {
+                    ProfileError::Contract(format!("cannot render typed parameter: {error}"))
+                })?;
+                typed.push(format!("{} = {}", binding.name, quote_string(&json)));
+            } else {
+                lines.push(format!("{} = {}", binding.name, render_toml_value(value)?));
+            }
         }
+    }
+    if !typed.is_empty() {
+        lines.push(String::new());
+        lines.push("[typed_parameters]".to_string());
+        lines.extend(typed);
     }
     lines.push(String::new());
     Ok(lines.join("\n"))
@@ -616,6 +660,9 @@ fn render_toml_value(value: &ParameterValue) -> Result<String, ProfileError> {
         ParameterValue::Float(value) if value.is_finite() => Ok(value.to_string()),
         ParameterValue::Float(_) => Err(ProfileError::Contract(
             "cannot render non-finite profile value".to_string(),
+        )),
+        ParameterValue::Complex(_) => Err(ProfileError::Contract(
+            "complex values require typed parameter encoding".into(),
         )),
         ParameterValue::String(value) => Ok(quote_string(value)),
         ParameterValue::Array(values) => values

@@ -21,6 +21,11 @@ fn array_elements(array: &ArrayValue, column_major: bool) -> Vec<String> {
         ArrayValue::Float64(values) => {
             collect!(values, |value: &f64| cpp_number_precision(*value, 6))
         }
+        ArrayValue::Complex64(values) => collect!(values, |value: &casa_types::Complex64| format!(
+            "({},{})",
+            cpp_number_precision(value.re, 6),
+            cpp_number_precision(value.im, 6)
+        )),
         ArrayValue::String(values) => collect!(values, |value: &String| value.clone()),
         _ => unreachable!("only parameter-converted arrays are formatted"),
     }
@@ -88,6 +93,13 @@ pub(super) fn format_record(record: &RecordValue) -> String {
                     Value::Scalar(ScalarValue::Float64(value)) => {
                         format!("{prefix}Double {}", cpp_number_precision(*value, 6))
                     }
+                    Value::Scalar(ScalarValue::Complex64(value)) => {
+                        format!(
+                            "{prefix}DComplex ({},{})",
+                            cpp_number_precision(value.re, 6),
+                            cpp_number_precision(value.im, 6)
+                        )
+                    }
                     Value::Scalar(ScalarValue::String(value)) => {
                         format!("{prefix}String \"{value}\"")
                     }
@@ -96,6 +108,7 @@ pub(super) fn format_record(record: &RecordValue) -> String {
                             ArrayValue::Bool(_) => "Bool",
                             ArrayValue::Int32(_) => "Int",
                             ArrayValue::Float64(_) => "Double",
+                            ArrayValue::Complex64(_) => "DComplex",
                             ArrayValue::String(_) => "String",
                             _ => unreachable!("only parameter-derived records are formatted"),
                         };

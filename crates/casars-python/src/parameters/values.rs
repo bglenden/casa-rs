@@ -15,7 +15,7 @@ use casa_provider_contracts::ParameterValue;
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple, PyType};
+use pyo3::types::{PyBool, PyComplex, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple, PyType};
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
 
@@ -47,6 +47,12 @@ pub(crate) fn parameter_value(value: &Bound<'_, PyAny>) -> PyResult<ParameterVal
     if value.is_instance_of::<PyFloat>() {
         return value.extract::<f64>().map(ParameterValue::Float);
     }
+    if let Ok(value) = value.cast::<PyComplex>() {
+        return Ok(ParameterValue::Complex([
+            casa_provider_contracts::CasaFloat(value.real()),
+            casa_provider_contracts::CasaFloat(value.imag()),
+        ]));
+    }
     if let Ok(text) = value.cast::<PyString>() {
         return Ok(ParameterValue::String(text.to_str()?.to_owned()));
     }
@@ -58,6 +64,18 @@ pub(crate) fn parameter_value(value: &Bound<'_, PyAny>) -> PyResult<ParameterVal
             ));
         };
         return Ok(ParameterValue::String(path.to_str()?.to_owned()));
+    }
+    if value.hasattr("dtype")? && value.hasattr("shape")? && value.hasattr("tolist")? {
+        if value.hasattr("size")? && value.getattr("size")?.extract::<usize>()? == 0 {
+            return Err(PyTypeError::new_err(
+                "empty NumPy parameter arrays are not supported (#977)",
+            ));
+        }
+        let converted = value.call_method0("tolist")?;
+        if converted.is(value) || converted.get_type().is(value.get_type()) {
+            return Err(PyTypeError::new_err("unsupported NumPy parameter dtype"));
+        }
+        return parameter_value(&converted);
     }
     if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
         return value
@@ -103,6 +121,7 @@ impl Serialize for NativeValue<'_> {
             ParameterValue::Bool(value) => serializer.serialize_bool(*value),
             ParameterValue::Integer(value) => serializer.serialize_i64(*value),
             ParameterValue::Float(value) => serializer.serialize_f64(*value),
+            ParameterValue::Complex(value) => value.serialize(serializer),
             ParameterValue::String(value) => serializer.serialize_str(value),
             ParameterValue::Array(values) => {
                 let mut sequence = serializer.serialize_seq(Some(values.len()))?;
@@ -120,6 +139,33 @@ impl Serialize for NativeValue<'_> {
             }
         }
     }
+}
+
+/// Convert typed parameter values into their natural Python representations.
+pub(crate) fn value_to_python<'py>(
+    py: Python<'py>,
+    value: &ParameterValue,
+) -> PyResult<Bound<'py, PyAny>> {
+    Ok(match value {
+        ParameterValue::Complex([real, imag]) => {
+            PyComplex::from_doubles(py, real.0, imag.0).into_any()
+        }
+        ParameterValue::Array(values) => {
+            let list = PyList::empty(py);
+            for value in values {
+                list.append(value_to_python(py, value)?)?;
+            }
+            list.into_any()
+        }
+        ParameterValue::Table(values) => {
+            let dict = PyDict::new(py);
+            for (key, value) in values {
+                dict.set_item(key, value_to_python(py, value)?)?;
+            }
+            dict.into_any()
+        }
+        other => pythonize::pythonize(py, &NativeValue(other)).map_err(PyErr::from)?,
+    })
 }
 
 /// Serialize an optional [`ParameterValue`] as its plain value.

@@ -281,6 +281,87 @@ def test_imhead_reads_casa_complex_scalars(tmp_path: Path) -> None:
     assert type(record["nested"]["imag"]) is complex
 
 
+def test_imhead_writes_complex_records_and_roundtrips_profiles(tmp_path: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "complex-write.im"
+    shutil.copytree(fixture, image)
+    value = {"scalar": 1.25 - 2.5j, "nested": {"imag": -3j},
+             "ordinary": {"kind": "complex", "value": [1, 2]},
+             "numbers": [1 + 2j, 3, 2.5, True],
+             "words": [1 + 2j, complex(float("nan"), float("inf")), "x"]}
+    params = TaskParameters.defaults("imhead", workspace=tmp_path)
+    params.set_many({"imagename": str(image), "mode": "add", "hdkey": "custom", "hdvalue": value})
+    assert params["hdvalue"]["scalar"] == value["scalar"]
+    profile = params.save(tmp_path / "complex.toml")
+    assert "[typed_parameters]" in profile.read_text()
+    restored = TaskParameters.load("imhead", profile, workspace=tmp_path)
+    assert restored["hdvalue"]["scalar"] == value["scalar"]
+    assert tasks.run("imhead", restored).value is None
+    actual = tasks.imhead(str(image), mode="get", hdkey="custom")
+    assert actual["scalar"] == value["scalar"] and type(actual["scalar"]) is complex
+    assert actual["nested"] == value["nested"]
+    assert actual["ordinary"]["kind"] == "complex"
+    np.testing.assert_array_equal(actual["ordinary"]["value"], [1, 2])
+    np.testing.assert_array_equal(actual["numbers"], [1 + 2j, 3 + 0j, 2.5 + 0j, 1 + 0j])
+    assert actual["numbers"].dtype == np.dtype("complex128")
+    np.testing.assert_array_equal(actual["words"], ["(1.000000,2.000000)", "(nan,inf)", "x"])
+    assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue={"changed": -4 + 5j}) is None
+    assert tasks.imhead(str(image), mode="get", hdkey="custom") == {"changed": -4 + 5j}
+
+
+def test_imhead_writes_numpy_complex_matrix_in_record(tmp_path: Path) -> None:
+    import numpy as np
+
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "complex-array.im"
+    shutil.copytree(fixture, image)
+    matrix = np.array([[1 + 2j, 3 + 4j, 5 + 6j], [7 + 8j, 9 + 10j, 11 + 12j]], dtype=np.complex64)
+    assert tasks.imhead(str(image), mode="add", hdkey="custom", hdvalue={"matrix": matrix}) is None
+    actual = tasks.imhead(str(image), mode="get", hdkey="custom")["matrix"]
+    assert actual.dtype == np.dtype("complex128")
+    np.testing.assert_array_equal(actual, matrix)
+
+
+def test_imhead_rejects_unsupported_extended_numpy_precision(tmp_path: Path) -> None:
+    import numpy as np
+
+    value = np.longdouble("1.25")
+    if type(value.tolist()) is not type(value):
+        pytest.skip("NumPy converts longdouble to a Python scalar on this platform")
+    params = TaskParameters.defaults("imhead", workspace=tmp_path)
+    for item in [value, np.array([value])]:
+        with pytest.raises(TypeError, match="unsupported NumPy parameter dtype"):
+            params["hdvalue"] = {"value": item}
+
+
+def test_imhead_refuses_empty_numpy_arrays_without_losing_shape(tmp_path: Path) -> None:
+    import numpy as np
+
+    params = TaskParameters.defaults("imhead", workspace=tmp_path)
+    for item in [np.array([], dtype=np.float64), np.empty((0, 2), dtype=np.complex128)]:
+        with pytest.raises(TypeError, match="empty NumPy parameter arrays.*#977"):
+            params["hdvalue"] = {"value": item}
+
+
+def test_complex_profile_nesting_is_bounded_before_it_is_saved(tmp_path: Path) -> None:
+    params = TaskParameters.defaults("imhead", workspace=tmp_path)
+    params["imagename"] = "image.im"
+    value = 1j
+    for _ in range(24):
+        value = [value]
+    for _ in range(24):
+        value = {"a": value}
+    params["hdvalue"] = value
+    profile = params.save(tmp_path / "deep.toml")
+    assert TaskParameters.load("imhead", profile, workspace=tmp_path)["hdvalue"] == value
+    with pytest.raises(TypeError, match="beyond 48 levels.*#977"):
+        params["hdvalue"] = {"a": value}
+
+
 def test_imhead_casa_record_multidimensional_arrays(tmp_path: Path) -> None:
     import numpy as np
 

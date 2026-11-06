@@ -37,12 +37,28 @@ pub(crate) fn snake_case_debug(value: impl std::fmt::Debug) -> String {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum TaggedValue {
-    Bool { value: bool },
-    Integer { value: i64 },
-    Float { value: f64 },
-    String { value: String },
-    Array { values: Vec<TaggedValue> },
-    Table { entries: Vec<TaggedEntry> },
+    Bool {
+        value: bool,
+    },
+    Integer {
+        value: i64,
+    },
+    Float {
+        value: f64,
+    },
+    Complex {
+        real: casa_provider_contracts::CasaFloat,
+        imag: casa_provider_contracts::CasaFloat,
+    },
+    String {
+        value: String,
+    },
+    Array {
+        values: Vec<TaggedValue>,
+    },
+    Table {
+        entries: Vec<TaggedEntry>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -57,6 +73,10 @@ impl From<&ParameterValue> for TaggedValue {
             ParameterValue::Bool(value) => Self::Bool { value: *value },
             ParameterValue::Integer(value) => Self::Integer { value: *value },
             ParameterValue::Float(value) => Self::Float { value: *value },
+            ParameterValue::Complex([real, imag]) => Self::Complex {
+                real: *real,
+                imag: *imag,
+            },
             ParameterValue::String(value) => Self::String {
                 value: value.clone(),
             },

@@ -90,13 +90,15 @@ impl ParameterConceptRef {
     }
 }
 
-/// JSON/TOML-compatible typed value used before provider adaptation.
+/// Typed parameter value used before provider adaptation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ParameterValue {
     Bool(bool),
     Integer(i64),
     Float(f64),
+    /// A complex scalar, with real and imaginary components.
+    Complex([crate::CasaFloat; 2]),
     String(String),
     Array(Vec<ParameterValue>),
     Table(BTreeMap<String, ParameterValue>),
@@ -115,6 +117,9 @@ impl ParameterValue {
             Self::Float(value) => {
                 serde_json::Number::from_f64(*value).map_or(Value::Null, Value::Number)
             }
+            Self::Complex(value) => {
+                serde_json::to_value(value).expect("complex components are serializable")
+            }
             Self::String(value) => Value::String(value.clone()),
             Self::Array(values) => Value::Array(values.iter().map(Self::to_plain_json).collect()),
             Self::Table(values) => Value::Object(
@@ -123,6 +128,25 @@ impl ParameterValue {
                     .map(|(name, value)| (name.clone(), value.to_plain_json()))
                     .collect(),
             ),
+        }
+    }
+
+    /// Whether this value contains a complex scalar and requires typed transport.
+    pub fn contains_complex(&self) -> bool {
+        match self {
+            Self::Complex(_) => true,
+            Self::Array(values) => values.iter().any(Self::contains_complex),
+            Self::Table(values) => values.values().any(Self::contains_complex),
+            _ => false,
+        }
+    }
+
+    /// Maximum array/record nesting, for bounding typed transport depth.
+    pub fn nesting_depth(&self) -> usize {
+        match self {
+            Self::Array(values) => 1 + values.iter().map(Self::nesting_depth).max().unwrap_or(0),
+            Self::Table(values) => 1 + values.values().map(Self::nesting_depth).max().unwrap_or(0),
+            _ => 0,
         }
     }
 
@@ -421,7 +445,10 @@ fn collect_selector_capabilities(
                 collect_selector_capabilities(grammar, value, used);
             }
         }
-        ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) => {}
+        ParameterValue::Bool(_)
+        | ParameterValue::Integer(_)
+        | ParameterValue::Float(_)
+        | ParameterValue::Complex(_) => {}
     }
 }
 
@@ -1621,14 +1648,22 @@ pub fn validate_parameter_value(
 }
 
 fn validate_variant_value(value: &ParameterValue) -> Result<(), String> {
-    match value {
-        ParameterValue::Float(value) if !value.is_finite() => {
-            Err("non-finite numbers are forbidden".to_string())
-        }
-        ParameterValue::Array(values) => values.iter().try_for_each(validate_variant_value),
-        ParameterValue::Table(values) => values.values().try_for_each(validate_variant_value),
-        _ => Ok(()),
+    // Each typed array or record introduces two JSON containers. Leave room
+    // for request and profile envelopes under serde_json's recursion limit.
+    if value.contains_complex() && value.nesting_depth() > 48 {
+        return Err("complex values nested beyond 48 levels are unsupported (#977)".into());
     }
+    fn validate(value: &ParameterValue) -> Result<(), String> {
+        match value {
+            ParameterValue::Float(value) if !value.is_finite() => {
+                Err("non-finite numbers are forbidden".into())
+            }
+            ParameterValue::Array(values) => values.iter().try_for_each(validate),
+            ParameterValue::Table(values) => values.values().try_for_each(validate),
+            _ => Ok(()),
+        }
+    }
+    validate(value)
 }
 
 fn validate_parameter_domain(domain: &ParameterType) -> Result<(), String> {
@@ -1934,7 +1969,7 @@ fn numeric_values(value: &ParameterValue) -> Vec<f64> {
         ParameterValue::String(value) => quantity_number(value).into_iter().collect(),
         ParameterValue::Array(values) => values.iter().flat_map(numeric_values).collect(),
         ParameterValue::Table(values) => values.values().flat_map(numeric_values).collect(),
-        ParameterValue::Bool(_) => Vec::new(),
+        ParameterValue::Bool(_) | ParameterValue::Complex(_) => Vec::new(),
     }
 }
 

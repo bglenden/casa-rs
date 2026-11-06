@@ -133,6 +133,7 @@ pub fn python_repr(value: &ParameterValue) -> String {
         ParameterValue::Bool(false) => "False".into(),
         ParameterValue::Integer(value) => value.to_string(),
         ParameterValue::Float(value) => python_float(*value),
+        ParameterValue::Complex([real, imag]) => format!("({}{:+}j)", real.0, imag.0),
         ParameterValue::String(value) => {
             format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
         }

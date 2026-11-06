@@ -27,6 +27,9 @@ pub fn parameter_value_to_casacore(value: &ParameterValue) -> Result<Value, &'st
             ParameterValue::Float(value) if value.is_finite() => {
                 Value::Scalar(ScalarValue::Float64(*value))
             }
+            ParameterValue::Complex([real, imag]) => Value::Scalar(ScalarValue::Complex64(
+                casa_types::Complex64::new(real.0, imag.0),
+            )),
             ParameterValue::String(value) if !value.contains('\0') => {
                 Value::Scalar(ScalarValue::String(value.clone()))
             }
@@ -183,7 +186,7 @@ pub fn casacore_value_to_casa(value: &Value) -> Result<CasaValue, &'static str> 
 }
 
 /// Convert a rectangular parameter array into a casacore array, using CASA's numeric
-/// promotion from booleans to 32-bit integers to doubles. Empty arrays have
+/// promotion from booleans to 32-bit integers to doubles and complex values. Empty arrays have
 /// boolean element type, as in CASA's Python variant conversion.
 ///
 /// # Errors
@@ -245,6 +248,9 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
             ArrayValue::Float64(v) => Ok(ArrayValue::Float64(
                 v.into_shape_with_order(shape).expect("rectangular array"),
             )),
+            ArrayValue::Complex64(v) => Ok(ArrayValue::Complex64(
+                v.into_shape_with_order(shape).expect("rectangular array"),
+            )),
             ArrayValue::String(v) => Ok(ArrayValue::String(
                 v.into_shape_with_order(shape).expect("rectangular array"),
             )),
@@ -257,7 +263,8 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
             ParameterValue::Bool(_) => 0,
             ParameterValue::Integer(_) => 1,
             ParameterValue::Float(value) if value.is_finite() => 2,
-            ParameterValue::String(value) if !value.contains('\0') => 3,
+            ParameterValue::Complex(_) => 3,
+            ParameterValue::String(value) if !value.contains('\0') => 4,
             _ => return Err("array element is not supported (#977)"),
         });
     }
@@ -294,6 +301,24 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
                 })
                 .collect(),
         )),
+        3 => Ok(ArrayValue::from_complex64_vec(
+            values
+                .iter()
+                .map(|value| match value {
+                    ParameterValue::Bool(value) => {
+                        casa_types::Complex64::new(f64::from(u8::from(*value)), 0.0)
+                    }
+                    ParameterValue::Integer(value) => {
+                        casa_types::Complex64::new(*value as f64, 0.0)
+                    }
+                    ParameterValue::Float(value) => casa_types::Complex64::new(*value, 0.0),
+                    ParameterValue::Complex([real, imag]) => {
+                        casa_types::Complex64::new(real.0, imag.0)
+                    }
+                    _ => unreachable!(),
+                })
+                .collect(),
+        )),
         _ => {
             // casatools converts scalar elements to strings when any element
             // is a string, using C++'s lower-case booleans and fixed six
@@ -304,6 +329,16 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
                     ParameterValue::Bool(value) => value.to_string(),
                     ParameterValue::Integer(value) => value.to_string(),
                     ParameterValue::Float(value) => format!("{value:.6}"),
+                    ParameterValue::Complex([real, imag]) => {
+                        let component = |value: f64| {
+                            if value.is_nan() {
+                                "nan".to_string()
+                            } else {
+                                format!("{value:.6}")
+                            }
+                        };
+                        format!("({},{})", component(real.0), component(imag.0))
+                    }
                     ParameterValue::String(value) => value.clone(),
                     _ => unreachable!("nested values were rejected"),
                 })

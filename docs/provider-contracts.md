@@ -240,6 +240,10 @@ The human interchange format is versioned sparse TOML. The `[casars]` table
 identifies format version, surface ID, surface kind (always `task`), and
 contract version. The `[parameters]` table contains required values and
 normalized semantic differences from current defaults.
+Values containing complex scalars are instead stored in an optional
+`[typed_parameters]` table, as JSON strings containing recursively tagged
+parameter values. This keeps complex values distinct from ordinary records
+and allows profiles to round-trip them without reserving any record key.
 
 This makes additive evolution cheap: a newly added optional parameter receives
 its current default without adding an override to a saved file. A surface may
@@ -318,7 +322,12 @@ started it.
 
 `--json-run SOURCE` takes a `TaskRunRequest`, `{"surface": ..., "values":
 {...}}` with the CASA-named values the caller set, and resolves it against the
-surface's contract inside the binary. It writes one `TaskReply` to stdout:
+surface's contract inside the binary. For values JSON cannot express directly,
+the request may also contain a
+`typed_values` map of recursively tagged parameter values. A parameter may
+occur in only one of `values` and `typed_values`; typed inputs are accepted
+only for variant parameters and pass the same validation as plain inputs.
+The binary writes one `TaskReply` to stdout:
 
 - `{"status": "succeeded", "surface", "value", "result"}`, where `value` is
   what CASA's task returns (`null` for `None`), kept ahead of the provider's

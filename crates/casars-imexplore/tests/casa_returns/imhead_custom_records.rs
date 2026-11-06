@@ -164,3 +164,35 @@ fn casa_created_record_returns_complex_scalars() {
         }
     );
 }
+
+#[test]
+fn invalid_typed_requests_do_not_modify_the_image() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("image.im");
+    copy_tree(&fixture, &path);
+    let table = std::fs::read(path.join("table.dat")).unwrap();
+    for extra in [
+        json!({"hdvalue": {"kind": "complex", "value": [1.0, 2.0]}}),
+        json!({"verbose": {"kind": "bool", "value": true}}),
+    ] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_imexplore"))
+            .args(["imhead", "--json-run", "-"])
+            .current_dir(workspace.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        write!(child.stdin.take().unwrap(), "{}", json!({
+            "surface": "imhead", "values": {"imagename": path, "mode": "add", "hdkey": "custom", "hdvalue": "plain"}, "typed_values": extra
+        })).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(matches!(
+            serde_json::from_slice::<TaskReply>(&output.stdout).unwrap(),
+            TaskReply::Failed { .. }
+        ));
+        assert_eq!(std::fs::read(path.join("table.dat")).unwrap(), table);
+    }
+}

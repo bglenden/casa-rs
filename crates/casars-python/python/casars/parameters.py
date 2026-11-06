@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, ClassVar, TypeAlias
 
 StrPath: TypeAlias = str | PathLike[str]
-ParameterScalar: TypeAlias = bool | int | float | str | PathLike[str]
+ParameterScalar: TypeAlias = bool | int | float | complex | str | PathLike[str]
 ParameterData: TypeAlias = (
     ParameterScalar
     | list["ParameterData"]

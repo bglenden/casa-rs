@@ -791,6 +791,9 @@ where
             }
             overrides.values.insert(name.clone(), value);
         }
+        if let Err((name, message)) = apply_typed_values(bundle, &request, &mut overrides) {
+            return refuse(&request.surface, message, Some(name));
+        }
         drop(text);
         let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let session = match open_named_session(OpenSessionRequest {
@@ -944,6 +947,44 @@ fn open_session(request: OpenSessionRequest) -> Result<ParameterSession, String>
 
 /// The session `request` opens, or its refusal and the parameter the
 /// refusal names, if any.
+fn apply_typed_values(
+    bundle: &SurfaceContractBundle,
+    request: &TaskRunRequest,
+    overrides: &mut ResolutionPatch,
+) -> Result<(), (String, String)> {
+    for (name, value) in &request.typed_values {
+        let error = |message| (name.clone(), message);
+        if request.values.contains_key(name) {
+            return Err(error(format!(
+                "parameter {name:?} occurs in both value maps"
+            )));
+        }
+        let binding = bundle
+            .surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == *name)
+            .ok_or_else(|| error(format!("unknown {} parameter {name:?}", request.surface)))?;
+        if !bundle
+            .catalog
+            .concept(&binding.concept)
+            .is_some_and(|concept| {
+                matches!(
+                    concept.value_domain,
+                    casa_provider_contracts::ParameterType::Variant
+                )
+            })
+        {
+            return Err(error(format!(
+                "typed parameter {name:?} must use a variant domain"
+            )));
+        }
+        crate::cli::checked_value(bundle, binding, value).map_err(error)?;
+        overrides.values.insert(name.clone(), value.clone());
+    }
+    Ok(())
+}
+
 fn open_named_session(
     request: OpenSessionRequest,
 ) -> Result<ParameterSession, (String, Option<String>)> {
