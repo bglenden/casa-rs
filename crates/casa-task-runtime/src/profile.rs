@@ -532,6 +532,7 @@ fn required_value_is_complete(value: &ParameterValue) -> bool {
         ParameterValue::Table(values) => {
             !values.is_empty() && values.values().all(required_value_is_complete)
         }
+        ParameterValue::EmptyArray { .. } => false,
         ParameterValue::Bool(_)
         | ParameterValue::Integer(_)
         | ParameterValue::Float(_)
@@ -579,7 +580,7 @@ pub fn render_sparse_profile(
             continue;
         };
         if sparse.contains_key(&binding.name) {
-            if value.contains_complex() {
+            if value.requires_typed_transport() {
                 let json = serde_json::to_string(value).map_err(|error| {
                     ProfileError::Contract(format!("cannot render typed parameter: {error}"))
                 })?;
@@ -661,9 +662,9 @@ fn render_toml_value(value: &ParameterValue) -> Result<String, ProfileError> {
         ParameterValue::Float(_) => Err(ProfileError::Contract(
             "cannot render non-finite profile value".to_string(),
         )),
-        ParameterValue::Complex(_) => Err(ProfileError::Contract(
-            "complex values require typed parameter encoding".into(),
-        )),
+        ParameterValue::Complex(_) | ParameterValue::EmptyArray { .. } => Err(
+            ProfileError::Contract("this value requires typed parameter encoding".into()),
+        ),
         ParameterValue::String(value) => Ok(quote_string(value)),
         ParameterValue::Array(values) => values
             .iter()

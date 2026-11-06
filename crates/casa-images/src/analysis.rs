@@ -2135,6 +2135,17 @@ pub fn imhead_custom_value_change(
                 let rendered = custom_values::format_array(&array);
                 (Value::Array(array), rendered)
             }
+            ParameterValue::EmptyArray { dtype, shape } => {
+                let array = casa_provider_contracts::empty_parameter_array(*dtype, shape)
+                    .map_err(|error| ImageError::InvalidMetadata(error.into()))?;
+                if matches!(array, casa_types::ArrayValue::Complex64(_)) {
+                    return Err(ImageError::InvalidMetadata(format!(
+                        "Unhandled value type Array<DComplex> for {key}"
+                    )));
+                }
+                let rendered = custom_values::format_array(&array);
+                (Value::Array(array), rendered)
+            }
             ParameterValue::Table(_) => {
                 let stored = casa_provider_contracts::parameter_value_to_casacore(value)
                     .map_err(|error| ImageError::InvalidMetadata(error.into()))?;

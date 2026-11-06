@@ -285,7 +285,9 @@ fn history_value(value: &ParameterValue) -> String {
         ParameterValue::Bool(value) => if *value { "True" } else { "False" }.to_string(),
         ParameterValue::Integer(value) => value.to_string(),
         ParameterValue::Float(value) => casa_provider_contracts::python_float(*value),
-        ParameterValue::Complex(_) => casa_provider_contracts::python_repr(value),
+        ParameterValue::Complex(_) | ParameterValue::EmptyArray { .. } => {
+            casa_provider_contracts::python_repr(value)
+        }
         ParameterValue::Array(_) | ParameterValue::Table(_) => {
             casa_provider_contracts::python_repr(value)
         }

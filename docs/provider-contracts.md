@@ -240,7 +240,7 @@ The human interchange format is versioned sparse TOML. The `[casars]` table
 identifies format version, surface ID, surface kind (always `task`), and
 contract version. The `[parameters]` table contains required values and
 normalized semantic differences from current defaults.
-Values containing complex scalars are instead stored in an optional
+Values containing complex scalars or explicitly typed empty arrays are instead stored in an optional
 `[typed_parameters]` table, as JSON strings containing recursively tagged
 parameter values. This keeps complex values distinct from ordinary records
 and allows profiles to round-trip them without reserving any record key.

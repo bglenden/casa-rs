@@ -134,6 +134,9 @@ pub fn python_repr(value: &ParameterValue) -> String {
         ParameterValue::Integer(value) => value.to_string(),
         ParameterValue::Float(value) => python_float(*value),
         ParameterValue::Complex([real, imag]) => format!("({}{:+}j)", real.0, imag.0),
+        ParameterValue::EmptyArray { dtype, shape } => {
+            format!("array([], shape={shape:?}, dtype={dtype:?})")
+        }
         ParameterValue::String(value) => {
             format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
         }

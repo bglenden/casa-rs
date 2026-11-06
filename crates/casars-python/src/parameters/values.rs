@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use casa_provider_contracts::ParameterValue;
+use casa_provider_contracts::{EmptyArrayType, ParameterValue};
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
@@ -66,10 +66,22 @@ pub(crate) fn parameter_value(value: &Bound<'_, PyAny>) -> PyResult<ParameterVal
         return Ok(ParameterValue::String(path.to_str()?.to_owned()));
     }
     if value.hasattr("dtype")? && value.hasattr("shape")? && value.hasattr("tolist")? {
+        let dtype = value.getattr("dtype")?;
+        let kind: String = dtype.getattr("kind")?.extract()?;
+        let size: usize = dtype.getattr("itemsize")?.extract()?;
+        let dtype = match (kind.as_str(), size) {
+            ("b", _) => EmptyArrayType::Bool,
+            ("i" | "u", 1 | 2 | 4 | 8) => EmptyArrayType::Integer,
+            ("f", 4 | 8) => EmptyArrayType::Float,
+            ("c", 8 | 16) => EmptyArrayType::Complex,
+            ("U", _) => EmptyArrayType::String,
+            _ => return Err(PyTypeError::new_err("unsupported NumPy parameter dtype")),
+        };
         if value.hasattr("size")? && value.getattr("size")?.extract::<usize>()? == 0 {
-            return Err(PyTypeError::new_err(
-                "empty NumPy parameter arrays are not supported (#977)",
-            ));
+            return Ok(ParameterValue::EmptyArray {
+                dtype,
+                shape: value.getattr("shape")?.extract()?,
+            });
         }
         let converted = value.call_method0("tolist")?;
         if converted.is(value) || converted.get_type().is(value.get_type()) {
@@ -122,6 +134,7 @@ impl Serialize for NativeValue<'_> {
             ParameterValue::Integer(value) => serializer.serialize_i64(*value),
             ParameterValue::Float(value) => serializer.serialize_f64(*value),
             ParameterValue::Complex(value) => value.serialize(serializer),
+            ParameterValue::EmptyArray { .. } => serializer.serialize_seq(Some(0))?.end(),
             ParameterValue::String(value) => serializer.serialize_str(value),
             ParameterValue::Array(values) => {
                 let mut sequence = serializer.serialize_seq(Some(values.len()))?;
@@ -149,6 +162,19 @@ pub(crate) fn value_to_python<'py>(
     Ok(match value {
         ParameterValue::Complex([real, imag]) => {
             PyComplex::from_doubles(py, real.0, imag.0).into_any()
+        }
+        ParameterValue::EmptyArray { dtype, shape } => {
+            let dtype = match dtype {
+                EmptyArrayType::Bool => "bool",
+                EmptyArrayType::Integer => "int64",
+                EmptyArrayType::Float => "float64",
+                EmptyArrayType::Complex => "complex128",
+                EmptyArrayType::String => "U5",
+            };
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("dtype", dtype)?;
+            py.import("numpy")?
+                .call_method("empty", (shape.clone(),), Some(&kwargs))?
         }
         ParameterValue::Array(values) => {
             let list = PyList::empty(py);

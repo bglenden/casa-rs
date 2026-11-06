@@ -57,6 +57,7 @@ pub fn display_value(value: &ParameterValue) -> String {
         ParameterValue::Integer(value) => value.to_string(),
         ParameterValue::Float(value) => value.to_string(),
         ParameterValue::Complex([real, imag]) => format!("({}{:+}j)", real.0, imag.0),
+        ParameterValue::EmptyArray { dtype, shape } => format!("empty {dtype:?} array {shape:?}"),
         ParameterValue::String(value) => format!("{value:?}"),
         ParameterValue::Array(values) => format!(
             "[{}]",

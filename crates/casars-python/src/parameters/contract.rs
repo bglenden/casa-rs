@@ -50,6 +50,10 @@ pub(crate) enum TaggedValue {
         real: casa_provider_contracts::CasaFloat,
         imag: casa_provider_contracts::CasaFloat,
     },
+    EmptyArray {
+        dtype: casa_provider_contracts::EmptyArrayType,
+        shape: Vec<usize>,
+    },
     String {
         value: String,
     },
@@ -76,6 +80,10 @@ impl From<&ParameterValue> for TaggedValue {
             ParameterValue::Complex([real, imag]) => Self::Complex {
                 real: *real,
                 imag: *imag,
+            },
+            ParameterValue::EmptyArray { dtype, shape } => Self::EmptyArray {
+                dtype: *dtype,
+                shape: shape.clone(),
             },
             ParameterValue::String(value) => Self::String {
                 value: value.clone(),

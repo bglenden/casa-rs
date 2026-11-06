@@ -3,7 +3,46 @@
 
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
-use crate::{CasaFloat, CasaValue, ComplexDtype, FloatDtype, IntDtype, ParameterValue};
+use crate::{
+    CasaFloat, CasaValue, ComplexDtype, EmptyArrayType, FloatDtype, IntDtype, ParameterValue,
+};
+
+/// Construct an empty casacore array while retaining its shape and type.
+///
+/// # Errors
+///
+/// Returns an error when the shape is invalid or cannot be represented.
+pub fn empty_parameter_array(
+    dtype: EmptyArrayType,
+    shape: &[usize],
+) -> Result<ArrayValue, &'static str> {
+    if shape.is_empty()
+        || shape.len() > 32
+        || !shape.contains(&0)
+        || shape.iter().any(|&size| i32::try_from(size).is_err())
+    {
+        return Err("invalid empty array shape (#977)");
+    }
+    macro_rules! reshape {
+        ($array:expr, $variant:ident) => {
+            match $array {
+                ArrayValue::$variant(values) => Ok(ArrayValue::$variant(
+                    values
+                        .into_shape_with_order(shape.to_vec())
+                        .map_err(|_| "empty array shape is too large (#977)")?,
+                )),
+                _ => unreachable!(),
+            }
+        };
+    }
+    match dtype {
+        EmptyArrayType::Bool => reshape!(ArrayValue::from_bool_vec(vec![]), Bool),
+        EmptyArrayType::Integer => reshape!(ArrayValue::from_i32_vec(vec![]), Int32),
+        EmptyArrayType::Float => reshape!(ArrayValue::from_f64_vec(vec![]), Float64),
+        EmptyArrayType::Complex => reshape!(ArrayValue::from_complex64_vec(vec![]), Complex64),
+        EmptyArrayType::String => reshape!(ArrayValue::from_string_vec(vec![]), String),
+    }
+}
 
 /// Convert parameter data to casacore metadata values, including records.
 ///
@@ -30,6 +69,15 @@ pub fn parameter_value_to_casacore(value: &ParameterValue) -> Result<Value, &'st
             ParameterValue::Complex([real, imag]) => Value::Scalar(ScalarValue::Complex64(
                 casa_types::Complex64::new(real.0, imag.0),
             )),
+            ParameterValue::EmptyArray { dtype, shape } => {
+                let array = empty_parameter_array(*dtype, shape)?;
+                match array {
+                    ArrayValue::String(values) if depth > 0 && values.ndim() > 1 => {
+                        Value::Array(ArrayValue::from_string_vec(vec![]))
+                    }
+                    array => Value::Array(array),
+                }
+            }
             ParameterValue::String(value) if !value.contains('\0') => {
                 Value::Scalar(ScalarValue::String(value.clone()))
             }

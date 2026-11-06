@@ -333,18 +333,48 @@ def test_imhead_rejects_unsupported_extended_numpy_precision(tmp_path: Path) -> 
     if type(value.tolist()) is not type(value):
         pytest.skip("NumPy converts longdouble to a Python scalar on this platform")
     params = TaskParameters.defaults("imhead", workspace=tmp_path)
-    for item in [value, np.array([value])]:
+    for item in [value, np.array([value]), np.array([1], dtype=np.float16), np.array([1], dtype=object), np.array([b"x"], dtype="S4")]:
         with pytest.raises(TypeError, match="unsupported NumPy parameter dtype"):
             params["hdvalue"] = {"value": item}
 
 
-def test_imhead_refuses_empty_numpy_arrays_without_losing_shape(tmp_path: Path) -> None:
+def test_imhead_empty_numpy_arrays_preserve_casa_dtype_and_shape(tmp_path: Path) -> None:
     import numpy as np
 
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/normal.im"
+    image = tmp_path / "empty-arrays.im"
+    shutil.copytree(fixture, image)
+    cases = [(np.bool_, np.bool_), (np.int16, np.int64), (np.float32, np.float64),
+             (np.complex64, np.complex128), ("U4", "U5")]
+    for case, (given_dtype, expected_dtype) in enumerate(cases):
+        for index, shape in enumerate([(0,), (0, 2), (2, 0), (2, 0, 3)]):
+            item = np.empty(shape, dtype=given_dtype)
+            key = f"empty{case}_{index}"
+            assert tasks.imhead(str(image), mode="add", hdkey=key, hdvalue={"value": item}) is None
+            actual = tasks.imhead(str(image), mode="get", hdkey=key)["value"]
+            assert actual.dtype == np.dtype(expected_dtype)
+            assert actual.shape == ((0,) if given_dtype == "U4" and len(shape) > 1 else shape)
     params = TaskParameters.defaults("imhead", workspace=tmp_path)
-    for item in [np.array([], dtype=np.float64), np.empty((0, 2), dtype=np.complex128)]:
-        with pytest.raises(TypeError, match="empty NumPy parameter arrays.*#977"):
-            params["hdvalue"] = {"value": item}
+    params.set_many({"imagename": str(image), "hdvalue": {"value": np.empty((0, 2), dtype=np.complex64)}})
+    profile = params.save(tmp_path / "empty.toml")
+    restored = TaskParameters.load("imhead", profile, workspace=tmp_path)["hdvalue"]["value"]
+    assert restored.shape == (0, 2) and restored.dtype == np.dtype("complex128")
+
+
+def test_imhead_reads_casa_created_empty_array_records(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    image = tmp_path / "casa-empty.im"
+    shutil.copytree(root / "custom_empty_arrays.im", image)
+    expected = json.loads((root / "custom_empty_arrays_expected.json").read_text())["record"]
+    actual = tasks.imhead(str(image), mode="get", hdkey="custom")
+    for name, recorded in expected.items():
+        assert actual[name].dtype == np.dtype(recorded["dtype"])
+        assert actual[name].shape == tuple(recorded["shape"])
 
 
 def test_complex_profile_nesting_is_bounded_before_it_is_saved(tmp_path: Path) -> None:

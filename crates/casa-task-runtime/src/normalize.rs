@@ -93,7 +93,8 @@ fn reject_forbidden_strings(
         ParameterValue::Bool(_)
         | ParameterValue::Integer(_)
         | ParameterValue::Float(_)
-        | ParameterValue::Complex(_) => {}
+        | ParameterValue::Complex(_)
+        | ParameterValue::EmptyArray { .. } => {}
     }
     Ok(())
 }
@@ -656,7 +657,9 @@ fn numeric_values(value: &ParameterValue) -> Vec<f64> {
             .unwrap_or_default(),
         ParameterValue::Array(values) => values.iter().flat_map(numeric_values).collect(),
         ParameterValue::Table(values) => values.values().flat_map(numeric_values).collect(),
-        ParameterValue::Bool(_) | ParameterValue::Complex(_) => Vec::new(),
+        ParameterValue::Bool(_)
+        | ParameterValue::Complex(_)
+        | ParameterValue::EmptyArray { .. } => Vec::new(),
     }
 }
 
@@ -685,6 +688,16 @@ fn values_semantically_equal(left: &ParameterValue, right: &ParameterValue) -> b
                         && (left - right).abs() <= left.abs().max(right.abs()).max(1.0) * 1.0e-12)
             })
         }
+        (
+            ParameterValue::EmptyArray {
+                dtype: ld,
+                shape: ls,
+            },
+            ParameterValue::EmptyArray {
+                dtype: rd,
+                shape: rs,
+            },
+        ) => ld == rd && ls == rs,
         (ParameterValue::Integer(left), ParameterValue::Integer(right)) => left == right,
         (ParameterValue::Integer(left), ParameterValue::Float(right))
         | (ParameterValue::Float(right), ParameterValue::Integer(left)) => {

@@ -39,7 +39,8 @@ pub use semantic::{
     TaskSemanticContract,
 };
 pub use value_conversion::{
-    casacore_value_to_casa, parameter_array_to_casa, parameter_value_to_casacore,
+    casacore_value_to_casa, empty_parameter_array, parameter_array_to_casa,
+    parameter_value_to_casacore,
 };
 
 #[cfg(test)]

@@ -139,6 +139,7 @@ fn projected_value(value: &ParameterValue) -> String {
         ParameterValue::Integer(value) => value.to_string(),
         ParameterValue::Float(value) => value.to_string(),
         ParameterValue::Complex([real, imag]) => format!("({}{:+}j)", real.0, imag.0),
+        ParameterValue::EmptyArray { .. } => "[]".into(),
         ParameterValue::String(value) => value.clone(),
         ParameterValue::Array(values) => values
             .iter()

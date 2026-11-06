@@ -73,7 +73,7 @@ pub fn project_provider_invocation_with_originals(
     let mut plain = serde_json::Map::new();
     let mut typed_values = BTreeMap::new();
     for (name, value) in values {
-        if value.contains_complex() {
+        if value.requires_typed_transport() {
             typed_values.insert(name, value);
         } else {
             plain.insert(name, value.to_plain_json());
@@ -181,6 +181,52 @@ mod tests {
         assert!(profile.contains("[typed_parameters]"));
         let parsed = crate::parse_profile(&profile).unwrap();
         assert_eq!(parsed.parameters.get("hdvalue"), Some(&record));
+    }
+
+    #[test]
+    fn empty_array_uses_typed_transport_and_roundtrips_profile() {
+        use casa_provider_contracts::EmptyArrayType;
+        let mut session =
+            ParameterSession::defaults(builtin_surface_bundle("imhead").unwrap()).unwrap();
+        session
+            .set("imagename", ParameterValue::String("image.im".into()))
+            .unwrap();
+        let value = ParameterValue::Table(BTreeMap::from([(
+            "value".into(),
+            ParameterValue::EmptyArray {
+                dtype: EmptyArrayType::Float,
+                shape: vec![0, 2],
+            },
+        )]));
+        session.set("hdvalue", value.clone()).unwrap();
+        let request = request(&session);
+        assert!(!request.values.contains_key("hdvalue"));
+        assert_eq!(request.typed_values.get("hdvalue"), Some(&value));
+        let profile = session.render_sparse().unwrap();
+        let parsed = crate::parse_profile(&profile).unwrap();
+        assert_eq!(parsed.parameters.get("hdvalue"), Some(&value));
+        assert!(
+            session
+                .set(
+                    "hdvalue",
+                    ParameterValue::EmptyArray {
+                        dtype: EmptyArrayType::Float,
+                        shape: vec![2, 3]
+                    }
+                )
+                .is_err()
+        );
+        assert!(
+            session
+                .set(
+                    "hdvalue",
+                    ParameterValue::EmptyArray {
+                        dtype: EmptyArrayType::Float,
+                        shape: vec![0, i32::MAX as usize + 1],
+                    }
+                )
+                .is_err()
+        );
     }
 
     #[test]

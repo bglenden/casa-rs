@@ -481,7 +481,7 @@ fn snapshot_to_python<'py>(
     let states = states.cast::<PyDict>()?;
     for (name, state) in &snapshot.states {
         if let Some(value) = &state.value
-            && value.contains_complex()
+            && value.requires_typed_transport()
         {
             let state = states.get_item(name)?.expect("snapshot state");
             state

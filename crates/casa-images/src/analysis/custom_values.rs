@@ -33,6 +33,18 @@ fn array_elements(array: &ArrayValue, column_major: bool) -> Vec<String> {
 
 pub(super) fn format_array(array: &ArrayValue) -> String {
     let shape = array.shape();
+    if shape.contains(&0) {
+        let dimensions = shape
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        return match shape.len() {
+            0 | 1 => "[]".into(),
+            2 => format!("Axis Lengths: [{dimensions}] []"),
+            n => format!("Ndim={n} Axis Lengths: [{dimensions}] []"),
+        };
+    }
     if shape.len() > 2 {
         let values = array_elements(array, true);
         let dimensions = shape
