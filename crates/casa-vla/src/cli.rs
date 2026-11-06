@@ -19,7 +19,7 @@ pub use casa_ms::presentation::UiCommandSchema;
 /// The front end of the `importvla` binary.
 pub fn task_front_end()
 -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
-    TaskFrontEnd::new(
+    TaskFrontEnd::new_with_deferred_schema(
         "importvla",
         importvla_task_schema_bundle(),
         &["importvla"],

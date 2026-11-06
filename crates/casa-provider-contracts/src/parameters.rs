@@ -16,10 +16,13 @@ mod migration;
 mod migration_list;
 #[path = "migration_set.rs"]
 mod migration_set;
+#[path = "surface_validation.rs"]
+mod surface_validation;
 
 use migration::validate_migrations;
 pub use migration::{MigrationStep, MigrationTransform, SurfaceMigration};
 pub use migration_list::ListElement;
+use surface_validation::{SurfaceContractRef, validate_surface_views};
 
 pub use casa_signature::{UnimplementedForms, UnimplementedParameter, python_float, python_repr};
 
@@ -1141,17 +1144,16 @@ impl SurfaceCatalogBundle {
     }
 
     pub fn validate(&self) -> Result<(), Vec<ContractValidationError>> {
-        let bundles = self
+        let bundles: Vec<_> = self
             .surfaces
             .iter()
-            .cloned()
-            .map(|surface| SurfaceContractBundle {
+            .map(|surface| SurfaceContractRef {
                 schema_version: self.schema_version,
                 surface,
-                catalog: self.catalog.clone(),
+                catalog: &self.catalog,
             })
-            .collect::<Vec<_>>();
-        validate_surface_bundles(&bundles)
+            .collect();
+        validate_surface_views(&bundles, true)
     }
 }
 
@@ -1194,81 +1196,14 @@ fn validate_surface_bundles_internal(
     bundles: &[SurfaceContractBundle],
     validate_cross_surface_names: bool,
 ) -> Result<(), Vec<ContractValidationError>> {
-    let mut errors = Vec::new();
-    let mut merged = BTreeMap::<(ParameterConceptId, SemanticRevision), ParameterConcept>::new();
-    let mut surface_ids = BTreeSet::new();
-
-    for bundle in bundles {
-        if bundle.schema_version != PARAMETER_CATALOG_SCHEMA_VERSION
-            || bundle.catalog.schema_version != PARAMETER_CATALOG_SCHEMA_VERSION
-        {
-            errors.push(ContractValidationError::new(
-                "schema_version",
-                format!(
-                    "surface {} uses unsupported parameter schema {} / catalog {}",
-                    bundle.surface.id(),
-                    bundle.schema_version,
-                    bundle.catalog.schema_version
-                ),
-            ));
-        }
-        // A former id names the surface in saved profiles, so it may name no
-        // other surface, now or before.
-        for id in std::iter::once(bundle.surface.id())
-            .chain(bundle.surface.former_ids().iter().map(String::as_str))
-        {
-            if !surface_ids.insert(id.to_string()) {
-                errors.push(ContractValidationError::new(
-                    "duplicate_surface",
-                    format!("duplicate surface {id}"),
-                ));
-            }
-        }
-        for concept in &bundle.catalog.concepts {
-            let key = (concept.id.clone(), concept.semantic_revision);
-            match merged.get(&key) {
-                Some(existing) if existing != concept => errors.push(ContractValidationError::new(
-                    "divergent_concept",
-                    format!(
-                        "concept {} revision {} has divergent definitions",
-                        concept.id, concept.semantic_revision.0
-                    ),
-                )),
-                Some(_) => {}
-                None => {
-                    if let NormalizationRule::CasaSelector { capabilities, .. } =
-                        &concept.normalization
-                    {
-                        for capability in capabilities.iter().filter(|capability| {
-                            !SELECTOR_CAPABILITY_NAMES.contains(&capability.as_str())
-                        }) {
-                            errors.push(ContractValidationError::new(
-                                "unknown_selector_capability",
-                                format!(
-                                    "concept {} declares unknown selector capability {capability:?}",
-                                    concept.id
-                                ),
-                            ));
-                        }
-                    }
-                    merged.insert(key, concept.clone());
-                }
-            }
-        }
-        validate_one_surface(bundle, &mut errors);
-    }
-
-    if validate_cross_surface_names {
-        validate_repeated_names(bundles, &mut errors);
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors)
-    }
+    let views: Vec<_> = bundles.iter().map(SurfaceContractRef::from).collect();
+    validate_surface_views(&views, validate_cross_surface_names)
 }
 
-fn validate_one_surface(bundle: &SurfaceContractBundle, errors: &mut Vec<ContractValidationError>) {
+fn validate_one_surface(
+    bundle: &SurfaceContractRef<'_>,
+    errors: &mut Vec<ContractValidationError>,
+) {
     let surface = &bundle.surface;
     let mut names = BTreeSet::new();
     let mut orders = BTreeSet::new();
@@ -1545,7 +1480,7 @@ fn validate_profile_parameter_name(
 /// own project directory keeps CASA's `true`
 /// ([`PROJECT_DIRECTORY_OVERWRITE_SURFACES`]).
 fn validate_overwrite_defaults(
-    bundle: &SurfaceContractBundle,
+    bundle: &SurfaceContractRef<'_>,
     errors: &mut Vec<ContractValidationError>,
 ) {
     let surface = &bundle.surface;
@@ -2164,7 +2099,7 @@ fn detects_cycle(
 }
 
 fn validate_repeated_names(
-    bundles: &[SurfaceContractBundle],
+    bundles: &[SurfaceContractRef<'_>],
     errors: &mut Vec<ContractValidationError>,
 ) {
     let mut grouped = BTreeMap::<
