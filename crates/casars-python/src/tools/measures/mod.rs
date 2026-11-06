@@ -31,6 +31,7 @@ mod frame;
 mod inspect;
 mod offset;
 pub(crate) mod surface;
+mod xvalue;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -299,11 +300,11 @@ impl PyMeasures {
         "measures"
     }
 
-    /// Not yet implemented in casa-rs.
-    #[allow(unused_variables)]
+    /// Return the Cartesian extra values of a supported scalar measure.
     #[pyo3(signature = (a), text_signature = "($self, a)")]
-    fn addxvalue(&self, a: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("addxvalue")
+    fn addxvalue(&self, py: Python<'_>, a: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let record = xvalue::read_record(a)?;
+        self.call(py, move |_, lines| xvalue::addxvalue(&record, lines))
     }
 
     /// Not yet implemented in casa-rs.

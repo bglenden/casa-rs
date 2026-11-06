@@ -4139,3 +4139,16 @@ When an otherwise valid direction offset contains an extra integer value of
 integer exactly. A self-referential input record terminates CASA with SIGSEGV;
 casa-rs raises a catchable `ValueError` before conversion. Array-valued and
 nested measure offsets remain explicitly unimplemented in casa-rs (#1053).
+
+## Extra-measure value inspection can crash on cyclic input
+
+- Date noted: 2026-11-06
+- Status: CASA crashes; casa-rs rejects the cyclic record (#1053).
+- Owner decision: Correct CASA crashes as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/measures_addxvalue_oracle.py` and its CASA 6.7.6-14 fixture; the cyclic-input probe runs in an isolated process with core dumps disabled.
+
+Passing a self-referential dictionary to `measures.addxvalue` terminates
+CASA with SIGSEGV while converting the input record. casa-rs raises a
+catchable `ValueError` before conversion. Excessively nested records are
+also refused, and offset, multivalued and unsupported measure kinds are
+explicitly unimplemented (#1053).
