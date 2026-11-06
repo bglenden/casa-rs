@@ -299,17 +299,15 @@ pub(crate) fn prepare_with_view_hooks(
             result
         })
         .transpose()?;
-    let specification = specification::specification(
+    let mut specification_inputs = specification_inputs(
         request,
-        &spectral,
-        specification_inputs(
-            request,
-            surveyed,
-            instrument,
-            primary_beam.is_some(),
-            continuum_transform,
-        )?,
+        surveyed,
+        instrument,
+        primary_beam.is_some(),
+        continuum_transform,
     )?;
+    specification_inputs.force_model = mvc_parent.is_some_and(|parent| parent.niter != 0);
+    let specification = specification::specification(request, &spectral, specification_inputs)?;
     let reconstruction_planes = match request.deconvolver {
         Deconvolver::Mtmfs => request.nterms,
         _ => spectral.output_channels,
@@ -610,6 +608,7 @@ fn specification_inputs(
         instrument,
         primary_beam,
         force_primary_beam: false,
+        force_model: false,
         w_projection: match &request.gridder {
             Gridder::Wproject { wprojplanes } => Some(specification::w_projection(
                 *wprojplanes,

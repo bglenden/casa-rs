@@ -240,9 +240,9 @@ pub(super) fn prepare_taylor(inputs: TaylorInputs<'_>) -> Result<TaylorView, sup
     })
 }
 
-/// The first native MVC slice forms a fresh dirty cube and its two-term
-/// Taylor products. Cleaning, restart, additional selections and side
-/// effects remain refused until their CASA execution is implemented.
+/// The first native MVC slice forms a fresh cube and its two-term Taylor
+/// products. Cleaning currently needs a negative pblimit and no nsigma;
+/// restart, additional selections and side effects remain refused (#1069).
 pub(super) fn check_execution_scope(
     request: &ImagingRequest,
     selected_fields: usize,
@@ -251,7 +251,7 @@ pub(super) fn check_execution_scope(
     use casa_types::measures::frequency::FrequencyRef;
     if request.vis.len() != 1
         || selected_fields != 1
-        || request.niter != 0
+        || (request.niter != 0 && (request.pblimit >= 0.0 || request.nsigma != 0.0))
         || !request.calcpsf
         || !request.calcres
         || request.tclean_restart
@@ -362,6 +362,10 @@ mod tests {
         assert!(check_execution_scope(&other, 1).is_err());
         let mut other = parent.clone();
         other.niter = 1;
+        assert!(check_execution_scope(&other, 1).is_err());
+        other.pblimit = -0.1;
+        assert!(check_execution_scope(&other, 1).is_ok());
+        other.nsigma = 1.0;
         assert!(check_execution_scope(&other, 1).is_err());
         let mut other = parent.clone();
         other.calcpsf = false;

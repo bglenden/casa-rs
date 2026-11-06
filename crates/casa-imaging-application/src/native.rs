@@ -387,6 +387,20 @@ pub(crate) fn run(
     let outcome = imaging::run(
         imaging::ImagingInputs {
             problem,
+            mvc: mvc_taylor.as_ref().and_then(|view| {
+                (view
+                    .problem
+                    .reconstruction()
+                    .controls()
+                    .max_minor_iterations()
+                    > 0)
+                .then_some(imaging::MvcCycleSpec {
+                    taylor_problem: &view.problem,
+                    expansion_reference_hz: view.expansion_reference_hz,
+                    controls: publication.controls,
+                    centres: publication.primary_beam_centres.as_ref(),
+                })
+            }),
             psf_cutoff: if !forms.psf && psf_beams.is_none() {
                 casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF
             } else {
@@ -442,6 +456,7 @@ pub(crate) fn run(
                         mvc_beam: None,
                     },
                     taylor_view: mvc_taylor,
+                    taylor_completion: outcome.mvc_taylor,
                 },
                 &runtime,
                 publication,
@@ -501,6 +516,7 @@ struct RunProductInputs<'a> {
     problem: &'a CompiledProblem,
     source: ProductSource<'a>,
     taylor_view: Option<crate::compile::CompiledTaylorView>,
+    taylor_completion: Option<Admitted<crate::mvc::TaylorCompletion>>,
 }
 
 /// Reduce MVC's cube before staging both families, or publish an ordinary run.
@@ -516,6 +532,7 @@ fn publish_run_products(
         problem,
         source,
         taylor_view,
+        taylor_completion,
     } = inputs;
     if let Some(view) = taylor_view {
         let crate::compile::CompiledTaylorView {
@@ -524,17 +541,21 @@ fn publish_run_products(
             expansion_reference_hz,
             reservation: _view_reservation,
         } = view;
-        let taylor = crate::mvc::assemble_taylor_completion(
-            crate::mvc::TaylorAssemblyInputs {
-                cube_problem: problem,
-                cube: &source.scientific,
-                taylor_problem: &taylor_problem,
-                expansion_reference_hz,
-                controls: publication.controls,
-                centres: publication.primary_beam_centres.as_ref(),
-            },
-            (&runtime.host, &runtime.resource_policy, &runtime.cancel),
-        )?;
+        let taylor = if let Some(taylor) = taylor_completion {
+            taylor
+        } else {
+            crate::mvc::assemble_taylor_completion(
+                crate::mvc::TaylorAssemblyInputs {
+                    cube_problem: problem,
+                    cube: &source.scientific,
+                    taylor_problem: &taylor_problem,
+                    expansion_reference_hz,
+                    controls: publication.controls,
+                    centres: publication.primary_beam_centres.as_ref(),
+                },
+                (&runtime.host, &runtime.resource_policy, &runtime.cancel),
+            )?
+        };
         let products = publish_mvc_products(
             MvcProductSource {
                 cube_problem: problem,
@@ -555,6 +576,11 @@ fn publish_run_products(
             products.names_reservation,
         ))
     } else {
+        if taylor_completion.is_some() {
+            return Err(NativeError::Other(
+                std::io::Error::other("MVC Taylor completion has no compiled view").into(),
+            ));
+        }
         let products = publish_products(
             problem,
             source,

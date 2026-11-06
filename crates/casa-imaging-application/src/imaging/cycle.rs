@@ -61,6 +61,7 @@ pub(crate) use continuation::Forms;
 /// What one native imaging run needs besides the compiled problem.
 pub(crate) struct ImagingInputs<'a> {
     pub(crate) problem: &'a CompiledProblem,
+    pub(crate) mvc: Option<MvcCycleSpec<'a>>,
     pub(crate) psf_cutoff: f32,
     pub(crate) psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
     pub(crate) mask_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
@@ -100,9 +101,19 @@ pub(crate) struct ImagingInputs<'a> {
     pub(crate) diagnostics: Diagnostics,
 }
 
+/// The independently compiled Taylor view used by an MVC cleaning cycle.
+#[derive(Clone, Copy)]
+pub(crate) struct MvcCycleSpec<'a> {
+    pub(crate) taylor_problem: &'a CompiledProblem,
+    pub(crate) expansion_reference_hz: f64,
+    pub(crate) controls: casa_imaging_products::ContinuumProductControls,
+    pub(crate) centres: Option<&'a casa_imaging_products::PrimaryBeamCentres>,
+}
+
 /// The final reconciliation and the record of the cycles that led to it.
 pub(crate) struct ImagingOutcome {
     pub(crate) scientific: MajorCycleCompletion,
+    pub(crate) mvc_taylor: Option<Admitted<crate::mvc::TaylorCompletion>>,
     pub(crate) masks: Option<ReconstructionMaskSet>,
     pub(crate) minor_cycles: Vec<NativeMinorCycleOutcome>,
     pub(crate) plane_rows: PlaneRows,
@@ -204,6 +215,7 @@ impl ImagingOutcome {
     fn initial(major: Major, run: &Run<'_>) -> Self {
         Self {
             scientific: major.completion,
+            mvc_taylor: None,
             masks: None,
             minor_cycles: Vec::new(),
             plane_rows: PlaneRows {
@@ -240,10 +252,12 @@ pub(crate) fn run(
     summary: &mut RunSummary,
 ) -> Result<ImagingOutcome, ImagingError> {
     let problem = inputs.problem;
-    let controls = problem.reconstruction().controls();
+    let mvc = inputs.mvc;
+    let reconstruction = mvc.map_or(problem, |view| view.taylor_problem);
+    let controls = reconstruction.reconstruction().controls();
     let cleaning = controls.max_minor_iterations() > 0;
     let setup = minor_setup(
-        problem,
+        reconstruction,
         (inputs.image_response, inputs.primary_beam),
         &inputs.masks,
         inputs.psf_cutoff,
@@ -256,7 +270,7 @@ pub(crate) fn run(
     // What a minor cycle holds on a team of so many workers, from the
     // layout the first pass forms, before any image exists (#737): the masks
     // it keeps and the larger of its two halves.
-    let layout = MinorLayout::planned(problem);
+    let layout = MinorLayout::planned(reconstruction);
     let iterations = Controller::new(&controls).cycle_iterations();
     let minor = |workers: usize| {
         if cleaning {
@@ -303,10 +317,18 @@ pub(crate) fn run(
         outcome.retained = std::mem::replace(&mut run.retained, Reservation::none());
         return Ok(outcome);
     }
+    let mvc = if let Some(spec) = mvc {
+        let (state, taylor) = clean::MvcState::begin(spec, outcome.scientific, &run)?;
+        outcome.scientific = taylor;
+        Some(state)
+    } else {
+        None
+    };
     clean::run(
         clean::CleanInputs {
             run,
             outcome,
+            mvc,
             controls,
             setup,
             mask_plans,
@@ -330,7 +352,11 @@ fn refresh_demand(
     cleaning: Option<(&MinorLayout, &MinorCycleSetup, usize)>,
 ) -> Option<RefreshDemand> {
     if let Some((layout, setup, iterations)) = cleaning {
-        let controls = inputs.problem.reconstruction().controls();
+        let controls = inputs
+            .mvc
+            .map_or(inputs.problem, |view| view.taylor_problem)
+            .reconstruction()
+            .controls();
         return Some(RefreshDemand {
             masks: 2 * layout.mask_bytes(&inputs.masks) + layout.psf_cache_bytes(),
             cached: layout.refresh_bytes(setup),

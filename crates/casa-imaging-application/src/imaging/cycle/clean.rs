@@ -3,9 +3,13 @@
 
 use super::*;
 
+mod mvc;
+pub(super) use mvc::MvcState;
+
 pub(super) struct CleanInputs<'a> {
     pub(super) run: Run<'a>,
     pub(super) outcome: ImagingOutcome,
+    pub(super) mvc: Option<MvcState<'a>>,
     pub(super) controls: casa_imaging_model::ReconstructionControls,
     pub(super) setup: MinorCycleSetup<'a>,
     pub(super) mask_plans: ImageDomainReconstructionMaskPlans,
@@ -20,6 +24,7 @@ pub(super) fn run(
     let CleanInputs {
         mut run,
         mut outcome,
+        mut mvc,
         controls,
         setup,
         mut mask_plans,
@@ -164,7 +169,19 @@ pub(super) fn run(
         let name = format!("major cycle {}", outcome.major_cycle_count + 1);
         let scientific = outcome.scientific;
         let major = run_phase(name, &cancel, diagnostics, summary, || {
-            run.refresh(scientific, (minor.terms, minor.results), last)
+            if let Some(state) = mvc.as_mut() {
+                Ok(Major {
+                    completion: state.refresh(
+                        &mut run,
+                        scientific,
+                        (minor.terms, minor.results),
+                        last,
+                    )?,
+                    visibility: None,
+                })
+            } else {
+                run.refresh(scientific, (minor.terms, minor.results), last)
+            }
         })?;
         controller.end_major_cycle();
         outcome.scientific = major.completion;
@@ -172,6 +189,11 @@ pub(super) fn run(
         outcome.major_cycle_count += 1;
     }
     summary.stop = outcome.stop;
+    if let Some(state) = mvc {
+        let (cube, taylor) = state.finish(outcome.scientific);
+        outcome.scientific = cube;
+        outcome.mvc_taylor = Some(taylor);
+    }
     if run.visibility_write.is_some() && outcome.visibility_products.is_none() {
         outcome = run_phase("model prediction", &cancel, diagnostics, summary, || {
             predict_final_model(&mut run, outcome)

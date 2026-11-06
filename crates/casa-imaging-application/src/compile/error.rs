@@ -22,7 +22,7 @@ use casa_types::measures::{
 pub enum PrepareError {
     /// The initial MVC execution cannot honour this run's controls yet.
     #[error(
-        "MVC currently supports fresh dirty imaging of one selected field and MeasurementSet, with LSRK coordinates, no side effects or PB correction, and a user box or full mask (#1069)"
+        "MVC supports fresh imaging of one selected field and MeasurementSet with LSRK coordinates, no side effects or PB correction, and a user box or full mask; cleaning requires negative pblimit and nsigma=0 (#1069)"
     )]
     MvcExecutionUnsupported,
     /// The additional MVC view is not yet bounded for this configuration.
