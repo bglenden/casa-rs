@@ -78,7 +78,16 @@ pub(crate) fn open_observation(
     }
     let Admitted { value, reservation } = admitted_opening(
         (0, "the MSv2 opening"),
-        |grant| Msv2Observation::open_granted(path, &OpenOptions::default(), grant),
+        |grant| {
+            Msv2Observation::open_granted(
+                path,
+                &OpenOptions {
+                    visibility_frequency_frame: true,
+                    ..OpenOptions::default()
+                },
+                grant,
+            )
+        },
         (
             |opened: &Msv2Observation| opened.retained_bytes() as u64,
             "observation retained",

@@ -78,6 +78,10 @@ pub struct OpenOptions {
     pub group_closure: GroupClosure,
     /// How an MSv2 is partitioned; see [`PartitionScheme`].
     pub partition_scheme: PartitionScheme,
+    /// Interpret an incomplete MSv2 frequency descriptor as CASA's
+    /// visibility iterator does: use the row's `MEAS_FREQ_REF` for its
+    /// channel frame. General measure metadata retains its own reference.
+    pub visibility_frequency_frame: bool,
 }
 
 /// Whether the store at `path` is an MSv4 processing set: a Zarr group,
