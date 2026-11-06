@@ -329,29 +329,42 @@ impl PyMeasures {
         stub("baseline")
     }
 
-    /// Not yet implemented in casa-rs.
-    fn cometangdiam(&self) -> PyResult<Py<PyAny>> {
-        stub("cometangdiam")
+    /// CASA's sentinel angular diameter when no comet table is loaded.
+    fn cometangdiam(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, _| Ok(CasaValue::quantity(-1.0, "rad")))
     }
 
-    /// Not yet implemented in casa-rs.
-    fn cometdist(&self) -> PyResult<Py<PyAny>> {
-        stub("cometdist")
+    /// CASA's sentinel distance when no comet table is loaded.
+    fn cometdist(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, _| Ok(CasaValue::quantity(-1.0, "AU")))
     }
 
-    /// Not yet implemented in casa-rs.
-    fn cometname(&self) -> PyResult<Py<PyAny>> {
-        stub("cometname")
+    /// Return an empty name and warn when no comet table is loaded.
+    fn cometname(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, lines| {
+            lines.push(LogLine::warning(
+                "Method cometname fails! No Comet table present",
+            ));
+            Ok(CasaValue::Text(String::new()))
+        })
     }
 
-    /// Not yet implemented in casa-rs.
-    fn comettopo(&self) -> PyResult<Py<PyAny>> {
-        stub("comettopo")
+    /// Return CASA's sentinel when no topocentric comet table is loaded.
+    fn comettopo(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, lines| {
+            lines.push(LogLine::warning(
+                "Method comettopo fails!  No Topocentric Comet table present",
+            ));
+            Ok(CasaValue::record([
+                ("unit", CasaValue::Text(String::new())),
+                ("value", CasaValue::floats(vec![0.0])),
+            ]))
+        })
     }
 
-    /// Not yet implemented in casa-rs.
-    fn comettype(&self) -> PyResult<Py<PyAny>> {
-        stub("comettype")
+    /// CASA's comet type when no comet table is loaded.
+    fn comettype(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        self.call(py, |_, _| Ok(CasaValue::Text("none".to_string())))
     }
 
     /// Not yet implemented in casa-rs.
