@@ -220,6 +220,8 @@ def test_imhead_preserves_python_scalar_header_types(
     assert type(count) is int and count == 42
     assert type(real) is float and real == 1.25
     assert tasks.imhead(image.name, mode="get", hdkey="literal") == "  42  "
+    assert tasks.imhead(image.name, mode="put", hdkey="crpix1", hdvalue=3.5) is None
+    assert tasks.imhead(image.name, mode="get", hdkey="crpix1") == 3.5
 
 
 def test_imhead_history_is_visible_with_default_logging(

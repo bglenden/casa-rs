@@ -1438,6 +1438,35 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(())
     }
 
+    /// Update a zero-based reference pixel while retaining the stored axis maps.
+    ///
+    /// Returns its previous value. Call [`Self::save`] to persist the change.
+    /// The image metadata is unchanged if validation fails.
+    ///
+    /// # Errors
+    ///
+    /// A polarization-axis update is a no-op, as in casacore. Returns an error
+    /// for an invalid axis, a non-finite value, or an unsupported or malformed
+    /// coordinate record.
+    pub fn set_reference_pixel(
+        &mut self,
+        pixel_axis: usize,
+        value: f64,
+    ) -> Result<f64, ImageError> {
+        let Some(Value::Record(mut record)) = self.table.keywords().get("coords").cloned() else {
+            return Err(ImageError::InvalidMetadata(
+                "image has no coordinate record".into(),
+            ));
+        };
+        let (coordinates, old) =
+            CoordinateSystem::set_reference_pixel_in_record(&mut record, pixel_axis, value)?;
+        self.table
+            .keywords_mut()
+            .upsert("coords", Value::Record(record));
+        self.coords = coordinates;
+        Ok(old)
+    }
+
     /// Replaces the image info record.
     pub fn set_image_info(&mut self, info: &ImageInfo) -> Result<(), ImageError> {
         self.table

@@ -1185,6 +1185,88 @@ pub fn imhead_put(
     imhead_change_string(path, "put", hdkey, &hdvalue.into())
 }
 
+/// Set a CASA `crpixN` image-header value, preserving coordinate axis maps.
+///
+/// `hdvalue` may be a finite number or a numeric string. The change is saved
+/// with an image history entry and the updated header is returned.
+///
+/// # Errors
+///
+/// Returns an error for an invalid or polarization axis, non-numeric value,
+/// malformed metadata, or image I/O failure. As in CASA, a history I/O error
+/// can be reported after the metadata has been saved.
+pub fn imhead_put_reference_pixel(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let key = hdkey.to_ascii_lowercase();
+    let axis = key
+        .strip_prefix("crpix")
+        .and_then(imhead_axis_index)
+        .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    let mut image = AnyPagedImage::open(path)?;
+    let axis_type = match &image {
+        AnyPagedImage::Float32(image) => image.coordinates().pixel_axis_type(axis),
+        AnyPagedImage::Float64(image) => image.coordinates().pixel_axis_type(axis),
+        AnyPagedImage::Complex32(image) => image.coordinates().pixel_axis_type(axis),
+        AnyPagedImage::Complex64(image) => image.coordinates().pixel_axis_type(axis),
+    }
+    .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    if axis_type == CoordinateType::Stokes {
+        return Err(ImageError::InvalidMetadata(
+            "A polarization axis cannot have a reference pixel".into(),
+        ));
+    }
+    let (value, rendered) = match hdvalue {
+        ParameterValue::Integer(value) => {
+            let value = i32::try_from(*value).map_err(|_| {
+                ImageError::InvalidMetadata(
+                    "Reference pixel integer is outside the supported 32-bit range (#977)".into(),
+                )
+            })?;
+            (f64::from(value), value.to_string())
+        }
+        ParameterValue::Float(value) if value.is_finite() => {
+            (*value, projection_header::cpp_number_precision(*value, 12))
+        }
+        ParameterValue::String(value) => (
+            value.parse::<f64>().map_err(|_| {
+                ImageError::InvalidMetadata(format!("fromString failure for string {value:?}"))
+            })?,
+            format!("\"{value}\""),
+        ),
+        _ => {
+            return Err(ImageError::InvalidMetadata(
+                "For crpix, value must be numeric".into(),
+            ));
+        }
+    };
+    let old = match &mut image {
+        AnyPagedImage::Float32(image) => image.set_reference_pixel(axis, value)?,
+        AnyPagedImage::Float64(image) => image.set_reference_pixel(axis, value)?,
+        AnyPagedImage::Complex32(image) => image.set_reference_pixel(axis, value)?,
+        AnyPagedImage::Complex64(image) => image.set_reference_pixel(axis, value)?,
+    };
+    image.save()?;
+    drop(image);
+    let old = projection_header::cpp_number_precision(old, 12);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::_setCoordinateValue",
+        &[format!("Modified {key} from {old} to {rendered}")],
+    )?;
+    imhead(path)
+}
+
+/// Parse the one-based digit prefix used by CASA's image-header axis keys.
+pub(crate) fn imhead_axis_index(suffix: &str) -> Option<usize> {
+    let digits = suffix.bytes().take_while(u8::is_ascii_digit).count();
+    suffix[..digits].parse::<usize>().ok()?.checked_sub(1)
+}
+
 /// Add or remove a supported string-valued CASA image header field.
 pub fn imhead_add_delete(
     path: impl AsRef<Path>,

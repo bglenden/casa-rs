@@ -112,7 +112,7 @@ fn axis_header_value(
         .zip(lower.get(5..))
         .filter(|(prefix, _)| ["cdelt", "crpix", "crval", "ctype", "cunit"].contains(prefix))
     {
-        let index = suffix.parse::<usize>().ok().and_then(|n| n.checked_sub(1));
+        let index = crate::analysis::imhead_axis_index(suffix);
         let axis = index
             .and_then(|index| summary.axes.get(index))
             .ok_or_else(|| execution(format!("imhead: invalid axis keyword {key:?}")))?;

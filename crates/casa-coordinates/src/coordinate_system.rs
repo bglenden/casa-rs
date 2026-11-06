@@ -12,6 +12,7 @@
 //! [`CoordinateSystem::from_record`] reads it with its coordinates in the
 //! order of their axes.
 
+mod edit;
 mod record_axes;
 
 use casa_types::{ArrayValue, RecordValue, Value};

@@ -5,6 +5,78 @@
 use super::*;
 
 #[test]
+fn imhead_edits_reference_pixels_on_normal_and_transposed_images() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let oracle: Value =
+        serde_json::from_slice(&std::fs::read(fixture.join("expected.json")).unwrap()).unwrap();
+    assert_eq!(oracle["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for (index, case) in oracle["cases"].as_array().unwrap().iter().enumerate() {
+        let path = workspace.path().join(format!("crpix-{index}.im"));
+        copy_tree(
+            &fixture.join(format!("{}.im", case["image"].as_str().unwrap())),
+            &path,
+        );
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "put", "hdkey": case["key"], "hdvalue": case["value"]}),
+        );
+        if case.get("error").is_some() {
+            assert!(
+                matches!(reply, Some(TaskReply::Failed { .. })),
+                "{index}: {reply:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    reply,
+                    Some(TaskReply::Succeeded {
+                        value: CasaValue::None,
+                        ..
+                    })
+                ),
+                "{index}: {reply:?}"
+            );
+            let value = returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "get", "hdkey": case["key"]}),
+            );
+            assert_eq!(value.to_plain_json(), case["get"], "{index}: get");
+            let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+            let history = image.history().unwrap();
+            let tail = &history[history.len() - 3..];
+            assert_eq!(tail[0], case["history"][0], "{index}");
+            assert_eq!(
+                tail[2],
+                case["history"][2]
+                    .as_str()
+                    .unwrap()
+                    .replace("<IMAGE>", &path.display().to_string()),
+                "{index}"
+            );
+        }
+        let summary = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "summary"}),
+        )
+        .to_plain_json();
+        for key in [
+            "axisnames",
+            "axisunits",
+            "incr",
+            "refpix",
+            "refval",
+            "shape",
+        ] {
+            assert_eq!(summary[key], case["after"][key], "{index}: {key}");
+        }
+    }
+}
+
+#[test]
 fn imhead_refuses_unimplemented_variants_without_mutating_metadata() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_put/base.im");
     let workspace = tempfile::tempdir().unwrap();
