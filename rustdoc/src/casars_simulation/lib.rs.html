@@ -220,7 +220,7 @@
 <a href=#220 id=220 data-nosnippet>220</a><span class="doccomment">/// The front end of the `simobserve` binary, which hosts `simobserve`.
 <a href=#221 id=221 data-nosnippet>221</a></span><span class="kw">pub fn </span>task_front_end()
 <a href=#222 id=222 data-nosnippet>222</a>-&gt; TaskFrontEnd&lt;<span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt;&gt; {
-<a href=#223 id=223 data-nosnippet>223</a>    TaskFrontEnd::new(
+<a href=#223 id=223 data-nosnippet>223</a>    TaskFrontEnd::new_with_deferred_schema(
 <a href=#224 id=224 data-nosnippet>224</a>        <span class="string">"simobserve"</span>,
 <a href=#225 id=225 data-nosnippet>225</a>        simobserve_task_schema_bundle(),
 <a href=#226 id=226 data-nosnippet>226</a>        <span class="kw-2">&amp;</span>[<span class="string">"simobserve"</span>],

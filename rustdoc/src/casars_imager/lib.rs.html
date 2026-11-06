@@ -140,7 +140,7 @@
 <a href=#140 id=140 data-nosnippet>140</a><span class="doccomment">/// The front end of the `casars-imager` binary, which hosts `tclean`.
 <a href=#141 id=141 data-nosnippet>141</a></span><span class="kw">pub fn </span>task_front_end()
 <a href=#142 id=142 data-nosnippet>142</a>-&gt; TaskFrontEnd&lt;<span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt;&gt; {
-<a href=#143 id=143 data-nosnippet>143</a>    TaskFrontEnd::new(
+<a href=#143 id=143 data-nosnippet>143</a>    TaskFrontEnd::new_with_deferred_schema(
 <a href=#144 id=144 data-nosnippet>144</a>        <span class="string">"casars-imager"</span>,
 <a href=#145 id=145 data-nosnippet>145</a>        imager_task_schema_bundle(),
 <a href=#146 id=146 data-nosnippet>146</a>        <span class="kw-2">&amp;</span>[<span class="string">"tclean"</span>],

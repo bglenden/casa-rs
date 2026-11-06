@@ -50,7 +50,7 @@
 <a href=#50 id=50 data-nosnippet>50</a>/// [`CALIBRATION_SURFACES`].
 <a href=#51 id=51 data-nosnippet>51</a></span><span class="kw">pub fn </span>task_front_end()
 <a href=#52 id=52 data-nosnippet>52</a>-&gt; TaskFrontEnd&lt;<span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt;&gt; {
-<a href=#53 id=53 data-nosnippet>53</a>    TaskFrontEnd::new(
+<a href=#53 id=53 data-nosnippet>53</a>    TaskFrontEnd::new_with_deferred_schema(
 <a href=#54 id=54 data-nosnippet>54</a>        <span class="string">"calibrate"</span>,
 <a href=#55 id=55 data-nosnippet>55</a>        calibration_task_schema_bundle(),
 <a href=#56 id=56 data-nosnippet>56</a>        <span class="kw-2">&amp;</span>CALIBRATION_SURFACES,

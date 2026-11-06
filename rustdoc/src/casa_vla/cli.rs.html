@@ -19,7 +19,7 @@
 <a href=#19 id=19 data-nosnippet>19</a><span class="doccomment">/// The front end of the `importvla` binary.
 <a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub fn </span>task_front_end()
 <a href=#21 id=21 data-nosnippet>21</a>-&gt; TaskFrontEnd&lt;<span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt;&gt; {
-<a href=#22 id=22 data-nosnippet>22</a>    TaskFrontEnd::new(
+<a href=#22 id=22 data-nosnippet>22</a>    TaskFrontEnd::new_with_deferred_schema(
 <a href=#23 id=23 data-nosnippet>23</a>        <span class="string">"importvla"</span>,
 <a href=#24 id=24 data-nosnippet>24</a>        importvla_task_schema_bundle(),
 <a href=#25 id=25 data-nosnippet>25</a>        <span class="kw-2">&amp;</span>[<span class="string">"importvla"</span>],

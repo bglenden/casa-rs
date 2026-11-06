@@ -165,7 +165,7 @@
 <a href=#165 id=165 data-nosnippet>165</a>/// default) and `plotms`.
 <a href=#166 id=166 data-nosnippet>166</a></span><span class="kw">pub fn </span>task_front_end()
 <a href=#167 id=167 data-nosnippet>167</a>-&gt; TaskFrontEnd&lt;<span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>TaskInvocation&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;TaskSuccess, TaskFailure&gt;&gt; {
-<a href=#168 id=168 data-nosnippet>168</a>    TaskFrontEnd::new(
+<a href=#168 id=168 data-nosnippet>168</a>    TaskFrontEnd::new_with_deferred_schema(
 <a href=#169 id=169 data-nosnippet>169</a>        <span class="string">"msexplore"</span>,
 <a href=#170 id=170 data-nosnippet>170</a>        msexplore_task_schema_bundle(),
 <a href=#171 id=171 data-nosnippet>171</a>        <span class="kw-2">&amp;</span>[<span class="string">"msexplore"</span>, <span class="string">"plotms"</span>],
