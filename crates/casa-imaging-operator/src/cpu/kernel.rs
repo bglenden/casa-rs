@@ -192,8 +192,7 @@ pub(super) fn gather<T: GridScalar>(
     taps: &TapLayout<'_>,
     mueller: u8,
     conjugate: bool,
-    gradient: [f32; 2],
-    origin_shift: u8,
+    (gradient, origin_shift): ([f32; 2], u8),
 ) -> Complex64 {
     match *taps {
         TapLayout::SeparableReal {
@@ -876,8 +875,7 @@ mod tests {
             &taps,
             0,
             conjugate,
-            gradient,
-            origin_shift,
+            (gradient, origin_shift),
         );
         if gradient == [0.0, 0.0] {
             assert!(got == expected, "{label}: gather changed");

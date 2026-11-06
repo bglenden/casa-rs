@@ -365,8 +365,7 @@ impl CpuBackend {
                             &taps,
                             mueller,
                             w_positive,
-                            placement.gradient,
-                            origin_shift,
+                            (placement.gradient, origin_shift),
                         ) * *power;
                     }
                     gathered.push((mueller, sum));

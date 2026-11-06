@@ -158,12 +158,10 @@ struct Group {
     imaging_half_support: [u16; 2],
     /// The same over the weight cells, which the PSF and weight image use.
     weight_half_support: [u16; 2],
-    /// Odd maximum CF extent of the PA's imaging and weight buffers.
-    pointing_origin_shift: [bool; 2],
 }
 
 impl Group {
-    fn new(cells: &[CellFiles], pointing_origin_shift: [bool; 2]) -> Self {
+    fn new(cells: &[CellFiles]) -> Self {
         let largest = |select: fn(&CellFiles) -> &CellHeader| {
             cells.iter().map(select).fold([0_u16; 2], |half, header| {
                 [
@@ -177,39 +175,27 @@ impl Group {
         Self {
             imaging_half_support,
             weight_half_support,
-            pointing_origin_shift,
         }
     }
 }
 
-/// Assemble the groups of each CASA PA buffer with that buffer's largest
-/// imaging and weight CF extents. A smaller cell still uses the same phase
-/// array as every other cell of its kind in the buffer.
-fn make_groups(cells: &[CellFiles], elements: usize, groups_per_pa: usize) -> Vec<Group> {
-    cells
-        .chunks_exact(groups_per_pa * elements)
-        .flat_map(|pa_cells| {
-            let odd = |select: fn(&CellFiles) -> &CellHeader| {
-                !pa_cells
-                    .iter()
-                    .map(select)
-                    .map(|header| header.shape[0])
-                    .max()
-                    .unwrap_or(0)
-                    .is_multiple_of(2)
-            };
-            let shift = [odd(|cell| &cell.imaging), odd(|cell| &cell.weight)];
-            pa_cells
-                .chunks_exact(elements)
-                .map(move |group| Group::new(group, shift))
-        })
-        .collect()
-}
-
-/// The retained group index owns both supports and the two phase-origin
-/// selectors at every allocated slot, including spare capacity.
-const fn group_index_bytes(capacity: usize) -> usize {
-    capacity * size_of::<Group>()
+/// CASA can reuse a larger phase-gradient array after a smaller CF
+/// buffer replaces it. Its origin is stable only when every PA's imaging
+/// and weight buffer has an odd maximum width. Mixed parity keeps the
+/// existing unshifted behavior until its history is represented (#1070).
+fn uniform_odd_phase_origin(cells: &[CellFiles], cells_per_pa: usize) -> bool {
+    cells.chunks_exact(cells_per_pa).all(|pa_cells| {
+        let odd_max = |select: fn(&CellFiles) -> &CellHeader| {
+            !pa_cells
+                .iter()
+                .map(select)
+                .map(|header| header.shape[0])
+                .max()
+                .unwrap_or(0)
+                .is_multiple_of(2)
+        };
+        odd_max(|cell| &cell.imaging) && odd_max(|cell| &cell.weight)
+    })
 }
 
 /// The loaded taps of one group.
@@ -286,6 +272,8 @@ pub struct AwCatalog {
     /// `cells[g·E..(g + 1)·E]` with `E` the number of elements.
     cells: Vec<CellFiles>,
     groups: Vec<Group>,
+    /// All PA buffers have an odd maximum CF width (#1070).
+    odd_pointing_origin: bool,
     oversampling: u16,
     max_half_support: [u16; 2],
     mueller: MuellerRouting,
@@ -415,7 +403,12 @@ impl AwCatalog {
                     .max(cell.weight.support[axis])
             })
         });
-        let groups = make_groups(&cells, elements, frequencies_hz.len() * w_values.len());
+        let odd_pointing_origin =
+            uniform_odd_phase_origin(&cells, elements * frequencies_hz.len() * w_values.len());
+        let groups = cells
+            .chunks_exact(elements)
+            .map(Group::new)
+            .collect::<Vec<_>>();
         let mueller = routing(&mueller_elements, polarization).ok_or_else(|| {
             cache_error(
                 &root,
@@ -457,6 +450,7 @@ impl AwCatalog {
             bound: CacheBound::new(bound_bytes),
             cells,
             groups,
+            odd_pointing_origin,
             oversampling,
             max_half_support,
             mueller,
@@ -629,7 +623,8 @@ impl AwCatalog {
         let index = self.root.capacity()
             + self.cells.capacity() * size_of::<CellFiles>()
             + paths.clone().sum::<usize>()
-            + group_index_bytes(self.groups.capacity())
+            + self.groups.capacity() * size_of::<Group>()
+            + size_of::<bool>()
             + (self.pa_deg.capacity() + self.frequencies_hz.capacity() + self.w_values.capacity())
                 * size_of::<f64>()
             + self.mueller_elements.capacity() * size_of::<u32>()
@@ -913,8 +908,8 @@ impl ConvolutionFunctionSet for AwCatalog {
         true
     }
 
-    fn pointing_origin_shift(&self, key: CfKey, weight: bool) -> bool {
-        self.groups[usize::from(key.group)].pointing_origin_shift[usize::from(weight)]
+    fn pointing_origin_shift(&self, _key: CfKey, _weight: bool) -> bool {
+        self.odd_pointing_origin
     }
 
     /// The catalog pages its cells, so its taps are its cache's bound; the
@@ -1222,7 +1217,6 @@ mod tests {
                         weight: header(*weight),
                     })
                     .collect::<Vec<_>>(),
-                [false, false],
             )
         };
         let wide_imaging = group(&[([6, 6], [4, 4]), ([5, 6], [4, 3])]);
@@ -1232,7 +1226,7 @@ mod tests {
 
     /// A catalog with only the group index allocated, for checking the
     /// retained charge and the public kernel-set lookup independently.
-    fn catalog_with_groups(groups: Vec<Group>) -> AwCatalog {
+    fn catalog_with_groups(groups: Vec<Group>, odd_pointing_origin: bool) -> AwCatalog {
         AwCatalog {
             root: PathBuf::new(),
             indexing: AwIndexing {
@@ -1246,6 +1240,7 @@ mod tests {
             mueller_elements: vec![0],
             cells: Vec::new(),
             groups,
+            odd_pointing_origin,
             oversampling: 2,
             max_half_support: [0, 0],
             mueller: MuellerRouting::scalar(&[Some(0)], 1),
@@ -1261,27 +1256,28 @@ mod tests {
         }
     }
 
-    /// The index's retained charge covers both origin selectors at every
-    /// allocated group slot, including spare capacity (#1070).
+    /// The catalog's retained charge covers its new origin selector and
+    /// every allocated group slot, including spare capacity (#1070).
     #[test]
-    fn group_index_charge_counts_both_origin_selectors() {
+    fn catalog_charge_counts_its_origin_selector() {
         let groups = Vec::<Group>::with_capacity(41);
-        let per_group = 2 * size_of::<[u16; 2]>() + 2 * size_of::<bool>();
+        let per_group = 2 * size_of::<[u16; 2]>();
         let allocated = groups.capacity() * per_group;
-        let catalog = catalog_with_groups(groups);
+        let catalog = catalog_with_groups(groups, true);
         assert_eq!(
             catalog.cache_charge().kept,
             allocated as u64
+                + size_of::<bool>() as u64
                 + (catalog.mueller_elements.capacity() * size_of::<u32>()) as u64
                 + catalog.mueller.bytes()
                 + catalog.correction.resident_bytes()
         );
     }
 
-    /// C++ builds one phase-gradient array per PA buffer from the largest
-    /// CF, separately for imaging and weight; parity is not a per-cell rule.
+    /// Odd maximum widths for every PA and tap kind make the cached
+    /// array's origin stable; mixed parities retain the old path (#1070).
     #[test]
-    fn phase_origin_follows_each_pa_buffers_largest_cell() {
+    fn phase_origin_requires_uniformly_odd_pa_buffers() {
         let cell = |imaging: usize, weight: usize| {
             let header = |width| CellHeader {
                 path: PathBuf::new(),
@@ -1300,24 +1296,19 @@ mod tests {
                 weight: header(weight),
             }
         };
-        let cells = [cell(10, 11), cell(13, 12), cell(14, 15), cell(12, 14)];
-        let groups = make_groups(&cells, 1, 2);
-        let shifts = groups
-            .iter()
-            .map(|g| g.pointing_origin_shift)
-            .collect::<Vec<_>>();
-        assert_eq!(
-            shifts,
-            [[true, false], [true, false], [false, true], [false, true]]
-        );
-        let catalog = catalog_with_groups(groups);
-        for (index, [imaging, weight]) in shifts.into_iter().enumerate() {
-            let key = CfKey {
-                group: index as u16,
-                cube: 0,
-            };
-            assert_eq!(catalog.pointing_origin_shift(key, false), imaging);
-            assert_eq!(catalog.pointing_origin_shift(key, true), weight);
+        // The maximum, not each cell, selects a PA buffer's parity.
+        let odd = [cell(10, 11), cell(13, 15), cell(14, 15), cell(17, 13)];
+        assert!(uniform_odd_phase_origin(&odd, 2));
+        let mixed_within = [cell(10, 11), cell(13, 12)];
+        assert!(!uniform_odd_phase_origin(&mixed_within, 2));
+        let mixed_across = [cell(13, 15), cell(17, 19), cell(12, 14), cell(16, 18)];
+        assert!(!uniform_odd_phase_origin(&mixed_across, 2));
+        let even = [cell(10, 12), cell(14, 16)];
+        assert!(!uniform_odd_phase_origin(&even, 2));
+        for odd in [false, true] {
+            let catalog = catalog_with_groups(Vec::new(), odd);
+            assert_eq!(catalog.pointing_origin_shift(CfKey::default(), false), odd);
+            assert_eq!(catalog.pointing_origin_shift(CfKey::default(), true), odd);
         }
     }
 
