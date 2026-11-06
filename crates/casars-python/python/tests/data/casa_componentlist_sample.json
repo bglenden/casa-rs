@@ -1,0 +1,896 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "state": "empty",
+      "input": "default",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "none",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "empty",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "integer",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "text",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "boolean",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "record",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "array",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "array0",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "nested",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "bytes",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "complex",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "object",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "set",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "u64",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "huge",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "negative_huge",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "huge_list",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "huge_tuple",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "huge_record",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "huge_key",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "object_array",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "realistic",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "huge_second",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "huge_third",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "empty",
+      "input": "huge_fourth",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "populated",
+      "input": "default",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "none",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "empty",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "integer",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "text",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "boolean",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "record",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "array",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "array0",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "nested",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "bytes",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "complex",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "object",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "set",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "u64",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "huge",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "negative_huge",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "huge_list",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "huge_tuple",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "huge_record",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "huge_key",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "object_array",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "realistic",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "huge_second",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "huge_third",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "populated",
+      "input": "huge_fourth",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 1,
+      "label": "unchanged"
+    },
+    {
+      "state": "done",
+      "input": "default",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "none",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "empty",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "integer",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "text",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "boolean",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "record",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "array",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "array0",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "nested",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "bytes",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "complex",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "object",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "set",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "u64",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "huge",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "negative_huge",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "huge_list",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "huge_tuple",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "huge_record",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "huge_key",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "object_array",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "realistic",
+      "result": {
+        "value": [],
+        "shape": [
+          0
+        ],
+        "dtype": "float64"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "huge_second",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "huge_third",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    },
+    {
+      "state": "done",
+      "input": "huge_fourth",
+      "error": {
+        "type": "SystemError",
+        "message": "<built-in function componentlist_sample> returned a result with an exception set"
+      },
+      "length": 0
+    }
+  ],
+  "cyclic_exit": -11
+}

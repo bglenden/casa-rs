@@ -219,7 +219,7 @@ const METHODS: &[Method] = &[
             param("frequency", K::Any, Empty),
         ],
         R::Floats,
-        No,
+        Yes,
     ),
     method("select", &[param("which", K::Ints, Required)], R::Bool, Yes),
     method("selected", &[], R::Ints, Yes),

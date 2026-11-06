@@ -381,12 +381,11 @@
    ]
   },
   "sample": {
-   "status": "Not implemented",
-   "issue": 1053,
-   "scope": "Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.",
+   "status": "Implemented",
+   "scope": "Matches CASA's placeholder: warns and returns an empty float64 array without numerical sampling. Cyclic arguments return safely rather than crashing.",
    "evidence": [
     "signature",
-    "refusals"
+    "sample-casa"
    ]
   },
   "select": {
@@ -852,6 +851,19 @@
     "docs/CASA (C++) bugs.md"
    ],
    "source_revision": "61b8a7091c2c9e34933eca41448a7cad1e8cf2d1"
+  },
+  "sample-casa": {
+   "kind": "CASA-recorded values",
+   "state": "measured",
+   "result": "78 CASA 6.7.6-14 calls cover argument conversion and empty, populated and released lists; an isolated cyclic argument crashes CASA.",
+   "scope": "componentlist.sample placeholder.",
+   "links": [
+    "tools/casa-compat/componentlist_sample_oracle.py",
+    "crates/casars-python/python/tests/data/casa_componentlist_sample.json",
+    "crates/casars-python/python/tests/test_componentlist_sample.py",
+    "docs/CASA (C++) bugs.md"
+   ],
+   "source_revision": "903b541567638789bd6fa270d7b801244f49ad07"
   }
  }
 }
