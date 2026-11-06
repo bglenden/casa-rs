@@ -323,6 +323,9 @@ pub(crate) fn psf_normalizes(peak: f32) -> bool {
 pub(crate) fn psf_real_plane(
     plane: &FinalNormalPlaneReader<'_>,
 ) -> Result<Vec<f32>, ProductsError> {
+    if let Some(real) = plane.read_psf_real()? {
+        return Ok(real.into_owned());
+    }
     Ok(plane
         .read_psf()?
         .iter()
@@ -331,6 +334,9 @@ pub(crate) fn psf_real_plane(
 }
 
 fn residual_real_plane(plane: &FinalNormalPlaneReader<'_>) -> Result<Vec<f32>, ProductsError> {
+    if let Some(real) = plane.read_residual_real()? {
+        return Ok(real.into_owned());
+    }
     Ok(plane
         .read_residual()?
         .iter()

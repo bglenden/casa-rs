@@ -10,6 +10,8 @@ use std::mem::size_of;
 #[path = "continuum_products/beam_grid.rs"]
 mod beam_grid;
 mod common;
+#[path = "continuum_products/real_plane.rs"]
+mod real_plane;
 use common::continuum::{
     SHAPE, TWO_DOMAIN_PRODUCTS, axes, continuum_problem,
     continuum_problem_with_domains_and_reconstruction, continuum_problem_with_policy,
