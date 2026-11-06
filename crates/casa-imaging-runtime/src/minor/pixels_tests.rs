@@ -129,7 +129,7 @@ fn analytic_domain_probe_visits_only_the_first_valid_polarization() {
             ])
             .unwrap();
             let mut setup = setup.clone();
-            setup.nsigma = 0.0;
+            setup.nsigma = 3.0;
             // The exact simultaneous buffers at Shared::masked: the
             // channel's two supports, a plane's saved validity and mask,
             // the automask's output, cleanable support, and the two
@@ -146,14 +146,25 @@ fn analytic_domain_probe_visits_only_the_first_valid_polarization() {
             )
             .unwrap();
             let valid = vec![true; width * width];
-            let plane_mask = channel.for_valid(&valid).within();
+            let plane = automask_plane(
+                &setup,
+                (true, false),
+                vec![0.0; width * width],
+                valid.clone(),
+                Some(channel.for_valid(&valid)),
+            );
+            assert!(
+                plane.statistics.is_some(),
+                "empty-domain fallback holds alternate statistics"
+            );
             let made = vec![true; width * width];
             let cleanable = vec![true; width * width];
             let measured = channel.for_valid(&valid);
             let held = channel.support.capacity()
                 + channel.within.as_ref().unwrap().capacity()
                 + valid.capacity()
-                + plane_mask.capacity()
+                + plane.valid.capacity()
+                + plane.statistics.as_ref().unwrap().capacity()
                 + made.capacity()
                 + cleanable.capacity()
                 + measured.support.capacity()
@@ -164,6 +175,7 @@ fn analytic_domain_probe_visits_only_the_first_valid_polarization() {
                 held <= charged,
                 "channel buffers hold {held} bytes, charge {charged}"
             );
+            setup.nsigma = 0.0;
             CHANNEL_BEAM_FORMS.with(|count| count.set(0));
             prepare_minor_cycle(
                 &completion,

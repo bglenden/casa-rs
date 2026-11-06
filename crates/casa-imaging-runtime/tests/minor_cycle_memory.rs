@@ -331,7 +331,7 @@ fn a_solve_measuring_through_a_beam_holds_at_most_its_admission() {
 
 type AutomaticMemoryCase = (usize, ReconstructionBasis, usize, bool, bool);
 
-fn automatic_memory_cases() -> impl Iterator<Item = (AutomaticMemoryCase, usize)> {
+fn automatic_memory_cases() -> impl Iterator<Item = (AutomaticMemoryCase, usize, bool)> {
     // The cases with a beam read an analytic `.pb` for the residual's
     // pixel mask and an `nsigma` noise inside it (#1078, #1079); the EVLA's
     // beam covers the cubes' 1.05 to 7.35 GHz.
@@ -397,16 +397,17 @@ fn automatic_memory_cases() -> impl Iterator<Item = (AutomaticMemoryCase, usize)
         // weight image's, read into an owned sensitivity plane.
         (64, ReconstructionBasis::Taylor { terms: 5 }, 1, true, true),
     ];
-    cases.into_iter().map(|case| (case, 1)).chain([(
-        (
-            32,
-            ReconstructionBasis::ChannelLocal { channels: 16 },
-            4,
-            true,
-            false,
-        ),
+    let full_stokes = (
+        32,
+        ReconstructionBasis::ChannelLocal { channels: 16 },
         4,
-    )])
+        true,
+        false,
+    );
+    cases
+        .into_iter()
+        .map(|case| (case, 1, false))
+        .chain([(full_stokes.clone(), 4, false), (full_stokes, 4, true)])
 }
 
 /// CASA's automatic mask of every channel (#980): preparing a minor cycle
@@ -428,7 +429,7 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
         small_scale_bias: 0.0,
     };
     let cases = automatic_memory_cases();
-    for ((width, basis, workers, with_beam, with_response), polarizations) in cases {
+    for ((width, basis, workers, with_beam, with_response), polarizations, empty_beam) in cases {
         let (channels, planes_per_polarization, algorithm, fluxes) = match basis {
             ReconstructionBasis::ChannelLocal { channels } => (
                 channels,
@@ -502,9 +503,19 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
         let completion = cycle.finish(SAMPLES, BLOCKS).expect("complete");
         let centres = std::collections::BTreeMap::from([(
             casa_imaging_model::ImageDomainRole::Main,
-            vec![[width as f64 / 2.0, width as f64 / 2.0]],
+            vec![[
+                if empty_beam {
+                    -1.0e5
+                } else {
+                    width as f64 / 2.0
+                },
+                width as f64 / 2.0,
+            ]],
         )]);
-        let setup = automask_setup(&problem, algorithm, &centres, (with_beam, with_response));
+        let mut setup = automask_setup(&problem, algorithm, &centres, (with_beam, with_response));
+        if empty_beam {
+            setup.pbmask = 0.2;
+        }
         let mut plans =
             ImageDomainReconstructionMaskPlans::new([ReconstructionMaskPlan::AutoMultithresh {
                 coordinate: problem.geometry().domains()[0].direction(),
@@ -567,9 +578,10 @@ fn an_automatic_cube_mask_holds_at_most_its_admission() {
                 planes,
                 "{label}: a mask plane per channel"
             );
-            assert!(
+            assert_eq!(
                 prepared.masks().primary().support().iter().any(|set| *set),
-                "{label}: the point is masked"
+                !empty_beam,
+                "{label}: the mask respects an empty beam"
             );
             plans = plans
                 .next_cycle(prepared.masks(), prepared.auto_masks(), boundary + 1, false)

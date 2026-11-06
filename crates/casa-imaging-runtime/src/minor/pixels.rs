@@ -172,6 +172,8 @@ pub(super) fn beam_pixels(
     let Some(beam) = &setup.primary_beam else {
         return Ok(None);
     };
+    #[cfg(test)]
+    CHANNEL_BEAM_FORMS.with(|count| count.set(count.get() + 1));
     let channel = if taylor { 0 } else { key.channel };
     let pb = beam.pb(&roles[key.domain], channel)?;
     Ok(Some(BeamPixels::new(

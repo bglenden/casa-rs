@@ -247,7 +247,7 @@ pub(super) fn beam_bytes_per_cell(
         && super::pixels::reads_beam(setup)
     {
         // Channel supports and one polarization's validity and intersections.
-        6 * size_of::<bool>() as u64
+        3 * size_of::<bool>() as u64
     } else {
         0
     };
