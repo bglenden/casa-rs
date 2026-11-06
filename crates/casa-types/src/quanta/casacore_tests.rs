@@ -3,8 +3,8 @@
 //! casa-simulation's `simutil_casa.json` holds the whole grid).
 
 use super::{
-    add, convert, div, formxxx, get_conformant_value, mul, mvangle_normalized, stream_double, sub,
-    tos,
+    add, convert, div, formxxx, get_conformant_value, get_value, mul, mvangle_normalized,
+    stream_double, sub, tos,
 };
 use crate::quanta::{Quantity, Unit};
 
@@ -20,6 +20,10 @@ fn get_value_uses_casacores_inverse_ratio_order() {
         1_419_999_999.999_999_8
     );
     assert!(get_conformant_value(&read("2m"), &hz).is_err());
+    assert_eq!(
+        get_value(&read("2Hz"), &Unit::new("'").unwrap()),
+        6875.493541569879
+    );
 }
 
 #[test]

@@ -120,7 +120,31 @@ pub fn get_conformant_value(value: &Quantity, target: &Unit) -> Result<f64, Quan
             target.name()
         )));
     }
-    Ok(value.value() / (target.val().factor / value.unit().val().factor))
+    Ok(get_value(value, target))
+}
+
+/// Return casacore's `Quantum::getValue(target)` without requiring conformant
+/// dimensions. Angle/time and frequency/wavelength use casacore's special
+/// conversions; other mismatched dimensions use the unit-factor ratio.
+#[must_use]
+pub fn get_value(value: &Quantity, target: &Unit) -> f64 {
+    let source = value.unit().val();
+    let destination = target.val();
+    let mut inverse = destination.factor / source.factor;
+    let angle = UnitDim::basis(Dimension::Angle);
+    let time = UnitDim::basis(Dimension::Time);
+    let length = UnitDim::basis(Dimension::Length);
+    let frequency = time.pow(-1);
+    if source.dim == angle && destination.dim == time {
+        inverse *= CIRCLE / DAY_S;
+    } else if source.dim == time && destination.dim == angle {
+        inverse *= DAY_S / CIRCLE;
+    } else if (source.dim == frequency && destination.dim == length)
+        || (source.dim == length && destination.dim == frequency)
+    {
+        return 299_792_458.0 / value.value() / source.factor / destination.factor;
+    }
+    value.value() / inverse
 }
 
 /// casacore's `Quantum::operator+`: the second value in the first's unit,

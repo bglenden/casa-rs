@@ -68,3 +68,13 @@ pub(super) fn in_unit(quantity: &Quantity, unit: &str) -> Result<f64, ImageError
     casa_types::quanta::casacore::get_conformant_value(quantity, &unit)
         .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
 }
+
+/// Convert as CASA's coordinate metadata setter does, including its handling
+/// of nonconformant units. An empty unit means the image axis unit.
+pub(super) fn in_axis_unit(quantity: &Quantity, unit: &str) -> Result<f64, ImageError> {
+    if quantity.unit().name().is_empty() {
+        return Ok(quantity.value());
+    }
+    let unit = Unit::new(unit).map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+    Ok(casa_types::quanta::casacore::get_value(quantity, &unit))
+}

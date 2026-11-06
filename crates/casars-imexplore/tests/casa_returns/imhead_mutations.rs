@@ -4,6 +4,165 @@
 
 use super::*;
 
+fn assert_header_value_near(actual: &Value, expected: &Value, case: usize) {
+    match (actual, expected) {
+        (Value::Number(a), Value::Number(b)) => {
+            let (a, b) = (a.as_f64().unwrap(), b.as_f64().unwrap());
+            assert!(
+                (a - b).abs() <= b.abs().max(1.0) * 5e-14,
+                "{case}: {a} != {b}"
+            );
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            assert_eq!(a.len(), b.len(), "{case}");
+            for (a, b) in a.iter().zip(b) {
+                assert_header_value_near(a, b, case);
+            }
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            assert_eq!(a.len(), b.len(), "{case}");
+            for (key, value) in a {
+                assert_header_value_near(value, &b[key], case);
+            }
+        }
+        _ => assert_eq!(actual, expected, "{case}"),
+    }
+}
+
+#[test]
+fn imhead_edits_coordinate_values_as_casa_quantities() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let oracle: Value = serde_json::from_slice(
+        &std::fs::read(fixture.join("axis_quantity_expected.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(oracle["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for (index, case) in oracle["cases"].as_array().unwrap().iter().enumerate() {
+        let path = workspace.path().join(format!("axis-quantity-{index}.im"));
+        copy_tree(
+            &fixture.join(format!("{}.im", case["image"].as_str().unwrap())),
+            &path,
+        );
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "put", "hdkey": case["key"], "hdvalue": case["value"]
+            }),
+        );
+        if case.get("error").is_some() {
+            assert!(
+                matches!(reply, Some(TaskReply::Failed { .. })),
+                "{index}: {reply:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    reply,
+                    Some(TaskReply::Succeeded {
+                        value: CasaValue::None,
+                        ..
+                    })
+                ),
+                "{index}: {reply:?}"
+            );
+            let value = returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "get", "hdkey": case["key"]}),
+            );
+            assert_header_value_near(&value.to_plain_json(), &case["get"], index);
+            let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+            let history = image.history().unwrap();
+            assert_eq!(
+                history[history.len() - 3],
+                case["history"][0],
+                "{index}: history"
+            );
+        }
+        let summary = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "summary"}),
+        )
+        .to_plain_json();
+        for key in [
+            "axisnames",
+            "axisunits",
+            "incr",
+            "refpix",
+            "refval",
+            "shape",
+        ] {
+            assert_header_value_near(&summary[key], &case["after"][key], index);
+        }
+    }
+}
+
+#[test]
+fn imhead_refuses_nonzenithal_reference_value_edits_without_mutation() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let workspace = tempfile::tempdir().unwrap();
+    for projection in ["car", "sfl", "mer", "ait"] {
+        let path = workspace.path().join(format!("{projection}.im"));
+        copy_tree(&fixture.join(format!("{projection}.im")), &path);
+        let before = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "summary"}),
+        );
+        for key in ["crval1", "crval2", "crval4"] {
+            let (_, reply) = json_run(
+                workspace.path(),
+                "imhead",
+                json!({
+                    "imagename": path, "mode": "put", "hdkey": key, "hdvalue": "3deg"
+                }),
+            );
+            assert!(
+                matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("#977")),
+                "{projection}: {key}"
+            );
+        }
+        let after = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "summary"}),
+        );
+        assert_eq!(before, after, "{projection}");
+    }
+}
+
+#[test]
+fn imhead_refuses_direction_increment_underflow_without_mutation() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("tiny.im");
+    copy_tree(&fixture, &path);
+    let before = returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": path, "mode": "summary"}),
+    );
+    for value in ["1e-322deg", "1e-320deg"] {
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "put", "hdkey": "cdelt1", "hdvalue": value
+            }),
+        );
+        assert!(matches!(reply, Some(TaskReply::Failed { .. })), "{value}");
+    }
+    let after = returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": path, "mode": "summary"}),
+    );
+    assert_eq!(before, after);
+}
+
 #[test]
 fn imhead_edits_rest_frequency_as_a_casa_quantity() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");

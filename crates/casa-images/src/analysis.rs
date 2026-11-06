@@ -1268,6 +1268,72 @@ pub(crate) fn imhead_axis_index(suffix: &str) -> Option<usize> {
     suffix[..digits].parse::<usize>().ok()?.checked_sub(1)
 }
 
+/// Set a non-polarization `cdeltN` or `crvalN` from a CASA quantity.
+///
+/// # Errors
+///
+/// Returns an error for invalid or unsupported axes, quantities, metadata,
+/// or image I/O. History I/O may fail after metadata has been saved.
+pub fn imhead_put_axis_quantity(
+    path: impl AsRef<Path>,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<ImageHeaderSummary, ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let key = hdkey.to_ascii_lowercase();
+    let (prefix, suffix) = key
+        .get(..5)
+        .zip(key.get(5..))
+        .filter(|(prefix, _)| ["cdelt", "crval"].contains(prefix))
+        .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    let axis = imhead_axis_index(suffix)
+        .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    let summary = imhead(path)?;
+    let header = summary
+        .axes
+        .get(axis)
+        .ok_or_else(|| ImageError::InvalidMetadata(format!("invalid axis keyword {hdkey:?}")))?;
+    if header.coordinate_type == "Stokes" {
+        return Err(ImageError::InvalidMetadata(if prefix == "cdelt" {
+            "A polarization axis cannot have an increment".into()
+        } else {
+            "Polarization reference-value edits are not implemented (#977)".into()
+        }));
+    }
+    let (quantity, rendered) = quantity_input::parse(hdvalue)?;
+    let value = quantity_input::in_axis_unit(&quantity, &header.unit)?;
+    let old = if prefix == "cdelt" {
+        header.increment
+    } else {
+        header.reference_value
+    };
+    let old = format!(
+        "{}{}",
+        projection_header::cpp_number_precision(old, 6),
+        header.unit
+    );
+    let mut image = AnyPagedImage::open(path)?;
+    match (&mut image, prefix) {
+        (AnyPagedImage::Float32(image), "cdelt") => image.set_increment(axis, value)?,
+        (AnyPagedImage::Float64(image), "cdelt") => image.set_increment(axis, value)?,
+        (AnyPagedImage::Complex32(image), "cdelt") => image.set_increment(axis, value)?,
+        (AnyPagedImage::Complex64(image), "cdelt") => image.set_increment(axis, value)?,
+        (AnyPagedImage::Float32(image), _) => image.set_reference_value(axis, value)?,
+        (AnyPagedImage::Float64(image), _) => image.set_reference_value(axis, value)?,
+        (AnyPagedImage::Complex32(image), _) => image.set_reference_value(axis, value)?,
+        (AnyPagedImage::Complex64(image), _) => image.set_reference_value(axis, value)?,
+    };
+    image.save()?;
+    drop(image);
+    crate::image::add_image_history(
+        path,
+        "ImageMetaDataRW::_setCoordinateValue",
+        &[format!("Modified {key} from \"{old}\" to {rendered}")],
+    )?;
+    imhead(path)
+}
+
 /// Set a CASA `restfreq` value from a quantity string or value-and-unit record.
 ///
 /// # Errors

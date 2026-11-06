@@ -1453,18 +1453,37 @@ impl<T: ImagePixel> PagedImage<T> {
         pixel_axis: usize,
         value: f64,
     ) -> Result<f64, ImageError> {
-        let Some(Value::Record(mut record)) = self.table.keywords().get("coords").cloned() else {
-            return Err(ImageError::InvalidMetadata(
-                "image has no coordinate record".into(),
-            ));
-        };
-        let (coordinates, old) =
-            CoordinateSystem::set_reference_pixel_in_record(&mut record, pixel_axis, value)?;
-        self.table
-            .keywords_mut()
-            .upsert("coords", Value::Record(record));
-        self.coords = coordinates;
-        Ok(old)
+        self.edit_coordinates(|record| {
+            CoordinateSystem::set_reference_pixel_in_record(record, pixel_axis, value)
+        })
+    }
+
+    /// Set an axis increment in its stored world unit and return the old value.
+    /// Call [`Self::save`] to persist it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the axis, value, or coordinate record is invalid.
+    pub fn set_increment(&mut self, pixel_axis: usize, value: f64) -> Result<f64, ImageError> {
+        self.edit_coordinates(|record| {
+            CoordinateSystem::set_increment_in_record(record, pixel_axis, value)
+        })
+    }
+
+    /// Set an axis reference value in its stored world unit and return the old
+    /// value. Call [`Self::save`] to persist it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the axis, value, or coordinate record is invalid.
+    pub fn set_reference_value(
+        &mut self,
+        pixel_axis: usize,
+        value: f64,
+    ) -> Result<f64, ImageError> {
+        self.edit_coordinates(|record| {
+            CoordinateSystem::set_reference_value_in_record(record, pixel_axis, value)
+        })
     }
 
     /// Set the active rest frequency in the spectral coordinate's stored unit.
@@ -1475,18 +1494,9 @@ impl<T: ImagePixel> PagedImage<T> {
     ///
     /// Returns an error if the value or spectral metadata is invalid.
     pub fn set_rest_frequency(&mut self, value: f64) -> Result<f64, ImageError> {
-        let Some(Value::Record(mut record)) = self.table.keywords().get("coords").cloned() else {
-            return Err(ImageError::InvalidMetadata(
-                "image has no coordinate record".into(),
-            ));
-        };
-        let (coordinates, old) =
-            CoordinateSystem::set_rest_frequency_in_record(&mut record, value)?;
-        self.table
-            .keywords_mut()
-            .upsert("coords", Value::Record(record));
-        self.coords = coordinates;
-        Ok(old)
+        self.edit_coordinates(|record| {
+            CoordinateSystem::set_rest_frequency_in_record(record, value)
+        })
     }
 
     /// Set an axis name, preserving the stored coordinate mappings.
@@ -1497,13 +1507,23 @@ impl<T: ImagePixel> PagedImage<T> {
     ///
     /// Returns an error if the axis or coordinate record is invalid.
     pub fn set_axis_name(&mut self, pixel_axis: usize, name: &str) -> Result<String, ImageError> {
+        self.edit_coordinates(|record| {
+            CoordinateSystem::set_axis_name_in_record(record, pixel_axis, name)
+        })
+    }
+
+    fn edit_coordinates<R>(
+        &mut self,
+        edit: impl FnOnce(
+            &mut RecordValue,
+        ) -> Result<(CoordinateSystem, R), casa_coordinates::CoordinateError>,
+    ) -> Result<R, ImageError> {
         let Some(Value::Record(mut record)) = self.table.keywords().get("coords").cloned() else {
             return Err(ImageError::InvalidMetadata(
                 "image has no coordinate record".into(),
             ));
         };
-        let (coordinates, old) =
-            CoordinateSystem::set_axis_name_in_record(&mut record, pixel_axis, name)?;
+        let (coordinates, old) = edit(&mut record)?;
         self.table
             .keywords_mut()
             .upsert("coords", Value::Record(record));

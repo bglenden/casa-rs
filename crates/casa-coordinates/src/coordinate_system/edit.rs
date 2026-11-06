@@ -4,7 +4,7 @@
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use super::CoordinateSystem;
-use crate::{CoordinateError, CoordinateType};
+use crate::{Coordinate, CoordinateError, CoordinateType};
 
 impl CoordinateSystem {
     /// Set the active rest frequency in the spectral coordinate's stored unit.
@@ -176,12 +176,60 @@ impl CoordinateSystem {
         pixel_axis: usize,
         value: f64,
     ) -> Result<(Self, f64), CoordinateError> {
+        Self::set_axis_scalar_in_record(record, pixel_axis, "crpix", value)
+    }
+
+    /// Update an axis increment in its stored world unit, preserving axis maps.
+    /// A polarization-coordinate update is a no-op, as in casacore.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid axis or value, malformed metadata, or
+    /// an unsupported coordinate layout.
+    pub fn set_increment_in_record(
+        record: &mut RecordValue,
+        pixel_axis: usize,
+        value: f64,
+    ) -> Result<(Self, f64), CoordinateError> {
+        Self::set_axis_scalar_in_record(record, pixel_axis, "cdelt", value)
+    }
+
+    /// Update an axis reference value in its stored world unit, preserving
+    /// axis maps. A polarization-coordinate update is a no-op, as in casacore.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid axis or value, malformed metadata, or
+    /// an unsupported coordinate layout.
+    pub fn set_reference_value_in_record(
+        record: &mut RecordValue,
+        pixel_axis: usize,
+        value: f64,
+    ) -> Result<(Self, f64), CoordinateError> {
+        Self::set_axis_scalar_in_record(record, pixel_axis, "crval", value)
+    }
+
+    fn set_axis_scalar_in_record(
+        record: &mut RecordValue,
+        pixel_axis: usize,
+        field: &str,
+        value: f64,
+    ) -> Result<(Self, f64), CoordinateError> {
         if !value.is_finite() {
             return Err(CoordinateError::InvalidRecord(
-                "reference pixel must be finite".into(),
+                "coordinate value must be finite".into(),
             ));
         }
         let coordinates = Self::record_coordinates(record)?;
+        if field == "crval" && coordinates.iter().any(|coordinate| {
+            coordinate.field.starts_with("direction")
+                && matches!(record.get(&coordinate.field), Some(Value::Record(direction))
+                    if matches!(direction.get("projection"), Some(Value::Scalar(ScalarValue::String(name))) if ["CAR", "SFL", "MER", "AIT"].iter().any(|projection| name.eq_ignore_ascii_case(projection))))
+        }) {
+            return Err(CoordinateError::InvalidRecord(
+                "reference-value edits on non-zenithal projection images are not implemented (#977)".into(),
+            ));
+        }
         let naxes = coordinates
             .iter()
             .flat_map(|coordinate| coordinate.pixel_axes.iter().flatten())
@@ -201,14 +249,34 @@ impl CoordinateSystem {
                 naxes,
             })?;
         if coordinate.field.starts_with("stokes") {
-            return Ok((Self::from_record(record)?, 0.0));
+            let system = Self::from_record(record)?;
+            let old = (0..system.n_coordinates())
+                .flat_map(|index| {
+                    let coordinate = system.coordinate(index);
+                    match field {
+                        "crpix" => coordinate.reference_pixel(),
+                        "cdelt" => coordinate.increment(),
+                        _ => coordinate.reference_value(),
+                    }
+                })
+                .nth(pixel_axis)
+                .ok_or(CoordinateError::AxisOutOfRange {
+                    index: pixel_axis,
+                    naxes,
+                })?;
+            return Ok((system, old));
+        }
+        if field == "cdelt" && value == 0.0 {
+            return Err(CoordinateError::InvalidRecord(
+                "axis increment cannot be zero".into(),
+            ));
         }
         if coordinate.field.starts_with("tabular")
             || (coordinate.field.starts_with("spectral")
                 && matches!(record.get(&coordinate.field), Some(Value::Record(inner)) if inner.get("tabular").is_some()))
         {
             return Err(CoordinateError::InvalidRecord(
-                "tabular reference-pixel edits are not implemented (#977)".into(),
+                "tabular coordinate-value edits are not implemented (#977)".into(),
             ));
         }
         let mut updated = record.clone();
@@ -240,23 +308,45 @@ impl CoordinateSystem {
         } else {
             coordinate_record
         };
-        let old = match target.get_mut("crpix") {
+        let old = match target.get_mut(field) {
             Some(Value::Scalar(ScalarValue::Float64(old))) if local_axis == 0 => {
                 std::mem::replace(old, value)
             }
             Some(Value::Array(ArrayValue::Float64(values))) if values.ndim() == 1 => {
                 let old = values.iter_mut().nth(local_axis).ok_or_else(|| {
-                    CoordinateError::InvalidRecord("reference pixel is missing an axis".into())
+                    CoordinateError::InvalidRecord(format!("{field} is missing an axis"))
                 })?;
                 std::mem::replace(old, value)
             }
             _ => {
-                return Err(CoordinateError::InvalidRecord(
-                    "invalid reference pixel record".into(),
-                ));
+                return Err(CoordinateError::InvalidRecord(format!(
+                    "invalid {field} record"
+                )));
             }
         };
         let system = Self::from_record(&updated)?;
+        for index in 0..system.n_coordinates() {
+            // WCSLIB accepts latitudes up to 1e-10 degrees beyond a pole.
+            let pole_limit =
+                std::f64::consts::FRAC_PI_2 + 1e-10_f64.to_radians() + 8.0 * f64::EPSILON;
+            if field == "crval"
+                && let crate::CoordinateModel::Direction(direction) = system.coordinate(index)
+                && direction.reference_value()[1].abs() > pole_limit
+            {
+                return Err(CoordinateError::InvalidRecord(
+                    "direction latitude is out of range".into(),
+                ));
+            }
+            if field == "cdelt"
+                && let crate::CoordinateModel::Direction(direction) = system.coordinate(index)
+                && direction.increment().iter().any(|value| !value.is_normal())
+            {
+                return Err(CoordinateError::InvalidRecord(
+                    "zero, non-finite, or subnormal direction increments are unsupported (#977)"
+                        .into(),
+                ));
+            }
+        }
         *record = updated;
         Ok((system, old))
     }
