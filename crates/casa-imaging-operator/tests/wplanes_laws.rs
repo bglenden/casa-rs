@@ -27,6 +27,7 @@ const WIDE_INCREMENT_RAD: f64 = 1.0e-3;
 
 fn context() -> RowContext {
     RowContext {
+        native_frequency_ratio: 1.0,
         original_uvw_m: None,
         time_s: 0.0,
         antennas: [0, 1],

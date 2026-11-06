@@ -12,6 +12,7 @@
 //! [`CoordinateSystem::from_record`] reads it with its coordinates in the
 //! order of their axes.
 
+mod edit;
 mod record_axes;
 
 use casa_types::{ArrayValue, RecordValue, Value};
@@ -302,6 +303,54 @@ impl CoordinateSystem {
             .into_iter()
             .map(|(placed, _)| placed)
             .collect())
+    }
+
+    /// Return the first spectral coordinate in the record's creation order.
+    ///
+    /// The field name is returned with the coordinate so callers can update
+    /// the same record even when its axes have been transposed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a coordinate record is malformed or unsupported.
+    pub fn first_spectral_in_record(
+        rec: &RecordValue,
+    ) -> Result<Option<(String, SpectralCoordinate)>, CoordinateError> {
+        for (_, key) in coordinate_record_entries(rec) {
+            let Some(Value::Record(coordinate)) = rec.get(&key) else {
+                return Err(CoordinateError::InvalidRecord(format!(
+                    "coordinate field {key:?} is not a record"
+                )));
+            };
+            if let CoordinateModel::Spectral(spectral) = parse_coordinate_record(&key, coordinate)?
+            {
+                return Ok(Some((key, *spectral)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Return the first direction coordinate in the record's creation order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a coordinate record is malformed.
+    pub fn first_direction_in_record(
+        rec: &RecordValue,
+    ) -> Result<Option<(String, DirectionCoordinate)>, CoordinateError> {
+        for (_, key) in coordinate_record_entries(rec) {
+            let Some(Value::Record(coordinate)) = rec.get(&key) else {
+                return Err(CoordinateError::InvalidRecord(format!(
+                    "coordinate field {key:?} is not a record"
+                )));
+            };
+            if let CoordinateModel::Direction(direction) =
+                parse_coordinate_record(&key, coordinate)?
+            {
+                return Ok(Some((key, direction)));
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -1266,9 +1315,10 @@ mod tests {
 
         let world = cs.to_world(&[128.0, 128.0, 0.0, 2.0]).unwrap();
         assert_eq!(world.len(), 4);
-        assert!((world[3] - 1.150345e11).abs() < 10.0);
+        // Casacore reconstructs a spectral lookup on consecutive channels.
+        assert!((world[3] - 1.1504075e11).abs() < 10.0);
 
-        let pixel = cs.to_pixel(&[4.02298, 0.08843, 1.0, 1.150345e11]).unwrap();
+        let pixel = cs.to_pixel(&[4.02298, 0.08843, 1.0, 1.1504075e11]).unwrap();
         assert!((pixel[3] - 2.0).abs() < 1e-10);
     }
 

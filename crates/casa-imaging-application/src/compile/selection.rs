@@ -778,6 +778,29 @@ mod tests {
         assert!(corrected(&[0, 2]));
     }
 
+    /// MVC chooses an output cube size independently of the input SPW
+    /// selector; a six-channel input can make three output planes.
+    #[test]
+    fn mvc_output_channel_count_does_not_select_input_channels() {
+        let frequencies = [1.0e9, 1.1e9, 1.2e9, 1.3e9, 1.4e9, 1.5e9];
+        let mut request = request(json!({}));
+        request.mvc_output_channels = std::num::NonZeroUsize::new(3);
+        assert_eq!(request.cube_output_channel_count(), Some(3));
+        assert_eq!(
+            selected_channels(&request, &WindowChannels::new(), 0, &frequencies).unwrap(),
+            [0, 1, 2, 3, 4, 5]
+        );
+        request.channel_start = Some(1);
+        request.channel_count = Some(2);
+        assert_eq!(
+            selected_channels(&request, &WindowChannels::new(), 0, &frequencies).unwrap(),
+            [1, 2]
+        );
+        assert_eq!(request.cube_output_channel_count(), Some(3));
+        request.mvc_output_channels = None;
+        assert_eq!(request.cube_output_channel_count(), Some(2));
+    }
+
     #[test]
     fn channels_past_the_window_are_refused() {
         let request = request(json!({ "channel_start": 1, "channel_count": 2 }));

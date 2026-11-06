@@ -21,7 +21,7 @@ import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from simobserve_parity import CASES, compare_images, repredict
+from simobserve_parity import CASES, compare_frequency_frames, compare_images, copy_inputs, repredict
 
 
 class ComponentLists:
@@ -155,6 +155,49 @@ class CompareImagesTest(unittest.TestCase):
             self.assertEqual(self.differences(pixels, with_bad), ["x.flat: casa-rs has 1 pixels that are not finite"])
             self.assertEqual(self.differences(with_bad, pixels), ["x.flat: CASA has 1 pixels that are not finite"])
             self.assertEqual(len(self.differences(with_bad, with_bad)), 2)
+
+
+class SpectralWindows:
+    def __init__(self, windows):
+        self.windows = windows
+
+    def open(self, path):
+        self.rows = self.windows[path]
+
+    def nrows(self):
+        return len(self.rows)
+
+    def getcell(self, column, row):
+        return self.rows[row][column]
+
+    def close(self):
+        pass
+
+
+class FrequencyFramesTest(unittest.TestCase):
+    def test_frame_and_channel_mismatches_are_reported(self):
+        windows = {"a/SPECTRAL_WINDOW": [{"MEAS_FREQ_REF": 5, "CHAN_FREQ": [1e9, 1.1e9]}],
+                   "b/SPECTRAL_WINDOW": [{"MEAS_FREQ_REF": 5, "CHAN_FREQ": [1e9, 1.1e9]}]}
+        table = SpectralWindows(windows)
+        details = {}
+        self.assertEqual(compare_frequency_frames(table, "a", "b", details), [])
+        self.assertEqual(details["CASA"][0]["reference"], 5)
+        self.assertEqual(details["casa-rs"][0]["channels_hz"], [1e9, 1.1e9])
+        windows["b/SPECTRAL_WINDOW"][0]["MEAS_FREQ_REF"] = 3
+        windows["b/SPECTRAL_WINDOW"][0]["CHAN_FREQ"] = [1e9, 1.2e9]
+        self.assertEqual(len(compare_frequency_frames(table, "a", "b")), 2)
+
+
+class InputSelectionTest(unittest.TestCase):
+    def test_only_selected_inputs_are_required(self):
+        with tempfile.TemporaryDirectory() as data, tempfile.TemporaryDirectory() as out:
+            source = pathlib.Path(data) / "unittest/simobserve/core5ps.skymodel"
+            source.mkdir(parents=True)
+            (source / "data").write_text("model", encoding="utf-8")
+            selected = [case for case in CASES if case["name"] == "frame_topo"]
+            copy_inputs(data, out, selected)
+            self.assertEqual((pathlib.Path(out) / "inputs/core5ps.skymodel/data").read_text(), "model")
+            self.assertFalse((pathlib.Path(out) / "inputs/core5ps.clist").exists())
 
 
 if __name__ == "__main__":

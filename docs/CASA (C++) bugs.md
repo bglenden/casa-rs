@@ -30,6 +30,7 @@ CASA behaviours casa-rs does not follow:
 [a Taylor run with no weight on its first correlation](#with-no-weight-on-the-first-correlation-every-taylor-plane-is-zero),
 [odd-size scale convolutions](#multiscale-and-multi-term-scale-convolutions-shift-by-a-pixel-on-odd-image-sizes),
 [MatrixCleaner's step residual](#matrixcleaners-step-residual-forgets-earlier-steps),
+[MEM masks on tiled images](#mem-reuses-the-first-mask-tile-for-its-alpha-update),
 [an unplaceable PB pointing](#the-analytic-pb-ignores-a-failed-topixel),
 [the cube density's two uvw frames](#the-cube-briggs-weightor-grids-and-looks-up-its-density-in-different-uvw-frames),
 [continuum `briggsabs` at robust 0 and noise 0](#continuum-briggsabs-at-robust-0-and-noise-0-weighs-every-visibility-infinite),
@@ -358,6 +359,27 @@ dirty gridding numerical floor. On the full
 `niter=500`, `cycleniter=50` heavy row, the same CASA-compatible mode reduced the
 CASA/casa-rs product differences to `.model` RMS `1.71e-7`, `.residual` RMS
 `5.68e-5`, and `.image` RMS `5.87e-5`.
+
+## MEM reuses the first mask tile for its alpha update
+
+CASA 6.7.6.14's no-prior `EntropyI::formGDG` advances its model and residual
+lattice iterators but does not advance its mask iterator. Its separate
+`formGDGStep` does advance the mask. Consequently the alpha update reads the
+first mask tile repeatedly, even when the model and residual have advanced to
+later tiles. For a 512 × 512 image whose 256 × 128 first tile is outside an
+81 × 81 box mask, an instrumented CASA run gives a zero alpha-update gradient
+matrix, although its step matrix has a nonzero chi-square gradient. On the
+`refim_eptwochan.ms` two-iteration test, the original CASA model differs from
+the native model by 0.164 normalized RMS; an offset box gives 0.164 as well.
+
+A local CASA probe replaced only that Gram-matrix calculation with
+`formGDGStep`, which computes the same matrix while advancing the mask. The
+probe is identical to unmodified CASA for a 200 × 200 single-tile box, and
+its 512 × 512 centred and offset box models agree with casa-rs within
+2.2e-7 normalized RMS; the other image products also pass their normal
+tolerances. This is evidence for the cause, not a replacement CASA reference.
+casa-rs reads each pixel's actual mask for both calculations, rather than
+reproducing a result that depends on the image's storage tile layout (#1060).
 
 ## MatrixCleaner counts the iteration that stops it
 
@@ -3100,6 +3122,12 @@ refuses such a value for an existing 32-bit keyword with
 `RuntimeError: ... does not fit the integer keyword NAME, which holds fewer
 bits`, rather than store a wrong number.
 
+`cl.putkeyword` uses the same CASA conversion: in CASA 6.7.6.14, writing
+`2**40` to either a new keyword or an existing 32-bit keyword stores `0`.
+casa-rs keeps a new value as a 64-bit integer and refuses an overflowing
+replacement of a 32-bit keyword, so neither call silently loses the value
+(#1053).
+
 ## `tb` slices with a wrong rank or a start outside the array abort the process
 
 - Date noted: 2026-10-30
@@ -3939,6 +3967,72 @@ The same cyclic argument also crashes CASA's `componentlist.sample`
 placeholder. `tools/casa-compat/componentlist_sample_oracle.py` records the
 isolated crash. casa-rs returns the placeholder's empty float array instead.
 
+## `componentlist.replace` crashes while converting ignored arguments
+
+- Date noted: 2026-11-06
+- Status: CASA crashes; casa-rs handles the inputs safely (#1053).
+- Owner decision: Correct CASA crashes as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_replace_crashes_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_replace_crashes.json`, CASA 6.7.6-14 on the Mac mini, with isolated processes and core dumps disabled.
+
+`cl.replace(0, record)` with a record containing itself, a cyclic list of
+`whichones`, and scalar NaN or infinity as `whichones` each terminate CASA's
+Python process with signal 11 before the placeholder can return. The method
+otherwise warns and returns `False`. casa-rs detects record cycles and returns
+the placeholder result; for cyclic or non-finite index arguments it raises a
+catchable `ValueError`, as for component selection (#1176). No component is
+changed.
+
+`componentlist.asciitocomponentlist('a', 'b', direction=record)` likewise
+crashes while converting a self-referential record, even though CASA's
+placeholder ignores that record. `tools/simulation/componentlist_ascii_oracle.py`
+records the crash in an isolated process. casa-rs returns the placeholder's
+zero and warning without reading a file or changing the list.
+
+## Invalid component direction frames use an uninitialized reference
+
+- Date noted: 2026-11-06
+- Status: CASA uses an uninitialized frame after a parse failure; casa-rs rejects it before mutation (#1053).
+- Owner decision: Correct CASA crashes and corruption as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setrefdirframe_invalid_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_setrefdirframe_invalid.json`, CASA 6.7.6-14 on the Mac mini.
+
+`componentlist.setrefdirframe(0, "bad")` logs that the direction frame was
+not changed, but the C++ code continues with `newFrame` uninitialized after
+`MDirection::getType` fails. On the tested CASA build, four invalid names and
+an invalid byte string each raise an `MDirection` assertion and leave the
+direction unchanged; an uninitialized value can behave differently in another
+build. casa-rs logs the
+parse failure and raises a predictable `RuntimeError` before changing the
+component. The error text differs from the observed CASA assertion.
+
+## AW projection chooses frequency cells from averaged channel widths
+
+- Date noted: 2026-11-05
+- Status: CASA 6.7.6.14 divergence; casa-rs uses the actual channel frequency (#1121).
+- Affected code: `MSSelection::getChanFreqList`, `CFBuffer::initMaps` and
+  `AWVisResampler`.
+
+CASA constructs its per-channel AW convolution-cell map from the first
+selected channel frequency and the average channel width, rather than each
+selected channel's `CHAN_FREQ`. For irregular channel centres this can pick a
+cell on the other side of a frequency boundary. In a controlled three-channel
+VLA fixture with centres 1349.88, 1350.01 and 1350.15 MHz, widths of 100 kHz,
+and cache cells at 1200 and 1500 MHz, CASA maps the second channel using
+1349.98 MHz. That selects the 1200 MHz cell even though its actual 1350.01 MHz
+centre is closer to the 1500 MHz cell.
+
+A CASA control using 125 kHz widths maps that channel to the latter cell. Its
+start was adjusted to keep the output coordinates identical; the visibilities,
+weights, flags, selected channels and output grid were otherwise the same.
+The two CASA results differ by 0.104 normalized RMS in the PSF and 0.158 in the
+primary beam. On that control, casa-rs agrees with CASA on all compared
+products, masks and metadata, with worst normalized RMS 5.50e-7. The width
+metadata really differs between the controls; the comparison isolates the
+cell-selection effect on this natural-weighted fixture rather than asserting
+that channel widths are generally interchangeable. The per-row frame conversion
+can itself move a channel across a cell boundary, so casa-rs recovers the stored
+channel frequency for AW cell selection while retaining the converted frequency
+for UV placement. Rounding near an exact cell tie remains permitted.
+
 ## CASA discards zero-dimensional floating quantity-record values
 
 - Date noted: 2026-11-05
@@ -3952,3 +4046,160 @@ converts zero. CASA handles the same array correctly when passed without a
 record. casa-rs preserves `1.25 m` and converts it to `125 cm`, using the
 same one-element output shape. Its `getunit`, `getvalue` and scalar arithmetic
 still report CASA's wrong-holder error for the record.
+
+## Unsafe component reference-direction inputs
+
+- Date noted: 2026-11-06
+- Status: CASA crashes or corrupts component directions; casa-rs rejects the inputs before mutation (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setrefdir_oracle.py`, `tools/simulation/componentlist_setrefdir_crashes_oracle.py`, and their recorded CASA 6.7.6-14 fixtures. Crash cases run in isolated processes with core dumps disabled.
+
+On an empty list, `cl.setrefdir(-1, '1rad', '0.5rad')` terminates CASA with
+SIGSEGV, as does a cyclic quantity record. A non-finite coordinate returns
+`True` but replaces the direction with NaN. Passing `None` or an integer too
+large for the binding as the component index raises `SystemError` only after
+changing every component's direction. casa-rs rejects these inputs without
+changing any components, and reports the crashes as catchable errors.
+
+## Component-list concatenation copies the wrong components
+
+- Date noted: 2026-11-06
+- Status: CASA copies unintended rows; casa-rs copies the requested rows (#1053).
+- Owner decision: Correct CASA data loss and contradictions of evident intent as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_concatenate_oracle.py` and `crates/casars-python/python/tests/data/casa_componentlist_concatenate.json`, CASA 6.7.6-14 on the Mac mini.
+
+For a source list labeled `source0`, `source1`, `source2`, CASA's
+`concatenate(source, [2, 0])` appends `source0`, `source1`; the source loop
+checks each requested index but copies the component at the index's position
+in the request. Duplicated or reordered requests can therefore silently
+replace the components the user asked for. casa-rs appends `source2`,
+`source0`. A request longer than the source list can also raise an assertion
+after appending some wrong rows; casa-rs appends every valid requested row.
+CASA also appends components before raising `SystemError` when
+the index-vector conversion leaves a Python exception pending (for example
+`which=None`); casa-rs reports the error without modifying the destination.
+
+## Unsafe component flux-polarisation conversion
+
+- Date noted: 2026-11-06
+- Status: CASA crashes on an empty list and mutates values before reporting failed index conversion; casa-rs rejects both inputs without mutation (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_convertfluxpol_oracle.py` and its CASA 6.7.6-14 fixture; the crash probe runs in an isolated process with core dumps disabled.
+
+`cl.convertfluxpol(-1, 'Linear')` on an empty list terminates CASA with
+SIGSEGV. With components present, passing `None` or an integer too large for
+the Python binding as the index raises `SystemError` after changing every
+component's flux representation. casa-rs raises catchable errors and leaves
+all component values unchanged.
+
+## Unsafe component flux updates
+
+- Date noted: 2026-11-06
+- Status: CASA aborts, crashes, or loses input values; casa-rs preserves the input or rejects it before mutation (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setflux_oracle.py` and its CASA 6.7.6-14 fixture. Crash cases run in isolated processes with core dumps disabled.
+
+For a component, `cl.setflux(0, 2, error=0.2)` aborts CASA because its
+four-element error vector is assigned a one-element array. casa-rs stores
+`[0.2, 0, 0, 0]`, preserving the supplied error. On an empty list,
+`cl.setflux(-1, 2)` terminates CASA with SIGSEGV. An index of `None` or an
+integer too large for the binding causes CASA to change every component and
+then raise `SystemError`; casa-rs reports a catchable error without mutation.
+
+CASA accepts complex flux values and four-element errors, silently discarding
+the imaginary parts; casa-rs rejects nonzero imaginary parts before mutation,
+because the Stokes record interface cannot return them. CASA also accepts NaN
+and infinity, and narrows a finite `1e200` to infinity when it temporarily
+stores the flux in single precision. casa-rs rejects non-finite inputs and
+retains finite double-precision values, consistent with the existing
+`addcomponent` precision decision above.
+
+## Component shape changes discard direction errors
+
+- Date noted: 2026-11-06
+- Status: CASA loses direction errors and can modify a component before reporting an argument error; casa-rs preserves them (#1053).
+- Owner decision: Correct CASA data corruption as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setshape_oracle.py` and its CASA 6.7.6-14 fixture.
+
+Given a component with nonzero direction errors, `setshape(0, ...)` copies
+only its direction and replaces both errors with zero. casa-rs preserves the
+original direction and both errors when changing the shape. Passing
+`optionalparms=None` can also update the shape before CASA raises
+`SystemError`; casa-rs reports the error without changing the component.
+Passing a cyclic `optionalparms` list terminates CASA with SIGSEGV; casa-rs
+rejects the cycle before changing the component.
+CASA accepts NaN as a Gaussian position angle or shape error and writes NaN;
+casa-rs rejects a non-finite shape or error before mutation.
+
+## Component spectrum changes can discard data
+
+- Date noted: 2026-11-06
+- Status: CASA clears a frequency error or leaves a partial update after an error; casa-rs preserves existing data (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setspectrum_oracle.py` and its CASA 6.7.6-14 fixture; the cyclic-input probe runs in an isolated process with core dumps disabled.
+
+Changing a component's spectral model with `setspectrum` resets its existing
+frequency error to zero. casa-rs keeps the original frequency error and unit.
+A tabulation in TOPO for a component whose reference frequency is LSRK raises
+`Cannot transform frequency` only after CASA replaces the old spectrum;
+casa-rs validates the frame conversion before mutation. An unconvertible
+numeric string in a tabular vector is silently stored as zero in CASA;
+casa-rs rejects it without changing the component. CASA also stores NaN
+spectral indices, polynomial coefficients and tabular fluxes, and terminates
+with SIGSEGV for a cyclic tabular vector. casa-rs rejects these inputs before
+mutation. A failed Python conversion can likewise cause CASA to change the
+spectrum before raising `SystemError`; casa-rs preserves the original.
+
+## Simulating more than the signed loop range
+
+- Date noted: 2026-11-06
+- Status: CASA's component counter overflows for requests above `INT_MAX`; casa-rs rejects them (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `componentlist::simulate` in CASA's `componentlist_cmpt.cc` uses an `int` loop counter against a `long` request; `test_componentlist_simulate.py` checks refusal without allocating billions of components.
+
+`componentlist.simulate(2147483648)` increments a signed 32-bit counter past
+its maximum if it reaches the requested count. Signed overflow is undefined,
+and the request is liable to exhaust memory first. casa-rs refuses counts
+outside the loop's valid range before changing the component list.
+
+## Stokes spectrum errors can alter existing components
+
+- Date noted: 2026-11-06
+- Status: CASA can discard an error or leave a partial spectrum update; casa-rs preserves existing data (#1053).
+- Owner decision: Correct CASA crashes, out-of-bounds reads and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/componentlist_setstokesspectrum_oracle.py` and `casa_componentlist_setstokesspectrum.json`; CASA's `componentlist::setstokesspectrum` reads `index[0]` without checking its length.
+
+`setstokesspectrum` can change a reference frequency before returning false
+for a power-log polynomial, or before raising `SystemError` for a failed
+vector conversion. A tabulation in TOPO for an LSRK reference can replace the
+spectrum before raising a frame-conversion error. CASA also accepts a length
+as a reference frequency and silently treats its numeric value as hertz; and
+an empty index is read out of bounds. casa-rs validates inputs and preserves
+the old component on these failures. Like `setspectrum`, replacing the model
+preserves an existing frequency error instead of resetting it to zero.
+
+## Measure-offset inspection can corrupt integers or crash
+
+- Date noted: 2026-11-06
+- Status: CASA truncates large integers in offset metadata and crashes on a cyclic Python record; casa-rs preserves the value or rejects the cycle (#1053).
+- Owner decision: Correct CASA crashes and data corruption as classes; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/measures_getoffset_oracle.py` and its CASA 6.7.6-14 fixture; the cyclic-input probe runs in an isolated process with core dumps disabled.
+
+When an otherwise valid direction offset contains an extra integer value of
+`2**53 + 1`, CASA's `getoffset` returns `1`. casa-rs returns the supplied
+integer exactly. A self-referential input record terminates CASA with SIGSEGV;
+casa-rs raises a catchable `ValueError` before conversion. Array-valued and
+nested measure offsets remain explicitly unimplemented in casa-rs (#1053).
+
+## Extra-measure value inspection can crash on cyclic input
+
+- Date noted: 2026-11-06
+- Status: CASA crashes; casa-rs rejects the cyclic record (#1053).
+- Owner decision: Correct CASA crashes as a class; see `docs/simulation/owner-decisions-20261105.md`.
+- Evidence: `tools/simulation/measures_addxvalue_oracle.py` and its CASA 6.7.6-14 fixture; the cyclic-input probe runs in an isolated process with core dumps disabled.
+
+Passing a self-referential dictionary to `measures.addxvalue` terminates
+CASA with SIGSEGV while converting the input record. casa-rs raises a
+catchable `ValueError` before conversion. Excessively nested records are
+also refused, and offset, multivalued and unsupported measure kinds are
+explicitly unimplemented (#1053).

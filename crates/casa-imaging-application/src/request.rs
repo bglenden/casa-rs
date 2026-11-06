@@ -44,6 +44,13 @@ pub struct ImagingRequest {
     /// Internal reader provenance only; this is never a catalog parameter.
     #[serde(default)]
     pub(crate) explicit_empty_mask: bool,
+    /// MVC's internally resolved output cube size, separate from the input
+    /// `channel_count` selector. Set after its selected band is surveyed.
+    #[serde(skip)]
+    pub(crate) mvc_output_channels: Option<NonZeroUsize>,
+    /// Ask CASA's MVC bandwidth rule to resolve the output cube depth.
+    #[serde(skip)]
+    pub(crate) mvc_auto_channels: bool,
     /// The MeasurementSets of tclean's `vis`, in the order it names them,
     /// each with the selection tclean applies to it: its own selectors, or
     /// the one each selector gives every MeasurementSet. Compile images them
@@ -410,6 +417,8 @@ pub enum Deconvolver {
     Clark,
     /// Clark point components on each polarization separately.
     ClarkStokes,
+    /// Image-plane maximum entropy.
+    Mem,
     /// Multiscale components.
     Multiscale,
     /// Multi-term multi-frequency synthesis.
@@ -645,6 +654,15 @@ pub struct InvalidRequest {
 }
 
 impl ImagingRequest {
+    /// The cube's output depth; MVC derives this independently of its input
+    /// channel selection (`PyMtmfsViaCubeSynthesisImager`).
+    pub(crate) const fn cube_output_channel_count(&self) -> Option<usize> {
+        match self.mvc_output_channels {
+            Some(channels) => Some(channels.get()),
+            None => self.channel_count,
+        }
+    }
+
     /// Check that the request can continue on what an earlier run left at
     /// its `imagename`, as tclean's `restart=True` does (#944): the same
     /// run's family of products, a model with no `startmodel`, a CLEAN mask
@@ -754,6 +772,7 @@ impl ImagingRequest {
                 "nterms is at least one, and more than one only with deconvolver = mtmfs",
             );
         }
+        self.validate_mem_scope()?;
         if self.deconvolver == Deconvolver::Mtmfs && self.specmode != SpecMode::Mfs {
             return invalid("deconvolver, specmode", "mtmfs images a continuum (mfs)");
         }
@@ -840,6 +859,33 @@ impl ImagingRequest {
         }
         if let Gridder::Awproject(aw) = &self.gridder {
             aw.validate()?;
+        }
+        Ok(())
+    }
+
+    /// Guard the tested MEM subset at both the CASA reader and typed request.
+    pub(crate) fn validate_mem_scope(&self) -> Result<(), InvalidRequest> {
+        if self.deconvolver == Deconvolver::Mem
+            && (self.specmode != SpecMode::Mfs
+                || self.stokes.as_slice() != [PolarizationCoordinate::StokesI]
+                || !matches!(self.gridder, Gridder::Standard { facets } if facets.get() == 1)
+                || self.weighting != Weighting::Natural
+                || self.vis.len() != 1
+                || self.outlierfile.is_some()
+                || self.has_start_model()
+                || self.tclean_restart
+                || !self.calcpsf
+                || !self.calcres
+                || self.usemask != UseMask::User
+                || self.mask_image.is_some()
+                || self.pbmask != 0.0
+                || self.nsigma != 0.0
+                || self.savemodel != SaveModel::None)
+        {
+            return Err(InvalidRequest {
+                parameters: "deconvolver",
+                reason: "MEM currently supports single-MS, Stokes I MFS with the standard gridder, natural weighting and a user box mask; continuation and model-column writes wait for #1060",
+            });
         }
         Ok(())
     }

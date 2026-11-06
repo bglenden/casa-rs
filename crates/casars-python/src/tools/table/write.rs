@@ -101,7 +101,7 @@ fn store(record: &mut RecordValue, name: &str, value: Incoming) -> Result<(), Fa
 }
 
 /// `putkeyword`'s rule: by (dotted) name or by 1-based position.
-fn put(
+pub(super) fn put(
     record: &mut RecordValue,
     key: &KeywordRef,
     value: Incoming,

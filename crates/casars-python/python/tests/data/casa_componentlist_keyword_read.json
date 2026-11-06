@@ -1,0 +1,203 @@
+{
+  "casatools": "6.7.6-14",
+  "results": {
+    "get:": {
+      "error": "RuntimeError",
+      "message": "RecordInterface::asValueHolder - unknown data type"
+    },
+    "get:.x": {
+      "error": "RuntimeError",
+      "message": "Part of keyword name .x is empty"
+    },
+    "get:Metadata": {
+      "error": "RuntimeError",
+      "message": "Table keyword Metadata does not exist"
+    },
+    "get:matrix": {
+      "value": {
+        "array": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "dtype": "i",
+        "shape": [
+          2,
+          2
+        ]
+      }
+    },
+    "get:metadata": {
+      "value": {
+        "answer": 42,
+        "flags": {
+          "array": [
+            true,
+            false
+          ],
+          "dtype": "b",
+          "shape": [
+            2
+          ]
+        },
+        "ints": {
+          "array": [
+            1,
+            2
+          ],
+          "dtype": "i",
+          "shape": [
+            2
+          ]
+        },
+        "nested": {
+          "x": "yes"
+        }
+      }
+    },
+    "get:metadata.": {
+      "error": "RuntimeError",
+      "message": "Part of keyword name metadata. is empty"
+    },
+    "get:metadata.absent": {
+      "error": "RuntimeError",
+      "message": "Table keyword metadata.absent does not exist"
+    },
+    "get:metadata.answer": {
+      "value": 42
+    },
+    "get:metadata.answer.x": {
+      "error": "RuntimeError",
+      "message": "Table keyword metadata.answer does not have a record-value"
+    },
+    "get:metadata.nested.x": {
+      "value": "yes"
+    },
+    "get:missing.x": {
+      "error": "RuntimeError",
+      "message": "Table keyword missing does not exist"
+    },
+    "get:scalar": {
+      "value": 5
+    },
+    "get_bytes": {
+      "value": 5
+    },
+    "get_default": {
+      "value": {
+        "answer": 42,
+        "flags": {
+          "array": [
+            true,
+            false
+          ],
+          "dtype": "b",
+          "shape": [
+            2
+          ]
+        },
+        "ints": {
+          "array": [
+            1,
+            2
+          ],
+          "dtype": "i",
+          "shape": [
+            2
+          ]
+        },
+        "nested": {
+          "x": "yes"
+        }
+      }
+    },
+    "get_none": {
+      "error": "TypeError",
+      "message": "argument _keyword must be a string"
+    },
+    "has:": {
+      "value": false
+    },
+    "has:.x": {
+      "value": false
+    },
+    "has:Metadata": {
+      "value": false
+    },
+    "has:matrix": {
+      "value": true
+    },
+    "has:metadata": {
+      "value": true
+    },
+    "has:metadata.": {
+      "value": false
+    },
+    "has:metadata.absent": {
+      "value": false
+    },
+    "has:metadata.answer": {
+      "value": false
+    },
+    "has:metadata.answer.x": {
+      "value": false
+    },
+    "has:metadata.nested.x": {
+      "value": false
+    },
+    "has:missing.x": {
+      "value": false
+    },
+    "has:scalar": {
+      "value": true
+    },
+    "has_default": {
+      "value": true
+    },
+    "has_none": {
+      "error": "TypeError",
+      "message": "argument _keyword must be a string"
+    },
+    "readonly": {
+      "value": {
+        "answer": 42,
+        "flags": {
+          "array": [
+            true,
+            false
+          ],
+          "dtype": "b",
+          "shape": [
+            2
+          ]
+        },
+        "ints": {
+          "array": [
+            1,
+            2
+          ],
+          "dtype": "i",
+          "shape": [
+            2
+          ]
+        },
+        "nested": {
+          "x": "yes"
+        }
+      }
+    },
+    "unattached_get": {
+      "error": "RuntimeError",
+      "message": "Exception: A table is not attached to this ComponentList."
+    },
+    "unattached_has": {
+      "error": "RuntimeError",
+      "message": "Exception: A table is not attached to this ComponentList."
+    }
+  }
+}

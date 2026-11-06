@@ -20,6 +20,7 @@ use casa_types::{ArrayValue, ScalarValue, Value};
 use super::{invalid, storage};
 use crate::derived::engine::resolve_direction_reference_selected;
 use crate::observation_io::heap;
+use crate::subtables::SubTable;
 use crate::{MeasurementSet, SubtableId};
 
 /// A column's `MEASINFO` record, if it has one.
@@ -672,9 +673,13 @@ pub(super) fn setups_bytes(ms: &MeasurementSet) -> Result<usize, ObservationErro
 }
 
 /// Every `DATA_DESCRIPTION` row's spectral setup.
-pub(super) fn spectral_setups(ms: &MeasurementSet) -> Result<Vec<SpectralSetup>, ObservationError> {
+pub(super) fn spectral_setups(
+    ms: &MeasurementSet,
+    visibility_frequency_frame: bool,
+) -> Result<Vec<SpectralSetup>, ObservationError> {
     let descriptions = ms.data_description().map_err(storage)?;
     let windows = ms.spectral_window().map_err(storage)?;
+    let frequency_refs = crate::columns::frequency_columns::ChanFreqColumn::new(windows.table());
     if let Some(window_table) = ms.subtable(SubtableId::SpectralWindow) {
         require_units(window_table, "CHAN_FREQ", "Hz")?;
         require_units(window_table, "CHAN_WIDTH", "Hz")?;
@@ -686,9 +691,12 @@ pub(super) fn spectral_setups(ms: &MeasurementSet) -> Result<Vec<SpectralSetup>,
                 .map_err(|_| invalid("negative SPECTRAL_WINDOW_ID"))?;
             let polarization = usize::try_from(descriptions.polarization_id(row).map_err(storage)?)
                 .map_err(|_| invalid("negative POLARIZATION_ID"))?;
-            let frame_code = windows.meas_freq_ref(window).map_err(storage)?;
-            let frequency_frame = FrequencyRef::from_casacore_code(frame_code)
-                .ok_or_else(|| invalid(format!("unknown MEAS_FREQ_REF {frame_code}")))?;
+            let frequency_frame = if visibility_frequency_frame {
+                frequency_refs.visibility_frequency_reference(window)
+            } else {
+                frequency_refs.frequency_reference(window)
+            }
+            .map_err(storage)?;
             let correlations = polarizations
                 .corr_type(polarization)
                 .map_err(storage)?

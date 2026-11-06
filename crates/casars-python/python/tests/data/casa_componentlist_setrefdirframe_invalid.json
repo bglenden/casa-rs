@@ -1,0 +1,165 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "frame": "bad",
+      "returncode": 0,
+      "result": {
+        "error": "RuntimeError",
+        "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/casacore/measures/Measures/MDirection.cc : 166) Failed AlwaysAssert (tp & ~MDirection::EXTRA) < (MDirection::N_Planets - MDirection::MERCURY)",
+        "before": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "after": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      }
+    },
+    {
+      "frame": "",
+      "returncode": 0,
+      "result": {
+        "error": "RuntimeError",
+        "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/casacore/measures/Measures/MDirection.cc : 166) Failed AlwaysAssert (tp & ~MDirection::EXTRA) < (MDirection::N_Planets - MDirection::MERCURY)",
+        "before": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "after": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      }
+    },
+    {
+      "frame": "unknown",
+      "returncode": 0,
+      "result": {
+        "error": "RuntimeError",
+        "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/casacore/measures/Measures/MDirection.cc : 166) Failed AlwaysAssert (tp & ~MDirection::EXTRA) < (MDirection::N_Planets - MDirection::MERCURY)",
+        "before": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "after": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      }
+    },
+    {
+      "frame": "B",
+      "returncode": 0,
+      "result": {
+        "error": "RuntimeError",
+        "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/casacore/measures/Measures/MDirection.cc : 166) Failed AlwaysAssert (tp & ~MDirection::EXTRA) < (MDirection::N_Planets - MDirection::MERCURY)",
+        "before": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "after": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      }
+    },
+    {
+      "frame": "hex:ff",
+      "returncode": 0,
+      "result": {
+        "error": "RuntimeError",
+        "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/casacore/measures/Measures/MDirection.cc : 166) Failed AlwaysAssert (tp & ~MDirection::EXTRA) < (MDirection::N_Planets - MDirection::MERCURY)",
+        "before": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        },
+        "after": {
+          "m0": {
+            "unit": "rad",
+            "value": 0.17453292519943295
+          },
+          "m1": {
+            "unit": "rad",
+            "value": 0.3490658503988659
+          },
+          "refer": "J2000",
+          "type": "direction"
+        }
+      }
+    }
+  ]
+}

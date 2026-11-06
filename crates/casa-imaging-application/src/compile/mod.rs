@@ -20,6 +20,8 @@ mod frequency_bands;
 mod instrument;
 mod intents;
 mod mask_image;
+pub(crate) mod mvc;
+mod mvc_request;
 pub(crate) use mask_image::{MaskImage, open_onto_itself as open_mask_image_onto_itself};
 mod native_aw;
 mod opening;
@@ -27,13 +29,14 @@ mod outliers;
 mod partitions;
 mod selection;
 mod specification;
-mod spectral;
+pub(crate) mod spectral;
 mod start_model;
 mod stores;
 mod survey;
 mod time_selection;
 mod virtual_selection;
 
+pub(crate) use mvc::{CompiledTaylorView, TaylorView};
 pub(crate) use opening::OpenedStore;
 pub(crate) use start_model::StartModel;
 
@@ -82,6 +85,8 @@ pub(crate) struct Prepared {
     pub(crate) specification: ProblemSpecification,
     pub(crate) geometry: GeometryInput,
     pub(crate) model_lifecycle: ModelLifecycleRequirements,
+    /// The separately coordinated Taylor view of an MVC run.
+    pub(crate) mvc_taylor: Option<TaylorView>,
     pub(crate) masks: ImageDomainReconstructionMaskPlans,
     /// Static restart-mask support, including the run's clone, kept through publication.
     pub(crate) mask_resident: casa_imaging_runtime::Reservation,
@@ -125,7 +130,7 @@ struct Surveyed<'a> {
     msv2: Option<&'a Msv2Observation>,
     engine: &'a MsCalEngine,
     survey: &'a Survey,
-    spectral: &'a PreparedSpectralAxis,
+    spectral: &'a PreparedSpectralAxis<'a>,
 }
 
 /// The outlier file's output prefixes.
@@ -157,6 +162,21 @@ pub(crate) fn prepare(
     request: &ImagingRequest,
     context: &RunContext,
 ) -> Result<Prepared, PrepareError> {
+    prepare_with_view_hooks(request, context, None)
+}
+
+/// Diagnostic callbacks around preparation of the secondary Taylor view.
+pub(crate) struct ViewHooks<'a> {
+    pub(crate) before: &'a dyn Fn(),
+    pub(crate) after: &'a dyn Fn(),
+}
+
+/// Diagnostic hooks bracket only preparation of the secondary Taylor view.
+pub(crate) fn prepare_with_view_hooks(
+    request: &ImagingRequest,
+    context: &RunContext,
+    hooks: Option<ViewHooks<'_>>,
+) -> Result<Prepared, PrepareError> {
     // The one Measures provider of the run: compile's geometry and the
     // batches' both evaluate with it.
     let measures = casa_ms::open_measures_runtime()?;
@@ -164,6 +184,29 @@ pub(crate) fn prepare(
     let continuum = (request.specmode == SpecMode::Mfs)
         .then(|| stores::continuum_band(request, &stores))
         .transpose()?;
+    // MVC surveys the selected continuum band once, then grids its major
+    // cycle as a cube. Its Taylor view must use this same survey.
+    let mvc_parent = ((request.mvc_output_channels.is_some() || request.mvc_auto_channels)
+        && request.specmode == SpecMode::Mfs
+        && request.deconvolver == Deconvolver::Mtmfs)
+        .then_some(request);
+    if let Some(parent) = mvc_parent {
+        mvc::check_execution_scope(parent, stores[0].survey.fields.len())?;
+    }
+    let mvc_cube = mvc_parent
+        .map(|parent| {
+            mvc::cube_request(
+                parent,
+                continuum
+                    .as_ref()
+                    .expect("MVC has a continuum band")
+                    .gridded
+                    .edges_hz(),
+                context,
+            )
+        })
+        .transpose()?;
+    let request = mvc_cube.as_ref().map_or(request, |cube| &cube.value);
     let reference = stores::reference(request, &stores)?;
     let store = &stores[reference];
     let (catalogue, engine, survey) = (store.catalogue(), &store.engine, &store.survey);
@@ -185,6 +228,7 @@ pub(crate) fn prepare(
         continuum.as_ref(),
         &frame,
         moving_rest_frame.as_ref(),
+        request.reffreq,
     )?;
     let surveyed_observation = Surveyed {
         stores: &stores,
@@ -210,6 +254,7 @@ pub(crate) fn prepare(
         &centre,
         (&spectral.image, spectral.output_channels),
         (&observation_info, object_name),
+        domains::MaskPreparation::ForRun,
     )?;
     let primary_beam = primary_beam_model(request, catalogue)?;
     let primary_beam_centres = match primary_beam {
@@ -231,17 +276,38 @@ pub(crate) fn prepare(
             .map(stores::SurveyedStore::catalogue)
             .collect::<Vec<_>>(),
     )?;
-    let specification = specification::specification(
+    let mvc_taylor = mvc_parent
+        .map(|parent| {
+            if let Some(hooks) = hooks.as_ref() {
+                (hooks.before)();
+            }
+            let result = mvc::prepare_taylor(mvc::TaylorInputs {
+                parent,
+                context,
+                band: continuum.as_ref().expect("MVC has a continuum band"),
+                surveyed,
+                frame: &frame,
+                centre: &centre,
+                observation_info: &observation_info,
+                object_name,
+                instrument,
+                has_primary_beam: primary_beam.is_some(),
+            });
+            if let Some(hooks) = hooks.as_ref() {
+                (hooks.after)();
+            }
+            result
+        })
+        .transpose()?;
+    let mut specification_inputs = specification_inputs(
         request,
-        &spectral,
-        specification_inputs(
-            request,
-            surveyed,
-            instrument,
-            primary_beam.is_some(),
-            continuum_transform,
-        )?,
+        surveyed,
+        instrument,
+        primary_beam.is_some(),
+        continuum_transform,
     )?;
+    specification_inputs.force_model = mvc_parent.is_some_and(|parent| parent.niter != 0);
+    let specification = specification::specification(request, &spectral, specification_inputs)?;
     let reconstruction_planes = match request.deconvolver {
         Deconvolver::Mtmfs => request.nterms,
         _ => spectral.output_channels,
@@ -285,6 +351,7 @@ pub(crate) fn prepare(
     Ok(Prepared {
         specification,
         geometry,
+        mvc_taylor,
         model_lifecycle: ModelLifecycleRequirements::new(
             ModelBounds::new(model_samples, model_samples, f64::MAX, f64::MAX)?,
             NumericPrecision::F64,
@@ -487,7 +554,7 @@ fn continuum_selection(
     centre: &Centre,
 ) -> Result<(Option<SequentialContinuumTransform>, Vec<WindowChannels>), PrepareError> {
     let Some(fitspw) = &request.fitspw else {
-        return Ok((None, surveyed.spectral.selected_source_channels.clone()));
+        return Ok((None, surveyed.spectral.selected_source_channels.to_vec()));
     };
     stores::one_store(surveyed.stores, "continuum subtraction (fitspw)")?;
     let window = selection::one_window(&surveyed.survey.spectral_windows, "continuum subtraction")?;
@@ -516,12 +583,15 @@ fn specification_inputs(
     primary_beam: bool,
     continuum_transform: Option<SequentialContinuumTransform>,
 ) -> Result<SpecificationInputs, PrepareError> {
-    let windows = surveyed
-        .stores
-        .iter()
-        .flat_map(|store| &store.survey.spectral_windows)
-        .cloned()
-        .collect::<Vec<_>>();
+    let frequency_range = || {
+        projection_frequency_range(surveyed.stores.iter().flat_map(|store| {
+            store
+                .survey
+                .spectral_windows
+                .iter()
+                .flat_map(|window| window.frequencies_hz.iter().copied())
+        }))
+    };
     let w = surveyed
         .stores
         .iter()
@@ -537,14 +607,18 @@ fn specification_inputs(
     Ok(SpecificationInputs {
         instrument,
         primary_beam,
+        force_primary_beam: false,
+        force_model: false,
         w_projection: match &request.gridder {
-            Gridder::Wproject { wprojplanes, .. } => {
-                Some(specification::w_projection(*wprojplanes, &windows, w)?)
-            }
+            Gridder::Wproject { wprojplanes, .. } => Some(specification::w_projection(
+                *wprojplanes,
+                frequency_range(),
+                w,
+            )?),
             _ => None,
         },
         aw_projection: match &request.gridder {
-            Gridder::Awproject(aw) => Some(specification::aw_projection(aw, &windows, w)?),
+            Gridder::Awproject(aw) => Some(specification::aw_projection(aw, frequency_range(), w)?),
             _ => None,
         },
         mosaic_conjugate_beams: matches!(
@@ -557,6 +631,13 @@ fn specification_inputs(
         cube_density_padding: cube_density_padding(request, surveyed, density_fields.is_some())?,
         density_fields,
         continuum_transform,
+    })
+}
+
+/// The extreme source frequencies without retaining or cloning window arrays.
+pub(crate) fn projection_frequency_range(frequencies: impl Iterator<Item = f64>) -> [f64; 2] {
+    frequencies.fold([f64::INFINITY, 0.0], |[low, high], frequency| {
+        [low.min(frequency), high.max(frequency)]
     })
 }
 
@@ -634,7 +715,7 @@ fn geometry(
     request: &ImagingRequest,
     domains: &[PreparedImageDomain],
     centre: &Centre,
-    spectral: &PreparedSpectralAxis,
+    spectral: &PreparedSpectralAxis<'_>,
 ) -> GeometryInput {
     let direction_dependent = matches!(
         request.gridder,

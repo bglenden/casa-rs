@@ -1,0 +1,162 @@
+{
+  "casatools": "6.7.6-14",
+  "results": {
+    "bool": {
+      "value": null
+    },
+    "child_add": {
+      "value": null
+    },
+    "child_update": {
+      "value": null
+    },
+    "component_label": "unchanged",
+    "count_after": {
+      "value": 43
+    },
+    "default": {
+      "value": null
+    },
+    "empty_1": {
+      "value": null
+    },
+    "empty_2": {
+      "value": null
+    },
+    "integer": {
+      "value": null
+    },
+    "integer_update": {
+      "value": null
+    },
+    "invalid_name": {
+      "error": "RuntimeError",
+      "message": "Part of keyword name .bad is empty"
+    },
+    "matrix": {
+      "value": null
+    },
+    "mismatch": {
+      "error": "RuntimeError",
+      "message": "TableRecordRep::defineDataField - incorrect data type used for field count"
+    },
+    "missing_parent": {
+      "error": "RuntimeError",
+      "message": "RecordInterface: field missing is unknown"
+    },
+    "nested_empty": {
+      "value": null
+    },
+    "none": {
+      "value": null
+    },
+    "persisted": {
+      "*-1": 7,
+      "*-1_1": 8,
+      "count": 43,
+      "flag": true,
+      "initial": {
+        "stable": 17
+      },
+      "matrix": {
+        "array": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "dtype": "i",
+        "shape": [
+          2,
+          2
+        ]
+      },
+      "metadata": {
+        "array": [],
+        "dtype": "b",
+        "shape": [
+          0
+        ]
+      },
+      "nested_empty": {
+        "empty": {
+          "array": [],
+          "dtype": "b",
+          "shape": [
+            0
+          ]
+        },
+        "tuple": {
+          "array": [],
+          "dtype": "b",
+          "shape": [
+            0
+          ]
+        }
+      },
+      "none": {
+        "array": [],
+        "dtype": "b",
+        "shape": [
+          0
+        ]
+      },
+      "readonly": {
+        "value": 19
+      },
+      "record": {
+        "nested": {
+          "n": 2
+        },
+        "new": "yes",
+        "x": 9
+      },
+      "typed_empty": {
+        "array": [],
+        "dtype": "i",
+        "shape": [
+          0
+        ]
+      }
+    },
+    "readonly_get": {
+      "value": {
+        "value": 19
+      }
+    },
+    "readonly_put": {
+      "value": null
+    },
+    "record": {
+      "value": null
+    },
+    "record_after": {
+      "value": {
+        "nested": {
+          "n": 2
+        },
+        "new": "yes",
+        "x": 9
+      }
+    },
+    "scalar_parent": {
+      "error": "RuntimeError",
+      "message": "Table keyword record.x does not have a record-value"
+    },
+    "typed_empty": {
+      "value": null
+    },
+    "unattached": {
+      "error": "RuntimeError",
+      "message": "Exception: A table is not attached to this ComponentList."
+    },
+    "wrong_name": {
+      "error": "TypeError",
+      "message": "argument _keyword must be a string"
+    }
+  }
+}

@@ -1,0 +1,78 @@
+{
+ "schema": "simobserve-parity-receipt/1",
+ "work_issue": 1053,
+ "date": "2026-11-06",
+ "oracle": "casatasks 6.7.6.14, casatools 6.7.6-14 (task_simobserve.py)",
+ "native_revision": "54a3ef4961ace31269764c9f4f0818c028bbdd0c",
+ "host": "bg-mac-mini, macOS arm64, CPU",
+ "command": "CASAPY tools/simulation/simobserve_parity.py --out OUT --casars-bin TARGET/release/simobserve --casatestdata LOCAL_COPY --only frame_topo frame_bary",
+ "comparator": "simobserve_parity.py: files, pointing file, images, spectral-window frequency references and channels, and compare_sm_ms.py DATA NRMS <= 1e-3",
+ "summary": {
+  "cases": 2,
+  "agree": 2
+ },
+ "cases": [
+  {
+   "name": "frame_topo",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 5,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 5,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-06 22:52:29\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "frame_topo: OK, 9 known (UVW within 3.88e-08 m); DATA NRMS 1.04e-06 over 73500 samples (cross 1.04e-06)"
+   ],
+   "seconds": {
+    "casa": 13.564968875143677,
+    "casa-rs": 6.162056125
+   }
+  },
+  {
+   "name": "frame_bary",
+   "differences": [],
+   "spectral_windows": {
+    "CASA": [
+     {
+      "reference": 3,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ],
+    "casa-rs": [
+     {
+      "reference": 3,
+      "channels_hz": [
+       345000000000.0
+      ]
+     }
+    ]
+   },
+   "ms": [
+    "measures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "2026-11-06 22:52:56\tSEVERE\t::casa\tmeasures_update: the measures data at /Users/brianglendenning/.casa/data is not maintained by casaconfig and so it can not be updated unless force is True",
+    "frame_bary: OK, 9 known (UVW within 3.88e-08 m); DATA NRMS 1.04e-06 over 73500 samples (cross 1.04e-06)"
+   ],
+   "seconds": {
+    "casa": 10.437031582929194,
+    "casa-rs": 5.795937208
+   }
+  }
+ ]
+}

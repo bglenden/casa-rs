@@ -14,7 +14,7 @@ use casa_coordinates::{
 use casa_simulation_synthesis::{
     AiryPrimaryBeam, AiryVoltagePattern, ImageGeometry, StandardMfsModelPredictor,
 };
-use casa_tables::table_measures::{MeasureType, TableMeasDesc};
+use casa_tables::table_measures::{MeasureType, TableMeasDesc, default_frequency_ref_map};
 use casa_tables::{ColumnOverrides, StreamedScalarValues};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
@@ -1939,18 +1939,13 @@ fn populate_spectral_windows(
         ))?;
     }
     for column in ["CHAN_FREQ", "REF_FREQUENCY"] {
+        let (types, codes) = default_frequency_ref_map();
         TableMeasDesc::new_variable_int(
             column,
             MeasureType::Frequency,
             "MEAS_FREQ_REF",
-            FrequencyRef::ALL
-                .iter()
-                .map(|refer| refer.as_str().to_owned())
-                .collect(),
-            FrequencyRef::ALL
-                .iter()
-                .map(|refer| refer.casacore_code())
-                .collect(),
+            types,
+            codes,
         )?
         .write(spectral_window)?;
     }

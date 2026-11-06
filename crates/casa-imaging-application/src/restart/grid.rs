@@ -106,6 +106,7 @@ fn same_grid(a: &CoordinateSystem, b: &CoordinateSystem) -> bool {
                 && match (a, b) {
                     (CoordinateModel::Direction(a), CoordinateModel::Direction(b)) => {
                         a.direction_ref() == b.direction_ref()
+                            && a.conversion_direction_ref() == b.conversion_direction_ref()
                             && a.projection().projection_type() == b.projection().projection_type()
                             && same_projection_parameters(a.projection(), b.projection())
                             && same_angle(a.longpole(), b.longpole())
@@ -190,6 +191,13 @@ mod tests {
         let mut changed = CoordinateSystem::new();
         changed.add_coordinate(direction.clone().with_increment([-2e-5, 2e-5]));
         assert!(!same_grid(&original, &changed));
+        let mut converted = CoordinateSystem::new();
+        converted.add_coordinate(
+            direction
+                .clone()
+                .with_conversion_direction_ref(DirectionRef::GALACTIC),
+        );
+        assert!(!same_grid(&original, &converted));
         let mut shifted = CoordinateSystem::new();
         shifted.add_coordinate(direction.with_reference_pixel([31.0, 32.0]));
         assert!(!same_grid(&original, &shifted));

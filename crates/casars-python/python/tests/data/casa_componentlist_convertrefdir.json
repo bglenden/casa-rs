@@ -1,0 +1,5558 @@
+{
+  "casatools": "6.7.6-14",
+  "cases": [
+    {
+      "case": "identity",
+      "which": 0,
+      "frame": "J2000",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "galactic",
+      "which": 0,
+      "frame": "GALACTIC",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 2.0816462301898957
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.7468334091079334
+              },
+              "refer": "GALACTIC",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "icrs",
+      "which": 0,
+      "frame": "ICRS",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453284765818966
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.34906593547799764
+              },
+              "refer": "ICRS",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "b1950",
+      "which": 0,
+      "frame": "B1950",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.16305567810535482
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3442772734173234
+              },
+              "refer": "B1950",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "supergal",
+      "which": 0,
+      "frame": "SUPERGAL",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -0.7873723608079505
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.15241710152170884
+              },
+              "refer": "SUPERGAL",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "second",
+      "which": 1,
+      "frame": "GALACTIC",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -0.5839204746505274
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.7802575437609878
+              },
+              "refer": "GALACTIC",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "lower",
+      "which": 0,
+      "frame": "galactic",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 2.0816462301898957
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.7468334091079334
+              },
+              "refer": "GALACTIC",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "prefix",
+      "which": 0,
+      "frame": "GAL",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 2.0816462301898957
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.7468334091079334
+              },
+              "refer": "GALACTIC",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "invalid",
+      "which": 0,
+      "frame": "bad",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": false,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "empty",
+      "which": 0,
+      "frame": "",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": false,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "hadec",
+      "which": 0,
+      "frame": "HADEC",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Missing information in Frame specified for conversion"
+      },
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "azel",
+      "which": 0,
+      "frame": "AZEL",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Missing information in Frame specified for conversion"
+      },
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "bmean",
+      "which": 0,
+      "frame": "BMEAN",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "Missing information in Frame specified for conversion"
+      },
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "index_neg",
+      "which": -1,
+      "frame": "GALACTIC",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/components/ComponentModels/ComponentList.cc : 447) Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "index_two",
+      "which": 2,
+      "frame": "GALACTIC",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/components/ComponentModels/ComponentList.cc : 578) Failed AlwaysAssert index < nelements()"
+      },
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "index_wrap",
+      "which": 4294967296,
+      "frame": "GALACTIC",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 2.0816462301898957
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.7468334091079334
+              },
+              "refer": "GALACTIC",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "invalid_before_index",
+      "which": -1,
+      "frame": "bad",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": false,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "index_none",
+      "which": null,
+      "frame": "GALACTIC",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/components/ComponentModels/ComponentList.cc : 447) Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "index_float",
+      "which": 0.0,
+      "frame": "GALACTIC",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _which must be an integer"
+      },
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "frame_none",
+      "which": 0,
+      "frame": null,
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _frame must be a string"
+      },
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "frame_int",
+      "which": 0,
+      "frame": 3,
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "error": {
+        "type": "TypeError",
+        "message": "argument _frame must be a string"
+      },
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "frame_bytes",
+      "which": 0,
+      "frame": "GALACTIC",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "result": true,
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 2.0816462301898957
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.7468334091079334
+              },
+              "refer": "GALACTIC",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "numpy_bool_false",
+      "which": false,
+      "frame": "GALACTIC",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/components/ComponentModels/ComponentList.cc : 447) Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    },
+    {
+      "case": "numpy_bool_true",
+      "which": true,
+      "frame": "GALACTIC",
+      "before": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "message": "(/Users/casaci/bamboohome/xml-data/build-dir/CASASPECS-RELEASE676BUILDCASALITH-BPO15ARMPY312/casa6/casatools/src/code/components/ComponentModels/ComponentList.cc : 447) Failed AlwaysAssert which(i) >= 0"
+      },
+      "after": [
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              3.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "first",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": 0.17453292519943295
+              },
+              "m1": {
+                "unit": "rad",
+                "value": 0.3490658503988659
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 1.4000000000000001
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        },
+        {
+          "flux": {
+            "error": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "polarisation": "Stokes",
+            "unit": "Jy",
+            "value": [
+              5.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "label": "second",
+          "shape": {
+            "direction": {
+              "error": {
+                "latitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                },
+                "longitude": {
+                  "unit": "rad",
+                  "value": 0.0
+                }
+              },
+              "m0": {
+                "unit": "rad",
+                "value": -2.6179938779914944
+              },
+              "m1": {
+                "unit": "rad",
+                "value": -0.2617993877991494
+              },
+              "refer": "J2000",
+              "type": "direction"
+            },
+            "type": "Point"
+          },
+          "spectrum": {
+            "frequency": {
+              "m0": {
+                "unit": "GHz",
+                "value": 2.0
+              },
+              "refer": "LSRK",
+              "type": "frequency"
+            },
+            "type": "Constant"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -68,7 +68,7 @@ impl Flux {
 
 /// `values` in `from`'s representation, as complex Stokes I, Q, U and V
 /// (`Flux::linearToStokes`, `Flux::circularToStokes`).
-fn to_stokes(values: [Complex64; 4], from: Polarisation) -> [Complex64; 4] {
+pub(crate) fn to_stokes(values: [Complex64; 4], from: Polarisation) -> [Complex64; 4] {
     let [a, b, c, d] = values;
     match from {
         Polarisation::Stokes => values,

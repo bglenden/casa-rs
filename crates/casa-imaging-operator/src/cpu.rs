@@ -327,6 +327,9 @@ impl CpuBackend {
             return;
         }
         let w_positive = placement.prediction_w_positive;
+        let origin_shift = u8::from(
+            placement.gradient != [0.0; 2] && cf.pointing_origin_shift(placement.cf, false),
+        );
         let table = cf.mueller().table(w_positive, true);
         let plane = layout.planes().local(placement.plane);
         let divide = cf.normalisation() == KernelNormalisation::KernelSum;
@@ -362,7 +365,7 @@ impl CpuBackend {
                             &taps,
                             mueller,
                             w_positive,
-                            placement.gradient,
+                            (placement.gradient, origin_shift),
                         ) * *power;
                     }
                     gathered.push((mueller, sum));
@@ -528,6 +531,10 @@ fn spread_sample<T: GridScalar, const COMPENSATED: bool>(
     mut clip: Option<Clip<'_, T>>,
 ) {
     let w_positive = placement.w > 0.0;
+    let origin_shift = u8::from(
+        placement.gradient != [0.0; 2]
+            && cf.pointing_origin_shift(placement.cf, mode != Mode::Data),
+    );
     let table = cf.mueller().table(w_positive, false);
     let plane = layout.planes().local(placement.plane);
     let block_cells = layout.block_cells();
@@ -600,6 +607,7 @@ fn spread_sample<T: GridScalar, const COMPENSATED: bool>(
                         mueller,
                         w_positive,
                         placement.gradient,
+                        origin_shift,
                         value,
                     ),
                     Some((scratch, cells)) => kernel::spread_clipped::<T, COMPENSATED>(
@@ -608,7 +616,7 @@ fn spread_sample<T: GridScalar, const COMPENSATED: bool>(
                         (layout.tile(), *cells),
                         location,
                         taps,
-                        (mueller, w_positive, placement.gradient),
+                        (mueller, w_positive, placement.gradient, origin_shift),
                         value,
                         scratch,
                     ),

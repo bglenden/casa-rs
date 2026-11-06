@@ -95,6 +95,11 @@ fn generates_vla_ppdisk_synthetic_ms_skeleton() {
             .position(|value| *value == code)
             .unwrap();
         assert_eq!(tab_ref_types[index], "LSRK");
+        let undefined = tab_ref_types
+            .iter()
+            .position(|name| name == "Undefined")
+            .unwrap();
+        assert_eq!(tab_ref_codes[undefined], 64);
     }
     let observation = ms.observation().unwrap();
     let telescope = observation

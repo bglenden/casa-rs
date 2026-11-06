@@ -20,6 +20,22 @@ use casa_types::measures::{
 /// action can cause is a bug and panics with the invariant it broke.
 #[derive(Debug, thiserror::Error)]
 pub enum PrepareError {
+    /// The initial MVC execution cannot honour this run's controls yet.
+    #[error(
+        "MVC supports fresh imaging of one selected field and MeasurementSet with LSRK coordinates, no side effects or PB correction, and a user box or full mask; cleaning requires negative pblimit, nsigma=0 and spatial-only user boxes (#1069)"
+    )]
+    MvcExecutionUnsupported,
+    /// The additional MVC view is not yet bounded for this configuration.
+    #[error(
+        "MVC currently supports one fixed-centre Stokes I domain, one standard-gridder facet, natural weighting, and two Taylor terms (#1069)"
+    )]
+    MvcViewUnsupported,
+    /// CASA MVC could not choose enough output channels for its Taylor terms.
+    #[error("invalid MVC cube depth: {reason} (#1069)")]
+    MvcCubeDepth {
+        /// The invalid band or channel count.
+        reason: &'static str,
+    },
     /// Existing products require CASA restart, which is not implemented yet.
     #[error(
         "existing image product {path:?}: this CASA restart configuration is not implemented yet (#944); previous products were preserved; choose a new imagename and, when applicable, supply the previous model with startmodel"
@@ -534,6 +550,14 @@ pub enum PrepareError {
     MaskImageFrame {
         /// The mask's frame.
         frame: DirectionRef,
+    },
+    /// A mask grid's native and converted frames cannot yet be represented.
+    #[error("mask direction conversion from {native} to {conversion} is unsupported (#977)")]
+    MaskImageConversion {
+        /// The native frame.
+        native: DirectionRef,
+        /// The conversion frame.
+        conversion: DirectionRef,
     },
     /// A `startmodel` casa-rs cannot start from.
     #[error("startmodel {}: {reason}", path.display())]

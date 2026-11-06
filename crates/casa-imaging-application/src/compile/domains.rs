@@ -113,6 +113,15 @@ impl PreparedImageDomain {
     }
 }
 
+/// Whether a domain's masking is needed by the run or only its geometry is used.
+#[derive(Clone, Copy)]
+pub(super) enum MaskPreparation {
+    /// Build the run's mask as requested.
+    ForRun,
+    /// A secondary coordinate view does not own a separate mask.
+    GeometryOnly,
+}
+
 /// The main domain and the outlier file's, ordered by role, each writing
 /// to its own output.
 pub(super) fn prepare_domains(
@@ -120,6 +129,7 @@ pub(super) fn prepare_domains(
     centre: &Centre,
     (spectral, channels): (&ImageSpectralCoordinate, usize),
     (observation, object_name): (&ObsInfo, &str),
+    mask_preparation: MaskPreparation,
 ) -> Result<Vec<PreparedImageDomain>, PrepareError> {
     let polarizations = &request.stokes;
     let facets = match request.gridder {
@@ -145,7 +155,10 @@ pub(super) fn prepare_domains(
             spectral,
             observation,
         ),
-        mask: request_mask(request, spectral, channels)?,
+        mask: match mask_preparation {
+            MaskPreparation::ForRun => request_mask(request, spectral, channels)?,
+            MaskPreparation::GeometryOnly => DomainMask::FullPlane,
+        },
         facets,
     }];
     if let Some(path) = request.outlierfile.as_deref() {
@@ -175,7 +188,10 @@ pub(super) fn prepare_domains(
                 ),
                 object_name: object_name.to_owned(),
                 telescope: observation.telescope.clone(),
-                mask: outlier.mask,
+                mask: match mask_preparation {
+                    MaskPreparation::ForRun => outlier.mask,
+                    MaskPreparation::GeometryOnly => DomainMask::FullPlane,
+                },
                 facets: FacetLayout::Single,
             });
         }
@@ -515,6 +531,12 @@ pub(super) fn direction_model_spec(
     let CoordinateModel::Direction(direction) = coordinate else {
         unreachable!("find_coordinate(Direction) names a direction coordinate");
     };
+    if direction.direction_ref() != direction.conversion_direction_ref() {
+        return Err(PrepareError::MaskImageConversion {
+            native: direction.direction_ref(),
+            conversion: direction.conversion_direction_ref(),
+        });
+    }
     let reference = coordinate.reference_value();
     let projection = Projection::of_coordinate(direction.projection(), reference[1]).ok_or(
         PrepareError::MaskImageProjection {
@@ -585,6 +607,17 @@ mod tests {
             [-1e-5, 1e-5],
             [1.5, 0.0],
         )
+    }
+
+    #[test]
+    fn mask_grid_refuses_direction_conversion_metadata() {
+        let coordinate = CoordinateModel::Direction(
+            direction().with_conversion_direction_ref(DirectionRef::GALACTIC),
+        );
+        assert!(matches!(
+            direction_model_spec(&coordinate),
+            Err(PrepareError::MaskImageConversion { .. })
+        ));
     }
 
     /// A one-plane mask image of `T` pixels on a 3 by 2 direction plane:

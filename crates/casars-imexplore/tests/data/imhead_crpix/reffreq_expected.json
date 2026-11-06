@@ -1,0 +1,1810 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "LSRK",
+      "get": "LSRK",
+      "history": [
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"LSRK\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "LSRK",
+      "value": "LSRK"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "LSRK",
+      "get": "LSRK",
+      "history": [
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"lsrk\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "LSRK",
+      "value": "lsrk"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "BARY",
+      "get": "BARY",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"BARY\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"BARY\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "BARY",
+      "value": "BARY"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "BARY",
+      "get": "BARY",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"barycentric\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"barycentric\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "BARY",
+      "value": "barycentric"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "BARY",
+      "get": "BARY",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"BARYCENTER\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"BARYCENTER\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "BARY",
+      "value": "BARYCENTER"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "GEO",
+      "get": "GEO",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"GEO\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"GEO\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "GEO",
+      "value": "GEO"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "GEO",
+      "get": "GEO",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"GEOCENTER\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"GEOCENTER\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "GEO",
+      "value": "GEOCENTER"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "TOPO",
+      "get": "TOPO",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"TOPO\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"TOPO\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "TOPO",
+      "value": "TOPO"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "TOPO",
+      "get": "TOPO",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"TOPOCENTER\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"TOPOCENTER\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "TOPO",
+      "value": "TOPOCENTER"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "GALACTO",
+      "get": "GALACTO",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"GALACTO\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"GALACTO\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "GALACTO",
+      "value": "GALACTO"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "GALACTO",
+      "get": "GALACTO",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"GALACTOCENTER\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"GALACTOCENTER\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "GALACTO",
+      "value": "GALACTOCENTER"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "LGROUP",
+      "get": "LGROUP",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"LGROUP\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"LGROUP\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "LGROUP",
+      "value": "LGROUP"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "CMB",
+      "get": "CMB",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"CMB\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"CMB\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "CMB",
+      "value": "CMB"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "REST",
+      "get": "REST",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"REST\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"REST\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "REST",
+      "value": "REST"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "Undefined",
+      "get": "Undefined",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"UNDEFINED\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"UNDEFINED\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "Undefined",
+      "value": "UNDEFINED"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "BARY",
+      "get": "BARY",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"B\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"B\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "BARY",
+      "value": "B"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "BARY",
+      "get": "BARY",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"BARYextra\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"BARYextra\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "BARY",
+      "value": "BARYextra"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "LSRK",
+      "get": "LSRK",
+      "history": [
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"LSRKanything\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "LSRK",
+      "value": "LSRKanything"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: Unknown velocity reference frame specification L.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": "LSRK",
+      "image": "normal",
+      "key": "reffreqtype",
+      "value": "L"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: Unknown velocity reference frame specification G.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": "LSRK",
+      "image": "normal",
+      "key": "reffreqtype",
+      "value": "G"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "Undefined",
+      "get": "Undefined",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"UNDEF\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"UNDEF\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "Undefined",
+      "value": "UNDEF"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: Unknown velocity reference frame specification BAD.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": "LSRK",
+      "image": "normal",
+      "key": "reffreqtype",
+      "value": "BAD"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: Unknown velocity reference frame specification .\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "get": "LSRK",
+      "image": "normal",
+      "key": "reffreqtype",
+      "value": ""
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: reffreqtypevalue must be a string.\n... thrown by casacore::String casa::ImageMetaDataRW<T>::_getString(const casacore::String&, const casacore::ValueHolder&) const [with T = float]",
+      "get": "LSRK",
+      "image": "normal",
+      "key": "reffreqtype",
+      "value": true
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: reffreqtypevalue must be a string.\n... thrown by casacore::String casa::ImageMetaDataRW<T>::_getString(const casacore::String&, const casacore::ValueHolder&) const [with T = float]",
+      "get": "LSRK",
+      "image": "normal",
+      "key": "reffreqtype",
+      "value": 42
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "BARY",
+      "get": "BARY",
+      "history": [
+        "Modified REFFREQTYPE from \"LSRK\" to \"BARY\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"REFFREQTYPE\", hdvalue=\"BARY\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "REFFREQTYPE",
+      "return": null,
+      "system": "BARY",
+      "value": "BARY"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "GHz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1.0000000000000002e-06
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1.415000000000001
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "BARY",
+      "get": "BARY",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"BARY\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"BARY\", verbose=False)"
+      ],
+      "image": "ghz",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "BARY",
+      "value": "BARY"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "Frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -1.0,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "conversion_system": "TOPO",
+      "get": "TOPO",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"TOPO\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"TOPO\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "TOPO",
+      "value": "TOPO"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "linear1",
+          "linear2"
+        ],
+        "axisunits": [
+          "km",
+          "km"
+        ],
+        "incr": [
+          1.0,
+          1.0
+        ],
+        "refpix": [
+          2.0,
+          2.0
+        ],
+        "refval": [
+          0.0,
+          0.0
+        ],
+        "shape": [
+          4,
+          4
+        ]
+      },
+      "error": "Exception: This image does not have a spectral coordinateand so a velocity reference frame cannot be added..\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "image": "linear",
+      "key": "reffreqtype",
+      "value": "BARY"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "BARY",
+      "get": "LSRK",
+      "history": [
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"LSRK\", verbose=False)"
+      ],
+      "image": "conversion",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "LSRK",
+      "value": "LSRK"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "BARY",
+      "get": "BARY",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"BARY\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"BARY\", verbose=False)"
+      ],
+      "image": "conversion",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "BARY",
+      "value": "BARY"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "TOPO",
+      "get": "TOPO",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"TOPO\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"TOPO\", verbose=False)"
+      ],
+      "image": "conversion",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "TOPO",
+      "value": "TOPO"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "conversion_system": "Undefined",
+      "get": "Undefined",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"UNDEFINED\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"UNDEFINED\", verbose=False)"
+      ],
+      "image": "conversion",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "Undefined",
+      "value": "UNDEFINED"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Frequency",
+          "Frequency"
+        ],
+        "axisunits": [
+          "Hz",
+          "Hz"
+        ],
+        "incr": [
+          1000.0,
+          1000.0
+        ],
+        "refpix": [
+          0.0,
+          0.0
+        ],
+        "refval": [
+          1415000000.0,
+          1415000000.0
+        ],
+        "shape": [
+          3,
+          3
+        ]
+      },
+      "conversion_system": "BARY",
+      "get": "BARY",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"BARY\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"BARY\", verbose=False)"
+      ],
+      "image": "multi",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "BARY",
+      "systems": [
+        "BARY",
+        "BARY"
+      ],
+      "value": "BARY"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Frequency",
+          "Frequency"
+        ],
+        "axisunits": [
+          "Hz",
+          "Hz"
+        ],
+        "incr": [
+          1000.0,
+          1000.0
+        ],
+        "refpix": [
+          0.0,
+          0.0
+        ],
+        "refval": [
+          1415000000.0,
+          1415000000.0
+        ],
+        "shape": [
+          3,
+          3
+        ]
+      },
+      "conversion_system": "TOPO",
+      "get": "TOPO",
+      "history": [
+        "Modified reffreqtype from \"LSRK\" to \"TOPO\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"TOPO\", verbose=False)"
+      ],
+      "image": "multi_transposed",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "TOPO",
+      "systems": [
+        "TOPO",
+        "BARY"
+      ],
+      "value": "TOPO"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Frequency",
+          "Frequency"
+        ],
+        "axisunits": [
+          "Hz",
+          "Hz"
+        ],
+        "incr": [
+          1000.0,
+          1000.0
+        ],
+        "refpix": [
+          0.0,
+          0.0
+        ],
+        "refval": [
+          1415000000.0,
+          1415000000.0
+        ],
+        "shape": [
+          3,
+          3
+        ]
+      },
+      "conversion_system": "LSRK",
+      "get": "LSRK",
+      "history": [
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"reffreqtype\", hdvalue=\"LSRK\", verbose=False)"
+      ],
+      "image": "multi_transposed",
+      "key": "reffreqtype",
+      "return": null,
+      "system": "LSRK",
+      "systems": [
+        "LSRK",
+        "BARY"
+      ],
+      "value": "LSRK"
+    }
+  ],
+  "restfreq_cases": [
+    {
+      "frequencies": [
+        1500000000.0,
+        2000000000.0
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1500000000.0
+      },
+      "image": "multi"
+    },
+    {
+      "frequencies": [
+        1500000000.0,
+        2000000000.0
+      ],
+      "get": {
+        "unit": "Hz",
+        "value": 1500000000.0
+      },
+      "image": "multi_transposed"
+    }
+  ]
+}

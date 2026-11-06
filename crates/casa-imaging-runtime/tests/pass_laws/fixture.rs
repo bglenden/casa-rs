@@ -201,6 +201,7 @@ impl Rows {
 /// block's rows by baseline reorders them.
 pub fn context(index: usize) -> RowContext {
     RowContext {
+        native_frequency_ratio: 1.0,
         original_uvw_m: None,
         time_s: 0.0,
         antennas: [0, 1 + (index % 5) as u32],

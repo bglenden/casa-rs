@@ -576,3 +576,19 @@ fn frequency_bands_take_any_finite_ascending_band_and_refuse_the_rest() {
         );
     }
 }
+
+/// Compiled views share the immutable source manifest, including provenance,
+/// instead of cloning the source vector and every locator per view.
+#[test]
+fn cloned_snapshot_shares_the_immutable_source_manifest() {
+    let original = snapshot(false, "first.ms", "second.ms");
+    let cloned = original.clone();
+    assert_eq!(original, cloned);
+    assert!(std::ptr::eq(
+        original.sources().as_ptr(),
+        cloned.sources().as_ptr()
+    ));
+    drop(original);
+    assert_eq!(cloned.sources().len(), 2);
+    assert_eq!(cloned, snapshot(false, "first.ms", "second.ms"));
+}

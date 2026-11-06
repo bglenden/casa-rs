@@ -32,6 +32,7 @@ mod driver;
 mod hogbom;
 mod major_cycle;
 mod mask;
+mod mem;
 mod model_lifecycle;
 mod model_storage;
 mod multiscale;
@@ -62,7 +63,7 @@ pub use mask::{
 };
 pub(crate) use model_lifecycle::validate_model_value;
 pub use model_lifecycle::{
-    ModelGeneration, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
+    DenseModelPlane, ModelGeneration, ModelLifecycle, ModelLifecycleError, PreparedFinalModel,
 };
 pub use model_storage::{
     ModelSampleStorage, ModelSampleUpdate, ModelStorageFactory, ModelStoragePlan,
@@ -91,6 +92,7 @@ pub use driver::{
     Component, PlaneOutcome, blank_plane_stop, run_plane, solve_bytes, update_entries,
 };
 pub use hogbom::Hogbom;
+pub use mem::{MemStep, mem_plane_bytes, mem_step, mem_step_bytes, run_mem_plane};
 pub use multiscale::{Multiscale, MultiscaleState};
 pub use plane::{
     PlaneShape, RobustNoise, Support, casacore_max_abs, first_peak, peak_magnitude, psf_peak,
@@ -131,6 +133,9 @@ pub enum Error {
          supports the requested Taylor terms"
     )]
     SingularHessian,
+    /// MEM's normalized gradient exceeds CASA's divergence limit.
+    #[error("MEM normalized gradient exceeded 100")]
+    MemExcessiveGradient,
     /// Solver arithmetic left the finite numbers.
     #[error("minor-cycle arithmetic produced a non-finite value")]
     NonFinite,

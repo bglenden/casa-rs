@@ -46,6 +46,8 @@ pub(crate) struct OpenedObservation {
 
 /// What the native run needs besides the compiled problem and its runtime.
 pub(crate) struct NativeInput {
+    /// Prepared MVC Taylor view for this cube run, when requested.
+    pub(crate) mvc_taylor: Option<crate::compile::TaylorView>,
     pub(crate) observation: OpenedObservation,
     pub(crate) write_model_column: bool,
     /// Whether the model column's final write is CASA's `predictModel`, over
@@ -93,6 +95,12 @@ impl From<ApplicationError> for NativeError {
     }
 }
 
+impl From<casa_imaging_deconvolution::ModelLifecycleError> for NativeError {
+    fn from(error: casa_imaging_deconvolution::ModelLifecycleError) -> Self {
+        Self::Other(Box::new(error))
+    }
+}
+
 impl From<ImagingError> for NativeError {
     fn from(error: ImagingError) -> Self {
         match error {
@@ -131,6 +139,7 @@ impl From<std::io::Error> for NativeError {
 /// A native run ready to start: its admitted source and what its passes,
 /// cycles and products need. Its setup chooses and forms its worker teams.
 pub(crate) struct NativeRun {
+    mvc_taylor: Option<crate::compile::CompiledTaylorView>,
     runtime: ApplicationRuntime,
     publication: ApplicationPublication,
     aw_catalog: Option<AwCatalogDeployment>,
@@ -253,6 +262,11 @@ pub(crate) fn prepare(
     input: NativeInput,
     native: ApplicationNative,
 ) -> Result<NativeRun, NativeError> {
+    let mvc_taylor = input
+        .mvc_taylor
+        .map(|view| view.compile_from_cube(problem))
+        .transpose()
+        .map_err(|error| NativeError::Other(Box::new(error)))?;
     let ApplicationNative {
         runtime,
         publication,
@@ -274,6 +288,7 @@ pub(crate) fn prepare(
         &runtime,
     )?;
     Ok(NativeRun {
+        mvc_taylor,
         runtime,
         publication,
         aw_catalog,
@@ -299,6 +314,7 @@ pub(crate) fn run(
     summary: &mut RunSummary,
 ) -> Result<impl FnOnce(RunSummary) -> ImagingOutcome + use<>, NativeError> {
     let NativeRun {
+        mvc_taylor,
         runtime,
         publication,
         aw_catalog,
@@ -371,6 +387,20 @@ pub(crate) fn run(
     let outcome = imaging::run(
         imaging::ImagingInputs {
             problem,
+            mvc: mvc_taylor.as_ref().and_then(|view| {
+                (view
+                    .problem
+                    .reconstruction()
+                    .controls()
+                    .max_minor_iterations()
+                    > 0)
+                .then_some(imaging::MvcCycleSpec {
+                    taylor_problem: &view.problem,
+                    expansion_reference_hz: view.expansion_reference_hz,
+                    controls: publication.controls,
+                    centres: publication.primary_beam_centres.as_ref(),
+                })
+            }),
             psf_cutoff: if !forms.psf && psf_beams.is_none() {
                 casa_imaging_deconvolution::DEFAULT_PSF_FIT_CUTOFF
             } else {
@@ -407,20 +437,30 @@ pub(crate) fn run(
         .compute();
     let mut published = Vec::new();
     let mut lanes = (0, None);
-    let products = run_phase(
+    let mvc_run = mvc_taylor.is_some();
+    // CASA creates the cube model when it invokes its first minor cycle.
+    let cube_model_created = outcome.mvc_taylor.is_none() || !outcome.minor_cycles.is_empty();
+    let products: Result<_, NativeError> = run_phase(
         "products",
         &runtime.cancel,
         runtime.diagnostics,
         summary,
         || {
-            publish_products(
-                problem,
-                ProductSource {
-                    scientific: outcome.scientific,
-                    masks: outcome.masks,
-                    facet_sum_weights: outcome.facet_sum_weights,
-                    saved_psf_beams,
-                    vla_selection_hz,
+            publish_run_products(
+                RunProductInputs {
+                    problem,
+                    source: ProductSource {
+                        scientific: outcome.scientific,
+                        masks: outcome.masks,
+                        facet_sum_weights: outcome.facet_sum_weights,
+                        mem_alpha: outcome.mem_alpha,
+                        saved_psf_beams,
+                        vla_selection_hz,
+                        mvc_beam: None,
+                    },
+                    taylor_view: mvc_taylor,
+                    taylor_completion: outcome.mvc_taylor,
+                    cube_model_created,
                 },
                 &runtime,
                 publication,
@@ -432,7 +472,9 @@ pub(crate) fn run(
     );
     summary.products = published;
     (summary.product_lanes, summary.product_lanes_reason) = lanes;
-    let products = products?;
+    let (products, taylor_names, names_reservation) = products?;
+    let mut retained = outcome.retained;
+    retained.join(names_reservation);
     for plan in &virtual_model {
         run_phase(
             "virtual model",
@@ -467,8 +509,96 @@ pub(crate) fn run(
         scientific: products.scientific,
         planned_products: products.planned,
         products: products.published,
-        _retained: outcome.retained,
+        mvc_taylor_names: taylor_names,
+        mvc_run,
+        _retained: retained,
     })
+}
+
+/// One run's cube or continuum products and, for MVC, its Taylor view.
+struct RunProductInputs<'a> {
+    problem: &'a CompiledProblem,
+    source: ProductSource<'a>,
+    taylor_view: Option<crate::compile::CompiledTaylorView>,
+    taylor_completion: Option<Admitted<crate::mvc::TaylorCompletion>>,
+    cube_model_created: bool,
+}
+
+/// Reduce MVC's cube before staging both families, or publish an ordinary run.
+fn publish_run_products(
+    inputs: RunProductInputs<'_>,
+    runtime: &ApplicationRuntime,
+    publication: ApplicationPublication,
+    team: &WorkerTeam,
+    published: &mut Vec<String>,
+    lanes: &mut (usize, Option<String>),
+) -> Result<(Products, Vec<String>, Reservation), NativeError> {
+    let RunProductInputs {
+        problem,
+        source,
+        taylor_view,
+        taylor_completion,
+        cube_model_created,
+    } = inputs;
+    if let Some(view) = taylor_view {
+        let crate::compile::CompiledTaylorView {
+            problem: taylor_problem,
+            coordinates,
+            expansion_reference_hz,
+            reservation: _view_reservation,
+        } = view;
+        let taylor = if let Some(taylor) = taylor_completion {
+            taylor
+        } else {
+            crate::mvc::assemble_taylor_completion(
+                crate::mvc::TaylorAssemblyInputs {
+                    cube_problem: problem,
+                    cube: &source.scientific,
+                    taylor_problem: &taylor_problem,
+                    expansion_reference_hz,
+                    controls: publication.controls,
+                    centres: publication.primary_beam_centres.as_ref(),
+                },
+                (&runtime.host, &runtime.resource_policy, &runtime.cancel),
+            )?
+        };
+        let products = publish_mvc_products(
+            MvcProductSource {
+                cube_problem: problem,
+                cube_model_created,
+                cube: source,
+                taylor_problem: &taylor_problem,
+                taylor,
+                taylor_coordinates: coordinates,
+            },
+            runtime,
+            publication,
+            team,
+            published,
+            lanes,
+        )?;
+        Ok((
+            products.cube,
+            products.taylor_names,
+            products.names_reservation,
+        ))
+    } else {
+        if taylor_completion.is_some() {
+            return Err(NativeError::Other(
+                std::io::Error::other("MVC Taylor completion has no compiled view").into(),
+            ));
+        }
+        let products = publish_products(
+            problem,
+            source,
+            runtime,
+            publication,
+            team,
+            published,
+            lanes,
+        )?;
+        Ok((products, Vec::new(), Reservation::none()))
+    }
 }
 
 /// The products of a run and the state they were generated from.
@@ -481,12 +611,20 @@ struct Products {
 /// What the products are formed from: the final completion, its
 /// reconstruction masks and the faceted domains' facets' own sums of
 /// weights.
-struct ProductSource {
+enum MvcProductBeam<'a> {
+    Cube(&'a [f32]),
+    Taylor(&'a [f32]),
+}
+
+struct ProductSource<'a> {
     scientific: MajorCycleCompletion,
     masks: Option<ReconstructionMaskSet>,
     facet_sum_weights: FacetSumWeights,
+    mem_alpha: Option<f32>,
     saved_psf_beams: Option<std::sync::Arc<[casa_imaging_deconvolution::RestoringBeam]>>,
     vla_selection_hz: Option<f64>,
+    /// A separately admitted common PB, borrowed until the family is staged.
+    mvc_beam: Option<MvcProductBeam<'a>>,
 }
 
 /// What `problem`'s products hold on one lane, before the run
@@ -510,21 +648,211 @@ fn products_floor(
 /// than the team's workers, why.
 fn publish_products(
     problem: &CompiledProblem,
-    source: ProductSource,
+    source: ProductSource<'_>,
+    runtime: &ApplicationRuntime,
+    mut publication: ApplicationPublication,
+    team: &WorkerTeam,
+    published: &mut Vec<String>,
+    lanes: &mut (usize, Option<String>),
+) -> Result<Products, NativeError> {
+    if let Some(alpha) = source.mem_alpha {
+        publication.writer.set_mem_alpha(alpha)?;
+    }
+    let (products, held) =
+        stage_products(problem, source, runtime, &publication, team, lanes, false)?;
+    if runtime.cancel.is_cancelled() {
+        // The staged members are removed when the writer drops.
+        return Err(Cancelled.into());
+    }
+    publication
+        .writer
+        .publish(|image: &Path| published.push(image.to_string_lossy().into_owned()))?;
+    // The charge covers the staged records until they are published.
+    drop(held);
+    Ok(products)
+}
+
+/// The two MVC families share one staging registry and one admitted beam.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "MVC publication is being wired in #1069")
+)]
+struct MvcProductSource<'a> {
+    cube_problem: &'a CompiledProblem,
+    cube_model_created: bool,
+    cube: ProductSource<'a>,
+    taylor_problem: &'a CompiledProblem,
+    taylor: Admitted<crate::mvc::TaylorCompletion>,
+    taylor_coordinates: Vec<(
+        casa_imaging_model::ImageDomainRole,
+        casa_coordinates::CoordinateSystem,
+    )>,
+}
+
+/// The cube remains the run's scientific result; Taylor names are separately
+/// charged so the task's artifact inventory can report both families.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "MVC publication is being wired in #1069")
+)]
+struct MvcProducts {
+    cube: Products,
+    taylor_names: Vec<String>,
+    names_reservation: Reservation,
+}
+
+/// Stage both MVC families before publishing either. A failure or cancellation
+/// drops the shared writer and discards its staged members.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "MVC publication is being wired in #1069")
+)]
+fn publish_mvc_products(
+    source: MvcProductSource<'_>,
     runtime: &ApplicationRuntime,
     publication: ApplicationPublication,
     team: &WorkerTeam,
     published: &mut Vec<String>,
     lanes: &mut (usize, Option<String>),
-) -> Result<Products, NativeError> {
+) -> Result<MvcProducts, NativeError> {
+    if runtime.cancel.is_cancelled() {
+        return Err(Cancelled.into());
+    }
+    let MvcProductSource {
+        cube_problem,
+        cube_model_created,
+        cube,
+        taylor_problem,
+        taylor,
+        taylor_coordinates,
+    } = source;
+    let Admitted {
+        value:
+            crate::mvc::TaylorCompletion {
+                scientific: taylor_science,
+                primary_beam,
+            },
+        reservation: taylor_reservation,
+    } = taylor;
+    let ProductSource {
+        scientific,
+        masks,
+        facet_sum_weights,
+        mem_alpha: _,
+        saved_psf_beams,
+        vla_selection_hz,
+        mvc_beam: _,
+    } = cube;
+    let taylor_publication = ApplicationPublication {
+        controls: publication.controls,
+        primary_beam_centres: publication.primary_beam_centres.clone(),
+        vla_selection_store: None,
+        writer: publication.writer.with_coordinates(taylor_coordinates),
+    };
+    let (cube, cube_charge) = stage_products(
+        cube_problem,
+        ProductSource {
+            scientific,
+            masks: None,
+            facet_sum_weights,
+            mem_alpha: None,
+            saved_psf_beams,
+            vla_selection_hz,
+            mvc_beam: Some(MvcProductBeam::Cube(&primary_beam)),
+        },
+        runtime,
+        &publication,
+        team,
+        lanes,
+        !cube_model_created,
+    )?;
+    let (taylor, taylor_charge) = stage_products(
+        taylor_problem,
+        ProductSource {
+            scientific: taylor_science,
+            masks,
+            facet_sum_weights: Default::default(),
+            mem_alpha: None,
+            saved_psf_beams: None,
+            vla_selection_hz: None,
+            mvc_beam: Some(MvcProductBeam::Taylor(&primary_beam)),
+        },
+        runtime,
+        &taylor_publication,
+        team,
+        lanes,
+        false,
+    )?;
+    let count = taylor.planned.members().len();
+    let overflow = || ProductsError::ResourceDemandOverflow("MVC product names");
+    let bytes = taylor.planned.members().iter().try_fold(
+        count
+            .checked_mul(size_of::<String>())
+            .ok_or_else(overflow)?,
+        |sum, member| sum.checked_add(member.name().len()).ok_or_else(overflow),
+    )?;
+    let names_reservation = admit(
+        &runtime.host,
+        &runtime.resource_policy,
+        &Demand {
+            phase: "MVC product inventory",
+            memory: u64::try_from(bytes).map_err(|_| overflow())?,
+        },
+    )?;
+    let mut taylor_names = Vec::with_capacity(count);
+    taylor_names.extend(
+        taylor
+            .planned
+            .members()
+            .iter()
+            .map(|member| member.name().to_owned()),
+    );
+    if runtime.cancel.is_cancelled() {
+        return Err(Cancelled.into());
+    }
+    publication
+        .writer
+        .publish(|image: &Path| published.push(image.to_string_lossy().into_owned()))?;
+    drop(taylor);
+    drop(taylor_charge);
+    drop(cube_charge);
+    drop(taylor_reservation);
+    Ok(MvcProducts {
+        cube,
+        taylor_names,
+        names_reservation,
+    })
+}
+
+/// Stage one product family without publishing it. The caller holds its
+/// admission until every staged family has been published or discarded.
+fn stage_products(
+    problem: &CompiledProblem,
+    source: ProductSource<'_>,
+    runtime: &ApplicationRuntime,
+    publication: &ApplicationPublication,
+    team: &WorkerTeam,
+    lanes: &mut (usize, Option<String>),
+    omit_uncreated_mvc_cube_model: bool,
+) -> Result<(Products, casa_imaging_runtime::Reservation), NativeError> {
     let ProductSource {
         scientific,
         masks: reconstruction_masks,
         facet_sum_weights,
+        mem_alpha: _,
         saved_psf_beams,
         vla_selection_hz,
+        mvc_beam,
     } = source;
     let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific);
+    if let Some(beam) = mvc_beam {
+        inputs = match beam {
+            MvcProductBeam::Cube(beam) => inputs.with_cube_taylor_primary_beam(beam)?,
+            MvcProductBeam::Taylor(beam) => inputs
+                .with_taylor_primary_beam(beam)?
+                .with_taylor_residual_sum_weight(1.0)?,
+        };
+    }
     if let Some(frequency) = vla_selection_hz {
         inputs = inputs.with_vla_selection_frequency(frequency);
     }
@@ -543,7 +871,10 @@ fn publish_products(
     if !facet_sum_weights.is_empty() {
         inputs = inputs.with_facet_sum_weights(&facet_sum_weights);
     }
-    let planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
+    let mut planned = PlannedContinuumGeneration::new(&inputs, &publication.controls)?;
+    if omit_uncreated_mvc_cube_model {
+        planned = planned.without_uncreated_mvc_cube_model();
+    }
     // The products' scratch grows with their lanes, and the gridding's
     // workers were chosen without it: the products take the most lanes, up
     // to the team's, whose demand fits what the policy leaves free (#763
@@ -602,18 +933,16 @@ fn publish_products(
     )?;
     let generation =
         produce_continuum_members(&planned, &inputs, window, team, &publication.writer)?;
-    if runtime.cancel.is_cancelled() {
-        // The staged members are removed when the writer drops.
-        return Err(Cancelled.into());
-    }
-    publication
-        .writer
-        .publish(|image: &Path| published.push(image.to_string_lossy().into_owned()))?;
-    // The charge covers the staged records until they are published.
-    drop(held);
-    Ok(Products {
-        planned,
-        scientific,
-        published: generation,
-    })
+    Ok((
+        Products {
+            planned,
+            scientific,
+            published: generation,
+        },
+        held,
+    ))
 }
+
+#[cfg(test)]
+#[path = "native/mvc_publication_law.rs"]
+mod mvc_publication_law;

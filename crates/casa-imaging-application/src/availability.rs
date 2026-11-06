@@ -6,8 +6,9 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, DensityCells, InstrumentResponse, PolarizationCoordinate, ProductKind,
-    ReconstructionAlgorithm, ReconstructionBasis, RequiredCapability, WeightingScheme,
+    CompiledProblem, DensityCells, FrequencyFrame, InstrumentResponse, PolarizationCoordinate,
+    ProductKind, ReconstructionAlgorithm, ReconstructionBasis, RequiredCapability,
+    SpectralFrameAnchor, SpectralKernel, WeightingScheme,
 };
 use casa_imaging_operator::GridPrecision;
 use casa_imaging_runtime::HostResources;
@@ -18,6 +19,8 @@ use crate::BackendRequest;
 /// One reason the installed implementation cannot run a problem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Unsupported {
+    /// MEM is verified only for a single standard Stokes I continuum domain.
+    MemScope,
     /// The major-cycle pass has no implementation of a capability the
     /// problem requires.
     Capability(RequiredCapability),
@@ -45,10 +48,8 @@ pub enum Unsupported {
     FacetedKernelSet,
     /// W-facet modes outside the verified scalar continuum scope (#1063).
     FacetedWMode,
-    /// AW projection images a cube whose windows hold one selected channel
-    /// each; a window of several interpolates onto the cube's axis, where
-    /// CASA's `AWVisResampler` reads a native channel's frequency and casa-rs
-    /// the fine grid's, and that has no CASA comparison yet (#1121).
+    /// Multi-channel AW cubes use nearest sampling in the data or LSRK
+    /// frame. Tracked TOPO/BARY, rest, linear and cubic modes wait for #1121.
     MultiChannelWindowAwCube,
     /// AW projection grids a square image of square cells: its native
     /// convolution functions and their cache are laid out on one axis.
@@ -62,6 +63,9 @@ pub enum Unsupported {
 impl fmt::Display for Unsupported {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MemScope => formatter.write_str(
+                "MEM currently supports one standard, natural-weighted Stokes I MFS domain (#1060)",
+            ),
             Self::Capability(capability) => write!(
                 formatter,
                 "the major-cycle pass has no implementation of {capability:?}"
@@ -92,8 +96,8 @@ impl fmt::Display for Unsupported {
                  weighting, explicit W planes and one image domain (#1063)",
             ),
             Self::MultiChannelWindowAwCube => formatter.write_str(
-                "AW projection images a cube whose selected windows hold one channel each; a \
-                 window of several waits for a CASA comparison (#1121)",
+                "AW projection of a multi-channel window needs nearest interpolation in \
+                 the data or LSRK frame; other cube modes wait for #1121",
             ),
             Self::NonSquareAwProjection => formatter.write_str(
                 "AW projection images a square imsize of square cells; the standard, W and \
@@ -199,6 +203,34 @@ pub fn check(
         .map(Unsupported::Capability)
         .collect::<Vec<_>>();
     if matches!(
+        problem.reconstruction().algorithm(),
+        ReconstructionAlgorithm::Mem
+    ) && (!matches!(
+        problem.reconstruction().basis(),
+        ReconstructionBasis::Constant
+    ) || problem.reconstruction().polarization().coordinates()
+        != [PolarizationCoordinate::StokesI]
+        || problem.geometry().domains().len() != 1
+        || problem
+            .required_capabilities()
+            .contains(&RequiredCapability::FacetedGeometry)
+        || !crate::imaging::standard_kernel_set(problem)
+        || problem
+            .science()
+            .measurement_equation()
+            .instrument_response()
+            != InstrumentResponse::Scalar
+        || !matches!(problem.weighting().scheme(), WeightingScheme::Natural)
+        || problem.observation().sources().len() != 1
+        || !problem
+            .observation_transaction()
+            .write_set()
+            .visibility_columns()
+            .is_empty())
+    {
+        unsupported.push(Unsupported::MemScope);
+    }
+    if matches!(
         problem.reconstruction().basis(),
         ReconstructionBasis::Taylor { .. }
     ) && problem.geometry().domains().len() != 1
@@ -264,6 +296,14 @@ pub fn check(
             .iter()
             .flat_map(|source| source.selection().spectral_windows())
             .any(|window| window.channel_indices().len() > 1)
+        && !aw_multichannel_sampling_supported(
+            problem.science().spectral().sampling().kernel(),
+            problem.geometry().spectral().output_frame(),
+            matches!(
+                problem.geometry().spectral().anchor(),
+                SpectralFrameAnchor::Conversion { .. }
+            ),
+        )
     {
         unsupported.push(Unsupported::MultiChannelWindowAwCube);
     }
@@ -324,6 +364,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::DirtyReconstruction
             | RequiredCapability::HogbomReconstruction
             | RequiredCapability::ClarkReconstruction
+            | RequiredCapability::MemReconstruction
             | RequiredCapability::MultiscaleReconstruction
             | RequiredCapability::MtmfsReconstruction
             | RequiredCapability::NaturalWeighting
@@ -356,9 +397,55 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
     )
 }
 
+/// Nearest avoids interpolated AW samples. A tracked TOPO/BARY cube needs
+/// the anchor scale in its prediction W cell before it can run (#1121).
+fn aw_multichannel_sampling_supported(
+    kernel: SpectralKernel,
+    frame: FrequencyFrame,
+    has_frame_anchor: bool,
+) -> bool {
+    kernel == SpectralKernel::Nearest
+        && frame != FrequencyFrame::Rest
+        && !(frame.gridded_through_lsrk() && has_frame_anchor)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multi_channel_aw_accepts_nearest_in_data_or_lsrk_frame() {
+        for frame in [
+            FrequencyFrame::Lsrk,
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Barycentric,
+        ] {
+            assert!(aw_multichannel_sampling_supported(
+                SpectralKernel::Nearest,
+                frame,
+                false
+            ));
+            assert_eq!(
+                aw_multichannel_sampling_supported(SpectralKernel::Nearest, frame, true),
+                frame == FrequencyFrame::Lsrk,
+            );
+            for kernel in [
+                SpectralKernel::Linear,
+                SpectralKernel::Cubic,
+                SpectralKernel::Identity,
+            ] {
+                assert!(!aw_multichannel_sampling_supported(kernel, frame, false));
+                assert!(!aw_multichannel_sampling_supported(kernel, frame, true));
+            }
+        }
+        for anchored in [false, true] {
+            assert!(!aw_multichannel_sampling_supported(
+                SpectralKernel::Nearest,
+                FrequencyFrame::Rest,
+                anchored
+            ));
+        }
+    }
 
     #[test]
     fn the_pass_runs_every_convolution_function_set_and_publication_beam() {

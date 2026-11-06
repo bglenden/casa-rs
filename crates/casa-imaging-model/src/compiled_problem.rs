@@ -766,6 +766,8 @@ pub enum ReconstructionAlgorithm {
     Clark,
     /// Clark point-component minor cycle on each polarization separately.
     ClarkStokes,
+    /// Image-plane maximum-entropy minor cycle.
+    Mem,
     /// Multiscale minor cycle with explicit scale sizes in pixels.
     Multiscale {
         /// Canonical requested scale sizes.
@@ -1707,6 +1709,8 @@ pub enum RequiredCapability {
     HogbomReconstruction,
     /// Clark reconstruction.
     ClarkReconstruction,
+    /// Image-plane maximum-entropy reconstruction.
+    MemReconstruction,
     /// Multiscale reconstruction.
     MultiscaleReconstruction,
     /// MT-MFS reconstruction.
@@ -1758,6 +1762,7 @@ impl RequiredCapability {
             Self::DirtyReconstruction,
             Self::HogbomReconstruction,
             Self::ClarkReconstruction,
+            Self::MemReconstruction,
             Self::MultiscaleReconstruction,
             Self::MtmfsReconstruction,
             Self::NaturalWeighting,
@@ -1806,6 +1811,7 @@ impl RequiredCapability {
             Self::DirtyReconstruction => "dirty_reconstruction".to_string(),
             Self::HogbomReconstruction => "hogbom_reconstruction".to_string(),
             Self::ClarkReconstruction => "clark_reconstruction".to_string(),
+            Self::MemReconstruction => "mem_reconstruction".to_string(),
             Self::MultiscaleReconstruction => "multiscale_reconstruction".to_string(),
             Self::MtmfsReconstruction => "mtmfs_reconstruction".to_string(),
             Self::NaturalWeighting => "natural_weighting".to_string(),
@@ -2428,6 +2434,7 @@ fn derive_capabilities(
         ReconstructionAlgorithm::Clark | ReconstructionAlgorithm::ClarkStokes => {
             RequiredCapability::ClarkReconstruction
         }
+        ReconstructionAlgorithm::Mem => RequiredCapability::MemReconstruction,
         ReconstructionAlgorithm::Multiscale { .. } => RequiredCapability::MultiscaleReconstruction,
         ReconstructionAlgorithm::Mtmfs { .. } => RequiredCapability::MtmfsReconstruction,
     });

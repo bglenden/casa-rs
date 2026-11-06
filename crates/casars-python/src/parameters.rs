@@ -32,7 +32,7 @@ use pyo3::types::{PyDict, PyString};
 use serde::Serialize;
 
 use self::contract::{BundleView, CatalogEnvelopeView, snake_case_debug};
-use self::values::{parameter_values, serialize_native};
+use self::values::{parameter_values, serialize_native, value_to_python};
 
 /// The `ValueError` a failed runtime call raises: `reason='...'`.
 pub(crate) fn reason_error(py: Python<'_>, reason: impl AsRef<str>) -> PyErr {
@@ -463,7 +463,33 @@ pub(crate) fn parameter_last<'py>(
     let snapshot = py
         .detach(|| last(surface_id, &workspace, successful))
         .map_err(|reason| reason_error(py, reason))?;
-    to_python(py, &snapshot)
+    match snapshot {
+        Some(snapshot) => snapshot_to_python(py, &snapshot),
+        None => Ok(py.None().into_bound(py)),
+    }
+}
+
+fn snapshot_to_python<'py>(
+    py: Python<'py>,
+    snapshot: &SnapshotView,
+) -> PyResult<Bound<'py, PyAny>> {
+    let result = to_python(py, snapshot)?;
+    let states = result
+        .cast::<PyDict>()?
+        .get_item("states")?
+        .expect("snapshot states");
+    let states = states.cast::<PyDict>()?;
+    for (name, state) in &snapshot.states {
+        if let Some(value) = &state.value
+            && value.requires_typed_transport()
+        {
+            let state = states.get_item(name)?.expect("snapshot state");
+            state
+                .cast::<PyDict>()?
+                .set_item("value", value_to_python(py, value)?)?;
+        }
+    }
+    Ok(result)
 }
 
 /// Resolve explicit values and unset names over one base source.
@@ -491,7 +517,7 @@ pub(crate) fn parameter_resolve<'py>(
             )
         })
         .map_err(|failure| failure.into_python(py))?;
-    to_python(py, &snapshot)
+    snapshot_to_python(py, &snapshot)
 }
 
 /// Resolved values as a sparse current-contract TOML profile.

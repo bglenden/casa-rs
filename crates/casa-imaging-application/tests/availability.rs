@@ -514,6 +514,69 @@ fn w_facet_availability_refuses_unverified_compiled_modes() {
     assert_exactly_unsupported(on_cpu(&outlier.compile()), [Unsupported::FacetedWMode]);
 }
 
+#[test]
+fn mem_compiled_scope_cannot_bypass_the_task_guard() {
+    let mem = || ProblemFixture {
+        algorithm: ReconstructionAlgorithm::Mem,
+        ..ProblemFixture::standard()
+    };
+    on_cpu(&mem().compile()).expect("standard Stokes I MEM is available");
+    on_cpu(
+        &ProblemFixture {
+            polarizations: vec![PolarizationCoordinate::StokesQ],
+            ..ProblemFixture::standard()
+        }
+        .compile(),
+    )
+    .expect("other reconstruction algorithms retain their scope");
+    let mut w = mem();
+    w.measurement_equation = w
+        .measurement_equation
+        .with_w_projection(WProjectionContract::new(100.0, None).unwrap());
+    let cases = [
+        ProblemFixture {
+            basis: ReconstructionBasis::ChannelLocal { channels: 1 },
+            ..mem()
+        },
+        ProblemFixture {
+            polarizations: vec![PolarizationCoordinate::StokesQ],
+            ..mem()
+        },
+        ProblemFixture {
+            outlier: true,
+            ..mem()
+        },
+        ProblemFixture {
+            facets: FacetLayout::Regular {
+                columns: 2,
+                rows: 2,
+            },
+            ..mem()
+        },
+        ProblemFixture {
+            weighting: WeightingScheme::Uniform,
+            ..mem()
+        },
+        ProblemFixture {
+            sources: 2,
+            ..mem()
+        },
+        ProblemFixture {
+            model_column_write: ModelColumnWrite::SelectedSamples,
+            ..mem()
+        },
+        mem().with_primary_beam(InstrumentModel::CasaAca7mInterferometricDirectPbV1),
+        w,
+    ];
+    for fixture in cases {
+        let result = on_cpu(&fixture.compile()).expect_err("unsupported MEM problem");
+        assert!(
+            result.unsupported().contains(&Unsupported::MemScope),
+            "{result:?}"
+        );
+    }
+}
+
 /// One compiled-problem fixture; [`ProblemFixture::standard`] is a dirty
 /// Stokes-I MFS request with a scalar measurement equation.
 struct ProblemFixture {
@@ -522,6 +585,7 @@ struct ProblemFixture {
     algorithm: ReconstructionAlgorithm,
     weighting: WeightingScheme,
     density_cells: casa_imaging_model::DensityCells,
+    sources: usize,
     polarizations: Vec<PolarizationCoordinate>,
     uvw: UvwCoordinateLaw,
     facets: FacetLayout,
@@ -546,6 +610,7 @@ impl ProblemFixture {
             algorithm: ReconstructionAlgorithm::Dirty,
             weighting: WeightingScheme::Natural,
             density_cells: casa_imaging_model::DensityCells::Image,
+            sources: 1,
             polarizations: vec![PolarizationCoordinate::StokesI],
             uvw: UvwCoordinateLaw::PhaseTrackingCentre,
             facets: FacetLayout::Single,
@@ -687,10 +752,47 @@ impl ProblemFixture {
                 numerics,
             ),
             geometry,
-            common::observation(),
+            observation_with_sources(self.sources),
             common::model_lifecycle(),
         )
     }
+}
+
+fn observation_with_sources(count: usize) -> casa_imaging_model::ObservationSnapshot {
+    if count == 1 {
+        return common::observation();
+    }
+    use casa_imaging_model::{
+        CorrelationProduct, FlagPolicy, IdSelection, IntentSelection, ObservationSelection,
+        ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance, PartitionId,
+        PartitionSelection, RowSelection, SelectedColumns, SpectralWindowSelection, UvSelection,
+        VisibilityColumn, WeightColumn, compile_observation,
+    };
+    let selection = ObservationSelection::new(
+        1,
+        RowSelection::new(IdSelection::All, UvSelection::All, IntentSelection::All),
+        vec![PartitionSelection::new(
+            PartitionId(0),
+            0,
+            vec![CorrelationProduct::new(0, casa_types::Correlation::I)],
+        )],
+        vec![SpectralWindowSelection::new(0, vec![0])],
+    );
+    let sources = (0..count)
+        .map(|index| {
+            ObservationSourceInput::new(
+                ObservationSourceProvenance::new(format!("fixture://store-{index}.ms")),
+                selection.clone(),
+                SelectedColumns::new(
+                    VisibilityColumn::Data,
+                    FlagPolicy::FlagOrFlagRow,
+                    WeightColumn::Weight,
+                ),
+                false,
+            )
+        })
+        .collect();
+    compile_observation(ObservationSnapshotInput::new(sources)).unwrap()
 }
 
 fn inner_products() -> DeclaredInnerProducts {

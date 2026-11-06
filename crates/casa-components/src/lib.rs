@@ -114,8 +114,8 @@
 //! - **Display units:** CASA remembers the units each shape axis was given in;
 //!   tables do not store them, and casa-rs keeps radians. Records give a
 //!   shape's axes in the units CASA gives one read from a table.
-//! - **Table keywords:** a list's table keywords (`cl.putkeyword`) are not
-//!   read or written.
+//! - **Table keywords:** rewriting an existing list preserves its table
+//!   keywords. They are not exposed by the list or by `cl.putkeyword` yet.
 
 mod component;
 mod component_type;
