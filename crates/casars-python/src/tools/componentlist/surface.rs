@@ -333,23 +333,26 @@ const METHODS: &[Method] = &[
             Yes,
         )
     },
-    method(
-        "setstokesspectrum",
-        &[
-            WHICH,
-            param("type", K::Text, Text("spectral index")),
-            param("index", K::Floats, Floats(&[0.0])),
-            TABULAR_FREQS,
-            param("tabulari", K::Floats, Floats(&[1.0])),
-            param("tabularq", K::Floats, Floats(&[0.0])),
-            param("tabularu", K::Floats, Floats(&[0.0])),
-            param("tabularv", K::Floats, Floats(&[0.0])),
-            param("reffreq", K::Any, Empty),
-            param("frame", K::Text, Text("LSRK")),
-        ],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "setstokesspectrum",
+            &[
+                WHICH,
+                param("type", K::Text, Text("spectral index")),
+                param("index", K::Floats, Floats(&[0.0])),
+                TABULAR_FREQS,
+                param("tabulari", K::Floats, Floats(&[1.0])),
+                param("tabularq", K::Floats, Floats(&[0.0])),
+                param("tabularu", K::Floats, Floats(&[0.0])),
+                param("tabularv", K::Floats, Floats(&[0.0])),
+                param("reffreq", K::Any, Empty),
+                param("frame", K::Text, Text("LSRK")),
+            ],
+            R::Bool,
+            Yes,
+        )
+    },
     of_one("shapetype", R::Text, Yes),
     Method {
         mutating: true,
