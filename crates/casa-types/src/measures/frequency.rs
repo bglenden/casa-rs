@@ -187,29 +187,16 @@ impl FromStr for CasaFrequencyFrame {
     /// Parse as casacore's `MFrequency::getType`: exact case-insensitive
     /// matches take precedence, then an unambiguous prefix in either direction.
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let input_upper = input.to_ascii_uppercase();
-        let candidates = FrequencyRef::ALL
+        let frames: Vec<_> = FrequencyRef::ALL
             .into_iter()
             .map(Self::Defined)
-            .chain([Self::Undefined]);
-        let frames: Vec<_> = candidates.collect();
-        if let Some(frame) = frames
-            .iter()
-            .copied()
-            .find(|frame| frame.as_str().eq_ignore_ascii_case(input))
-        {
-            return Ok(frame);
-        }
-        let mut matches = frames.into_iter().filter(|frame| {
-            let name = frame.as_str().to_ascii_uppercase();
-            name.starts_with(&input_upper) || input_upper.starts_with(&name)
-        });
-        match (matches.next(), matches.next()) {
-            (Some(frame), None) => Ok(frame),
-            _ => Err(MeasureError::UnknownRefType {
+            .chain([Self::Undefined])
+            .collect();
+        crate::quanta::unique_prefix_position(input, &frames, |frame| frame.as_str())
+            .map(|index| frames[index])
+            .ok_or_else(|| MeasureError::UnknownRefType {
                 input: input.to_owned(),
-            }),
-        }
+            })
     }
 }
 

@@ -1430,6 +1430,138 @@ pub fn imhead_put_spectral_reference(
     imhead(path)
 }
 
+/// Add, modify, or remove restoring-beam header metadata.
+///
+/// The boolean indicates whether CASA would append task history. In
+/// particular, deleting a beam from an image without one is a no-op.
+///
+/// # Errors
+///
+/// Returns an error for invalid quantities, unsupported operations, malformed
+/// beam metadata, or image I/O failure. History I/O may fail after saving.
+pub fn imhead_change_beam(
+    path: impl AsRef<Path>,
+    mode: &str,
+    hdkey: &str,
+    hdvalue: &ParameterValue,
+) -> Result<(ImageHeaderSummary, bool), ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    let key = hdkey.to_ascii_lowercase();
+    let component = match key.as_str() {
+        "beammajor" | "bmaj" => crate::BeamComponent::Major,
+        "beamminor" | "bmin" => crate::BeamComponent::Minor,
+        "beampa" | "bpa" => crate::BeamComponent::PositionAngle,
+        _ => {
+            return Err(ImageError::InvalidMetadata(format!(
+                "invalid beam keyword {hdkey:?}"
+            )));
+        }
+    };
+    let mut image = AnyPagedImage::open(path)?;
+    let history = match &mut image {
+        AnyPagedImage::Float32(image) => edit_beam(image, mode, hdkey, component, hdvalue)?,
+        AnyPagedImage::Float64(image) => edit_beam(image, mode, hdkey, component, hdvalue)?,
+        AnyPagedImage::Complex32(image) => edit_beam(image, mode, hdkey, component, hdvalue)?,
+        AnyPagedImage::Complex64(image) => edit_beam(image, mode, hdkey, component, hdvalue)?,
+    };
+    if history.is_some() {
+        image.save()?;
+    }
+    drop(image);
+    if let Some((origin, message)) = history {
+        crate::image::add_image_history(path, origin, &[message])?;
+        Ok((imhead(path)?, true))
+    } else {
+        Ok((imhead(path)?, false))
+    }
+}
+
+fn edit_beam<T: ImagePixel>(
+    image: &mut PagedImage<T>,
+    mode: &str,
+    hdkey: &str,
+    component: crate::BeamComponent,
+    hdvalue: &ParameterValue,
+) -> Result<Option<(&'static str, String)>, ImageError> {
+    use crate::BeamComponent;
+    let info = image.image_info()?;
+    if mode == "del" {
+        let multiple = info.beam_set.is_multi();
+        if !image.remove_restoring_beams()? {
+            return Ok(None);
+        }
+        let message = if multiple {
+            "Removed image's multiple beams"
+        } else {
+            "Removed image's single beam"
+        };
+        return Ok(Some(("ImageMetaDataRW::remove", message.into())));
+    }
+    if mode != "add" && mode != "put" {
+        return Err(ImageError::InvalidMetadata(format!(
+            "invalid beam operation {mode:?}"
+        )));
+    }
+    if mode == "add" && component == BeamComponent::PositionAngle {
+        return Err(ImageError::InvalidMetadata(
+            "Cannot add a beam position angle".into(),
+        ));
+    }
+    if mode == "add" && !info.beam_set.is_empty() {
+        return Err(ImageError::InvalidMetadata(
+            "This image already has a beam(s)".into(),
+        ));
+    }
+    if info.beam_set.is_multi() {
+        return Err(ImageError::InvalidMetadata(
+            "This image has multiple beams".into(),
+        ));
+    }
+    let (quantity, rendered) = quantity_input::parse(hdvalue)?;
+    let old = image.stored_restoring_beam()?;
+    let quantity_text = |quantity: &casa_types::quanta::Quantity| {
+        format!(
+            "{} {}",
+            projection_header::cpp_number_precision(quantity.value(), 6),
+            quantity.unit().name()
+        )
+    };
+    let (beam, message) = if let Some(old) = old {
+        let suffix = if component == BeamComponent::PositionAngle {
+            ""
+        } else {
+            "\n"
+        };
+        let previous = format!("{}{suffix}", quantity_text(old.component(component)));
+        let beam = old.with_component(component, quantity)?;
+        (
+            beam,
+            format!("Modified {hdkey} from \"{previous}\" to {rendered}"),
+        )
+    } else {
+        if component == BeamComponent::PositionAngle {
+            return Err(ImageError::InvalidMetadata(
+                "This image has no beam; add a beam axis before its position angle".into(),
+            ));
+        }
+        let beam = crate::StoredGaussianBeam::new(
+            quantity.clone(),
+            quantity,
+            casa_types::quanta::Quantity::new(0.0, "deg").expect("built-in degrees"),
+        )?;
+        let message = format!(
+            "Added beam major: {}, minor: {}, pa: {}",
+            quantity_text(beam.component(BeamComponent::Major)),
+            quantity_text(beam.component(BeamComponent::Minor)),
+            quantity_text(beam.component(BeamComponent::PositionAngle))
+        );
+        (beam, message)
+    };
+    image.set_stored_restoring_beam(&beam)?;
+    Ok(Some(("ImageMetaDataRW::set", message)))
+}
+
 /// Set a CASA `ctypeN` axis name and record the image history.
 ///
 /// # Errors
@@ -2047,18 +2179,13 @@ fn format_beam(beam: GaussianBeam, record: Option<&RecordValue>) -> Option<Resto
     let position_angle = record
         .and_then(|r| beam_quantity(r, "positionangle"))
         .unwrap_or_else(|| fallback(position_angle_deg, "deg"));
-    let mut wrapped_position_angle = position_angle.clone();
-    if position_angle_deg > 90.0 || position_angle_deg <= -90.0 {
-        let mut degrees = position_angle_deg % 180.0;
-        if degrees > 90.0 {
-            degrees -= 180.0;
-        } else if degrees <= -90.0 {
-            degrees += 180.0;
-        }
-        let quantity = casa_types::quanta::Quantity::new(degrees, "deg").ok()?;
-        let unit = casa_types::quanta::Unit::new(&position_angle.unit).ok()?;
-        wrapped_position_angle.value = quantity.get_value_in(&unit).ok()?;
-    }
+    let quantity =
+        casa_types::quanta::Quantity::new(position_angle.value, &position_angle.unit).ok()?;
+    let wrapped = crate::beam::wrap_position_angle(&quantity).ok()?;
+    let wrapped_position_angle = BeamQuantity {
+        value: wrapped.value(),
+        unit: wrapped.unit().name().into(),
+    };
     Some(RestoringBeamSummary {
         major_arcsec,
         minor_arcsec,
@@ -2074,18 +2201,10 @@ fn beam_quantity(record: &RecordValue, key: &str) -> Option<BeamQuantity> {
     let Value::Record(quantity) = record.get(key)? else {
         return None;
     };
-    let value = match quantity.get("value")? {
-        Value::Scalar(ScalarValue::Float64(value)) => *value,
-        Value::Scalar(ScalarValue::Float32(value)) => f64::from(*value),
-        Value::Scalar(ScalarValue::Int32(value)) => f64::from(*value),
-        _ => return None,
-    };
-    let Value::Scalar(ScalarValue::String(unit)) = quantity.get("unit")? else {
-        return None;
-    };
+    let quantity = crate::beam::quantity_from_record(quantity).ok()?;
     Some(BeamQuantity {
-        value,
-        unit: casa_types::quanta::unit::normalize_casa_unit_name(unit),
+        value: quantity.value(),
+        unit: casa_types::quanta::unit::normalize_casa_unit_name(quantity.unit().name()),
     })
 }
 
@@ -4469,7 +4588,14 @@ where
             .map_err(|error| ImageError::Io(error.to_string()))?;
         hdu.write_key(&mut fits, "BMIN", beam.minor_in("deg")?)
             .map_err(|error| ImageError::Io(error.to_string()))?;
-        hdu.write_key(&mut fits, "BPA", beam.position_angle_in("deg")?)
+        let stored = image
+            .stored_restoring_beam()?
+            .ok_or_else(|| ImageError::InvalidMetadata("missing restoring beam record".into()))?;
+        let wrapped = stored.wrapped_position_angle()?;
+        let degrees = casa_types::quanta::Unit::new("deg").expect("built-in degrees");
+        let bpa = casa_types::quanta::casacore::get_conformant_value(&wrapped, &degrees)
+            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+        hdu.write_key(&mut fits, "BPA", bpa)
             .map_err(|error| ImageError::Io(error.to_string()))?;
     }
     Ok(FitsExportSummary {

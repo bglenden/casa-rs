@@ -77,6 +77,8 @@ fn run_imhead(
             let axis_unit = mode == "put" && key.starts_with("cunit");
             let rest_frequency = mode == "put" && key == "restfreq";
             let spectral_reference = mode == "put" && key == "reffreqtype";
+            let beam_key =
+                ["beammajor", "beamminor", "beampa", "bmaj", "bmin", "bpa"].contains(&key.as_str());
             let axis_quantity =
                 mode == "put" && (key.starts_with("cdelt") || key.starts_with("crval"));
             if !["bunit", "object", "observer", "telescope"].contains(&key.as_str())
@@ -86,6 +88,7 @@ fn run_imhead(
                 && !axis_unit
                 && !rest_frequency
                 && !spectral_reference
+                && !beam_key
                 && !axis_quantity
                 && !casa_images::analysis::imhead_is_custom_key(&hdkey)
             {
@@ -102,13 +105,22 @@ fn run_imhead(
                 .unwrap_or_else(|| ParameterValue::String(String::new()));
             if matches!(hdvalue, ParameterValue::Array(_) | ParameterValue::Table(_))
                 && mode == "del"
+                && !beam_key
             {
                 return Err(TaskFailure::validation(
                     "imhead del with an array or record hdvalue is not implemented (#977)",
                 )
                 .at("hdvalue"));
             }
-            let summary = if reference_pixel {
+            let mut write_task_history = true;
+            let summary = if beam_key {
+                casa_images::analysis::imhead_change_beam(&path, &mode, &hdkey, &hdvalue).map(
+                    |(summary, write_history)| {
+                        write_task_history = write_history;
+                        summary
+                    },
+                )
+            } else if reference_pixel {
                 casa_images::analysis::imhead_put_reference_pixel(&path, &hdkey, &hdvalue)
             } else if axis_name {
                 casa_images::analysis::imhead_put_axis_name(&path, &hdkey, &hdvalue)
@@ -159,7 +171,9 @@ fn run_imhead(
                     history_value(&hdvalue)
                 ),
             ];
-            if let Err(error) = casa_images::image::add_image_history(&path, "imhead", &history) {
+            if write_task_history
+                && let Err(error) = casa_images::image::add_image_history(&path, "imhead", &history)
+            {
                 tracing::warn!("imhead could not write task history: {error}");
             }
             summary
@@ -221,8 +235,9 @@ fn history_value(value: &ParameterValue) -> String {
         ParameterValue::Bool(value) => if *value { "True" } else { "False" }.to_string(),
         ParameterValue::Integer(value) => value.to_string(),
         ParameterValue::Float(value) => casa_provider_contracts::python_float(*value),
-        ParameterValue::Table(_) => casa_provider_contracts::python_repr(value),
-        _ => "...".to_string(),
+        ParameterValue::Array(_) | ParameterValue::Table(_) => {
+            casa_provider_contracts::python_repr(value)
+        }
     }
 }
 

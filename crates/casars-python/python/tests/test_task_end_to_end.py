@@ -256,6 +256,17 @@ def test_imhead_put_accepts_rest_frequency_quantity_record(tmp_path: Path) -> No
     assert tasks.imhead(str(image), mode="get", hdkey="reffreqtype") == "BARY"
 
 
+def test_imhead_edits_and_removes_a_restoring_beam(tmp_path: Path) -> None:
+    require_executables("imhead")
+    fixture = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix/beam.im"
+    image = tmp_path / "beam.im"
+    shutil.copytree(fixture, image)
+    assert tasks.imhead(str(image), mode="put", hdkey="bmaj", hdvalue={"value": 40.0, "unit": "arcsec"}) is None
+    assert tasks.imhead(str(image), mode="get", hdkey="bmaj") == {"value": 40.0, "unit": "arcsec"}
+    assert tasks.imhead(str(image), mode="del", hdkey="bpa", hdvalue=[1, 2]) is None
+    assert "restoringbeam" not in tasks.imhead(str(image), mode="summary")
+
+
 def test_msconvert_converts_both_ways_and_reports_its_losses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

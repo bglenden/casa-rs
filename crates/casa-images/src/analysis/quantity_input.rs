@@ -49,7 +49,9 @@ pub(super) fn parse(value: &ParameterValue) -> Result<(Quantity, String), ImageE
                 }
                 _ => return Err(invalid("Illegal Quantity record".into())),
             };
-            let quantity = Quantity::new(number, unit).map_err(|err| invalid(err.to_string()))?;
+            let unit_value = casa_types::quanta::casacore::casacore_unit(unit)
+                .map_err(|error| invalid(error.to_string()))?;
+            let quantity = Quantity::with_unit(number, unit_value);
             Ok((
                 quantity,
                 format!("  unit: String \"{unit}\"\n  value: {ty} {rendered}"),

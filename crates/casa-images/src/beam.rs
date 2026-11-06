@@ -3,9 +3,225 @@
 
 use casa_numerics::{EllipticalGaussian, common_enclosing_gaussian, deconvolving_gaussian};
 use casa_types::quanta::{Quantity, Unit};
-use casa_types::{RecordField, RecordValue, ScalarValue, Value};
+use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::error::ImageError;
+
+/// Read the scalar or one-element real quantity forms CASA accepts.
+pub(crate) fn quantity_from_record(record: &RecordValue) -> Result<Quantity, ImageError> {
+    let number = match record.get("value") {
+        Some(Value::Scalar(ScalarValue::Float64(v))) => Some(*v),
+        Some(Value::Scalar(ScalarValue::Float32(v))) => Some(f64::from(*v)),
+        Some(Value::Scalar(ScalarValue::Int32(v))) => Some(f64::from(*v)),
+        Some(Value::Array(ArrayValue::Float64(v))) if v.len() == 1 => v.iter().next().copied(),
+        Some(Value::Array(ArrayValue::Float32(v))) if v.len() == 1 => {
+            v.iter().next().map(|v| f64::from(*v))
+        }
+        Some(Value::Array(ArrayValue::Int32(v))) if v.len() == 1 => {
+            v.iter().next().map(|v| f64::from(*v))
+        }
+        _ => None,
+    }
+    .ok_or_else(|| ImageError::InvalidMetadata("invalid quantity value".into()))?;
+    let Some(Value::Scalar(ScalarValue::String(unit))) = record.get("unit") else {
+        return Err(ImageError::InvalidMetadata("invalid quantity unit".into()));
+    };
+    let unit = casa_types::quanta::casacore::casacore_unit(unit)
+        .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+    Ok(Quantity::with_unit(number, unit))
+}
+
+/// A restoring beam with each quantity retained in its stored unit.
+///
+/// This complements [`GaussianBeam`]'s radian-based representation for
+/// metadata edits that must preserve the original units.
+#[derive(Debug, Clone)]
+pub struct StoredGaussianBeam {
+    major: Quantity,
+    minor: Quantity,
+    position_angle: Quantity,
+}
+
+/// The component of a stored restoring beam to update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BeamComponent {
+    /// Full width of the major axis.
+    Major,
+    /// Full width of the minor axis.
+    Minor,
+    /// Position angle of the major axis.
+    PositionAngle,
+}
+
+/// Wrap an angular quantity to CASA's (-90, 90] degree range, preserving its
+/// unit and casacore's conversion order.
+///
+/// # Errors
+///
+/// Returns an error for a non-angular or non-finite quantity.
+pub fn wrap_position_angle(pa: &Quantity) -> Result<Quantity, ImageError> {
+    let degree = Unit::new("deg").expect("built-in degrees");
+    if !pa.value().is_finite() || !pa.unit().conformant(&degree) {
+        return Err(ImageError::InvalidMetadata(
+            "position angle must be a finite angular quantity".into(),
+        ));
+    }
+    let quarter = Quantity::new(90.0, "deg").expect("built-in degrees");
+    let threshold = casa_types::quanta::casacore::convert(&quarter, Some(pa.unit()))
+        .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?
+        .value();
+    if pa.value() > threshold || pa.value() <= -threshold {
+        let mut degrees = casa_types::quanta::casacore::get_conformant_value(pa, &degree)
+            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?
+            % 180.0;
+        if degrees > 90.0 {
+            degrees -= 180.0;
+        } else if degrees <= -90.0 {
+            degrees += 180.0;
+        }
+        let wrapped = Quantity::with_unit(degrees, degree);
+        casa_types::quanta::casacore::convert(&wrapped, Some(pa.unit()))
+            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
+    } else {
+        Ok(pa.clone())
+    }
+}
+
+impl StoredGaussianBeam {
+    /// Construct a beam from angular quantities, retaining their units.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for non-angular, non-finite, negative, or
+    /// incorrectly ordered axes, or a non-angular position angle.
+    pub fn new(
+        major: Quantity,
+        minor: Quantity,
+        position_angle: Quantity,
+    ) -> Result<Self, ImageError> {
+        let radians = Unit::new("rad").expect("built-in unit");
+        for (label, quantity) in [
+            ("major", &major),
+            ("minor", &minor),
+            ("position angle", &position_angle),
+        ] {
+            if !quantity.value().is_finite() || !quantity.unit().conformant(&radians) {
+                return Err(ImageError::InvalidMetadata(format!(
+                    "beam {label} must be a finite angular quantity"
+                )));
+            }
+        }
+        if major.value() < 0.0 || minor.value() < 0.0 {
+            return Err(ImageError::InvalidMetadata(
+                "beam axes cannot be negative".into(),
+            ));
+        }
+        let minor_in_major = casa_types::quanta::casacore::convert(&minor, Some(major.unit()))
+            .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?;
+        if major.value() < minor_in_major.value() {
+            return Err(ImageError::InvalidMetadata(
+                "major axis must be greater or equal to minor axis".into(),
+            ));
+        }
+        Ok(Self {
+            major,
+            minor,
+            position_angle,
+        })
+    }
+
+    /// Reconstruct a beam from a casacore quantity record.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed, non-angular, or invalid beam values.
+    pub fn from_record(record: &RecordValue) -> Result<Self, ImageError> {
+        if record.len() != 3 {
+            return Err(ImageError::InvalidMetadata(
+                "Beam record does not contain 3 fields".into(),
+            ));
+        }
+        let read = |name: &str| -> Result<Quantity, ImageError> {
+            let Some(Value::Record(field)) = record.get(name) else {
+                return Err(ImageError::InvalidMetadata(format!(
+                    "beam is missing {name}"
+                )));
+            };
+            quantity_from_record(field)
+        };
+        Self::new(read("major")?, read("minor")?, read("positionangle")?)
+    }
+
+    /// Return the requested component in its stored unit.
+    #[must_use]
+    pub fn component(&self, component: BeamComponent) -> &Quantity {
+        match component {
+            BeamComponent::Major => &self.major,
+            BeamComponent::Minor => &self.minor,
+            BeamComponent::PositionAngle => &self.position_angle,
+        }
+    }
+
+    /// Return the position angle wrapped to CASA's (-90, 90] degree range,
+    /// retaining its stored unit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the angular unit cannot be converted.
+    pub fn wrapped_position_angle(&self) -> Result<Quantity, ImageError> {
+        wrap_position_angle(&self.position_angle)
+    }
+
+    /// Return a copy with one component replaced.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the resulting beam is invalid.
+    pub fn with_component(
+        &self,
+        component: BeamComponent,
+        value: Quantity,
+    ) -> Result<Self, ImageError> {
+        let mut updated = self.clone();
+        match component {
+            BeamComponent::Major => updated.major = value,
+            BeamComponent::Minor => updated.minor = value,
+            BeamComponent::PositionAngle => updated.position_angle = value,
+        }
+        Self::new(updated.major, updated.minor, updated.position_angle)
+    }
+
+    /// Whether either axis is zero, making the restoring beam null.
+    #[must_use]
+    pub fn is_null(&self) -> bool {
+        self.major.value() == 0.0 || self.minor.value() == 0.0
+    }
+
+    /// Serialize the original quantity values and units to a beam record.
+    #[must_use]
+    pub fn to_record(&self) -> RecordValue {
+        let field = |name: &str, quantity: &Quantity| {
+            RecordField::new(
+                name,
+                Value::Record(RecordValue::new(vec![
+                    RecordField::new(
+                        "value",
+                        Value::Scalar(ScalarValue::Float64(quantity.value())),
+                    ),
+                    RecordField::new(
+                        "unit",
+                        Value::Scalar(ScalarValue::String(quantity.unit().name().into())),
+                    ),
+                ])),
+            )
+        };
+        RecordValue::new(vec![
+            field("major", &self.major),
+            field("minor", &self.minor),
+            field("positionangle", &self.position_angle),
+        ])
+    }
+}
 
 /// A two-dimensional Gaussian restoring beam.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -95,65 +311,33 @@ impl GaussianBeam {
 
     /// Deserializes a beam from a casacore quantity record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, ImageError> {
-        if rec.len() != 3 {
+        let stored = StoredGaussianBeam::from_record(rec)?;
+        let radians = Unit::new("rad").expect("built-in radians unit must parse");
+        let convert = |component| {
+            stored
+                .component(component)
+                .get_value_in(&radians)
+                .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
+        };
+        let major = convert(BeamComponent::Major)?;
+        let minor = convert(BeamComponent::Minor)?;
+        let position_angle = convert(BeamComponent::PositionAngle)?;
+        if (major == 0.0 && stored.component(BeamComponent::Major).value() != 0.0)
+            || (minor == 0.0 && stored.component(BeamComponent::Minor).value() != 0.0)
+        {
             return Err(ImageError::InvalidMetadata(
-                "Beam record does not contain 3 fields".into(),
+                "beam axes underflow in the shared radian representation (#977)".into(),
             ));
         }
-        fn read_quantity(rec: &RecordValue, key: &str) -> Result<f64, ImageError> {
-            match rec.get(key) {
-                Some(Value::Record(sub)) => {
-                    let value = match sub.get("value") {
-                        Some(Value::Scalar(ScalarValue::Float64(v))) => *v,
-                        Some(Value::Scalar(ScalarValue::Float32(v))) => f64::from(*v),
-                        Some(Value::Scalar(ScalarValue::Int32(v))) => f64::from(*v),
-                        _ => {
-                            return Err(ImageError::InvalidMetadata(format!(
-                                "beam {key}: missing or invalid value field"
-                            )));
-                        }
-                    };
-                    let unit = match sub.get("unit") {
-                        Some(Value::Scalar(ScalarValue::String(unit))) => unit.as_str(),
-                        _ => {
-                            return Err(ImageError::InvalidMetadata(format!(
-                                "beam {key}: missing or invalid unit field"
-                            )));
-                        }
-                    };
-                    let quantity = Quantity::new(value, unit).map_err(|err| {
-                        ImageError::InvalidMetadata(format!(
-                            "beam {key}: invalid quantity unit '{unit}': {err}"
-                        ))
-                    })?;
-                    let radians = Unit::new("rad").expect("built-in radians unit must parse");
-                    quantity.get_value_in(&radians).map_err(|err| {
-                        ImageError::InvalidMetadata(format!(
-                            "beam {key}: expected angular quantity, got '{unit}': {err}"
-                        ))
-                    })
-                }
-                _ => Err(ImageError::InvalidMetadata(format!(
-                    "beam: missing '{key}' sub-record"
-                ))),
-            }
-        }
-
-        let major = read_quantity(rec, "major")?;
-        let minor = read_quantity(rec, "minor")?;
-        let position_angle = read_quantity(rec, "positionangle")?;
-        if !major.is_finite() || !minor.is_finite() || major < 0.0 || minor < 0.0 || major < minor {
+        if !major.is_finite() || !minor.is_finite() || !position_angle.is_finite() {
             return Err(ImageError::InvalidMetadata(
-                "Invalid restoring beam axes".into(),
+                "invalid restoring beam values".into(),
             ));
         }
-        if !position_angle.is_finite() {
-            return Err(ImageError::InvalidMetadata(
-                "Invalid restoring beam position angle".into(),
-            ));
-        }
+        // Casacore compares the original units. Conversion of physically equal
+        // axes to radians can reverse their order by one rounding bit.
         Ok(Self {
-            major,
+            major: major.max(minor),
             minor,
             position_angle,
         })
@@ -604,6 +788,62 @@ mod tests {
             arcsec_to_rad(minor),
             pa_deg.to_radians(),
         )
+    }
+
+    #[test]
+    fn stored_beam_edits_preserve_units_and_reject_invalid_axes() {
+        let beam = StoredGaussianBeam::new(
+            Quantity::new(1., "arcmin").unwrap(),
+            Quantity::new(20., "arcsec").unwrap(),
+            Quantity::new(120., "deg").unwrap(),
+        )
+        .unwrap();
+        let updated = beam
+            .with_component(BeamComponent::Major, Quantity::new(40., "arcsec").unwrap())
+            .unwrap();
+        let restored = StoredGaussianBeam::from_record(&updated.to_record()).unwrap();
+        assert_eq!(
+            restored.component(BeamComponent::Major).unit().name(),
+            "arcsec"
+        );
+        assert_eq!(restored.component(BeamComponent::Minor).value(), 20.);
+        assert_eq!(
+            restored.component(BeamComponent::PositionAngle).value(),
+            120.
+        );
+        assert!(
+            beam.with_component(BeamComponent::Major, Quantity::new(10., "arcsec").unwrap())
+                .is_err()
+        );
+        assert!(
+            beam.with_component(
+                BeamComponent::PositionAngle,
+                Quantity::new(1., "Hz").unwrap()
+            )
+            .is_err()
+        );
+        assert_eq!(beam.component(BeamComponent::Major).unit().name(), "arcmin");
+    }
+
+    #[test]
+    fn beam_position_angles_wrap_as_casacore_does() {
+        for (value, expected) in [
+            (-400., -40.),
+            (-90., 90.),
+            (90., 90.),
+            (190., 10.),
+            (270., 90.),
+        ] {
+            let quantity = Quantity::new(value, "deg").unwrap();
+            assert_eq!(wrap_position_angle(&quantity).unwrap().value(), expected);
+        }
+        let radians = wrap_position_angle(&Quantity::new(2., "rad").unwrap()).unwrap();
+        let degrees = casa_types::quanta::casacore::get_conformant_value(
+            &radians,
+            &Unit::new("deg").unwrap(),
+        )
+        .unwrap();
+        assert!((degrees - (-65.40844097383535)).abs() < 1e-12);
     }
 
     #[test]

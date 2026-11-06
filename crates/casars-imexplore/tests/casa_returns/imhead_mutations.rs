@@ -5,6 +5,173 @@
 use super::*;
 
 #[test]
+fn imhead_edits_restoring_beams_as_casa_does() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let oracle: Value =
+        serde_json::from_slice(&std::fs::read(fixture.join("beam_edit_expected.json")).unwrap())
+            .unwrap();
+    assert_eq!(oracle["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for (index, case) in oracle["cases"].as_array().unwrap().iter().enumerate() {
+        let path = workspace.path().join(format!("beam-edit-{index}.im"));
+        let source = case["image"].as_str().unwrap();
+        let source_path = if source == "multi" || source == "single_dual" {
+            fixture.parent().unwrap().join(if source == "multi" {
+                "imhead_beams/multiple.im"
+            } else {
+                "imhead_beams/single_dual.im"
+            })
+        } else {
+            fixture.join(format!("{source}.im"))
+        };
+        copy_tree(&source_path, &path);
+        let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+        let count = image.history().unwrap().len();
+        let before = image.image_info().unwrap();
+        drop(image);
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": case["mode"], "hdkey": case["key"], "hdvalue": case["value"]
+            }),
+        );
+        if case.get("error").is_some() {
+            assert!(
+                matches!(reply, Some(TaskReply::Failed { .. })),
+                "{index}: {reply:?}"
+            );
+        } else {
+            assert!(
+                matches!(
+                    reply,
+                    Some(TaskReply::Succeeded {
+                        value: CasaValue::None,
+                        ..
+                    })
+                ),
+                "{index}: {reply:?}"
+            );
+        }
+        let image = casa_images::PagedImage::<f32>::open(&path).unwrap();
+        let info = image.image_info().unwrap();
+        let expected_beam = &case["beam"];
+        if expected_beam.as_object().unwrap().is_empty() {
+            assert!(info.beam_set.is_empty(), "{index}");
+        } else if expected_beam.get("beams").is_some() {
+            assert_eq!(
+                info.beam_set, before.beam_set,
+                "{index}: multi-beam unchanged"
+            );
+        } else {
+            let beam = image.stored_restoring_beam().unwrap().unwrap();
+            for (name, component) in [
+                ("major", casa_images::BeamComponent::Major),
+                ("minor", casa_images::BeamComponent::Minor),
+                ("positionangle", casa_images::BeamComponent::PositionAngle),
+            ] {
+                let value = beam.component(component);
+                assert_header_value_near(
+                    &json!({"value": value.value(), "unit": value.unit().name()}),
+                    &expected_beam[name],
+                    index,
+                );
+            }
+        }
+        if let Some(expected) = case.get("history") {
+            let history = image.history().unwrap();
+            let tail = &history[count..];
+            let expected = expected.as_array().unwrap();
+            assert_eq!(tail.len(), expected.len(), "{index}: history count");
+            if expected.len() == 3 {
+                assert_eq!(tail[0], expected[0], "{index}: metadata history");
+            }
+            if !tail.is_empty() {
+                assert_eq!(
+                    tail[tail.len() - 1],
+                    expected[expected.len() - 1]
+                        .as_str()
+                        .unwrap()
+                        .replace("<IMAGE>", &path.display().to_string()),
+                    "{index}: task history"
+                );
+            }
+        } else {
+            assert_eq!(
+                info, before,
+                "{index}: failed operation must not change metadata"
+            );
+        }
+    }
+}
+
+#[test]
+fn imhead_refuses_beam_axes_that_underflow_in_the_shared_model() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("tiny-beam.im");
+    copy_tree(&fixture, &path);
+    let before = casa_images::PagedImage::<f32>::open(&path)
+        .unwrap()
+        .image_info()
+        .unwrap();
+    let (_, reply) = json_run(
+        workspace.path(),
+        "imhead",
+        json!({
+            "imagename": path, "mode": "put", "hdkey": "bmaj", "hdvalue": "1e-322deg"
+        }),
+    );
+    assert!(matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("#977")));
+    let after = casa_images::PagedImage::<f32>::open(&path)
+        .unwrap()
+        .image_info()
+        .unwrap();
+    assert_eq!(before, after);
+}
+
+#[test]
+fn imhead_beam_position_angle_exports_in_casas_wrapped_range() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/beam.im");
+    let workspace = tempfile::tempdir().unwrap();
+    for (index, (value, expected)) in [
+        ("190deg", 10.),
+        ("-400deg", -40.),
+        ("2rad", -65.40844097383535),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let image = workspace.path().join(format!("beam-{index}.im"));
+        let fits = workspace.path().join(format!("beam-{index}.fits"));
+        copy_tree(&fixture, &image);
+        let value = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": image, "mode": "put", "hdkey": "bpa", "hdvalue": value}),
+        );
+        assert_eq!(value, CasaValue::None);
+        casa_images::analysis::export_fits(&image, &fits, false, false).unwrap();
+        let bytes = std::fs::read(fits).unwrap();
+        let card = bytes
+            .as_chunks::<80>()
+            .0
+            .iter()
+            .find(|card| card.starts_with(b"BPA     "))
+            .unwrap();
+        let number = std::str::from_utf8(&card[10..])
+            .unwrap()
+            .split('/')
+            .next()
+            .unwrap()
+            .trim()
+            .parse::<f64>()
+            .unwrap();
+        assert!((number - expected).abs() < 1e-10, "{number} != {expected}");
+    }
+}
+
+#[test]
 fn imhead_edits_spectral_reference_frames() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
     let oracle: Value =

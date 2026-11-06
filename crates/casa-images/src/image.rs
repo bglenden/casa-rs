@@ -1379,8 +1379,85 @@ impl<T: ImagePixel> PagedImage<T> {
     pub fn image_info(&self) -> Result<ImageInfo, ImageError> {
         match self.table.keywords().get("imageinfo") {
             Some(Value::Record(rec)) => ImageInfo::from_record(rec),
-            _ => Ok(ImageInfo::default()),
+            None => Ok(ImageInfo::default()),
+            Some(_) => Err(ImageError::InvalidMetadata(
+                "imageinfo is not a record".into(),
+            )),
         }
+    }
+
+    /// Return a single restoring beam with its stored quantity units.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed metadata or a multi-beam image.
+    pub fn stored_restoring_beam(&self) -> Result<Option<crate::StoredGaussianBeam>, ImageError> {
+        let info = self.image_info()?;
+        if info.beam_set.is_multi() {
+            return Err(ImageError::InvalidMetadata(
+                "image has multiple restoring beams".into(),
+            ));
+        }
+        if info.beam_set.is_empty() {
+            return Ok(None);
+        }
+        let record = self
+            .restoring_beam_record()
+            .ok_or_else(|| ImageError::InvalidMetadata("missing restoring beam record".into()))?;
+        Ok(Some(crate::StoredGaussianBeam::from_record(record)?))
+    }
+
+    /// Replace the restoring beam while retaining unrelated image metadata.
+    /// Call [`Self::save`] to persist the change.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a null beam or a beam the image reader cannot restore.
+    pub fn set_stored_restoring_beam(
+        &mut self,
+        beam: &crate::StoredGaussianBeam,
+    ) -> Result<(), ImageError> {
+        self.image_info()?;
+        if beam.is_null() {
+            return Err(ImageError::InvalidMetadata(
+                "Beam is null and therefore invalid".into(),
+            ));
+        }
+        let record = beam.to_record();
+        crate::GaussianBeam::from_record(&record)?;
+        let mut info = match self.table.keywords().get("imageinfo") {
+            Some(Value::Record(record)) => record.clone(),
+            _ => RecordValue::default(),
+        };
+        info.remove("perplanebeams");
+        info.upsert("restoringbeam", Value::Record(record));
+        self.table
+            .keywords_mut()
+            .upsert("imageinfo", Value::Record(info));
+        Ok(())
+    }
+
+    /// Remove all restoring beams while preserving unrelated image metadata.
+    /// Returns whether the image had a beam. Call [`Self::save`] to persist it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the existing image-info record is malformed.
+    pub fn remove_restoring_beams(&mut self) -> Result<bool, ImageError> {
+        if self.image_info()?.beam_set.is_empty() {
+            return Ok(false);
+        }
+        let Some(Value::Record(mut info)) = self.table.keywords().get("imageinfo").cloned() else {
+            return Err(ImageError::InvalidMetadata(
+                "missing image-info record".into(),
+            ));
+        };
+        info.remove("restoringbeam");
+        info.remove("perplanebeams");
+        self.table
+            .keywords_mut()
+            .upsert("imageinfo", Value::Record(info));
+        Ok(true)
     }
 
     pub(crate) fn has_image_type_record(&self) -> bool {
@@ -2984,6 +3061,29 @@ mod tests {
 
     fn make_coords() -> CoordinateSystem {
         CoordinateSystem::new()
+    }
+
+    #[test]
+    fn restoring_beam_edits_do_not_replace_malformed_image_info() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut image =
+            PagedImage::<f32>::create(vec![2, 2], make_coords(), directory.path().join("image"))
+                .unwrap();
+        let invalid = Value::Scalar(ScalarValue::String("not a record".into()));
+        image
+            .table
+            .keywords_mut()
+            .upsert("imageinfo", invalid.clone());
+        let beam = crate::StoredGaussianBeam::new(
+            casa_types::quanta::Quantity::new(2., "arcsec").unwrap(),
+            casa_types::quanta::Quantity::new(1., "arcsec").unwrap(),
+            casa_types::quanta::Quantity::new(0., "deg").unwrap(),
+        )
+        .unwrap();
+        assert!(image.stored_restoring_beam().is_err());
+        assert!(image.set_stored_restoring_beam(&beam).is_err());
+        assert!(image.remove_restoring_beams().is_err());
+        assert_eq!(image.table.keywords().get("imageinfo"), Some(&invalid));
     }
 
     /// Rows from an origin keep their order, with casacore's `LogOrigin`
