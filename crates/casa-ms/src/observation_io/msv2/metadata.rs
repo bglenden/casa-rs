@@ -133,11 +133,12 @@ pub(super) fn read_windows(ms: &MeasurementSet) -> Result<Vec<WindowEntry>, Obse
     ] {
         require_units(table, column, "Hz")?;
     }
+    let frequency_refs = crate::columns::frequency_columns::ChanFreqColumn::new(table);
     (0..table.row_count())
         .map(|row| {
-            let code = get_i32(table, row, "MEAS_FREQ_REF").map_err(storage)?;
-            let frame = FrequencyRef::from_casacore_code(code)
-                .ok_or_else(|| invalid(format!("unknown MEAS_FREQ_REF {code}")))?;
+            let frame = frequency_refs
+                .reference_frequency_reference(row)
+                .map_err(storage)?;
             let channels = get_i32(table, row, "NUM_CHAN").map_err(storage)?;
             Ok(WindowEntry {
                 name: get_string(table, row, "NAME").map_err(storage)?,

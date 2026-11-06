@@ -7,6 +7,7 @@
 //! Cf. C++ `MSSpWindowColumns`.
 
 use casa_tables::Table;
+use casa_types::measures::frequency::FrequencyRef;
 use casa_types::{ArrayValue, ScalarValue};
 
 use crate::column_def::ColumnDef;
@@ -67,9 +68,28 @@ impl<'a> MsSpectralWindow<'a> {
         get_f64(self.table, row, "TOTAL_BANDWIDTH")
     }
 
-    /// Frequency measure reference code (index into `FrequencyRef` enum).
+    /// Stored frequency reference code; the table's mapping determines its meaning.
     pub fn meas_freq_ref(&self, row: usize) -> MsResult<i32> {
         get_i32(self.table, row, "MEAS_FREQ_REF")
+    }
+
+    /// Frequency frame resolved through the table's measure reference mapping.
+    ///
+    /// # Errors
+    ///
+    /// The reference column or its measure mapping is invalid or unreadable.
+    pub fn frequency_reference(&self, row: usize) -> MsResult<FrequencyRef> {
+        crate::columns::frequency_columns::ChanFreqColumn::new(self.table).frequency_reference(row)
+    }
+
+    /// Frame of `REF_FREQUENCY`, resolved using that column's measure mapping.
+    ///
+    /// # Errors
+    ///
+    /// The reference column or its measure mapping is invalid or unreadable.
+    pub fn reference_frequency_reference(&self, row: usize) -> MsResult<FrequencyRef> {
+        crate::columns::frequency_columns::ChanFreqColumn::new(self.table)
+            .reference_frequency_reference(row)
     }
 
     /// Spectral window name.

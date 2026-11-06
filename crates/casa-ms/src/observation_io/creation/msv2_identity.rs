@@ -8,9 +8,8 @@
 
 use casa_observation::{Catalogue, FieldEntry, ObservationError, PartitionEntry};
 use casa_tables::ColumnSchema;
-use casa_tables::table_measures::{MeasureType, TableMeasDesc};
+use casa_tables::table_measures::{MeasureType, TableMeasDesc, default_frequency_ref_map};
 use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::{EpochRef, MEpoch};
 
 use super::msv2_sources::{self, NamedSources};
@@ -303,18 +302,13 @@ pub(super) fn spectral_windows(
         )));
     }
     for column in ["CHAN_FREQ", "REF_FREQUENCY"] {
+        let (types, codes) = default_frequency_ref_map();
         TableMeasDesc::new_variable_int(
             column,
             MeasureType::Frequency,
             "MEAS_FREQ_REF",
-            FrequencyRef::ALL
-                .iter()
-                .map(|refer| refer.as_str().to_owned())
-                .collect(),
-            FrequencyRef::ALL
-                .iter()
-                .map(|refer| refer.casacore_code())
-                .collect(),
+            types,
+            codes,
         )
         .and_then(|description| description.write(table))
         .map_err(storage)?;

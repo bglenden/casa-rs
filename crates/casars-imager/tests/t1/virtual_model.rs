@@ -113,6 +113,42 @@ fn a_virtual_model_holds_the_gridded_final_model() {
     }
 }
 
+/// Code 64 is LSRK in this table, not casacore's canonical Undefined.
+/// Saving the virtual model must use the mapped frequency frame.
+#[test]
+fn virtual_model_uses_the_measurement_set_frequency_mapping() {
+    use casa_ms::SubtableId;
+    use casa_tables::table_measures::{MeasureType, TableMeasDesc};
+
+    let observation = Observation::synthesise(&[("point", POINT)]);
+    let mut ms = MeasurementSet::open(observation.measurement_set()).unwrap();
+    let spw = ms.subtable_mut(SubtableId::SpectralWindow).unwrap();
+    for row in 0..spw.row_count() {
+        spw.cell_accessor_mut(row, "MEAS_FREQ_REF")
+            .unwrap()
+            .set(Value::Scalar(ScalarValue::Int32(64)))
+            .unwrap();
+    }
+    for column in ["CHAN_FREQ", "REF_FREQUENCY"] {
+        TableMeasDesc::new_variable_int(
+            column,
+            MeasureType::Frequency,
+            "MEAS_FREQ_REF",
+            vec!["LSRK".to_string(), "Undefined".to_string()],
+            vec![64, 9],
+        )
+        .unwrap()
+        .write(spw)
+        .unwrap();
+    }
+    ms.save().unwrap();
+    drop(ms);
+    let (_, products) = observation.image("mapped-virtual-model", controls("virtual"));
+    let (amplitude, _, _) = peak(&products.get(".model").pixels);
+    assert!(amplitude > 0.0, "the virtual model contains the source");
+    assert_eq!(entry(&observation).kind, VirtualModelKind::FtMachine);
+}
+
 /// A second run replaces the model (CASA clears the selection's models
 /// first), deleting the first run's grid; a model column run then clears
 /// it, as CASA's `addScrCols` does.

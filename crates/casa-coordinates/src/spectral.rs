@@ -93,7 +93,7 @@ impl SpectralCoordinate {
     ) -> Self {
         Self {
             frequency_ref,
-            undefined_frame: false,
+            undefined_frame: frequency_ref == FrequencyRef::Undefined,
             conversion: None,
             rest_frequency,
             rest_frequencies: vec![rest_frequency],
@@ -129,7 +129,7 @@ impl SpectralCoordinate {
         }
         Ok(Self {
             frequency_ref,
-            undefined_frame: false,
+            undefined_frame: frequency_ref == FrequencyRef::Undefined,
             conversion: None,
             rest_frequency,
             rest_frequencies: vec![rest_frequency],
@@ -238,7 +238,7 @@ impl SpectralCoordinate {
 
     /// Reconstructs a spectral coordinate from a serialized record.
     pub fn from_record(rec: &RecordValue) -> Result<Self, CoordinateError> {
-        let mut undefined_frame = false;
+        let undefined_frame;
         let frequency_ref = if let Some(name) =
             get_optional_string(rec, "frequency_ref").or_else(|| get_optional_string(rec, "system"))
         {
@@ -247,6 +247,7 @@ impl SpectralCoordinate {
                 CoordinateError::InvalidRecord(format!("invalid spectral frequency_ref: {name}"))
             })?
         } else if let Some(code) = get_optional_i32(rec, "frequency_ref") {
+            undefined_frame = code == FrequencyRef::Undefined.casacore_code();
             FrequencyRef::from_casacore_code(code).ok_or_else(|| {
                 CoordinateError::InvalidRecord(format!(
                     "invalid spectral frequency_ref code {code}"
@@ -320,17 +321,13 @@ impl SpectralCoordinate {
 }
 
 fn parse_frequency_ref_name(name: &str) -> Option<FrequencyRef> {
-    FrequencyRef::from_str(name).ok().or_else(|| {
-        if name.eq_ignore_ascii_case("Undefined") {
-            // CASA `specmode='cubedata'` serializes the spectral coordinate with
-            // `system="Undefined"` while still writing a valid frequency axis.
-            // Treat that form as a native-frequency axis so the coordinate is
-            // preserved on reopen instead of being dropped entirely.
-            Some(FrequencyRef::TOPO)
-        } else {
-            None
-        }
-    })
+    if name.eq_ignore_ascii_case("Undefined") {
+        // CASA `specmode='cubedata'` serializes a valid native-frequency
+        // axis with `system="Undefined"`; retain its established handling.
+        Some(FrequencyRef::TOPO)
+    } else {
+        FrequencyRef::from_str(name).ok()
+    }
 }
 
 impl Coordinate for SpectralCoordinate {
@@ -941,6 +938,29 @@ mod tests {
             coord.to_record().get("system"),
             Some(Value::Scalar(ScalarValue::String(system))) if system == "Undefined"
         ));
+        let mut numeric = record.clone();
+        numeric.remove("system");
+        numeric.upsert("frequency_ref", Value::Scalar(ScalarValue::Int32(64)));
+        let numeric = SpectralCoordinate::from_record(&numeric).unwrap();
+        assert_eq!(numeric.frequency_ref(), FrequencyRef::Undefined);
+        assert!(numeric.has_undefined_frame());
+        assert!(matches!(
+            numeric.to_record().get("system"),
+            Some(Value::Scalar(ScalarValue::String(system))) if system == "Undefined"
+        ));
+        let explicit = SpectralCoordinate::new(FrequencyRef::Undefined, 1.0e9, 1.0e6, 0.0, 0.0);
+        assert!(explicit.has_undefined_frame());
+        let tabulated = SpectralCoordinate::from_tabular(
+            FrequencyRef::Undefined,
+            vec![0.0, 1.0],
+            vec![1.0e9, 1.1e9],
+            1.0e9,
+            1.0e6,
+            0.0,
+            0.0,
+        )
+        .unwrap();
+        assert!(tabulated.has_undefined_frame());
         let declared = SpectralCoordinate::new(FrequencyRef::TOPO, 1.0e9, 1.0e6, 0.0, 0.0);
         assert!(!declared.has_undefined_frame());
         assert!(matches!(
