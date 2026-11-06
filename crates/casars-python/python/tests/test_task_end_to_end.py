@@ -266,7 +266,7 @@ def test_imhead_custom_records_from_python(image: Path) -> None:
     assert nested["label"] == "test"
     np.testing.assert_array_equal(nested["values"], np.array([1, 2], dtype=np.int64))
     np.testing.assert_array_equal(nested["matrix"], [[1, 2], [3, 4]])
-    np.testing.assert_array_equal(nested["mixed"], ["true", "1.500000", "x"])
+    np.testing.assert_array_equal(nested["mixed"], ["1.000000", "1.500000", "x"])
     np.testing.assert_array_equal(nested["cube"], [[[1, 2]], [[3, 4]]])
 
 
@@ -553,6 +553,43 @@ def test_imhead_numpy_scalars_match_casa_by_context(tmp_path: Path) -> None:
                 assert got.dtype == np.dtype(expected["value"]["dtype"])
                 values = [[z.real, z.imag] for z in got] if got.dtype.kind == "c" else got.tolist()
                 assert values == expected["value"]["values"]
+
+
+def test_imhead_ignored_elements_in_multidimensional_arrays_match_casa(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_crpix"
+    expected = json.loads((root / "ignored_matrix_expected.json").read_text())["cases"]
+    cases = {
+        "integers": [[1, np.array(2)], [np.array(3), 4]],
+        "floats": [[1.5, np.array(2.)], [np.array(3.), 4.5]],
+        "strings_before": [["a", np.array("b")], ["c", "d"]],
+        "strings_last": [["a", "b"], ["c", np.array("d")]],
+        "strings_trailing": [["a", np.array("b")], [np.array("c"), np.array("d")]],
+        "all_ignored": [[np.array(1), np.array(2)], [np.array(3), np.array(4)]],
+        "bool_scalars": [[np.bool_(True), False], [True, np.bool_(False)]],
+        "included_signed": [[np.int32(1), np.int32(2)], [np.int32(3), np.int32(4)]],
+        "integer_cube": [[[1, np.array(2), 3], [4, 5, 6]], [[7, 8, 9], [10, np.array(11), 12]]],
+        "string_cube": [[["a", np.array("b")], ["c", "d"]], [["e", "f"], ["g", np.array("h")]]],
+        "numeric_before_string": [[2, np.array(9)], ["a", np.array(9)]],
+        "float_bool_string": [[np.bool_(True), 1.25], [True, "a"]],
+        "single_row": [["a", np.array("b"), "c", np.array("d")]],
+        "single_column": [["a"], [np.array("b")], ["c"], [np.array("d")]],
+        "ordinary_promotion": [[True, 1.25], ["a", 2]],
+        "flat_float_then_string": [True, 1.5, "a"],
+        "flat_string_first": ["a", True, 1.5],
+        "flat_integer_then_string": [True, 2, "a"],
+    }
+    for name, value in cases.items():
+        image = tmp_path / f"{name}.im"
+        shutil.copytree(root / "normal.im", image)
+        assert tasks.imhead(str(image), mode="put", hdkey="custom", hdvalue={"value": value}) is None
+        result = tasks.imhead(str(image), mode="get", hdkey="custom")["value"]
+        assert result.dtype == np.dtype(expected[name]["dtype"]), name
+        assert result.shape == tuple(expected[name]["shape"]), name
+        assert result.tolist() == expected[name]["values"], name
 
 
 def test_imhead_large_integer_record_uses_casa_conversion(tmp_path: Path) -> None:

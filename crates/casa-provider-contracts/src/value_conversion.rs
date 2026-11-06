@@ -3,6 +3,8 @@
 
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
+mod multidimensional;
+
 /// Convert a Python variant integer as CASA does: retain its low 32 bits.
 ///
 /// CASA's scalar and integer-array variant conversions use signed 32-bit
@@ -294,6 +296,44 @@ pub fn casacore_value_to_casa(value: &Value) -> Result<CasaValue, &'static str> 
     convert(value, 0)
 }
 
+fn array_parameter_element(value: &ParameterValue) -> Option<ParameterValue> {
+    match value {
+        ParameterValue::ScalarArray(_) => None,
+        ParameterValue::NumpyScalar { dtype, value } => match dtype {
+            NumpyScalarType::Int8
+            | NumpyScalarType::Int16
+            | NumpyScalarType::Int32
+            | NumpyScalarType::Int64
+            | NumpyScalarType::Float32
+            | NumpyScalarType::Complex128 => Some(value.as_ref().clone()),
+            _ => None,
+        },
+        value => Some(value.clone()),
+    }
+}
+
+fn casa_array_string(value: &ParameterValue) -> String {
+    let float = |value: f64| {
+        if value.is_nan() {
+            if value.is_sign_negative() {
+                "-nan".to_string()
+            } else {
+                "nan".to_string()
+            }
+        } else {
+            format!("{value:.6}")
+        }
+    };
+    match value {
+        ParameterValue::Bool(value) => value.to_string(),
+        ParameterValue::Integer(value) => value.to_string(),
+        ParameterValue::Float(value) => float(*value),
+        ParameterValue::Complex([real, imag]) => format!("({},{})", float(real.0), float(imag.0)),
+        ParameterValue::String(value) => value.clone(),
+        _ => unreachable!("only scalar array elements are formatted"),
+    }
+}
+
 /// Convert a rectangular parameter array into a casacore array, using CASA's numeric
 /// promotion from booleans to 32-bit integers to doubles and complex values. Empty arrays have
 /// boolean element type, as in CASA's Python variant conversion.
@@ -346,10 +386,8 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
         let mut flat = Vec::new();
         let mut shape = Vec::new();
         flatten(values, 0, &mut shape, &mut None, &mut flat)?;
-        let converted = parameter_array_to_casa(&flat)?;
-        if converted.shape().iter().product::<usize>() != flat.len() {
-            return Err("nested arrays with ignored scalar elements are unsupported (#977)");
-        }
+        let normalized = multidimensional::convert(values, &shape)?;
+        let converted = parameter_array_to_casa(&normalized)?;
         return match converted {
             ArrayValue::Bool(v) => Ok(ArrayValue::Bool(
                 v.into_shape_with_order(shape).expect("rectangular array"),
@@ -369,30 +407,8 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
             _ => unreachable!("parameter arrays use supported primitive types"),
         };
     }
-    if values.iter().any(|value| {
-        matches!(
-            value,
-            ParameterValue::NumpyScalar { .. } | ParameterValue::ScalarArray(_)
-        )
-    }) {
-        let converted = values
-            .iter()
-            .filter_map(|value| match value {
-                ParameterValue::ScalarArray(_) => None,
-                ParameterValue::NumpyScalar { dtype, value } => match dtype {
-                    NumpyScalarType::Int8
-                    | NumpyScalarType::Int16
-                    | NumpyScalarType::Int32
-                    | NumpyScalarType::Int64
-                    | NumpyScalarType::Float32
-                    | NumpyScalarType::Complex128 => Some(value.as_ref().clone()),
-                    _ => None,
-                },
-                value => Some(value.clone()),
-            })
-            .collect::<Vec<_>>();
-        return parameter_array_to_casa(&converted);
-    }
+    let normalized = multidimensional::flat(values)?;
+    let values = normalized.as_slice();
     let mut rank = 0u8;
     for value in values {
         rank = rank.max(match value {
@@ -457,37 +473,7 @@ pub fn parameter_array_to_casa(values: &[ParameterValue]) -> Result<ArrayValue, 
             // casatools converts scalar elements to strings when any element
             // is a string, using C++'s lower-case booleans and fixed six
             // decimal places for doubles.
-            let strings = values
-                .iter()
-                .map(|value| match value {
-                    ParameterValue::Bool(value) => value.to_string(),
-                    ParameterValue::Integer(value) => value.to_string(),
-                    ParameterValue::Float(value) if value.is_nan() => if value.is_sign_negative() {
-                        "-nan"
-                    } else {
-                        "nan"
-                    }
-                    .to_string(),
-                    ParameterValue::Float(value) => format!("{value:.6}"),
-                    ParameterValue::Complex([real, imag]) => {
-                        let component = |value: f64| {
-                            if value.is_nan() {
-                                if value.is_sign_negative() {
-                                    "-nan"
-                                } else {
-                                    "nan"
-                                }
-                                .to_string()
-                            } else {
-                                format!("{value:.6}")
-                            }
-                        };
-                        format!("({},{})", component(real.0), component(imag.0))
-                    }
-                    ParameterValue::String(value) => value.clone(),
-                    _ => unreachable!("nested values were rejected"),
-                })
-                .collect();
+            let strings = values.iter().map(casa_array_string).collect();
             Ok(ArrayValue::from_string_vec(strings))
         }
     }
