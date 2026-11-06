@@ -1,0 +1,1008 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "deg",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -0.016666666666666666,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": "deg",
+      "history": [
+        "Modified cunit1 from \"'\" to \"deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cunit1\", hdvalue=\"deg\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cunit1",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "return": null,
+      "value": "deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          " deg",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -0.016666666666666666,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": " deg",
+      "history": [
+        "Modified cunit1 from \"'\" to \" deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cunit1\", hdvalue=\" deg\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cunit1",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "return": null,
+      "value": " deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "deg ",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -0.016666666666666666,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": "deg ",
+      "history": [
+        "Modified cunit1 from \"'\" to \"deg \"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cunit1\", hdvalue=\"deg \", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cunit1",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "return": null,
+      "value": "deg "
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "rad",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          0.0002908882086657216,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": "rad",
+      "history": [
+        "Modified cunit2 from \"'\" to \"rad\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cunit2\", hdvalue=\"rad\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cunit2",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "return": null,
+      "value": "rad"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "arcsec",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -60.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": "arcsec",
+      "history": [
+        "Modified cunit1 from \"'\" to \"arcsec\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cunit1\", hdvalue=\"arcsec\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cunit1",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "return": null,
+      "value": "arcsec"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Units are not compatible dimensionally",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "image": "normal",
+      "key": "cunit1",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "value": "Hz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Unit::check Illegal unit string 'bad'",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "image": "normal",
+      "key": "cunit1",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "value": "bad"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Units are not compatible dimensionally",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "image": "normal",
+      "key": "cunit1",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "value": ""
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: A polarization axis cannot have a unit.\n... thrown by void casa::ImageMetaDataRW<T>::_setCoordinateValue(const casacore::String&, const casacore::ValueHolder&) [with T = float]",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "image": "normal",
+      "key": "cunit3",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "value": "deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Units are not compatible dimensionally",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "image": "normal",
+      "key": "cunit4",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "value": "km/s"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": "Hz",
+      "history": [
+        "Modified cunit4 from \"Hz\" to \"Hz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cunit4\", hdvalue=\"Hz\", verbose=False)"
+      ],
+      "image": "normal",
+      "key": "cunit4",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "return": null,
+      "value": "Hz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "error": "Exception: cunit1value must be a string.\n... thrown by casacore::String casa::ImageMetaDataRW<T>::_getString(const casacore::String&, const casacore::ValueHolder&) const [with T = float]",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "image": "normal",
+      "key": "cunit1",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "value": 42
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "'",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -1.0,
+          1.0,
+          1.0,
+          1000.0000000000002
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0000007
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "frequencies": [
+        1000000000.0,
+        1400000000.0000002,
+        1600000000.0
+      ],
+      "get": "Hz",
+      "history": [
+        "Modified cunit4 from \"GHz\" to \"Hz\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cunit4\", hdvalue=\"Hz\", verbose=False)"
+      ],
+      "image": "ghz",
+      "key": "cunit4",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1400000000.0000002
+      },
+      "return": null,
+      "value": "Hz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "linear1",
+          "linear2"
+        ],
+        "axisunits": [
+          "m",
+          "km"
+        ],
+        "incr": [
+          1000.0,
+          1.0
+        ],
+        "refpix": [
+          2.0,
+          2.0
+        ],
+        "refval": [
+          0.0,
+          0.0
+        ],
+        "shape": [
+          4,
+          4
+        ]
+      },
+      "get": "m",
+      "history": [
+        "Modified cunit1 from \"km\" to \"m\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cunit1\", hdvalue=\"m\", verbose=False)"
+      ],
+      "image": "linear",
+      "key": "cunit1",
+      "return": null,
+      "value": "m"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "linear1",
+          "linear2"
+        ],
+        "axisunits": [
+          "km",
+          "km"
+        ],
+        "incr": [
+          1.0,
+          1.0
+        ],
+        "refpix": [
+          2.0,
+          2.0
+        ],
+        "refval": [
+          0.0,
+          0.0
+        ],
+        "shape": [
+          4,
+          4
+        ]
+      },
+      "error": "Units are not compatible dimensionally",
+      "image": "linear",
+      "key": "cunit1",
+      "value": "Hz"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "Frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "deg",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -0.016666666666666666,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "get": "deg",
+      "history": [
+        "Modified cunit3 from \"'\" to \"deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cunit3\", hdvalue=\"deg\", verbose=False)"
+      ],
+      "image": "transposed",
+      "key": "cunit3",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "return": null,
+      "value": "deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Stokes",
+          "Frequency",
+          "Right Ascension",
+          "Declination"
+        ],
+        "axisunits": [
+          "",
+          "Hz",
+          "'",
+          "'"
+        ],
+        "incr": [
+          1.0,
+          1000.0,
+          -1.0,
+          1.0
+        ],
+        "refpix": [
+          0.0,
+          1.0,
+          2.0,
+          2.0
+        ],
+        "refval": [
+          1.0,
+          1415000000.0,
+          0.0,
+          0.0
+        ],
+        "shape": [
+          1,
+          2,
+          4,
+          4
+        ]
+      },
+      "error": "Exception: A polarization axis cannot have a unit.\n... thrown by void casa::ImageMetaDataRW<T>::_setCoordinateValue(const casacore::String&, const casacore::ValueHolder&) [with T = float]",
+      "frequencies": [
+        1420405751.7860003
+      ],
+      "image": "transposed",
+      "key": "cunit1",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1420405751.7860003
+      },
+      "value": "deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "deg",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -0.016666666666666666,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "frequencies": [
+        1000000000.0,
+        1400000000.0,
+        1600000000.0
+      ],
+      "get": "deg",
+      "history": [
+        "Modified cunit1 from \"'\" to \"deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cunit1\", hdvalue=\"deg\", verbose=False)"
+      ],
+      "image": "selector_lo",
+      "key": "cunit1",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1400000000.0
+      },
+      "return": null,
+      "value": "deg"
+    },
+    {
+      "after": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Stokes",
+          "Frequency"
+        ],
+        "axisunits": [
+          "deg",
+          "'",
+          "",
+          "Hz"
+        ],
+        "incr": [
+          -0.016666666666666666,
+          1.0,
+          1.0,
+          1000.0
+        ],
+        "refpix": [
+          2.0,
+          2.0,
+          0.0,
+          1.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1.0,
+          1415000000.0
+        ],
+        "shape": [
+          4,
+          4,
+          1,
+          2
+        ]
+      },
+      "frequencies": [
+        1000000000.0,
+        1400000000.0,
+        1600000000.0
+      ],
+      "get": "deg",
+      "history": [
+        "Modified cunit1 from \"'\" to \"deg\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"cunit1\", hdvalue=\"deg\", verbose=False)"
+      ],
+      "image": "selector_hi",
+      "key": "cunit1",
+      "restfreq": {
+        "unit": "Hz",
+        "value": 1600000000.0
+      },
+      "return": null,
+      "value": "deg"
+    }
+  ]
+}

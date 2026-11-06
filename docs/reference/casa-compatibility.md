@@ -25,7 +25,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | fluxscale | fluxscale | yes | 15 | 15 | 0 | 7 | 3 | 0 |
 | gaincal | gaincal | yes | 38 | 38 | 0 | 12 | 4 | 0 |
 | gencal | gencal | yes | 14 | 14 | 0 | 8 | 4 | 0 |
-| imhead | imhead | yes | 5 | 5 | 0 | 1 | 0 | 0 |
+| imhead | imhead | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | immath | immath | yes | 15 | 15 | 0 | 12 | 1 | 0 |
 | immoments | immoments | yes | 12 | 12 | 0 | 6 | 1 | 0 |
 | impbcor | impbcor | yes | 12 | 12 | 0 | 6 | 0 | 0 |
@@ -174,7 +174,6 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the imagename parameter must be a path that exists ('' does not exist)
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #977: `verbose`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 5, in CASA's order: yes
 - Defaults that differ: none

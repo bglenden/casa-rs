@@ -21,7 +21,7 @@ use migration::validate_migrations;
 pub use migration::{MigrationStep, MigrationTransform, SurfaceMigration};
 pub use migration_list::ListElement;
 
-pub use casa_signature::{UnimplementedForms, UnimplementedParameter, python_repr};
+pub use casa_signature::{UnimplementedForms, UnimplementedParameter, python_float, python_repr};
 
 /// Current schema version for the catalog and surface-definition model.
 pub const PARAMETER_CATALOG_SCHEMA_VERSION: u32 = 1;
@@ -90,22 +90,85 @@ impl ParameterConceptRef {
     }
 }
 
-/// JSON/TOML-compatible typed value used before provider adaptation.
+/// Element type for an empty array passed through a task parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EmptyArrayType {
+    Bool,
+    Integer,
+    Float,
+    Complex,
+    String,
+}
+
+/// A NumPy scalar type whose conversion can depend on its surrounding value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NumpyScalarType {
+    Bool,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    #[serde(rename = "uint8")]
+    UInt8,
+    #[serde(rename = "uint16")]
+    UInt16,
+    #[serde(rename = "uint32")]
+    UInt32,
+    #[serde(rename = "uint64")]
+    UInt64,
+    Float32,
+    Complex64,
+    Complex128,
+}
+
+/// Typed parameter value used before provider adaptation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum ParameterValue {
     Bool(bool),
     Integer(i64),
-    Float(f64),
+    Float(
+        #[serde(with = "parameter_float_serde")]
+        #[schemars(with = "crate::CasaFloat")]
+        f64,
+    ),
+    /// A complex scalar, with real and imaginary components.
+    Complex([crate::CasaFloat; 2]),
+    /// An empty NumPy array, retaining its dimensions and element type.
+    EmptyArray {
+        dtype: EmptyArrayType,
+        shape: Vec<usize>,
+    },
+    /// A zero-dimensional NumPy array, retaining its scalar value.
+    ScalarArray(Box<ParameterValue>),
+    /// A NumPy scalar, including its native dtype and scalar value.
+    NumpyScalar {
+        dtype: NumpyScalarType,
+        value: Box<ParameterValue>,
+    },
     String(String),
     Array(Vec<ParameterValue>),
     Table(BTreeMap<String, ParameterValue>),
 }
 
+mod parameter_float_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &f64, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::CasaFloat(*value).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+        crate::CasaFloat::deserialize(deserializer).map(|value| value.0)
+    }
+}
+
 impl ParameterValue {
     /// The value as plain JSON, as requests and profiles spell it: `"none"`,
-    /// `512`, `["0.5arcsec", "0.5arcsec"]`. A non-finite float, which
-    /// normalization never admits, becomes `null`.
+    /// `512`, `["0.5arcsec", "0.5arcsec"]`. Non-finite floats become
+    /// `null`; use typed transport when their identity must be preserved.
     #[must_use]
     pub fn to_plain_json(&self) -> serde_json::Value {
         use serde_json::Value;
@@ -115,6 +178,12 @@ impl ParameterValue {
             Self::Float(value) => {
                 serde_json::Number::from_f64(*value).map_or(Value::Null, Value::Number)
             }
+            Self::Complex(value) => {
+                serde_json::to_value(value).expect("complex components are serializable")
+            }
+            Self::EmptyArray { .. } => Value::Array(Vec::new()),
+            Self::ScalarArray(value) => value.to_plain_json(),
+            Self::NumpyScalar { value, .. } => value.to_plain_json(),
             Self::String(value) => Value::String(value.clone()),
             Self::Array(values) => Value::Array(values.iter().map(Self::to_plain_json).collect()),
             Self::Table(values) => Value::Object(
@@ -123,6 +192,31 @@ impl ParameterValue {
                     .map(|(name, value)| (name.clone(), value.to_plain_json()))
                     .collect(),
             ),
+        }
+    }
+
+    /// Whether this value requires typed rather than plain JSON transport.
+    pub fn requires_typed_transport(&self) -> bool {
+        match self {
+            Self::Complex(_)
+            | Self::EmptyArray { .. }
+            | Self::ScalarArray(_)
+            | Self::NumpyScalar { .. } => true,
+            Self::Float(value) if !value.is_finite() => true,
+            Self::Array(values) => values.iter().any(Self::requires_typed_transport),
+            Self::Table(values) => values.values().any(Self::requires_typed_transport),
+            _ => false,
+        }
+    }
+
+    /// Maximum array/record nesting, for bounding typed transport depth.
+    pub fn nesting_depth(&self) -> usize {
+        match self {
+            Self::Array(values) => 1 + values.iter().map(Self::nesting_depth).max().unwrap_or(0),
+            Self::Table(values) => 1 + values.values().map(Self::nesting_depth).max().unwrap_or(0),
+            Self::ScalarArray(value) => 1 + value.nesting_depth(),
+            Self::NumpyScalar { value, .. } => 1 + value.nesting_depth(),
+            _ => 0,
         }
     }
 
@@ -222,6 +316,8 @@ pub enum UnitDimension {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ParameterType {
+    /// A CASA variant: any finite scalar, list, or string-keyed record.
+    Variant,
     Bool,
     Integer,
     Float,
@@ -419,7 +515,15 @@ fn collect_selector_capabilities(
                 collect_selector_capabilities(grammar, value, used);
             }
         }
-        ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) => {}
+        ParameterValue::ScalarArray(value) => collect_selector_capabilities(grammar, value, used),
+        ParameterValue::NumpyScalar { value, .. } => {
+            collect_selector_capabilities(grammar, value, used)
+        }
+        ParameterValue::Bool(_)
+        | ParameterValue::Integer(_)
+        | ParameterValue::Float(_)
+        | ParameterValue::Complex(_)
+        | ParameterValue::EmptyArray { .. } => {}
     }
 }
 
@@ -1533,6 +1637,7 @@ pub fn validate_parameter_value(
     domain: &ParameterType,
 ) -> Result<(), String> {
     match (value, domain) {
+        (value, ParameterType::Variant) => validate_variant_value(value),
         (ParameterValue::Bool(_), ParameterType::Bool)
         | (ParameterValue::Integer(_), ParameterType::Integer)
         | (ParameterValue::String(_), ParameterType::String)
@@ -1617,6 +1722,55 @@ pub fn validate_parameter_value(
     }
 }
 
+fn validate_variant_value(value: &ParameterValue) -> Result<(), String> {
+    // Each typed array or record introduces two JSON containers. Leave room
+    // for request and profile envelopes under serde_json's recursion limit.
+    if value.requires_typed_transport() && value.nesting_depth() > 48 {
+        return Err("typed values nested beyond 48 levels are unsupported (#977)".into());
+    }
+    fn validate(value: &ParameterValue) -> Result<(), String> {
+        match value {
+            ParameterValue::NumpyScalar { dtype, value } => {
+                use NumpyScalarType as N;
+                let fits_f32 = |value: f64| value.is_nan() || f64::from(value as f32) == value;
+                let valid = match (dtype, value.as_ref()) {
+                    (N::Bool, ParameterValue::Bool(_)) => true,
+                    (N::Int8, ParameterValue::Integer(v)) => i8::try_from(*v).is_ok(),
+                    (N::Int16, ParameterValue::Integer(v)) => i16::try_from(*v).is_ok(),
+                    (N::Int32, ParameterValue::Integer(v)) => i32::try_from(*v).is_ok(),
+                    (N::Int64, ParameterValue::Integer(_)) => true,
+                    (N::UInt8, ParameterValue::Integer(v)) => u8::try_from(*v).is_ok(),
+                    (N::UInt16, ParameterValue::Integer(v)) => u16::try_from(*v).is_ok(),
+                    (N::UInt32, ParameterValue::Integer(v)) => u32::try_from(*v).is_ok(),
+                    (N::UInt64, ParameterValue::Integer(v)) => *v >= 0,
+                    (N::Float32, ParameterValue::Float(value)) => fits_f32(*value),
+                    (N::Complex64, ParameterValue::Complex(value)) => value.iter().all(|part| fits_f32(part.0)),
+                    (N::Complex128, ParameterValue::Complex(_)) => true,
+                    _ => false,
+                };
+                if valid { Ok(()) } else { Err("NumPy scalar dtype and value do not match (#977)".into()) }
+            }
+            ParameterValue::ScalarArray(value)
+                if !matches!(value.as_ref(), ParameterValue::Bool(_) | ParameterValue::Integer(_) | ParameterValue::Float(_) | ParameterValue::Complex(_) | ParameterValue::String(_)) =>
+            {
+                Err("zero-dimensional array must contain a scalar (#977)".into())
+            }
+            ParameterValue::EmptyArray { shape, .. }
+                if shape.is_empty() || shape.len() > 32 || !shape.contains(&0) || shape.iter().any(|&size| i32::try_from(size).is_err()) =>
+            {
+                Err(
+                    "empty array must have 1 to 32 dimensions, 32-bit dimension sizes, and a zero dimension (#977)"
+                        .into(),
+                )
+            }
+            ParameterValue::Array(values) => values.iter().try_for_each(validate),
+            ParameterValue::Table(values) => values.values().try_for_each(validate),
+            _ => Ok(()),
+        }
+    }
+    validate(value)
+}
+
 fn validate_parameter_domain(domain: &ParameterType) -> Result<(), String> {
     match domain {
         ParameterType::Quantity {
@@ -1633,7 +1787,8 @@ fn validate_parameter_domain(domain: &ParameterType) -> Result<(), String> {
             }
             Ok(())
         }
-        ParameterType::Bool
+        ParameterType::Variant
+        | ParameterType::Bool
         | ParameterType::Integer
         | ParameterType::Float
         | ParameterType::String
@@ -1919,7 +2074,11 @@ fn numeric_values(value: &ParameterValue) -> Vec<f64> {
         ParameterValue::String(value) => quantity_number(value).into_iter().collect(),
         ParameterValue::Array(values) => values.iter().flat_map(numeric_values).collect(),
         ParameterValue::Table(values) => values.values().flat_map(numeric_values).collect(),
-        ParameterValue::Bool(_) => Vec::new(),
+        ParameterValue::ScalarArray(value) => numeric_values(value),
+        ParameterValue::NumpyScalar { value, .. } => numeric_values(value),
+        ParameterValue::Bool(_)
+        | ParameterValue::Complex(_)
+        | ParameterValue::EmptyArray { .. } => Vec::new(),
     }
 }
 

@@ -1,0 +1,402 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "get_error": "Unhandled data type Array<Int> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = [1, 2, 3]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[1, 2, 3], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            1,
+            2,
+            3
+          ]
+        }
+      ],
+      "stored": {
+        "data": [
+          1,
+          2,
+          3
+        ],
+        "kind": "i"
+      }
+    },
+    {
+      "get_error": "Unhandled data type Array<double> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = [1, 2.5]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[1.0, 2.5], verbose=False)"
+          ],
+          "mode": "put",
+          "value": [
+            1.0,
+            2.5
+          ]
+        }
+      ],
+      "stored": {
+        "data": [
+          1.0,
+          2.5
+        ],
+        "kind": "f"
+      }
+    },
+    {
+      "get_error": "Unhandled data type Array<Bool> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = [1, 0]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[True, False], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            true,
+            false
+          ]
+        }
+      ],
+      "stored": {
+        "data": [
+          true,
+          false
+        ],
+        "kind": "b"
+      }
+    },
+    {
+      "get_error": "Unhandled data type Array<String> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = [x, y]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=['x', 'y'], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            "x",
+            "y"
+          ]
+        }
+      ],
+      "stored": {
+        "data": [
+          "x",
+          "y"
+        ],
+        "kind": "U"
+      }
+    },
+    {
+      "get_error": "Unhandled data type Array<Bool> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = []",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[], verbose=False)"
+          ],
+          "mode": "add",
+          "value": []
+        }
+      ],
+      "stored": {
+        "data": [],
+        "kind": "b"
+      }
+    },
+    {
+      "get_error": "Unhandled data type Array<double> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = [1, 2.5]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[1, 2.5], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            1,
+            2.5
+          ]
+        }
+      ],
+      "stored": {
+        "data": [
+          1.0,
+          2.5
+        ],
+        "kind": "f"
+      }
+    },
+    {
+      "get_error": "Unhandled data type Array<Int> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = [1, 2]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[True, 2], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            true,
+            2
+          ]
+        }
+      ],
+      "stored": {
+        "data": [
+          1,
+          2
+        ],
+        "kind": "i"
+      }
+    },
+    {
+      "get_error": "Unhandled data type Array<double> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = [1, 1.5]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[True, 1.5], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            true,
+            1.5
+          ]
+        }
+      ],
+      "stored": {
+        "data": [
+          1.0,
+          1.5
+        ],
+        "kind": "f"
+      }
+    },
+    {
+      "get_error": "Unhandled data type Array<double> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = [2.14748e+09, 1]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[2147483648, 1.0], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            2147483648,
+            1.0
+          ]
+        }
+      ],
+      "stored": {
+        "data": [
+          2147483648.0,
+          1.0
+        ],
+        "kind": "f"
+      }
+    },
+    {
+      "get_error": "Unhandled data type Array<double> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = [1.23457, 1.23457e+08, 1e-09]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[1.234567890123456, 123456789.1234, 1e-09], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            1.234567890123456,
+            123456789.1234,
+            1e-09
+          ]
+        }
+      ],
+      "stored": {
+        "data": [
+          1.234567890123456,
+          123456789.1234,
+          1e-09
+        ],
+        "kind": "f"
+      }
+    },
+    {
+      "get_error": "Unhandled data type Array<Int> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = [1, 2]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[1, 2], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            1,
+            2
+          ]
+        },
+        {
+          "history": [
+            "Added custom = [3, 4, 5]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[3, 4, 5], verbose=False)"
+          ],
+          "mode": "put",
+          "value": [
+            3,
+            4,
+            5
+          ]
+        }
+      ],
+      "stored": {
+        "data": [
+          3,
+          4,
+          5
+        ],
+        "kind": "i"
+      }
+    },
+    {
+      "get_error": "Unhandled data type Array<Int> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = [1, 2]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[1, 2], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            1,
+            2
+          ]
+        },
+        {
+          "error": "TableRecordRep::defineDataField - incorrect data type used for field custom",
+          "history": [],
+          "mode": "put",
+          "value": [
+            1.0,
+            2.0
+          ]
+        }
+      ],
+      "stored": {
+        "data": [
+          1,
+          2
+        ],
+        "kind": "i"
+      }
+    },
+    {
+      "get_error": "Unhandled data type Array<Int> for user defined type. Send us a bug report",
+      "operations": [
+        {
+          "history": [
+            "Added custom = [1, 2]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[1, 2], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            1,
+            2
+          ]
+        },
+        {
+          "error": "Keyword custom already exists so cannot be added.",
+          "history": [],
+          "mode": "add",
+          "value": [
+            3,
+            4
+          ]
+        }
+      ],
+      "stored": {
+        "data": [
+          1,
+          2
+        ],
+        "kind": "i"
+      }
+    },
+    {
+      "operations": [
+        {
+          "history": [
+            "Added custom = [1, 2]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[1, 2], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            1,
+            2
+          ]
+        },
+        {
+          "history": [
+            "Removed user-defined keyword custom",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"custom\", hdvalue=[1, 2], verbose=False)"
+          ],
+          "mode": "del",
+          "value": [
+            1,
+            2
+          ]
+        }
+      ]
+    },
+    {
+      "operations": [
+        {
+          "history": [
+            "Added custom = [1, 2]",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"custom\", hdvalue=[1, 2], verbose=False)"
+          ],
+          "mode": "add",
+          "value": [
+            1,
+            2
+          ]
+        },
+        {
+          "history": [
+            "Removed user-defined keyword custom",
+            "version: 6.7.6-14 CASAtools:v1.0.0",
+            "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"custom\", hdvalue={'ignored': 'yes'}, verbose=False)"
+          ],
+          "mode": "del",
+          "value": {
+            "ignored": "yes"
+          }
+        }
+      ]
+    }
+  ]
+}

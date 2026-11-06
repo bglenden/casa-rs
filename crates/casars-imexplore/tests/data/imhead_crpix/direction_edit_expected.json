@@ -1,0 +1,862 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "EQUINOX": 2000.0,
+        "RADESYS": "FK5"
+      },
+      "get": "J2000",
+      "history": [
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"J2000\", verbose=False)"
+      ],
+      "image": "normal",
+      "inverse": [
+        [
+          -7.562839243746566e-13,
+          -7.567280135845067e-13
+        ],
+        [
+          2.4999999999983227,
+          1.0000000000007052
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "00:00:08.000 -00.02.00.000 I 1.415e+09Hz",
+      "value": "J2000",
+      "world": [
+        [
+          0.0005817765486052144,
+          -0.0005817764501500444
+        ],
+        [
+          6.283039863068588,
+          -0.0002908882127680567
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "GLON-SIN",
+        "CTYPE2": "GLAT-SIN"
+      },
+      "get": "GALACTIC",
+      "history": [
+        "Modified equinox from \"J2000\" to \"GALACTIC\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"GALACTIC\", verbose=False)"
+      ],
+      "image": "normal",
+      "inverse": [
+        [
+          1.8886687547237102e-08,
+          -1.6050230300379553e-07
+        ],
+        [
+          2.50000001870405,
+          0.9999998392448777
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "266.457200 -28.925079 I 1.415e+09Hz",
+      "value": "GALACTIC",
+      "world": [
+        [
+          -1.6326298553225678,
+          -0.5048378709991462
+        ],
+        [
+          -1.6333463831134356,
+          -0.5053071890229062
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "RADESYS": "ICRS"
+      },
+      "get": "ICRS",
+      "history": [
+        "Modified equinox from \"J2000\" to \"ICRS\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"ICRS\", verbose=False)"
+      ],
+      "image": "normal",
+      "inverse": [
+        [
+          -7.558398351648066e-13,
+          -7.576161920042068e-13
+        ],
+        [
+          2.4999999999983227,
+          1.0000000000007052
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "00:00:08.001 -00.02.00.017 I 1.415e+09Hz",
+      "value": "ICRS",
+      "world": [
+        [
+          0.0005818473121934956,
+          -0.0005818570315439897
+        ],
+        [
+          -0.00014537333782424134,
+          -0.00029096877013257263
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "EQUINOX": 1950.0,
+        "RADESYS": "FK4"
+      },
+      "get": "B1950",
+      "history": [
+        "Modified equinox from \"J2000\" to \"B1950\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"B1950\", verbose=False)"
+      ],
+      "image": "normal",
+      "inverse": [
+        [
+          -1.0760281554667017e-12,
+          6.865263912914088e-11
+        ],
+        [
+          2.4999999999990137,
+          1.0000000000343348
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "00:02:41.774 +00.14.42.053 I 1.415e+09Hz",
+      "value": "B1950",
+      "world": [
+        [
+          0.011764514059209094,
+          0.0042763149036547585
+        ],
+        [
+          0.011037295745470714,
+          0.004567223183006401
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "ELON-SIN",
+        "CTYPE2": "ELAT-SIN"
+      },
+      "get": "ECLIPTIC",
+      "history": [
+        "Modified equinox from \"J2000\" to \"ECLIPTIC\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"ECLIPTIC\", verbose=False)"
+      ],
+      "image": "normal",
+      "inverse": [
+        [
+          -7.558398351648066e-13,
+          -7.576161920042068e-13
+        ],
+        [
+          2.4999999999983227,
+          1.0000000000007052
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "0.043842 -0.017323 I 1.415e+09Hz",
+      "value": "ECLIPTIC",
+      "world": [
+        [
+          0.0007651869053574657,
+          -0.000302352062968903
+        ],
+        [
+          -1.773367335757328e-05,
+          -0.00032473906139430007
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "SLON-SIN",
+        "CTYPE2": "SLAT-SIN"
+      },
+      "get": "SUPERGAL",
+      "history": [
+        "Modified equinox from \"J2000\" to \"SUPERGAL\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"SUPERGAL\", verbose=False)"
+      ],
+      "image": "normal",
+      "inverse": [
+        [
+          -2.3773632129575617e-07,
+          -6.091104420846705e-08
+        ],
+        [
+          2.4999997622505545,
+          0.9999999389187271
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "42.400680 59.538705 I 1.415e+09Hz",
+      "value": "SUPERGAL",
+      "world": [
+        [
+          0.7400314753351654,
+          1.0391464367801613
+        ],
+        [
+          0.7387801675973034,
+          1.0386873710013351
+        ]
+      ]
+    },
+    {
+      "fits_error": true,
+      "get": "J2000",
+      "history": [
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"J2000\", verbose=False)"
+      ],
+      "image": "transposed",
+      "inverse": [
+        [
+          -7.562839243746566e-13,
+          -7.567280135845067e-13
+        ],
+        [
+          2.4999999999983227,
+          1.0000000000007052
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "I 1.415e+09Hz 00:00:08.000 -00.02.00.000",
+      "value": "J2000",
+      "world": [
+        [
+          0.0005817765486052144,
+          -0.0005817764501500444
+        ],
+        [
+          6.283039863068588,
+          -0.0002908882127680567
+        ]
+      ]
+    },
+    {
+      "fits_error": true,
+      "get": "GALACTIC",
+      "history": [
+        "Modified equinox from \"J2000\" to \"GALACTIC\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"GALACTIC\", verbose=False)"
+      ],
+      "image": "transposed",
+      "inverse": [
+        [
+          1.8886687547237102e-08,
+          -1.6050230300379553e-07
+        ],
+        [
+          2.50000001870405,
+          0.9999998392448777
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "I 1.415e+09Hz 266.457200 -28.925079",
+      "value": "GALACTIC",
+      "world": [
+        [
+          -1.6326298553225678,
+          -0.5048378709991462
+        ],
+        [
+          -1.6333463831134356,
+          -0.5053071890229062
+        ]
+      ]
+    },
+    {
+      "fits_error": true,
+      "get": "ICRS",
+      "history": [
+        "Modified equinox from \"J2000\" to \"ICRS\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"ICRS\", verbose=False)"
+      ],
+      "image": "transposed",
+      "inverse": [
+        [
+          -7.558398351648066e-13,
+          -7.576161920042068e-13
+        ],
+        [
+          2.4999999999983227,
+          1.0000000000007052
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "I 1.415e+09Hz 00:00:08.001 -00.02.00.017",
+      "value": "ICRS",
+      "world": [
+        [
+          0.0005818473121934956,
+          -0.0005818570315439897
+        ],
+        [
+          -0.00014537333782424134,
+          -0.00029096877013257263
+        ]
+      ]
+    },
+    {
+      "fits_error": true,
+      "get": "B1950",
+      "history": [
+        "Modified equinox from \"J2000\" to \"B1950\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"B1950\", verbose=False)"
+      ],
+      "image": "transposed",
+      "inverse": [
+        [
+          -1.0760281554667017e-12,
+          6.865263912914088e-11
+        ],
+        [
+          2.4999999999990137,
+          1.0000000000343348
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "I 1.415e+09Hz 00:02:41.774 +00.14.42.053",
+      "value": "B1950",
+      "world": [
+        [
+          0.011764514059209094,
+          0.0042763149036547585
+        ],
+        [
+          0.011037295745470714,
+          0.004567223183006401
+        ]
+      ]
+    },
+    {
+      "fits_error": true,
+      "get": "ECLIPTIC",
+      "history": [
+        "Modified equinox from \"J2000\" to \"ECLIPTIC\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"ECLIPTIC\", verbose=False)"
+      ],
+      "image": "transposed",
+      "inverse": [
+        [
+          -7.558398351648066e-13,
+          -7.576161920042068e-13
+        ],
+        [
+          2.4999999999983227,
+          1.0000000000007052
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "I 1.415e+09Hz 0.043842 -0.017323",
+      "value": "ECLIPTIC",
+      "world": [
+        [
+          0.0007651869053574657,
+          -0.000302352062968903
+        ],
+        [
+          -1.773367335757328e-05,
+          -0.00032473906139430007
+        ]
+      ]
+    },
+    {
+      "fits_error": true,
+      "get": "SUPERGAL",
+      "history": [
+        "Modified equinox from \"J2000\" to \"SUPERGAL\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"SUPERGAL\", verbose=False)"
+      ],
+      "image": "transposed",
+      "inverse": [
+        [
+          -2.3773632129575617e-07,
+          -6.091104420846705e-08
+        ],
+        [
+          2.4999997622505545,
+          0.9999999389187271
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "I 1.415e+09Hz 42.400680 59.538705",
+      "value": "SUPERGAL",
+      "world": [
+        [
+          0.7400314753351654,
+          1.0391464367801613
+        ],
+        [
+          0.7387801675973034,
+          1.0386873710013351
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "EQUINOX": 2000.0,
+        "RADESYS": "FK5"
+      },
+      "get": "J2000",
+      "history": [
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"J2000\", verbose=False)"
+      ],
+      "image": "projection_pointing",
+      "inverse": [
+        [
+          -9.037215420448774e-13,
+          -6.10178574333986e-13
+        ],
+        [
+          2.499999999999827,
+          0.9999999999997506
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "11:20:21.864 -60.00.43.810 I 1.415e+09Hz",
+      "value": "J2000",
+      "world": [
+        [
+          2.968649756772355,
+          -1.04740994897851
+        ],
+        [
+          2.967098721948413,
+          -1.0475221895038203
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "GLON-SIN",
+        "CTYPE2": "GLAT-SIN"
+      },
+      "get": "GALACTIC",
+      "history": [
+        "Modified equinox from \"J2000\" to \"GALACTIC\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"GALACTIC\", verbose=False)"
+      ],
+      "image": "projection_pointing",
+      "inverse": [
+        [
+          -3.445715743843891e-07,
+          3.551547731461824e-07
+        ],
+        [
+          2.499999655910905,
+          1.0000003556564074
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "34.455669 -5.305918 I 1.415e+09Hz",
+      "value": "GALACTIC",
+      "world": [
+        [
+          0.6013648627521926,
+          -0.09260573361113796
+        ],
+        [
+          0.6007027364257221,
+          -0.0921829021591416
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "RADESYS": "ICRS"
+      },
+      "get": "ICRS",
+      "history": [
+        "Modified equinox from \"J2000\" to \"ICRS\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"ICRS\", verbose=False)"
+      ],
+      "image": "projection_pointing",
+      "inverse": [
+        [
+          1.3988810110276972e-13,
+          -1.6537882174816332e-12
+        ],
+        [
+          2.5000000000002096,
+          0.9999999999990885
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "11:20:21.867 -60.00.43.795 I 1.415e+09Hz",
+      "value": "ICRS",
+      "world": [
+        [
+          2.9686499080146564,
+          -1.0474098753072156
+        ],
+        [
+          2.967098873409547,
+          -1.0475221159046297
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "EQUINOX": 1950.0,
+        "RADESYS": "FK4"
+      },
+      "get": "B1950",
+      "history": [
+        "Modified equinox from \"J2000\" to \"B1950\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"B1950\", verbose=False)"
+      ],
+      "image": "projection_pointing",
+      "inverse": [
+        [
+          -6.740207059152681e-09,
+          1.163537666215575e-08
+        ],
+        [
+          2.4999999932818384,
+          1.0000000116347088
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "11:22:36.145 -60.17.11.997 I 1.415e+09Hz",
+      "value": "B1950",
+      "world": [
+        [
+          2.978414896030286,
+          -1.0522008119513044
+        ],
+        [
+          2.976850487575165,
+          -1.0523117801459112
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "ELON-SIN",
+        "CTYPE2": "ELAT-SIN"
+      },
+      "get": "ECLIPTIC",
+      "history": [
+        "Modified equinox from \"J2000\" to \"ECLIPTIC\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"ECLIPTIC\", verbose=False)"
+      ],
+      "image": "projection_pointing",
+      "inverse": [
+        [
+          -9.037215420448774e-13,
+          -6.10178574333986e-13
+        ],
+        [
+          2.499999999999827,
+          0.9999999999997506
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "139.303817 -49.503675 I 1.415e+09Hz",
+      "value": "ECLIPTIC",
+      "world": [
+        [
+          2.431310269066355,
+          -0.8640021219794441
+        ],
+        [
+          2.4302541864980176,
+          -0.8636240881998472
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "SLON-SIN",
+        "CTYPE2": "SLAT-SIN"
+      },
+      "get": "SUPERGAL",
+      "history": [
+        "Modified equinox from \"J2000\" to \"SUPERGAL\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"SUPERGAL\", verbose=False)"
+      ],
+      "image": "projection_pointing",
+      "inverse": [
+        [
+          -5.511469503005628e-08,
+          -8.046535349137685e-08
+        ],
+        [
+          2.4999999448734256,
+          0.9999999194290181
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "125.989715 -38.460979 I 1.415e+09Hz",
+      "value": "SUPERGAL",
+      "world": [
+        [
+          2.1989353520588093,
+          -0.6712707098640406
+        ],
+        [
+          2.199507837912946,
+          -0.6706285159228703
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "GLON-SIN",
+        "CTYPE2": "GLAT-SIN"
+      },
+      "get": "GALACTIC",
+      "history": [
+        "Modified equinox from \"J2000\" to \"GAL\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"GAL\", verbose=False)"
+      ],
+      "image": "normal",
+      "inverse": [
+        [
+          1.8886687547237102e-08,
+          -1.6050230300379553e-07
+        ],
+        [
+          2.50000001870405,
+          0.9999998392448777
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "266.457200 -28.925079 I 1.415e+09Hz",
+      "value": "GAL",
+      "world": [
+        [
+          -1.6326298553225678,
+          -0.5048378709991462
+        ],
+        [
+          -1.6333463831134356,
+          -0.5053071890229062
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "EQUINOX": 2000.0,
+        "RADESYS": "FK5"
+      },
+      "get": "J2000",
+      "history": [
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"EQUINOX\", hdvalue=\"j2\", verbose=False)"
+      ],
+      "image": "normal",
+      "inverse": [
+        [
+          -7.562839243746566e-13,
+          -7.567280135845067e-13
+        ],
+        [
+          2.4999999999983227,
+          1.0000000000007052
+        ]
+      ],
+      "key": "EQUINOX",
+      "minpos": "00:00:08.000 -00.02.00.000 I 1.415e+09Hz",
+      "value": "j2",
+      "world": [
+        [
+          0.0005817765486052144,
+          -0.0005817764501500444
+        ],
+        [
+          6.283039863068588,
+          -0.0002908882127680567
+        ]
+      ]
+    },
+    {
+      "error": "Exception: Unknown direction reference frame specification.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "EQUINOX": 2000.0,
+        "RADESYS": "FK5"
+      },
+      "get": "J2000",
+      "history": [],
+      "image": "normal",
+      "inverse": [
+        [
+          -7.562839243746566e-13,
+          -7.567280135845067e-13
+        ],
+        [
+          2.4999999999983227,
+          1.0000000000007052
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "00:00:08.000 -00.02.00.000 I 1.415e+09Hz",
+      "value": "J",
+      "world": [
+        [
+          0.0005817765486052144,
+          -0.0005817764501500444
+        ],
+        [
+          6.283039863068588,
+          -0.0002908882127680567
+        ]
+      ]
+    },
+    {
+      "error": "Exception: Unknown direction reference frame specification.\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::set(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "EQUINOX": 2000.0,
+        "RADESYS": "FK5"
+      },
+      "get": "J2000",
+      "history": [],
+      "image": "normal",
+      "inverse": [
+        [
+          -7.562839243746566e-13,
+          -7.567280135845067e-13
+        ],
+        [
+          2.4999999999983227,
+          1.0000000000007052
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "00:00:08.000 -00.02.00.000 I 1.415e+09Hz",
+      "value": "bad",
+      "world": [
+        [
+          0.0005817765486052144,
+          -0.0005817764501500444
+        ],
+        [
+          6.283039863068588,
+          -0.0002908882127680567
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "RADESYS": "ICRS"
+      },
+      "get": "ICRS",
+      "history": [
+        "Modified equinox from \"GALACTIC\" to \"ICRS\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"ICRS\", verbose=False)"
+      ],
+      "image": "normal",
+      "initial": "GALACTIC",
+      "inverse": [
+        [
+          -7.558398351648066e-13,
+          -7.576161920042068e-13
+        ],
+        [
+          2.4999999999983227,
+          1.0000000000007052
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "00:00:08.001 -00.02.00.017 I 1.415e+09Hz",
+      "value": "ICRS",
+      "world": [
+        [
+          0.0005818473121934956,
+          -0.0005818570315439897
+        ],
+        [
+          -0.00014537333782424134,
+          -0.00029096877013257263
+        ]
+      ]
+    },
+    {
+      "fits": {
+        "CTYPE1": "RA---SIN",
+        "CTYPE2": "DEC--SIN",
+        "EQUINOX": 2000.0,
+        "RADESYS": "FK5"
+      },
+      "get": "J2000",
+      "history": [
+        "Modified equinox from \"GALACTIC\" to \"J2000\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"equinox\", hdvalue=\"J2000\", verbose=False)"
+      ],
+      "image": "normal",
+      "initial": "GALACTIC",
+      "inverse": [
+        [
+          -7.562839243746566e-13,
+          -7.567280135845067e-13
+        ],
+        [
+          2.4999999999983227,
+          1.0000000000007052
+        ]
+      ],
+      "key": "equinox",
+      "minpos": "00:00:08.000 -00.02.00.000 I 1.415e+09Hz",
+      "value": "J2000",
+      "world": [
+        [
+          0.0005817765486052144,
+          -0.0005817764501500444
+        ],
+        [
+          6.283039863068588,
+          -0.0002908882127680567
+        ]
+      ]
+    }
+  ]
+}

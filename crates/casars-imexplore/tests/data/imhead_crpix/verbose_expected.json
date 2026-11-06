@@ -1,0 +1,584 @@
+{
+  "casa_version": "6.7.6-14",
+  "summary": {
+    "false": {
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "defaultmask": "",
+      "hasmask": false,
+      "imagetype": "Intensity",
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0
+      ],
+      "masks": [],
+      "messages": [],
+      "ndim": 4,
+      "perplanebeams": {
+        "beams": {
+          "*0": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 4.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 0.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcsec",
+                "value": 5.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 1.0
+              }
+            },
+            "*2": {
+              "major": {
+                "unit": "arcsec",
+                "value": 6.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 2.0
+              }
+            },
+            "*3": {
+              "major": {
+                "unit": "arcsec",
+                "value": 7.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 3.0
+              }
+            }
+          },
+          "*1": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 5.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.25
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 5.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcsec",
+                "value": 6.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.25
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 6.0
+              }
+            },
+            "*2": {
+              "major": {
+                "unit": "arcsec",
+                "value": 7.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.25
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 7.0
+              }
+            },
+            "*3": {
+              "major": {
+                "unit": "arcsec",
+                "value": 8.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.25
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 8.0
+              }
+            }
+          },
+          "*2": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 6.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.5
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 10.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcsec",
+                "value": 7.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.5
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 11.0
+              }
+            },
+            "*2": {
+              "major": {
+                "unit": "arcsec",
+                "value": 8.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.5
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 12.0
+              }
+            },
+            "*3": {
+              "major": {
+                "unit": "arcsec",
+                "value": 9.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.5
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 13.0
+              }
+            }
+          },
+          "*3": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 7.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.75
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 15.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcsec",
+                "value": 8.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.75
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 16.0
+              }
+            },
+            "*2": {
+              "major": {
+                "unit": "arcsec",
+                "value": 9.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.75
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 17.0
+              }
+            },
+            "*3": {
+              "major": {
+                "unit": "arcsec",
+                "value": 10.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.75
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 18.0
+              }
+            }
+          }
+        },
+        "nChannels": 4,
+        "nStokes": 4
+      },
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        2.0
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1415000000.0
+      ],
+      "shape": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "tileshape": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "unit": ""
+    },
+    "true": {
+      "axisnames": [
+        "Right Ascension",
+        "Declination",
+        "Stokes",
+        "Frequency"
+      ],
+      "axisunits": [
+        "'",
+        "'",
+        "",
+        "Hz"
+      ],
+      "defaultmask": "",
+      "hasmask": false,
+      "imagetype": "Intensity",
+      "incr": [
+        -1.0,
+        1.0,
+        1.0,
+        1000.0
+      ],
+      "masks": [],
+      "messages": [],
+      "ndim": 4,
+      "perplanebeams": {
+        "beams": {
+          "*0": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 4.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 0.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcsec",
+                "value": 5.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 1.0
+              }
+            },
+            "*2": {
+              "major": {
+                "unit": "arcsec",
+                "value": 6.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 2.0
+              }
+            },
+            "*3": {
+              "major": {
+                "unit": "arcsec",
+                "value": 7.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 3.0
+              }
+            }
+          },
+          "*1": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 5.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.25
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 5.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcsec",
+                "value": 6.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.25
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 6.0
+              }
+            },
+            "*2": {
+              "major": {
+                "unit": "arcsec",
+                "value": 7.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.25
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 7.0
+              }
+            },
+            "*3": {
+              "major": {
+                "unit": "arcsec",
+                "value": 8.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.25
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 8.0
+              }
+            }
+          },
+          "*2": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 6.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.5
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 10.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcsec",
+                "value": 7.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.5
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 11.0
+              }
+            },
+            "*2": {
+              "major": {
+                "unit": "arcsec",
+                "value": 8.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.5
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 12.0
+              }
+            },
+            "*3": {
+              "major": {
+                "unit": "arcsec",
+                "value": 9.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.5
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 13.0
+              }
+            }
+          },
+          "*3": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 7.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.75
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 15.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcsec",
+                "value": 8.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.75
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 16.0
+              }
+            },
+            "*2": {
+              "major": {
+                "unit": "arcsec",
+                "value": 9.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.75
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 17.0
+              }
+            },
+            "*3": {
+              "major": {
+                "unit": "arcsec",
+                "value": 10.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.75
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 18.0
+              }
+            }
+          }
+        },
+        "nChannels": 4,
+        "nStokes": 4
+      },
+      "refpix": [
+        2.0,
+        2.0,
+        0.0,
+        2.0
+      ],
+      "refval": [
+        0.0,
+        0.0,
+        1.0,
+        1415000000.0
+      ],
+      "shape": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "tileshape": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "unit": ""
+    }
+  },
+  "tabular_velocity_increment_km_s": -2110.611
+}

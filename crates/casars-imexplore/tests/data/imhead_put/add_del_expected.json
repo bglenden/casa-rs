@@ -1,0 +1,317 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "mode": "add",
+      "key": "bunit",
+      "initial": "",
+      "value": "K",
+      "return": null,
+      "readback": "K",
+      "history": [
+        "Modified bunit from \"\" to \"K\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"bunit\", hdvalue=\"K\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "add",
+      "key": "bunit",
+      "initial": "K",
+      "value": "K",
+      "error": "Exception: bunit is already present and has value K. It may be modified but not added..\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::add(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "readback": "K"
+    },
+    {
+      "mode": "del",
+      "key": "bunit",
+      "initial": "K",
+      "value": "ignored",
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified bunit from \"K\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bunit\", hdvalue=\"ignored\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "bunit",
+      "initial": "",
+      "value": "",
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified bunit from \"\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bunit\", hdvalue=\"\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "bunit",
+      "initial": "K",
+      "value": [
+        1,
+        2
+      ],
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified bunit from \"K\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bunit\", hdvalue=[1, 2], verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "bunit",
+      "initial": "K",
+      "value": {
+        "ignored": "yes"
+      },
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified bunit from \"K\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"bunit\", hdvalue={'ignored': 'yes'}, verbose=False)"
+      ]
+    },
+    {
+      "mode": "add",
+      "key": "object",
+      "initial": "",
+      "value": "New value",
+      "return": null,
+      "readback": "New value",
+      "history": [
+        "Modified object from \"\" to \"New value\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"object\", hdvalue=\"New value\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "add",
+      "key": "object",
+      "initial": "Existing",
+      "value": "New value",
+      "error": "Exception: object is already present and has value Existing. It may be modified but not added..\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::add(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "readback": "Existing"
+    },
+    {
+      "mode": "del",
+      "key": "object",
+      "initial": "Existing",
+      "value": "ignored",
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified object from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"object\", hdvalue=\"ignored\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "object",
+      "initial": "",
+      "value": "",
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified object from \"\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"object\", hdvalue=\"\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "object",
+      "initial": "Existing",
+      "value": [
+        1,
+        2
+      ],
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified object from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"object\", hdvalue=[1, 2], verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "object",
+      "initial": "Existing",
+      "value": {
+        "ignored": "yes"
+      },
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified object from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"object\", hdvalue={'ignored': 'yes'}, verbose=False)"
+      ]
+    },
+    {
+      "mode": "add",
+      "key": "observer",
+      "initial": "",
+      "value": "New value",
+      "return": null,
+      "readback": "New value",
+      "history": [
+        "Modified observer from \"\" to \"New value\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"observer\", hdvalue=\"New value\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "add",
+      "key": "observer",
+      "initial": "Existing",
+      "value": "New value",
+      "error": "Exception: observer is already present and has value Existing.  It may be modified but not added..\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::add(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "readback": "Existing"
+    },
+    {
+      "mode": "del",
+      "key": "observer",
+      "initial": "Existing",
+      "value": "ignored",
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified observer from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"observer\", hdvalue=\"ignored\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "observer",
+      "initial": "",
+      "value": "",
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified observer from \"\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"observer\", hdvalue=\"\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "observer",
+      "initial": "Existing",
+      "value": [
+        1,
+        2
+      ],
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified observer from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"observer\", hdvalue=[1, 2], verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "observer",
+      "initial": "Existing",
+      "value": {
+        "ignored": "yes"
+      },
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified observer from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"observer\", hdvalue={'ignored': 'yes'}, verbose=False)"
+      ]
+    },
+    {
+      "mode": "add",
+      "key": "telescope",
+      "initial": "",
+      "value": "New value",
+      "return": null,
+      "readback": "New value",
+      "history": [
+        "Modified telescope from \"\" to \"New value\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"add\", hdkey=\"telescope\", hdvalue=\"New value\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "add",
+      "key": "telescope",
+      "initial": "Existing",
+      "value": "New value",
+      "error": "Exception: telescope is already present and has value Existing. It may be modified but not added..\n... thrown by casacore::Bool casa::ImageMetaDataRW<T>::add(const casacore::String&, const casacore::ValueHolder&) [with T = float; casacore::Bool = bool]",
+      "readback": "Existing"
+    },
+    {
+      "mode": "del",
+      "key": "telescope",
+      "initial": "Existing",
+      "value": "ignored",
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified telescope from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"telescope\", hdvalue=\"ignored\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "telescope",
+      "initial": "",
+      "value": "",
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified telescope from \"\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"telescope\", hdvalue=\"\", verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "telescope",
+      "initial": "Existing",
+      "value": [
+        1,
+        2
+      ],
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified telescope from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"telescope\", hdvalue=[1, 2], verbose=False)"
+      ]
+    },
+    {
+      "mode": "del",
+      "key": "telescope",
+      "initial": "Existing",
+      "value": {
+        "ignored": "yes"
+      },
+      "return": null,
+      "readback": "",
+      "history": [
+        "Modified telescope from \"Existing\" to \"\"",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"del\", hdkey=\"telescope\", hdvalue={'ignored': 'yes'}, verbose=False)"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,567 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": [
+    {
+      "history": [
+        "Added custom = [1, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[1, 'a'], verbose=False)"
+      ],
+      "shape": [
+        2
+      ],
+      "stored": [
+        "1",
+        "a"
+      ],
+      "value": [
+        1,
+        "a"
+      ]
+    },
+    {
+      "history": [
+        "Added custom = [true, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[True, 'a'], verbose=False)"
+      ],
+      "shape": [
+        2
+      ],
+      "stored": [
+        "true",
+        "a"
+      ],
+      "value": [
+        true,
+        "a"
+      ]
+    },
+    {
+      "history": [
+        "Added custom = [false, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[False, 'a'], verbose=False)"
+      ],
+      "shape": [
+        2
+      ],
+      "stored": [
+        "false",
+        "a"
+      ],
+      "value": [
+        false,
+        "a"
+      ]
+    },
+    {
+      "history": [
+        "Added custom = [1.000000, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[1.0, 'a'], verbose=False)"
+      ],
+      "shape": [
+        2
+      ],
+      "stored": [
+        "1.000000",
+        "a"
+      ],
+      "value": [
+        1.0,
+        "a"
+      ]
+    },
+    {
+      "history": [
+        "Added custom = [-0.000000, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[-0.0, 'a'], verbose=False)"
+      ],
+      "shape": [
+        2
+      ],
+      "stored": [
+        "-0.000000",
+        "a"
+      ],
+      "value": [
+        -0.0,
+        "a"
+      ]
+    },
+    {
+      "history": [
+        "Added custom = [0.000010, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[1e-05, 'a'], verbose=False)"
+      ],
+      "shape": [
+        2
+      ],
+      "stored": [
+        "0.000010",
+        "a"
+      ],
+      "value": [
+        1e-05,
+        "a"
+      ]
+    },
+    {
+      "history": [
+        "Added custom = [100000000000000000000.000000, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[1e+20, 'a'], verbose=False)"
+      ],
+      "shape": [
+        2
+      ],
+      "stored": [
+        "100000000000000000000.000000",
+        "a"
+      ],
+      "value": [
+        1e+20,
+        "a"
+      ]
+    },
+    {
+      "history": [
+        "Added custom = [1.234568, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[1.2345678901234567, 'a'], verbose=False)"
+      ],
+      "shape": [
+        2
+      ],
+      "stored": [
+        "1.234568",
+        "a"
+      ],
+      "value": [
+        1.2345678901234567,
+        "a"
+      ]
+    },
+    {
+      "history": [
+        "Added custom = [9223372036854775807, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[9223372036854775807, 'a'], verbose=False)"
+      ],
+      "shape": [
+        2
+      ],
+      "stored": [
+        "9223372036854775807",
+        "a"
+      ],
+      "value": [
+        9223372036854775807,
+        "a"
+      ]
+    },
+    {
+      "history": [
+        "Added custom = [0.000000, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[5e-07, 'a'], verbose=False)"
+      ],
+      "shape": [
+        2
+      ],
+      "stored": [
+        "0.000000",
+        "a"
+      ],
+      "value": [
+        5e-07,
+        "a"
+      ]
+    },
+    {
+      "history": [
+        "Added custom = Axis Lengths: [2, 2]  (NB: Matrix in Row/Column order)\n[1, a\n 2.500000, b]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[[1, 'a'], [2.5, 'b']], verbose=False)"
+      ],
+      "shape": [
+        2,
+        2
+      ],
+      "stored": [
+        [
+          "1",
+          "a"
+        ],
+        [
+          "2.500000",
+          "b"
+        ]
+      ],
+      "value": [
+        [
+          1,
+          "a"
+        ],
+        [
+          2.5,
+          "b"
+        ]
+      ]
+    },
+    {
+      "history": [
+        "Added custom = Axis Lengths: [2, 2]  (NB: Matrix in Row/Column order)\n[true, a\n 1, b]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue=[[True, 'a'], [1, 'b']], verbose=False)"
+      ],
+      "shape": [
+        2,
+        2
+      ],
+      "stored": [
+        [
+          "true",
+          "a"
+        ],
+        [
+          "1",
+          "b"
+        ]
+      ],
+      "value": [
+        [
+          true,
+          "a"
+        ],
+        [
+          1,
+          "b"
+        ]
+      ]
+    },
+    {
+      "get": {
+        "mixed": [
+          "1",
+          "a"
+        ]
+      },
+      "history": [
+        "Added custom =   mixed: String array with shape [2]\n    [1, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue={'mixed': [1, 'a']}, verbose=False)"
+      ],
+      "stored": {
+        "mixed": [
+          "1",
+          "a"
+        ]
+      },
+      "value": {
+        "mixed": [
+          1,
+          "a"
+        ]
+      }
+    },
+    {
+      "get": {
+        "mixed": [
+          "true",
+          "a"
+        ]
+      },
+      "history": [
+        "Added custom =   mixed: String array with shape [2]\n    [true, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue={'mixed': [True, 'a']}, verbose=False)"
+      ],
+      "stored": {
+        "mixed": [
+          "true",
+          "a"
+        ]
+      },
+      "value": {
+        "mixed": [
+          true,
+          "a"
+        ]
+      }
+    },
+    {
+      "get": {
+        "mixed": [
+          "false",
+          "a"
+        ]
+      },
+      "history": [
+        "Added custom =   mixed: String array with shape [2]\n    [false, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue={'mixed': [False, 'a']}, verbose=False)"
+      ],
+      "stored": {
+        "mixed": [
+          "false",
+          "a"
+        ]
+      },
+      "value": {
+        "mixed": [
+          false,
+          "a"
+        ]
+      }
+    },
+    {
+      "get": {
+        "mixed": [
+          "1.000000",
+          "a"
+        ]
+      },
+      "history": [
+        "Added custom =   mixed: String array with shape [2]\n    [1.000000, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue={'mixed': [1.0, 'a']}, verbose=False)"
+      ],
+      "stored": {
+        "mixed": [
+          "1.000000",
+          "a"
+        ]
+      },
+      "value": {
+        "mixed": [
+          1.0,
+          "a"
+        ]
+      }
+    },
+    {
+      "get": {
+        "mixed": [
+          "-0.000000",
+          "a"
+        ]
+      },
+      "history": [
+        "Added custom =   mixed: String array with shape [2]\n    [-0.000000, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue={'mixed': [-0.0, 'a']}, verbose=False)"
+      ],
+      "stored": {
+        "mixed": [
+          "-0.000000",
+          "a"
+        ]
+      },
+      "value": {
+        "mixed": [
+          -0.0,
+          "a"
+        ]
+      }
+    },
+    {
+      "get": {
+        "mixed": [
+          "0.000010",
+          "a"
+        ]
+      },
+      "history": [
+        "Added custom =   mixed: String array with shape [2]\n    [0.000010, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue={'mixed': [1e-05, 'a']}, verbose=False)"
+      ],
+      "stored": {
+        "mixed": [
+          "0.000010",
+          "a"
+        ]
+      },
+      "value": {
+        "mixed": [
+          1e-05,
+          "a"
+        ]
+      }
+    },
+    {
+      "get": {
+        "mixed": [
+          "100000000000000000000.000000",
+          "a"
+        ]
+      },
+      "history": [
+        "Added custom =   mixed: String array with shape [2]\n    [100000000000000000000.000000, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue={'mixed': [1e+20, 'a']}, verbose=False)"
+      ],
+      "stored": {
+        "mixed": [
+          "100000000000000000000.000000",
+          "a"
+        ]
+      },
+      "value": {
+        "mixed": [
+          1e+20,
+          "a"
+        ]
+      }
+    },
+    {
+      "get": {
+        "mixed": [
+          "1.234568",
+          "a"
+        ]
+      },
+      "history": [
+        "Added custom =   mixed: String array with shape [2]\n    [1.234568, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue={'mixed': [1.2345678901234567, 'a']}, verbose=False)"
+      ],
+      "stored": {
+        "mixed": [
+          "1.234568",
+          "a"
+        ]
+      },
+      "value": {
+        "mixed": [
+          1.2345678901234567,
+          "a"
+        ]
+      }
+    },
+    {
+      "get": {
+        "mixed": [
+          "9223372036854775807",
+          "a"
+        ]
+      },
+      "history": [
+        "Added custom =   mixed: String array with shape [2]\n    [9223372036854775807, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue={'mixed': [9223372036854775807, 'a']}, verbose=False)"
+      ],
+      "stored": {
+        "mixed": [
+          "9223372036854775807",
+          "a"
+        ]
+      },
+      "value": {
+        "mixed": [
+          9223372036854775807,
+          "a"
+        ]
+      }
+    },
+    {
+      "get": {
+        "mixed": [
+          "0.000000",
+          "a"
+        ]
+      },
+      "history": [
+        "Added custom =   mixed: String array with shape [2]\n    [0.000000, a]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue={'mixed': [5e-07, 'a']}, verbose=False)"
+      ],
+      "stored": {
+        "mixed": [
+          "0.000000",
+          "a"
+        ]
+      },
+      "value": {
+        "mixed": [
+          5e-07,
+          "a"
+        ]
+      }
+    },
+    {
+      "get": {
+        "mixed": [
+          "1",
+          "2.500000",
+          "a",
+          "b"
+        ]
+      },
+      "history": [
+        "Added custom =   mixed: String array with shape [4]\n    [1, 2.500000, a, b]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue={'mixed': [[1, 'a'], [2.5, 'b']]}, verbose=False)"
+      ],
+      "stored": {
+        "mixed": [
+          "1",
+          "2.500000",
+          "a",
+          "b"
+        ]
+      },
+      "value": {
+        "mixed": [
+          [
+            1,
+            "a"
+          ],
+          [
+            2.5,
+            "b"
+          ]
+        ]
+      }
+    },
+    {
+      "get": {
+        "mixed": [
+          "true",
+          "1",
+          "a",
+          "b"
+        ]
+      },
+      "history": [
+        "Added custom =   mixed: String array with shape [4]\n    [true, 1, a, b]",
+        "version: 6.7.6-14 CASAtools:v1.0.0",
+        "imhead(imagename=\"<IMAGE>\", mode=\"put\", hdkey=\"custom\", hdvalue={'mixed': [[True, 'a'], [1, 'b']]}, verbose=False)"
+      ],
+      "stored": {
+        "mixed": [
+          "true",
+          "1",
+          "a",
+          "b"
+        ]
+      },
+      "value": {
+        "mixed": [
+          [
+            true,
+            "a"
+          ],
+          [
+            1,
+            "b"
+          ]
+        ]
+      }
+    }
+  ]
+}

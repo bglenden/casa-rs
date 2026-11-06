@@ -116,11 +116,73 @@ pub(crate) fn integer_literal_outside_i64(raw: &str) -> bool {
         && raw.parse::<i64>().is_err()
 }
 
+/// Decode a variant from its JSON spelling before integer type information is lost.
+pub(crate) fn parse_variant_json(raw: &str) -> Result<ParameterValue, String> {
+    use serde_json::value::RawValue;
+    let raw = raw.trim();
+    match raw.as_bytes().first() {
+        Some(b'[') => serde_json::from_str::<Vec<&RawValue>>(raw)
+            .map_err(|error| error.to_string())?
+            .iter()
+            .map(|value| parse_variant_json(value.get()))
+            .collect::<Result<Vec<_>, _>>()
+            .map(ParameterValue::Array),
+        Some(b'{') => serde_json::from_str::<BTreeMap<String, &RawValue>>(raw)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|(key, value)| Ok((key, parse_variant_json(value.get())?)))
+            .collect::<Result<BTreeMap<_, _>, String>>()
+            .map(ParameterValue::Table),
+        Some(b'"') => serde_json::from_str(raw)
+            .map(ParameterValue::String)
+            .map_err(|error| format!("invalid string: {error}")),
+        Some(b'-' | b'0'..=b'9')
+            if raw
+                .strip_prefix('-')
+                .unwrap_or(raw)
+                .bytes()
+                .all(|ch| ch.is_ascii_digit()) =>
+        {
+            raw.parse::<i64>()
+                .map(ParameterValue::Integer)
+                .map_err(|_| "integer is outside casa-rs's signed 64-bit range".into())
+        }
+        Some(b'-' | b'0'..=b'9') => {
+            let number = raw.parse::<f64>().map_err(|error| error.to_string())?;
+            if !number.is_finite() {
+                return Err("non-finite numbers are forbidden".into());
+            }
+            Ok(ParameterValue::Float(number))
+        }
+        Some(b't') if raw == "true" => Ok(ParameterValue::Bool(true)),
+        Some(b'f') if raw == "false" => Ok(ParameterValue::Bool(false)),
+        _ => Err("null is not a parameter value".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use casa_provider_contracts::ParameterValue;
 
     use super::{direct_type_refusal, integer_literal_outside_i64, single_required_path};
+
+    #[test]
+    fn variant_json_keeps_integer_negative_zero_and_rejects_nested_overflow() {
+        let value = super::parse_variant_json("[0, -0, -0.0]").unwrap();
+        assert_eq!(
+            value,
+            ParameterValue::Array(vec![
+                ParameterValue::Integer(0),
+                ParameterValue::Integer(0),
+                ParameterValue::Float(-0.0)
+            ])
+        );
+        assert!(
+            super::parse_variant_json("{\"nested\":[9223372036854775808]}")
+                .unwrap_err()
+                .contains("signed 64-bit")
+        );
+    }
 
     #[test]
     fn required_paths_and_union_types_do_not_get_guessed_scalar_errors() {

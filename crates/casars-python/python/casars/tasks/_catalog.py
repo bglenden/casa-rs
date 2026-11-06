@@ -348,16 +348,14 @@ def simobserve(
 
 def imhead(
     imagename: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
-    mode: Literal['list', 'put', 'summary'] = 'summary',
+    mode: Literal['add', 'del', 'get', 'history', 'list', 'put', 'summary'] = 'summary',
     hdkey: str = '',
-    hdvalue: str = '',
+    hdvalue: str | bool | int | float | dict[str, ParameterData] | list[ParameterData] = '',
     verbose: bool = False,
 ) -> Any:
     """Inspect or update CASA image header metadata.
 
     CASA's ``imhead``: its parameters, defaults and return value.
-    Accepted only at CASA's default, where CASA reads them, until #977:
-    ``verbose``.
     """
     return _call_casa(imhead, locals())
 

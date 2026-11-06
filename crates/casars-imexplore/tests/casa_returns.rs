@@ -87,6 +87,8 @@ fn write_fromshape(path: &Path, units: &str, masked: bool) {
         2.0,
         1.420_405_752e9,
     ));
+    coords.obs_info_mut().observer = "Karl Jansky".into();
+    coords.obs_info_mut().telescope = "ALMA".into();
     let shape = [4, 4, 1, 4];
     let mut image = Image::create(shape.to_vec(), coords, path).expect("create image");
     image.set_units(units).expect("set units");
@@ -189,6 +191,7 @@ fn describe(value: &CasaValue) -> Value {
         CasaValue::Bool { .. } => json!({"type": "bool"}),
         CasaValue::Int { .. } => json!({"type": "int"}),
         CasaValue::Float { .. } => json!({"type": "float"}),
+        CasaValue::Complex { .. } => json!({"type": "complex"}),
         CasaValue::String { .. } => json!({"type": "str"}),
         CasaValue::List { items } => {
             json!({"type": "list", "items": items.iter().map(describe).collect::<Vec<_>>()})
@@ -219,6 +222,7 @@ fn describe(value: &CasaValue) -> Value {
             shape,
         ),
         CasaValue::ComplexArray { shape, .. } => array("complex", shape),
+        CasaValue::UInt64Array { shape, .. } => array("uint64", shape),
         // The width Python decodes it with, casatools' (`<U15`).
         CasaValue::StrArray { shape, data } => array(&CasaValue::str_dtype(data), shape),
     }
@@ -425,31 +429,27 @@ fn imhead_returns_casas_summary_and_list_records_and_none_for_put() {
     let image = workspace.path().join("fromshape.im");
     write_fromshape(&image, "Jy/beam", false);
     let summary = returned(workspace.path(), "imhead", json!({"imagename": image}));
-    assert_casa_dict(&summary, "imhead summary", &["messages", "tileshape"]);
+    assert_casa_dict(&summary, "imhead summary", &[]);
+    let fixture: Value = serde_json::from_str(include_str!("data/imhead_casa.json")).unwrap();
+    assert_eq!(texts(&summary, "messages"), [] as [&str; 0]);
+    assert_eq!(
+        entry(&summary, "messages").to_plain_json(),
+        fixture["summary"]["messages"]
+    );
+    assert_eq!(
+        entry(&summary, "tileshape"),
+        &CasaValue::int64_vector([4, 4, 1, 4])
+    );
+    assert_eq!(
+        entry(&summary, "tileshape").to_plain_json(),
+        fixture["summary"]["tileshape"]
+    );
     let list = returned(
         workspace.path(),
         "imhead",
         json!({"imagename": image, "mode": "list"}),
     );
-    assert_casa_dict(
-        &list,
-        "imhead list",
-        &[
-            "datamax",
-            "datamin",
-            "date-obs",
-            "equinox",
-            "maxpixpos",
-            "maxpos",
-            "minpixpos",
-            "minpos",
-            "observer",
-            "projection",
-            "reffreqtype",
-            "restfreq",
-            "telescope",
-        ],
-    );
+    assert_casa_dict(&list, "imhead list", &[]);
     let put = returned(
         workspace.path(),
         "imhead",
@@ -458,34 +458,581 @@ fn imhead_returns_casas_summary_and_list_records_and_none_for_put() {
     assert_eq!(describe(&put), casa("imhead put"));
 }
 
-/// CASA reads imhead's `verbose` only in summary mode, as its task XML
-/// shows it: list mode takes any value, and summary refuses all but the
-/// default, naming #977.
+/// The returned tile shape describes storage, not the image dimensions.
 #[test]
-fn imhead_verbose_is_read_only_in_summary_mode() {
+fn imhead_summary_reports_the_stored_tile_shape() {
     let workspace = tempfile::tempdir().unwrap();
-    let image = workspace.path().join("fromshape.im");
+    let path = workspace.path().join("tiled.im");
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(LinearCoordinate::new(
+        2,
+        vec!["X".into(), "Y".into()],
+        vec!["pix".into(), "pix".into()],
+    ));
+    let mut image = casa_images::PagedImage::<f32>::create_with_tile_shape(
+        vec![12, 10],
+        vec![4, 5],
+        coordinates,
+        &path,
+    )
+    .unwrap();
+    image.save().unwrap();
+    drop(image);
+    let summary = returned(workspace.path(), "imhead", json!({"imagename": path}));
+    assert_eq!(entry(&summary, "shape"), &CasaValue::int64_vector([12, 10]));
+    assert_eq!(
+        entry(&summary, "tileshape"),
+        &CasaValue::int64_vector([4, 5])
+    );
+    assert_eq!(texts(&summary, "messages"), [] as [&str; 0]);
+}
+
+/// Values recorded from CASA 6.7.6.14 on its `fromshape` image.
+#[test]
+fn imhead_get_returns_casa_header_values() {
+    let workspace = tempfile::tempdir().unwrap();
+    let image = workspace.path().join("head.im");
     write_fromshape(&image, "Jy/beam", false);
-    let list = returned(
-        workspace.path(),
-        "imhead",
-        json!({"imagename": image, "mode": "list", "verbose": true}),
-    );
-    assert!(matches!(list, CasaValue::Dict { .. }), "{list:?}");
-    let (output, reply) = json_run(
-        workspace.path(),
-        "imhead",
-        json!({"imagename": image, "verbose": true}),
-    );
-    assert_eq!(output.status.code(), Some(2));
-    let Some(TaskReply::Failed {
-        message, parameter, ..
-    }) = reply
-    else {
-        panic!("{reply:?}");
+    let fixture: Value = serde_json::from_str(include_str!("data/imhead_casa.json")).unwrap();
+    assert_eq!(fixture["casa_version"], "6.7.6-14");
+    let quantity = |value, unit| {
+        CasaValue::dict([
+            ("unit", CasaValue::string(unit)),
+            ("value", CasaValue::float(value)),
+        ])
     };
-    assert_eq!(parameter.as_deref(), Some("verbose"));
-    assert!(message.contains("#977"), "{message}");
+    for (key, expected) in [
+        ("bunit", CasaValue::string("Jy/beam")),
+        ("BUNIT", CasaValue::string("Jy/beam")),
+        ("object", CasaValue::string("")),
+        ("imtype", CasaValue::string("Intensity")),
+        ("observer", CasaValue::string("Karl Jansky")),
+        ("telescope", CasaValue::string("ALMA")),
+        ("equinox", CasaValue::string("J2000")),
+        ("masks", CasaValue::str_vector(Vec::<String>::new())),
+        ("shape", CasaValue::int64_vector([4, 4, 1, 4])),
+        ("cdelt1", quantity(-1.0, "'")),
+        ("cdelt3", quantity(1.0, "")),
+        ("crval1", quantity(0.0, "'")),
+        ("crval3", CasaValue::str_vector(["I"])),
+        ("crpix1", CasaValue::float(2.0)),
+        ("ctype1", CasaValue::string("Right Ascension")),
+        ("cunit1", CasaValue::string("'")),
+    ] {
+        let actual = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": image, "mode": "get", "hdkey": key}),
+        );
+        assert_eq!(actual, expected, "{key}");
+        assert_eq!(actual.to_plain_json(), fixture["get"][key], "{key}");
+    }
+    // CASA reports an absent user-defined key as an unknown keyword.
+    let (_, reply) = json_run(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": image, "mode": "get", "hdkey": "unimplemented-user-key"}),
+    );
+    let Some(TaskReply::Failed { message, .. }) = reply else {
+        panic!("expected a refusal: {reply:?}");
+    };
+    assert!(message.contains("Unknown keyword"), "{message}");
+}
+
+#[test]
+fn imhead_get_reads_metadata_on_complex_images() {
+    let workspace = tempfile::tempdir().unwrap();
+    let fixture: Value = serde_json::from_str(include_str!("data/imhead_casa.json")).unwrap();
+    let path = workspace.path().join("complex.im");
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(LinearCoordinate::new(
+        2,
+        vec!["X".into(), "Y".into()],
+        vec!["pix".into(), "pix".into()],
+    ));
+    let mut image =
+        casa_images::PagedImage::<casa_types::Complex32>::create(vec![4, 4], coordinates, &path)
+            .unwrap();
+    image
+        .set_image_info(&ImageInfo {
+            object_name: "Galaxy".into(),
+            image_type: ImageType::Intensity,
+            ..ImageInfo::default()
+        })
+        .unwrap();
+    image.save().unwrap();
+    drop(image);
+    for (key, expected) in [("object", "Galaxy"), ("imtype", "Intensity")] {
+        let value = returned(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "get", "hdkey": key
+            }),
+        );
+        assert_eq!(value, CasaValue::string(expected), "{key}");
+        assert_eq!(value.to_plain_json(), fixture["complex_get"][key], "{key}");
+    }
+}
+
+#[test]
+fn imhead_get_stokes_returns_all_plane_labels() {
+    use casa_coordinates::{StokesCoordinate, StokesType};
+    let workspace = tempfile::tempdir().unwrap();
+    let path = workspace.path().join("stokes.im");
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(LinearCoordinate::new(
+        2,
+        vec!["X".into(), "Y".into()],
+        vec!["pix".into(), "pix".into()],
+    ));
+    coordinates.add_coordinate(StokesCoordinate::new(vec![
+        StokesType::I,
+        StokesType::Q,
+        StokesType::U,
+        StokesType::V,
+    ]));
+    let mut image =
+        casa_images::PagedImage::<f32>::create(vec![4, 4, 4], coordinates, &path).unwrap();
+    image.save().unwrap();
+    drop(image);
+    let value = returned(
+        workspace.path(),
+        "imhead",
+        json!({
+            "imagename": path, "mode": "get", "hdkey": "crval3"
+        }),
+    );
+    let fixture: Value = serde_json::from_str(include_str!("data/imhead_casa.json")).unwrap();
+    assert_eq!(value, CasaValue::str_vector(["I", "Q", "U", "V"]));
+    assert_eq!(value.to_plain_json(), fixture["stokes_get"]);
+}
+
+/// CASA-created images retain each beam quantity's own unit, including an
+/// unwrapped position angle in `summary` and a wrapped angle in `get`/`list`.
+#[test]
+fn imhead_beam_records_preserve_casas_units_and_angle_convention() {
+    fn compare_quantity(actual: &Value, expected: &Value, label: &str) {
+        assert_eq!(actual["unit"], expected["unit"], "{label}");
+        let a = actual["value"].as_f64().unwrap();
+        let b = expected["value"].as_f64().unwrap();
+        assert!((a - b).abs() < 1e-11, "{label}: {a} != {b}");
+    }
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_beams");
+    let expected: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture.join("expected.json")).unwrap())
+            .unwrap();
+    assert_eq!(expected["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for name in ["degrees", "radians", "radian_wrap", "negative"] {
+        let filename = format!("{name}.im");
+        let path = workspace.path().join(&filename);
+        copy_tree(&fixture.join(filename), &path);
+        let wanted = &expected["cases"][name];
+        for key in ["beammajor", "beamminor", "beampa", "bmaj", "bmin", "bpa"] {
+            let value = returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "get", "hdkey": key}),
+            );
+            compare_quantity(&value.to_plain_json(), &wanted["get"][key], key);
+        }
+        let list = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "list"}),
+        )
+        .to_plain_json();
+        for key in ["beammajor", "beamminor", "beampa"] {
+            compare_quantity(&list[key], &wanted["list"][key], key);
+        }
+        let summary =
+            returned(workspace.path(), "imhead", json!({"imagename": path})).to_plain_json();
+        for key in ["major", "minor", "positionangle"] {
+            compare_quantity(&summary["restoringbeam"][key], &wanted["summary"][key], key);
+        }
+    }
+    for name in ["none", "multiple"] {
+        let filename = format!("{name}.im");
+        let path = workspace.path().join(&filename);
+        copy_tree(&fixture.join(filename), &path);
+        let (_, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({
+                "imagename": path, "mode": "get", "hdkey": "beammajor"
+            }),
+        );
+        let Some(TaskReply::Failed { message, .. }) = reply else {
+            panic!("{name}: expected a CASA error, got {reply:?}");
+        };
+        assert!(
+            message.contains(expected["errors"][name].as_str().unwrap()),
+            "{name}: {message}"
+        );
+    }
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for item in std::fs::read_dir(from).unwrap() {
+        let item = item.unwrap();
+        let dest = to.join(item.file_name());
+        if item.file_type().unwrap().is_dir() {
+            copy_tree(&item.path(), &dest);
+        } else {
+            std::fs::copy(item.path(), dest).unwrap();
+        }
+    }
+}
+
+#[test]
+fn imhead_reports_casas_per_plane_beams_and_median() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_beams");
+    let expected: Value =
+        serde_json::from_slice(&std::fs::read(fixture.join("multi_expected.json")).unwrap())
+            .unwrap();
+    assert_eq!(expected["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for name in ["multiple", "multiple_mixed", "spaced_units", "nearly_equal"] {
+        let path = workspace.path().join(format!("{name}.im"));
+        copy_tree(&fixture.join(format!("{name}.im")), &path);
+        for mode in ["summary", "list"] {
+            let actual = returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": mode}),
+            )
+            .to_plain_json();
+            assert_eq!(
+                actual["perplanebeams"], expected["cases"][name][mode],
+                "{name} {mode}"
+            );
+        }
+    }
+    let dual = workspace.path().join("single_dual.im");
+    copy_tree(&fixture.join("single_dual.im"), &dual);
+    let summary = returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": dual, "mode": "summary"}),
+    )
+    .to_plain_json();
+    let listed = returned(
+        workspace.path(),
+        "imhead",
+        json!({"imagename": dual, "mode": "list"}),
+    )
+    .to_plain_json();
+    assert_eq!(summary["restoringbeam"], expected["single_dual"]["summary"]);
+    for key in ["beammajor", "beamminor", "beampa"] {
+        assert_eq!(listed[key], expected["single_dual"]["list"][key]);
+    }
+    for name in expected["invalid"].as_object().unwrap().keys() {
+        let path = workspace.path().join(format!("{name}.im"));
+        copy_tree(&fixture.join(format!("{name}.im")), &path);
+        for mode in ["summary", "list", "get"] {
+            let (_, reply) = json_run(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": mode, "hdkey": "bunit"}),
+            );
+            assert!(
+                matches!(reply, Some(TaskReply::Failed { .. })),
+                "{name} {mode}: {reply:?}"
+            );
+        }
+        let table = std::fs::read(path.join("table.dat")).unwrap();
+        for key in ["object", "custom"] {
+            let (_, reply) = json_run(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "put", "hdkey": key, "hdvalue": "must not be written"}),
+            );
+            assert!(
+                matches!(reply, Some(TaskReply::Failed { .. })),
+                "{name} put {key}: {reply:?}"
+            );
+            assert_eq!(
+                std::fs::read(path.join("table.dat")).unwrap(),
+                table,
+                "{name} put {key}"
+            );
+        }
+    }
+}
+
+#[test]
+fn imhead_spectral_metadata_uses_casas_stored_world_units() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_spectral");
+    let expected: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture.join("expected.json")).unwrap())
+            .unwrap();
+    assert_eq!(expected["casa_version"], "6.7.6-14");
+    let workspace = tempfile::tempdir().unwrap();
+    for unit in ["Hz", "GHz", "MHz"] {
+        let filename = format!("{unit}.im");
+        let path = workspace.path().join(&filename);
+        copy_tree(&fixture.join(filename), &path);
+        let wanted = &expected["cases"][unit];
+        let get = |key| {
+            returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "get", "hdkey": key}),
+            )
+            .to_plain_json()
+        };
+        let reference = get("restfreq");
+        assert_eq!(reference["unit"], wanted["get_restfreq"]["unit"]);
+        let actual = reference["value"].as_f64().unwrap();
+        let target = wanted["get_restfreq"]["value"].as_f64().unwrap();
+        assert!(
+            (actual - target).abs() <= target.abs() * 1e-12,
+            "{unit}: {actual} != {target}"
+        );
+        assert_eq!(get("reffreqtype"), wanted["get_reffreqtype"]);
+        let list = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "list"}),
+        )
+        .to_plain_json();
+        assert_eq!(list["reffreqtype"], wanted["list_reffreqtype"]);
+        let listed = list["restfreq"][0].as_f64().unwrap();
+        let listed_target = wanted["list_restfreq"][0].as_f64().unwrap();
+        assert!((listed - listed_target).abs() <= listed_target.abs() * 1e-12);
+    }
+}
+
+#[test]
+fn imhead_projection_matches_casa_for_standard_slant_and_ncp() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_projection");
+    let expected: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture.join("expected.json")).unwrap())
+            .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    for name in ["sin", "tan", "slant", "ncp"] {
+        let filename = format!("{name}.im");
+        let path = workspace.path().join(&filename);
+        copy_tree(&fixture.join(filename), &path);
+        let result = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "get", "hdkey": "projection"}),
+        );
+        assert_eq!(result.to_plain_json(), expected["cases"][name], "{name}");
+        let list = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "list"}),
+        );
+        assert_eq!(
+            entry(&list, "projection").to_plain_json(),
+            expected["cases"][name],
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn imhead_observation_date_matches_casas_epoch_format() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_dates");
+    let expected: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture.join("expected.json")).unwrap())
+            .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    for name in ["missing", "j2000", "noon", "fraction"] {
+        let filename = format!("{name}.im");
+        let path = workspace.path().join(&filename);
+        copy_tree(&fixture.join(filename), &path);
+        for key in ["date-obs", "epoch"] {
+            let result = returned(
+                workspace.path(),
+                "imhead",
+                json!({"imagename": path, "mode": "get", "hdkey": key}),
+            );
+            assert_eq!(
+                result.to_plain_json(),
+                expected["cases"][name][key],
+                "{name} {key}"
+            );
+        }
+        let list = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "list"}),
+        );
+        assert_eq!(
+            entry(&list, "date-obs").to_plain_json(),
+            expected["cases"][name]["list"],
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn imhead_extrema_match_casa_with_masks_ties_and_complex_pixels() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_extrema");
+    let expected: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture.join("expected.json")).unwrap())
+            .unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    for name in [
+        "ordinary",
+        "partial",
+        "masked",
+        "complex",
+        "ties",
+        "nanfirst",
+        "nanlater",
+        "infinities",
+        "four",
+        "linear",
+        "galactic",
+        "tiled",
+        "hadec180",
+        "ecliptic180",
+    ] {
+        let filename = format!("{name}.im");
+        let path = workspace.path().join(&filename);
+        copy_tree(&fixture.join(filename), &path);
+        let listed = returned(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": path, "mode": "list"}),
+        )
+        .to_plain_json();
+        for key in [
+            "datamin",
+            "datamax",
+            "minpixpos",
+            "maxpixpos",
+            "minpos",
+            "maxpos",
+        ] {
+            let wanted = &expected["cases"][name][key];
+            if let Some(error) = wanted.get("error") {
+                let (_, reply) = json_run(
+                    workspace.path(),
+                    "imhead",
+                    json!({"imagename": path, "mode": "get", "hdkey": key}),
+                );
+                let Some(TaskReply::Failed { message, .. }) = reply else {
+                    panic!("{name} {key}: {reply:?}")
+                };
+                assert!(
+                    message.contains(error.as_str().unwrap()),
+                    "{name} {key}: {message}"
+                );
+                assert!(
+                    listed.get(key).is_none(),
+                    "{name}: unexpectedly listed {key}"
+                );
+            } else {
+                let value = returned(
+                    workspace.path(),
+                    "imhead",
+                    json!({"imagename": path, "mode": "get", "hdkey": key}),
+                );
+                if key.ends_with("pixpos") {
+                    assert!(
+                        matches!(
+                            value,
+                            CasaValue::IntArray {
+                                dtype: IntDtype::Int64,
+                                ..
+                            }
+                        ),
+                        "{name} {key}"
+                    );
+                }
+                assert_eq!(value.to_plain_json(), *wanted, "{name} {key}");
+                assert_eq!(listed[key], *wanted, "{name} list {key}");
+            }
+        }
+    }
+}
+
+#[path = "casa_returns/imhead_date_edits.rs"]
+mod imhead_date_edits;
+
+#[path = "casa_returns/imhead_restfreq_add.rs"]
+mod imhead_restfreq_add;
+
+#[path = "casa_returns/imhead_projection_edits.rs"]
+mod imhead_projection_edits;
+
+#[path = "casa_returns/imhead_custom_arrays.rs"]
+mod imhead_custom_arrays;
+
+#[path = "casa_returns/imhead_custom_records.rs"]
+mod imhead_custom_records;
+
+#[path = "casa_returns/imhead_custom_matrices.rs"]
+mod imhead_custom_matrices;
+
+#[path = "casa_returns/imhead_stokes_edits.rs"]
+mod imhead_stokes_edits;
+
+#[path = "casa_returns/imhead_custom_mixed.rs"]
+mod imhead_custom_mixed;
+
+#[path = "casa_returns/imhead_direction_edits.rs"]
+mod imhead_direction_edits;
+
+#[path = "casa_returns/imhead_custom_cubes.rs"]
+mod imhead_custom_cubes;
+
+#[path = "casa_returns/imhead_mutations.rs"]
+mod imhead_mutations;
+
+#[path = "casa_returns/imhead_list_log.rs"]
+mod imhead_list_log;
+
+/// Verbose changes the human-readable beam listing, not the returned record.
+#[test]
+fn imhead_verbose_summary_returns_casas_record() {
+    let workspace = tempfile::tempdir().unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
+    let image = workspace.path().join("verbose_beams.im");
+    copy_tree(&fixture.join("verbose_beams.im"), &image);
+    let oracle: Value =
+        serde_json::from_slice(&std::fs::read(fixture.join("verbose_expected.json")).unwrap())
+            .unwrap();
+    let table = std::fs::read(image.join("table.dat")).unwrap();
+    let mut returns = Vec::new();
+    for verbose in [false, true] {
+        let (output, reply) = json_run(
+            workspace.path(),
+            "imhead",
+            json!({"imagename": image, "mode": "summary", "verbose": verbose}),
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let Some(TaskReply::Succeeded { value, .. }) = reply else {
+            panic!("{reply:?}")
+        };
+        assert_eq!(
+            value.to_plain_json(),
+            oracle["summary"][verbose.to_string()],
+            "verbose={verbose}"
+        );
+        let text = String::from_utf8_lossy(&output.stderr);
+        assert!(text.contains("Restoring beams: 4 channels, 4 polarizations"));
+        assert_eq!(
+            text.lines()
+                .filter(|line| line.contains("channel ") && line.contains("polarization "))
+                .count(),
+            if verbose { 16 } else { 12 }
+        );
+        returns.push(value);
+    }
+    assert_eq!(returns[0], returns[1]);
+    assert_eq!(std::fs::read(image.join("table.dat")).unwrap(), table);
 }
 
 /// CASA's `imhead(image, mode='put', hdkey='bunit', hdvalue='')` clears the
@@ -538,7 +1085,7 @@ fn imhead_put_of_an_empty_bunit_clears_it() {
     let (output, reply) = json_run(
         workspace.path(),
         "imhead",
-        json!({"imagename": image, "mode": "put", "hdkey": "object", "hdvalue": "M31"}),
+        json!({"imagename": image, "mode": "put", "hdkey": "shape", "hdvalue": "M31"}),
     );
     assert_eq!(output.status.code(), Some(2));
     let Some(TaskReply::Failed {

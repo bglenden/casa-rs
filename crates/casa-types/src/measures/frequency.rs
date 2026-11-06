@@ -169,6 +169,45 @@ impl fmt::Display for FrequencyRef {
     }
 }
 
+/// A CASA spectral reference frame, including its undefined frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CasaFrequencyFrame {
+    /// A defined frequency reference frame.
+    Defined(FrequencyRef),
+    /// The CASA `Undefined` frame.
+    Undefined,
+}
+
+impl CasaFrequencyFrame {
+    /// CASA's canonical spelling for this frame.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Defined(frame) => frame.as_str(),
+            Self::Undefined => "Undefined",
+        }
+    }
+}
+
+impl FromStr for CasaFrequencyFrame {
+    type Err = MeasureError;
+
+    /// Parse as casacore's `MFrequency::getType`: exact case-insensitive
+    /// matches take precedence, then an unambiguous prefix in either direction.
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let frames: Vec<_> = FrequencyRef::ALL
+            .into_iter()
+            .map(Self::Defined)
+            .chain([Self::Undefined])
+            .collect();
+        crate::quanta::unique_prefix_position(input, &frames, |frame| frame.as_str())
+            .map(|index| frames[index])
+            .ok_or_else(|| MeasureError::UnknownRefType {
+                input: input.to_owned(),
+            })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // MFrequency
 // ---------------------------------------------------------------------------
@@ -799,6 +838,28 @@ mod tests {
         for r in FrequencyRef::ALL {
             let parsed: FrequencyRef = r.as_str().parse().unwrap();
             assert_eq!(parsed, r);
+        }
+    }
+
+    #[test]
+    fn casa_frequency_frame_accepts_only_unambiguous_prefixes() {
+        for (input, expected) in [
+            ("b", CasaFrequencyFrame::Defined(FrequencyRef::BARY)),
+            (
+                "BARYCENTER",
+                CasaFrequencyFrame::Defined(FrequencyRef::BARY),
+            ),
+            (
+                "LSRKanything",
+                CasaFrequencyFrame::Defined(FrequencyRef::LSRK),
+            ),
+            ("GEOCENTER", CasaFrequencyFrame::Defined(FrequencyRef::GEO)),
+            ("UNDEF", CasaFrequencyFrame::Undefined),
+        ] {
+            assert_eq!(input.parse::<CasaFrequencyFrame>().unwrap(), expected);
+        }
+        for input in ["", "L", "LSR", "G", " BAD"] {
+            assert!(input.parse::<CasaFrequencyFrame>().is_err(), "{input}");
         }
     }
 

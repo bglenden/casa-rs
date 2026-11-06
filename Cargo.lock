@@ -760,6 +760,7 @@ dependencies = [
  "ndarray",
  "serde_json",
  "tempfile",
+ "tracing",
 ]
 
 [[package]]

@@ -1,0 +1,217 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": {
+    "complex": {
+      "datamax": {
+        "error": "RecordInterface: field datamax is unknown"
+      },
+      "datamin": {
+        "error": "RecordInterface: field datamin is unknown"
+      },
+      "maxpixpos": {
+        "error": "RecordInterface: field maxpixpos is unknown"
+      },
+      "maxpos": {
+        "error": "RecordInterface: field maxpos is unknown"
+      },
+      "minpixpos": {
+        "error": "RecordInterface: field minpixpos is unknown"
+      },
+      "minpos": {
+        "error": "RecordInterface: field minpos is unknown"
+      }
+    },
+    "ecliptic180": {
+      "datamax": 0.0,
+      "datamin": 0.0,
+      "maxpixpos": [
+        0,
+        0
+      ],
+      "maxpos": "-180.000000 0.000000",
+      "minpixpos": [
+        0,
+        0
+      ],
+      "minpos": "-180.000000 0.000000"
+    },
+    "four": {
+      "datamax": 31.0,
+      "datamin": 0.0,
+      "maxpixpos": [
+        1,
+        1,
+        3,
+        1
+      ],
+      "maxpos": "00:00:00.000 +00.00.00.000 V 1.415e+09Hz",
+      "minpixpos": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "minpos": "00:00:04.000 -00.01.00.000 I 1.415e+09Hz"
+    },
+    "galactic": {
+      "datamax": 11.0,
+      "datamin": 0.0,
+      "maxpixpos": [
+        2,
+        3
+      ],
+      "maxpos": "359.983333 0.016667",
+      "minpixpos": [
+        0,
+        0
+      ],
+      "minpos": "0.016667 -0.033333"
+    },
+    "hadec180": {
+      "datamax": 0.0,
+      "datamin": 0.0,
+      "maxpixpos": [
+        0,
+        0
+      ],
+      "maxpos": "-12:00:00.000 +00.00.00.000",
+      "minpixpos": [
+        0,
+        0
+      ],
+      "minpos": "-12:00:00.000 +00.00.00.000"
+    },
+    "infinities": {
+      "datamax": "inf",
+      "datamin": "-inf",
+      "maxpixpos": [
+        1,
+        0
+      ],
+      "maxpos": "00:00:00.000 -00.02.00.000",
+      "minpixpos": [
+        0,
+        0
+      ],
+      "minpos": "00:00:04.000 -00.02.00.000"
+    },
+    "linear": {
+      "datamax": 11.0,
+      "datamin": 0.0,
+      "maxpixpos": [
+        2,
+        3
+      ],
+      "maxpos": "1 1",
+      "minpixpos": [
+        0,
+        0
+      ],
+      "minpos": "-1 -2"
+    },
+    "masked": {
+      "datamax": {
+        "error": "RecordInterface: field datamax is unknown"
+      },
+      "datamin": {
+        "error": "RecordInterface: field datamin is unknown"
+      },
+      "maxpixpos": {
+        "error": "RecordInterface: field maxpixpos is unknown"
+      },
+      "maxpos": {
+        "error": "RecordInterface: field maxpos is unknown"
+      },
+      "minpixpos": {
+        "error": "RecordInterface: field minpixpos is unknown"
+      },
+      "minpos": {
+        "error": "RecordInterface: field minpos is unknown"
+      }
+    },
+    "nanfirst": {
+      "datamax": "nan",
+      "datamin": "nan",
+      "maxpixpos": [
+        0,
+        0
+      ],
+      "maxpos": "00:00:04.000 -00.02.00.000",
+      "minpixpos": [
+        0,
+        0
+      ],
+      "minpos": "00:00:04.000 -00.02.00.000"
+    },
+    "nanlater": {
+      "datamax": 11.0,
+      "datamin": 0.0,
+      "maxpixpos": [
+        2,
+        3
+      ],
+      "maxpos": "23:59:56.000 +00.01.00.000",
+      "minpixpos": [
+        0,
+        0
+      ],
+      "minpos": "00:00:04.000 -00.02.00.000"
+    },
+    "ordinary": {
+      "datamax": 11.0,
+      "datamin": 0.0,
+      "maxpixpos": [
+        2,
+        3
+      ],
+      "maxpos": "23:59:56.000 +00.01.00.000",
+      "minpixpos": [
+        0,
+        0
+      ],
+      "minpos": "00:00:04.000 -00.02.00.000"
+    },
+    "partial": {
+      "datamax": 11.0,
+      "datamin": 5.0,
+      "maxpixpos": [
+        2,
+        3
+      ],
+      "maxpos": "23:59:56.000 +00.01.00.000",
+      "minpixpos": [
+        2,
+        1
+      ],
+      "minpos": "23:59:56.000 -00.01.00.000"
+    },
+    "ties": {
+      "datamax": 99.0,
+      "datamin": -2.0,
+      "maxpixpos": [
+        1,
+        0
+      ],
+      "maxpos": "00:00:00.000 -00.02.00.000",
+      "minpixpos": [
+        0,
+        0
+      ],
+      "minpos": "00:00:04.000 -00.02.00.000"
+    },
+    "tiled": {
+      "datamax": 999999.0,
+      "datamin": -5.0,
+      "maxpixpos": [
+        512,
+        512
+      ],
+      "maxpos": "23:42:52.215 +04.15.14.065",
+      "minpixpos": [
+        512,
+        0
+      ],
+      "minpos": "23:42:52.170 -04.17.14.399"
+    }
+  }
+}
