@@ -74,12 +74,15 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("close", &[LOG], R::Bool, Yes),
-    method(
-        "concatenate",
-        &[param("list", K::Any, Empty), WHICH_ALL, LOG],
-        R::Bool,
-        No,
-    ),
+    Method {
+        mutating: true,
+        ..method(
+            "concatenate",
+            &[param("list", K::Any, Empty), WHICH_ALL, LOG],
+            R::Bool,
+            Yes,
+        )
+    },
     method(
         "convertfluxpol",
         &[WHICH, param("polarization", K::Text, Text("Stokes"))],

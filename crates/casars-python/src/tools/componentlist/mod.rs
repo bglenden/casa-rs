@@ -294,15 +294,44 @@ impl PyComponentList {
         })
     }
 
-    /// Not yet implemented in casa-rs.
+    /// Append selected components from a component-list table.
     #[pyo3(signature = (list = None, which = None, log = None), text_signature = "($self, list=[], which=[-1], log=True)")]
     fn concatenate(
         &self,
-        list: Option<&Bound<'_, PyAny>>,
-        which: Option<&Bound<'_, PyAny>>,
-        log: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        #[pyo3(from_py_with = supplied)] list: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] which: Option<Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = supplied)] log: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        stub("concatenate")
+        let source = match list {
+            Some(value) if value.is_instance_of::<PyDict>() => {
+                return Err(PyNotImplementedError::new_err(
+                    "componentlist.concatenate record input is not yet implemented (#1053)",
+                ));
+            }
+            Some(value) => value.extract::<Variant>()?,
+            None => Variant::Empty,
+        };
+        let (indices, pending) = match which {
+            Some(value) => selection::indices(&value)?,
+            None => (vec![-1], false),
+        };
+        if log.is_some_and(|value| !value.is_instance_of::<PyBool>()) {
+            return Err(PyTypeError::new_err(
+                "in method 'componentlist_concatenate', argument 4 of type 'bool'",
+            ));
+        }
+        let result = self.call(py, move |state, lines| {
+            state
+                .concatenate(&source, &indices, pending, lines)
+                .map(CasaValue::Bool)
+        })?;
+        if pending {
+            return Err(PySystemError::new_err(
+                "<built-in function componentlist_concatenate> returned a result with an exception set",
+            ));
+        }
+        Ok(result)
     }
 
     /// Not yet implemented in casa-rs.

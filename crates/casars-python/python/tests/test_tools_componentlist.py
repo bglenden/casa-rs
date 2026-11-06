@@ -58,7 +58,7 @@ CASA = casa_signatures("componentlist")
 TOOL = json.loads((DATA / "casa_componentlist_tool.json").read_text(encoding="utf-8"))
 
 IMPLEMENTED = {
-    "addcomponent", "close", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
+    "addcomponent", "close", "concatenate", "done", "getcomponent", "getfluxunit", "getfluxvalue", "getlabel",
     "getfluxerror", "getfluxpol", "getfreq", "getfreqframe", "getfrequnit", "getfreqvalue",
     "indices", "getkeyword", "haskeyword", "getrefdir", "getrefdirra", "getrefdirdec", "getrefdirframe", "getshape", "getspectrum", "length", "open", "rename", "shapetype", "spectrumtype",
     "select", "deselect", "selected", "setlabel", "setfreq", "setfreqframe", "setrefdir", "setrefdirframe", "remove", "recover", "purge", "putkeyword", "sample", "convertfluxunit", "convertfrequnit", "convertshape", "edit", "replace", "torecord", "isphysical", "iscomponentlist",
