@@ -2384,6 +2384,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#setflux-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        setflux-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -6382,6 +6393,17 @@
     <span class="md-ellipsis">
       
         convertfluxpol-casa
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#setflux-casa" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        setflux-casa
       
     </span>
   </a>
@@ -10816,9 +10838,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <td><code>casars.tools</code></td>
 <td style="text-align: right;">61</td>
 <td>yes</td>
-<td style="text-align: right;">48</td>
+<td style="text-align: right;">49</td>
 <td style="text-align: right;">2</td>
-<td style="text-align: right;">11</td>
+<td style="text-align: right;">10</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
 <td style="text-align: right;">0</td>
@@ -10936,7 +10958,7 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <h3 id="componentlist">componentlist<a class="headerlink" href="#componentlist" title="Permanent link">&para;</a></h3>
 <h4 id="componentlist-method-implementation">componentlist method implementation<a class="headerlink" href="#componentlist-method-implementation" title="Permanent link">&para;</a></h4>
 <p>Implementation status is <strong>not behavioral verification</strong>. Implemented means the stated scope has a native code path; Partial has known missing modes or combinations, which raise <code>NotImplementedError</code> naming the issue shown; Not implemented raises it for every call; Disabled in CASA and Deprecated in CASA do what CASA does; Unassessed has not been reviewed. Evidence states are listed separately below.</p>
-<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 48, Partial: 2, Not implemented: 11, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
+<p>Audit baseline: <code>49c810c57210127fc4bc4f66289cadec90f49947</code>. Status counts: Implemented: 49, Partial: 2, Not implemented: 10, Disabled in CASA: 0, Deprecated in CASA: 0, Unassessed: 0.</p>
 <table>
 <thead>
 <tr>
@@ -11273,9 +11295,9 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <tr>
 <td><code>setflux</code></td>
 <td><code>which, value=[], unit='Jy', polarization='Stokes', error=[], log=True</code></td>
-<td>Not implemented (#1053)</td>
-<td>Raises NotImplementedError naming #1053. CASA's simulation tasks and simutil do not call it.</td>
-<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-refusals">refusals</a></td>
+<td>Implemented (#1053)</td>
+<td>Sets scalar or four-component Stokes flux and errors for one or all components, including NumPy arrays in column-major order. Preserves finite double precision and a singleton error; rejects non-finite values, nonzero imaginary parts, and unsafe index conversions before mutation.</td>
+<td><a href="#componentlist-evidence-signature">signature</a>, <a href="#componentlist-evidence-setflux-casa">setflux-casa</a></td>
 </tr>
 <tr>
 <td><code>setfreq</code></td>
@@ -11760,6 +11782,16 @@ Sources: <code>resources/casa-compat/casa-6.7.6.14/</code> (read from CASA by <c
 <li><a href="https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.cl.tgz">crates/casars-python/python/tests/data/casa_componentlist_convertfluxpol.cl.tgz</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/crates/casars-python/python/tests/test_componentlist_convertfluxpol.py">crates/casars-python/python/tests/test_componentlist_convertfluxpol.py</a></li>
 <li><a href="https://github.com/bglenden/casa-rs/blob/a297aeb7133d596b7f7f7f60127d545f51329318/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
+</ul>
+<p><a id="componentlist-evidence-setflux-casa"></a></p>
+<h5 id="setflux-casa">setflux-casa<a class="headerlink" href="#setflux-casa" title="Permanent link">&para;</a></h5>
+<p><strong>CASA-recorded values — measured.</strong> 31 CASA 6.7.6-14 argument cases, 12 NumPy cases, three complex-loss cases, three non-finite/overflow cases and two isolated crash probes cover flux assignment. CASA reads a casa-rs-updated table with array values, errors, keyword and unrelated direction errors intact. componentlist.setflux values, errors and table persistence.</p>
+<ul>
+<li><a href="https://github.com/bglenden/casa-rs/blob/c7812db83679f9c49e5397540c331895da3aa89d/tools/simulation/componentlist_setflux_oracle.py">tools/simulation/componentlist_setflux_oracle.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/c7812db83679f9c49e5397540c331895da3aa89d/crates/casars-python/python/tests/data/casa_componentlist_setflux.json">crates/casars-python/python/tests/data/casa_componentlist_setflux.json</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/c7812db83679f9c49e5397540c331895da3aa89d/crates/casars-python/python/tests/data/casa_componentlist_setflux.cl.tgz">crates/casars-python/python/tests/data/casa_componentlist_setflux.cl.tgz</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/c7812db83679f9c49e5397540c331895da3aa89d/crates/casars-python/python/tests/test_componentlist_setflux.py">crates/casars-python/python/tests/test_componentlist_setflux.py</a></li>
+<li><a href="https://github.com/bglenden/casa-rs/blob/c7812db83679f9c49e5397540c331895da3aa89d/docs/CASA%20%28C%2B%2B%29%20bugs.md">docs/CASA (C++) bugs.md</a></li>
 </ul>
 <h3 id="measures">measures<a class="headerlink" href="#measures" title="Permanent link">&para;</a></h3>
 <h4 id="measures-method-implementation">measures method implementation<a class="headerlink" href="#measures-method-implementation" title="Permanent link">&para;</a></h4>

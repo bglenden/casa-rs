@@ -4855,6 +4855,26 @@ SIGSEGV. With components present, passing <code>None</code> or an integer too la
 the Python binding as the index raises <code>SystemError</code> after changing every
 component's flux representation. casa-rs raises catchable errors and leaves
 all component values unchanged.</p>
+<h2 id="unsafe-component-flux-updates">Unsafe component flux updates<a class="headerlink" href="#unsafe-component-flux-updates" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Date noted: 2026-11-06</li>
+<li>Status: CASA aborts, crashes, or loses input values; casa-rs preserves the input or rejects it before mutation (#1053).</li>
+<li>Owner decision: Correct CASA crashes and data corruption as classes; see <code>docs/simulation/owner-decisions-20261105.md</code>.</li>
+<li>Evidence: <code>tools/simulation/componentlist_setflux_oracle.py</code> and its CASA 6.7.6-14 fixture. Crash cases run in isolated processes with core dumps disabled.</li>
+</ul>
+<p>For a component, <code>cl.setflux(0, 2, error=0.2)</code> aborts CASA because its
+four-element error vector is assigned a one-element array. casa-rs stores
+<code>[0.2, 0, 0, 0]</code>, preserving the supplied error. On an empty list,
+<code>cl.setflux(-1, 2)</code> terminates CASA with SIGSEGV. An index of <code>None</code> or an
+integer too large for the binding causes CASA to change every component and
+then raise <code>SystemError</code>; casa-rs reports a catchable error without mutation.</p>
+<p>CASA accepts complex flux values and four-element errors, silently discarding
+the imaginary parts; casa-rs rejects nonzero imaginary parts before mutation,
+because the Stokes record interface cannot return them. CASA also accepts NaN
+and infinity, and narrows a finite <code>1e200</code> to infinity when it temporarily
+stores the flux in single precision. casa-rs rejects non-finite inputs and
+retains finite double-precision values, consistent with the existing
+<code>addcomponent</code> precision decision above.</p>
 
 
 
