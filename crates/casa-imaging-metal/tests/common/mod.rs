@@ -321,6 +321,11 @@ impl ConvolutionFunctionSet for Dense {
     fn pointing_ramp(&self) -> bool {
         true
     }
+    // Exercise both odd and even phase origins and the independently
+    // selected weight origin in the CPU/Metal comparison laws.
+    fn pointing_origin_shift(&self, key: CfKey, weight: bool) -> bool {
+        (key.cube == 1) ^ weight
+    }
     fn image_correction(&self) -> &ImageCorrection {
         &self.correction
     }

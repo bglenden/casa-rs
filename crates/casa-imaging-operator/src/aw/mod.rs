@@ -158,10 +158,12 @@ struct Group {
     imaging_half_support: [u16; 2],
     /// The same over the weight cells, which the PSF and weight image use.
     weight_half_support: [u16; 2],
+    /// Odd maximum CF extent of the PA's imaging and weight buffers.
+    pointing_origin_shift: [bool; 2],
 }
 
 impl Group {
-    fn new(cells: &[CellFiles]) -> Self {
+    fn new(cells: &[CellFiles], pointing_origin_shift: [bool; 2]) -> Self {
         let largest = |select: fn(&CellFiles) -> &CellHeader| {
             cells.iter().map(select).fold([0_u16; 2], |half, header| {
                 [
@@ -175,8 +177,39 @@ impl Group {
         Self {
             imaging_half_support,
             weight_half_support,
+            pointing_origin_shift,
         }
     }
+}
+
+/// Assemble the groups of each CASA PA buffer with that buffer's largest
+/// imaging and weight CF extents. A smaller cell still uses the same phase
+/// array as every other cell of its kind in the buffer.
+fn make_groups(cells: &[CellFiles], elements: usize, groups_per_pa: usize) -> Vec<Group> {
+    cells
+        .chunks_exact(groups_per_pa * elements)
+        .flat_map(|pa_cells| {
+            let odd = |select: fn(&CellFiles) -> &CellHeader| {
+                !pa_cells
+                    .iter()
+                    .map(select)
+                    .map(|header| header.shape[0])
+                    .max()
+                    .unwrap_or(0)
+                    .is_multiple_of(2)
+            };
+            let shift = [odd(|cell| &cell.imaging), odd(|cell| &cell.weight)];
+            pa_cells
+                .chunks_exact(elements)
+                .map(move |group| Group::new(group, shift))
+        })
+        .collect()
+}
+
+/// The retained group index owns both supports and the two phase-origin
+/// selectors at every allocated slot, including spare capacity.
+const fn group_index_bytes(capacity: usize) -> usize {
+    capacity * size_of::<Group>()
 }
 
 /// The loaded taps of one group.
@@ -382,10 +415,7 @@ impl AwCatalog {
                     .max(cell.weight.support[axis])
             })
         });
-        let groups = cells
-            .chunks_exact(elements)
-            .map(Group::new)
-            .collect::<Vec<_>>();
+        let groups = make_groups(&cells, elements, frequencies_hz.len() * w_values.len());
         let mueller = routing(&mueller_elements, polarization).ok_or_else(|| {
             cache_error(
                 &root,
@@ -599,7 +629,7 @@ impl AwCatalog {
         let index = self.root.capacity()
             + self.cells.capacity() * size_of::<CellFiles>()
             + paths.clone().sum::<usize>()
-            + self.groups.capacity() * size_of::<Group>()
+            + group_index_bytes(self.groups.capacity())
             + (self.pa_deg.capacity() + self.frequencies_hz.capacity() + self.w_values.capacity())
                 * size_of::<f64>()
             + self.mueller_elements.capacity() * size_of::<u32>()
@@ -881,6 +911,10 @@ impl ConvolutionFunctionSet for AwCatalog {
 
     fn pointing_ramp(&self) -> bool {
         true
+    }
+
+    fn pointing_origin_shift(&self, key: CfKey, weight: bool) -> bool {
+        self.groups[usize::from(key.group)].pointing_origin_shift[usize::from(weight)]
     }
 
     /// The catalog pages its cells, so its taps are its cache's bound; the
@@ -1188,11 +1222,58 @@ mod tests {
                         weight: header(*weight),
                     })
                     .collect::<Vec<_>>(),
+                [false, false],
             )
         };
         let wide_imaging = group(&[([6, 6], [4, 4]), ([5, 6], [4, 3])]);
         assert_eq!(wide_imaging.imaging_half_support, [6, 6]);
         assert_eq!(wide_imaging.weight_half_support, [4, 4]);
+    }
+
+    /// The index's retained charge covers both origin selectors at every
+    /// allocated group slot, including spare capacity (#1070).
+    #[test]
+    fn group_index_charge_counts_both_origin_selectors() {
+        let groups = Vec::<Group>::with_capacity(41);
+        let per_group = 2 * size_of::<[u16; 2]>() + 2 * size_of::<bool>();
+        assert_eq!(
+            group_index_bytes(groups.capacity()),
+            groups.capacity() * per_group
+        );
+    }
+
+    /// C++ builds one phase-gradient array per PA buffer from the largest
+    /// CF, separately for imaging and weight; parity is not a per-cell rule.
+    #[test]
+    fn phase_origin_follows_each_pa_buffers_largest_cell() {
+        let cell = |imaging: usize, weight: usize| {
+            let header = |width| CellHeader {
+                path: PathBuf::new(),
+                shape: [width, width],
+                sampling: 2,
+                support: [1, 1],
+                mueller: 0,
+                w_value: 0.0,
+                working_field_rad: None,
+                w_increment: 0.0,
+                pa_deg: 0.0,
+                frequency_hz: 1.0e9,
+            };
+            CellFiles {
+                imaging: header(imaging),
+                weight: header(weight),
+            }
+        };
+        let cells = [cell(10, 11), cell(13, 12), cell(14, 15), cell(12, 14)];
+        let groups = make_groups(&cells, 1, 2);
+        let shifts = groups
+            .iter()
+            .map(|g| g.pointing_origin_shift)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            shifts,
+            [[true, false], [true, false], [false, true], [false, true]]
+        );
     }
 
     #[test]

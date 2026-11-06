@@ -51,7 +51,8 @@ pub(crate) struct SampleRecord {
     /// Taylor variable.
     pub spectral: f32,
     /// Bit 0: gridding `w > 0`; bit 1: prediction `w > 0`; bit 2: the
-    /// sample is predicted ([`PREDICTS`]).
+    /// sample is predicted ([`PREDICTS`]); bit 3 shifts an odd AW
+    /// pointing-gradient origin ([`SHIFT_POINTING_ORIGIN`]).
     pub flags: u32,
     /// Pointing phase gradient.
     pub gradient: [f32; 2],
@@ -65,6 +66,8 @@ pub(crate) struct SampleRecord {
 /// grid, which a prediction gathers; a mosaic predicts zero for a sample
 /// whose support overruns it (`fmosaic.f`'s `omos`).
 pub(crate) const PREDICTS: u32 = 1 << 2;
+/// CASA's odd AW phase-gradient array starts one fine pixel later.
+pub(crate) const SHIFT_POINTING_ORIGIN: u32 = 1 << 3;
 
 /// Where one kernel cell's taps sit in the device arenas (`Table`);
 /// [`crate::kernel_bytes`] charges its size per cell.
@@ -290,6 +293,8 @@ impl Routes {
 pub(crate) struct Targets<'a> {
     /// Which taps the samples use.
     pub kind: TapsKind,
+    /// Whether the dispatch uses the AW weight-buffer pointing origin.
+    pub weight_origin: bool,
     /// The accumulator the adjoint spreads into, with the mode's terms.
     pub adjoint: Option<(&'a AccumulatorLayout, Range<usize>)>,
     /// The model grids the forward transform gathers from.
@@ -434,7 +439,14 @@ pub(crate) fn prepare(
             spectral: placement.spectral,
             flags: u32::from(w_positive)
                 | (u32::from(prediction_w_positive) << 1)
-                | if predicts { PREDICTS } else { 0 },
+                | if predicts { PREDICTS } else { 0 }
+                | if placement.gradient != [0.0; 2]
+                    && cf.pointing_origin_shift(placement.cf, targets.weight_origin)
+                {
+                    SHIFT_POINTING_ORIGIN
+                } else {
+                    0
+                },
             gradient: placement.gradient,
             clip_low,
             clip_high,

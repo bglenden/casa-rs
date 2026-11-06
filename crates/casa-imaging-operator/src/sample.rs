@@ -53,7 +53,8 @@ pub struct Placement {
     /// carry `e^{iφ}`; prediction applies `e^{−iφ}`. The pointing ramp's
     /// phase at the sample's fine offset belongs to the kernels, which
     /// anchor the ramp at the sample in every mode (CASA reads the ramped
-    /// kernel at `ix · sampling + off`).
+    /// kernel at `ix · sampling + off`); an odd AW phase array adds its
+    /// one-fine-pixel origin shift in the backend.
     pub phase: f64,
     /// Target grid plane: the output channel for a channel-local basis,
     /// 0 for a constant or Taylor basis.
