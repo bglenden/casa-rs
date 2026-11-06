@@ -14,6 +14,7 @@ use casa_types::measures::position_to_record;
 use casa_types::measures::{
     MeasFrame, direction_from_record, epoch_from_record, position_from_record,
 };
+use casa_types::quanta::Unit;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::coordinate::{Coordinate, CoordinateType};
@@ -22,6 +23,7 @@ use crate::record_utils::{
     get_optional_i32, get_optional_string, get_optional_vec_f64, get_optional_vec_string,
     get_required_f64, get_required_vec_f64,
 };
+use crate::tabular::{TabularEdit, edit_table};
 
 #[derive(Debug, Clone)]
 enum SpectralMapping {
@@ -47,6 +49,16 @@ pub(crate) fn closest_rest_frequency(values: &[f64], target: f64) -> Option<usiz
         .enumerate()
         .min_by(|(_, a), (_, b)| (a - target).abs().total_cmp(&(b - target).abs()))
         .map(|(index, _)| index)
+}
+
+fn frequency_unit_scale(unit: &str) -> Option<f64> {
+    if unit == "Hz" {
+        return Some(1.0);
+    }
+    let unit = Unit::new(unit).ok()?;
+    let hz = Unit::new("Hz").ok()?;
+    let scale = unit.val().factor / hz.val().factor;
+    (unit.conformant(&hz) && scale.is_normal() && scale > 0.0).then_some(scale)
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +96,8 @@ pub struct SpectralCoordinate {
     name: String,
     /// The world axis unit string.
     unit: String,
+    /// The stored unit's scale to Hz, if it is a supported frequency unit.
+    unit_scale_hz: Option<f64>,
 }
 
 impl SpectralCoordinate {
@@ -114,6 +128,7 @@ impl SpectralCoordinate {
             },
             name: "Frequency".into(),
             unit: "Hz".into(),
+            unit_scale_hz: Some(1.0),
         }
     }
 
@@ -152,13 +167,192 @@ impl SpectralCoordinate {
             },
             name: "Frequency".into(),
             unit: "Hz".into(),
+            unit_scale_hz: Some(1.0),
         })
     }
 
     /// Sets the world axis unit string. Returns `self` for chaining.
     pub fn with_unit(mut self, unit: impl Into<String>) -> Self {
-        self.unit = unit.into();
+        let unit = unit.into();
+        self.unit_scale_hz = frequency_unit_scale(&unit);
+        self.unit = unit;
         self
+    }
+
+    /// Convert a value in the coordinate's stored frequency unit to Hz.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stored unit is not a supported frequency unit.
+    pub fn value_in_hz(&self, value: f64) -> Result<f64, CoordinateError> {
+        let scale = self.unit_scale_hz.ok_or_else(|| {
+            CoordinateError::InvalidRecord(format!(
+                "invalid spectral frequency unit {:?}",
+                self.unit
+            ))
+        })?;
+        Ok(value * scale)
+    }
+
+    /// Convert a frequency in Hz to the coordinate's stored unit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stored unit is not a supported frequency unit.
+    pub fn value_from_hz(&self, value: f64) -> Result<f64, CoordinateError> {
+        let scale = self.unit_scale_hz.ok_or_else(|| {
+            CoordinateError::InvalidRecord(format!(
+                "invalid spectral frequency unit {:?}",
+                self.unit
+            ))
+        })?;
+        Ok(value / scale)
+    }
+
+    /// Return the active rest frequency in Hz.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stored unit is not a supported frequency unit.
+    pub fn rest_frequency_hz(&self) -> Result<f64, CoordinateError> {
+        self.value_in_hz(self.rest_frequency)
+    }
+
+    /// Return the world-frame frequency at a pixel, in Hz.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the unit or pixel-to-world conversion is invalid.
+    pub fn world_frequency_hz(&self, pixel: f64) -> Result<f64, CoordinateError> {
+        self.value_in_hz(self.to_world(&[pixel])?[0])
+    }
+
+    /// Rebuild a tabular spectral record for a unit-stride image section.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stored coordinate or lookup table is invalid.
+    pub fn subimage_tabular_record(
+        record: &mut RecordValue,
+        start: usize,
+        length: usize,
+    ) -> Result<bool, CoordinateError> {
+        let Some(Value::Record(table)) = record.get("tabular") else {
+            return Ok(false);
+        };
+        let table_unit = get_optional_vec_string(table, "units")
+            .and_then(|units| units.into_iter().next())
+            .unwrap_or_else(|| "Hz".into());
+        let coordinate = Self::from_record(record)?;
+        let SpectralMapping::Tabular {
+            pixel_values,
+            world_values,
+            ..
+        } = &coordinate.mapping
+        else {
+            return Ok(false);
+        };
+        let factor = coordinate
+            .unit_scale_hz
+            .ok_or_else(|| CoordinateError::InvalidRecord("invalid spectral unit".into()))?
+            / frequency_unit_scale(&table_unit).ok_or_else(|| {
+                CoordinateError::InvalidRecord("invalid tabular spectral unit".into())
+            })?;
+        let count = length.max(2);
+        let values = (0..count)
+            .map(|pixel| {
+                interpolate(pixel_values, world_values, (start + pixel) as f64)
+                    .map(|world| world * factor)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let increment = (values[count - 1] - values[0]) / (count - 1) as f64;
+        let Some(Value::Record(table)) = record.get_mut("tabular") else {
+            unreachable!()
+        };
+        table.upsert(
+            "crval",
+            Value::Array(ArrayValue::from_f64_vec(vec![values[0]])),
+        );
+        table.upsert(
+            "cdelt",
+            Value::Array(ArrayValue::from_f64_vec(vec![increment])),
+        );
+        table.upsert("crpix", Value::Array(ArrayValue::from_f64_vec(vec![0.0])));
+        table.upsert(
+            "pixelvalues",
+            Value::Array(ArrayValue::from_f64_vec(
+                (0..count).map(|i| i as f64).collect(),
+            )),
+        );
+        table.upsert(
+            "worldvalues",
+            Value::Array(ArrayValue::from_f64_vec(values)),
+        );
+        Ok(true)
+    }
+
+    /// Return the spectral increment in the world frame, expressed in Hz.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the unit or reference-frame conversion is invalid.
+    pub fn world_increment_hz(&self) -> Result<f64, CoordinateError> {
+        self.value_in_hz(self.convert_native_to_world(self.increment()[0])?)
+    }
+
+    /// Linear FITS frequency axis `(reference pixel, reference Hz, increment Hz)`.
+    ///
+    /// Casacore represents a non-linear table in FITS by the line through
+    /// its first two sampled frequencies, anchored at the first pixel.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the unit or pixel-to-world conversion is invalid.
+    pub fn fits_linearized_axis_hz(&self) -> Result<(f64, f64, f64), CoordinateError> {
+        if let SpectralMapping::Tabular { pixel_values, .. } = &self.mapping {
+            let first = self.world_frequency_hz(pixel_values[0])?;
+            let second = self.world_frequency_hz(pixel_values[1])?;
+            Ok((pixel_values[0], first, second - first))
+        } else {
+            let pixel = self.reference_pixel()[0];
+            Ok((
+                pixel,
+                self.world_frequency_hz(pixel)?,
+                self.world_increment_hz()?,
+            ))
+        }
+    }
+
+    /// Apply a tabular coordinate edit and canonicalize the resulting table
+    /// as casacore does when it saves and restores a spectral coordinate.
+    pub(crate) fn edit_tabular(&mut self, edit: TabularEdit) -> Result<f64, CoordinateError> {
+        let SpectralMapping::Tabular {
+            pixel_values,
+            world_values,
+            crval,
+            cdelt,
+            crpix,
+        } = &mut self.mapping
+        else {
+            return Err(CoordinateError::InvalidRecord(
+                "spectral coordinate is not tabular".into(),
+            ));
+        };
+        let updated = edit_table(pixel_values, world_values, *crval, *cdelt, *crpix, edit)?;
+        *crval = updated.values[0];
+        *cdelt = updated.increment;
+        *crpix = pixel_values[0];
+        *world_values = updated.values;
+        Ok(updated.old)
+    }
+
+    /// Return the pixel for a world-frame frequency expressed in Hz.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the unit or world-to-pixel conversion is invalid.
+    pub fn pixel_at_frequency_hz(&self, frequency_hz: f64) -> Result<f64, CoordinateError> {
+        Ok(self.to_pixel(&[self.value_from_hz(frequency_hz)?])?[0])
     }
 
     /// Sets the CASA conversion-layer frame used for displayed world coordinates.
@@ -284,9 +478,9 @@ impl SpectralCoordinate {
             parameter_record = tabular;
         }
 
-        let crval = get_required_vec_f64(parameter_record, "crval")?;
-        let cdelt = get_required_vec_f64(parameter_record, "cdelt")?;
-        let crpix = get_required_vec_f64(parameter_record, "crpix")?;
+        let mut crval = get_required_vec_f64(parameter_record, "crval")?;
+        let mut cdelt = get_required_vec_f64(parameter_record, "cdelt")?;
+        let mut crpix = get_required_vec_f64(parameter_record, "crpix")?;
         if crval.len() != 1 || cdelt.len() != 1 || crpix.len() != 1 {
             return Err(CoordinateError::InvalidRecord(
                 "spectral coordinate expects single-valued crval/cdelt/crpix".into(),
@@ -299,7 +493,49 @@ impl SpectralCoordinate {
                 "invalid rest frequency".into(),
             ));
         }
-        let mut coord = if let Some((pixel_values, world_values)) = lookup_tables {
+        let axis_unit = get_optional_string(rec, "unit").or_else(|| {
+            get_optional_vec_string(parameter_record, "units")
+                .and_then(|units| units.into_iter().next())
+        });
+        let mut coord = if let Some((mut pixel_values, mut world_values)) = lookup_tables {
+            // Casacore's nested tabular coordinate is in Hz, while the
+            // surrounding spectral coordinate may display another unit.
+            let table_unit = get_optional_vec_string(parameter_record, "units")
+                .and_then(|units| units.into_iter().next())
+                .unwrap_or_else(|| "Hz".into());
+            let from = frequency_unit_scale(&table_unit).ok_or_else(|| {
+                CoordinateError::InvalidRecord(format!(
+                    "invalid tabular spectral unit {table_unit:?}"
+                ))
+            })?;
+            let to = frequency_unit_scale(axis_unit.as_deref().unwrap_or("Hz"))
+                .ok_or_else(|| CoordinateError::InvalidRecord("invalid spectral unit".into()))?;
+            let factor = from / to;
+            crval[0] *= factor;
+            cdelt[0] *= factor;
+            for value in &mut world_values {
+                *value *= factor;
+            }
+            if pixel_values.len() >= 2 && world_values.len() == pixel_values.len() {
+                let last = pixel_values.len() - 1;
+                if pixel_values[last] == pixel_values[0] {
+                    return Err(CoordinateError::InvalidRecord(
+                        "tabular spectral pixel endpoints coincide".into(),
+                    ));
+                }
+                // Casacore rebuilds a spectral lookup with consecutive
+                // channel indices, then restores the table's reference pixel.
+                let original_reference_pixel = pixel_values[0];
+                crval[0] = world_values[0];
+                cdelt[0] = (world_values[last] - world_values[0]) / last as f64;
+                crpix[0] = original_reference_pixel;
+                for (index, (pixel, world)) in
+                    pixel_values.iter_mut().zip(&mut world_values).enumerate()
+                {
+                    *pixel = index as f64;
+                    *world -= cdelt[0] * original_reference_pixel;
+                }
+            }
             Self::from_tabular(
                 frequency_ref,
                 pixel_values,
@@ -318,10 +554,7 @@ impl SpectralCoordinate {
         }) {
             coord = coord.with_name(name);
         }
-        if let Some(unit) = get_optional_string(rec, "unit").or_else(|| {
-            get_optional_vec_string(parameter_record, "units")
-                .and_then(|units| units.into_iter().next())
-        }) {
+        if let Some(unit) = axis_unit {
             coord = coord.with_unit(unit);
         }
         if let Some(conversion) = parse_conversion(rec) {
@@ -525,14 +758,15 @@ impl SpectralCoordinate {
                 cdelt,
                 crpix,
             } => {
+                let to_hz = self.unit_scale_hz.unwrap_or(1.0);
                 let mut tabular = RecordValue::default();
                 tabular.upsert(
                     "crval",
-                    Value::Array(ArrayValue::from_f64_vec(vec![*crval])),
+                    Value::Array(ArrayValue::from_f64_vec(vec![*crval * to_hz])),
                 );
                 tabular.upsert(
                     "cdelt",
-                    Value::Array(ArrayValue::from_f64_vec(vec![*cdelt])),
+                    Value::Array(ArrayValue::from_f64_vec(vec![*cdelt * to_hz])),
                 );
                 tabular.upsert(
                     "crpix",
@@ -545,7 +779,7 @@ impl SpectralCoordinate {
                 );
                 tabular.upsert(
                     "units",
-                    Value::Array(ArrayValue::from_string_vec(vec![self.unit.clone()])),
+                    Value::Array(ArrayValue::from_string_vec(vec!["Hz".into()])),
                 );
                 tabular.upsert(
                     "pixelvalues",
@@ -553,7 +787,9 @@ impl SpectralCoordinate {
                 );
                 tabular.upsert(
                     "worldvalues",
-                    Value::Array(ArrayValue::from_f64_vec(world_values.clone())),
+                    Value::Array(ArrayValue::from_f64_vec(
+                        world_values.iter().map(|value| value * to_hz).collect(),
+                    )),
                 );
                 rec.upsert("tabular", Value::Record(tabular));
             }
@@ -584,11 +820,12 @@ impl SpectralCoordinate {
 }
 
 impl SpectralCoordinate {
-    fn convert_native_to_world(&self, native_hz: f64) -> Result<f64, CoordinateError> {
+    fn convert_native_to_world(&self, native: f64) -> Result<f64, CoordinateError> {
         let Some(conversion) = &self.conversion else {
-            return Ok(native_hz);
+            return Ok(native);
         };
-        MFrequency::new(native_hz, self.frequency_ref)
+        let native_hz = self.value_in_hz(native)?;
+        let converted_hz = MFrequency::new(native_hz, self.frequency_ref)
             .convert_to(conversion.frequency_ref, &conversion.frame)
             .map(|frequency| frequency.hz())
             .map_err(|err| {
@@ -596,14 +833,16 @@ impl SpectralCoordinate {
                     "spectral frame conversion {} -> {} failed: {err}",
                     self.frequency_ref, conversion.frequency_ref
                 ))
-            })
+            })?;
+        self.value_from_hz(converted_hz)
     }
 
-    fn convert_world_to_native(&self, world_hz: f64) -> Result<f64, CoordinateError> {
+    fn convert_world_to_native(&self, world: f64) -> Result<f64, CoordinateError> {
         let Some(conversion) = &self.conversion else {
-            return Ok(world_hz);
+            return Ok(world);
         };
-        MFrequency::new(world_hz, conversion.frequency_ref)
+        let world_hz = self.value_in_hz(world)?;
+        let converted_hz = MFrequency::new(world_hz, conversion.frequency_ref)
             .convert_to(self.frequency_ref, &conversion.frame)
             .map(|frequency| frequency.hz())
             .map_err(|err| {
@@ -611,7 +850,8 @@ impl SpectralCoordinate {
                     "spectral frame conversion {} -> {} failed: {err}",
                     conversion.frequency_ref, self.frequency_ref
                 ))
-            })
+            })?;
+        self.value_from_hz(converted_hz)
     }
 }
 
@@ -849,9 +1089,10 @@ mod tests {
         assert_eq!(restored.axis_units(), vec!["Hz"]);
         assert_eq!(restored.reference_value(), vec![1.41e9]);
         assert_eq!(restored.reference_pixel(), vec![0.0]);
-        assert_eq!(restored.increment(), vec![5.0e5]);
+        // Casacore rebuilds spectral tables on consecutive channels.
+        assert_eq!(restored.increment(), vec![1.0e6]);
         let restored_world = restored.to_world(&[2.0]).unwrap();
-        assert!((restored_world[0] - 1.41125e9).abs() < 1.0);
+        assert!((restored_world[0] - 1.412e9).abs() < 1.0);
     }
 
     #[test]
@@ -935,10 +1176,10 @@ mod tests {
         assert_eq!(coord.axis_units(), vec!["Hz"]);
         assert_eq!(coord.reference_value(), vec![1.41e9]);
         assert_eq!(coord.reference_pixel(), vec![0.0]);
-        assert_eq!(coord.increment(), vec![5.0e5]);
+        assert_eq!(coord.increment(), vec![1.0e6]);
         let world = coord.to_world(&[2.0]).unwrap();
-        assert!((world[0] - 1.41125e9).abs() < 1.0);
-        let pixel = coord.to_pixel(&[1.41125e9]).unwrap();
+        assert!((world[0] - 1.412e9).abs() < 1.0);
+        let pixel = coord.to_pixel(&[1.412e9]).unwrap();
         assert!((pixel[0] - 2.0).abs() < 1e-10);
     }
 

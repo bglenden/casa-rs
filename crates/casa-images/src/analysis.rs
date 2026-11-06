@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_coordinates::{
-    Coordinate, CoordinateSystem, CoordinateType, FitsHeader, FitsValue, fits::to_fits_header,
+    Coordinate, CoordinateSystem, CoordinateType, FitsHeader, FitsValue, fits::try_to_fits_header,
 };
 use casa_fft::Fft2;
 use casa_lattices::{LatticeStatistics, Statistic, StatsElement, TiledShape};
@@ -23,6 +23,7 @@ use num_complex::Complex32;
 mod axes;
 mod custom_values;
 mod extrema;
+mod imhead_fits;
 mod list_log;
 mod planes;
 mod projection_header;
@@ -111,6 +112,9 @@ pub fn run_image_analysis_task(
 /// Return a CASA `imhead(..., mode="summary")`-style metadata summary.
 pub fn imhead(path: impl AsRef<Path>) -> Result<ImageHeaderSummary, ImageError> {
     let path = path.as_ref();
+    if path.is_file() {
+        return imhead_fits::summary(path);
+    }
     let image = AnyPagedImage::open(path)?;
     match &image {
         AnyPagedImage::Float32(image) => imhead_typed(path, image, image.pixel_type_label()),
@@ -341,6 +345,13 @@ pub fn import_fits(
         }
     }
 
+    let mut primary = PrimaryHdu::open(fitsimage)?;
+    let mut image_info = image_info_from_fits_header(&primary.header);
+    let beam_data = primary.beam_set()?;
+    if let Some((beams, _)) = &beam_data {
+        image_info.beam_set = beams.clone();
+    }
+    let image_info = (image_info, beam_data.map(|(_, records)| records));
     let PrimaryHdu {
         mut fits,
         hdu,
@@ -348,13 +359,21 @@ pub fn import_fits(
         shape,
         header,
         coordinates,
-    } = PrimaryHdu::open(fitsimage)?;
+    } = primary;
     match image_type {
         FitsImageType::Double => {
             let data = hdu
                 .read_image::<Vec<f64>>(&mut fits)
                 .map_err(|error| ImageError::Io(error.to_string()))?;
-            import_fits_typed::<f64>(fitsimage, imagename, shape, coordinates, header, data)
+            import_fits_typed::<f64>(
+                fitsimage,
+                imagename,
+                shape,
+                coordinates,
+                header,
+                image_info,
+                data,
+            )
         }
         FitsImageType::Float
         | FitsImageType::UnsignedByte
@@ -367,7 +386,15 @@ pub fn import_fits(
             let data = hdu
                 .read_image::<Vec<f32>>(&mut fits)
                 .map_err(|error| ImageError::Io(error.to_string()))?;
-            import_fits_typed::<f32>(fitsimage, imagename, shape, coordinates, header, data)
+            import_fits_typed::<f32>(
+                fitsimage,
+                imagename,
+                shape,
+                coordinates,
+                header,
+                image_info,
+                data,
+            )
         }
     }
 }
@@ -378,6 +405,7 @@ fn import_fits_typed<T>(
     shape: Vec<usize>,
     coordinates: CoordinateSystem,
     header: FitsHeader,
+    image_info: (ImageInfo, Option<RecordValue>),
     data: Vec<T>,
 ) -> Result<FitsImportSummary, ImageError>
 where
@@ -395,8 +423,11 @@ where
     if let Some(units) = header.get_string("BUNIT") {
         image.set_units(units)?;
     }
-    let image_info = image_info_from_fits_header(&header);
-    image.set_image_info(&image_info)?;
+    if let Some(beams) = image_info.1.as_ref() {
+        image.set_image_info_with_beam_records(&image_info.0, beams)?;
+    } else {
+        image.set_image_info(&image_info.0)?;
+    }
     image.add_history(format!("Imported from FITS {}", fitsimage.display()))?;
     image.save()?;
 
@@ -406,8 +437,9 @@ where
         shape,
         pixel_type: image_pixel_type::<T>().pixel_type_label(),
         units: header.get_string("BUNIT").unwrap_or("").to_string(),
-        object_name: image_info.object_name,
+        object_name: image_info.0.object_name,
         has_restoring_beam: image_info
+            .0
             .beam_set
             .single_beam()
             .is_some_and(|beam| !beam.is_null()),
@@ -1220,6 +1252,10 @@ pub fn imhead_custom_value(
     path: impl AsRef<Path>,
     key: &str,
 ) -> Result<casa_provider_contracts::CasaValue, ImageError> {
+    let path = path.as_ref();
+    if path.is_file() {
+        return imhead_fits::custom_value(path, key);
+    }
     fn get<T: ImagePixel>(
         image: &PagedImage<T>,
         key: &str,
@@ -1529,6 +1565,11 @@ fn imhead_change_string(
 ///
 /// Returns an error for an unreadable image or an invalid restoring-beam set.
 pub fn validate_imhead_image(path: impl AsRef<Path>) -> Result<(), ImageError> {
+    let path = path.as_ref();
+    if path.is_file() {
+        PrimaryHdu::open(path)?;
+        return Ok(());
+    }
     fn validate<T: ImagePixel>(image: &PagedImage<T>) -> Result<(), ImageError> {
         let info = image.image_info()?;
         per_plane_beam_summary(image, &info.beam_set)?;
@@ -1540,6 +1581,20 @@ pub fn validate_imhead_image(path: impl AsRef<Path>) -> Result<(), ImageError> {
         AnyPagedImage::Complex32(image) => validate(image),
         AnyPagedImage::Complex64(image) => validate(image),
     }
+}
+
+/// Validate metadata and require a writable CASA image for an imhead edit.
+///
+/// # Errors
+///
+/// Returns an error for unreadable metadata or a read-only FITS image.
+pub fn validate_imhead_writable(path: impl AsRef<Path>) -> Result<(), ImageError> {
+    let path = path.as_ref();
+    validate_imhead_image(path)?;
+    if path.is_file() {
+        return Err(ImageError::ReadOnly("FITS image"));
+    }
+    Ok(())
 }
 
 fn header_string<T: ImagePixel>(image: &PagedImage<T>, key: &str) -> Result<String, ImageError> {
@@ -1591,6 +1646,8 @@ where
     T: ImagePixel,
 {
     let info = image.image_info()?;
+    let default_mask = image.default_mask_name();
+    let has_mask = default_mask.is_some();
     Ok(ImageHeaderSummary {
         imagename: path.display().to_string(),
         pixel_type,
@@ -1629,7 +1686,8 @@ where
         ),
         spectral: spectral_header(image)?.map(Box::new),
         image_type: header_image_type(image)?.to_string(),
-        default_mask: image.default_mask_name(),
+        default_mask,
+        has_mask,
         masks: image.mask_names(),
         regions: image.region_names(),
         restoring_beam: info
@@ -1640,13 +1698,27 @@ where
         has_multiple_beams: info.beam_set.is_multi(),
         per_plane_beams: per_plane_beam_summary(image, &info.beam_set)?.map(Box::new),
         extrema: None,
-        axes: axis_summaries(image),
+        axes: axis_summaries(image.coordinates(), image.shape()),
     })
 }
 
 fn per_plane_beam_summary<T: ImagePixel>(
     image: &PagedImage<T>,
     beam_set: &ImageBeamSet,
+) -> Result<Option<PerPlaneBeamSummary>, ImageError> {
+    summarize_beam_set(
+        image.coordinates(),
+        image.shape(),
+        beam_set,
+        image.per_plane_beam_record(),
+    )
+}
+
+fn summarize_beam_set(
+    coordinates: &CoordinateSystem,
+    shape: &[usize],
+    beam_set: &ImageBeamSet,
+    beam_record: Option<&RecordValue>,
 ) -> Result<Option<PerPlaneBeamSummary>, ImageError> {
     if beam_set.single_beam().is_some_and(|beam| beam.is_null()) {
         return Err(ImageError::InvalidMetadata(
@@ -1661,13 +1733,11 @@ fn per_plane_beam_summary<T: ImagePixel>(
     let mut axis = 0;
     let mut image_channels = 1;
     let mut image_stokes = 1;
-    for index in 0..image.coordinates().n_coordinates() {
-        let coordinate = image.coordinates().coordinate(index);
+    for index in 0..coordinates.n_coordinates() {
+        let coordinate = coordinates.coordinate(index);
         match coordinate.coordinate_type() {
-            CoordinateType::Spectral => {
-                image_channels = image.shape().get(axis).copied().unwrap_or(1)
-            }
-            CoordinateType::Stokes => image_stokes = image.shape().get(axis).copied().unwrap_or(1),
+            CoordinateType::Spectral => image_channels = shape.get(axis).copied().unwrap_or(1),
+            CoordinateType::Stokes => image_stokes = shape.get(axis).copied().unwrap_or(1),
             _ => {}
         }
         axis += coordinate.n_pixel_axes();
@@ -1690,8 +1760,7 @@ fn per_plane_beam_summary<T: ImagePixel>(
         for channel in 0..channels {
             let index = polarization * channels + channel;
             let beam = *beam_set.beam(channel, polarization);
-            let raw = image
-                .per_plane_beam_record()
+            let raw = beam_record
                 .and_then(|record| record.get(&format!("*{index}")))
                 .and_then(|value| match value {
                     Value::Record(record) => Some(record),
@@ -1730,13 +1799,17 @@ fn spectral_header<T: ImagePixel>(
     let Some(spectral) = image.first_spectral_coordinate()? else {
         return Ok(None);
     };
+    Ok(Some(spectral_summary(&spectral)))
+}
+
+fn spectral_summary(spectral: &casa_coordinates::SpectralCoordinate) -> SpectralHeaderSummary {
     let unit = spectral
         .axis_units()
         .into_iter()
         .next()
         .unwrap_or_else(|| "Hz".into());
     // The stored record's rest frequencies are already in its axis unit.
-    Ok(Some(SpectralHeaderSummary {
+    SpectralHeaderSummary {
         reference_frame: if spectral.has_undefined_frame() {
             "Undefined".into()
         } else {
@@ -1745,7 +1818,7 @@ fn spectral_header<T: ImagePixel>(
         unit,
         rest_frequency: spectral.rest_frequency(),
         rest_frequencies: spectral.rest_frequencies().to_vec(),
-    }))
+    }
 }
 
 fn format_beam(beam: GaussianBeam, record: Option<&RecordValue>) -> Option<RestoringBeamSummary> {
@@ -1797,12 +1870,11 @@ fn beam_quantity(record: &RecordValue, key: &str) -> Option<BeamQuantity> {
     })
 }
 
-fn axis_summaries<T: ImagePixel>(image: &impl ImageInterface<T>) -> Vec<ImageAxisSummary> {
+fn axis_summaries(coordinates: &CoordinateSystem, shape: &[usize]) -> Vec<ImageAxisSummary> {
     let mut summaries = Vec::new();
-    let shape = image.shape();
     let mut axis = 0usize;
-    for coord_idx in 0..image.coordinates().n_coordinates() {
-        let coord = image.coordinates().coordinate(coord_idx);
+    for coord_idx in 0..coordinates.n_coordinates() {
+        let coord = coordinates.coordinate(coord_idx);
         let mut refs = coord.reference_value();
         let refpix = coord.reference_pixel();
         let mut increments = coord.increment();
@@ -2818,8 +2890,9 @@ where
     let selection = Selection::new(image, box_region.as_ref(), request.chans.as_deref())?;
     let data = image.get_slice(&selection.start, &selection.shape)?;
     let mask = image.get_mask_slice(&selection.start, &selection.shape, &vec![1; image.ndim()])?;
-    let output_coordinates = subimage_coordinates(image.coordinates(), &selection.start)?;
-    let legacy_coordinates = legacy_subimage_coordinates(image, &selection.start);
+    let output_coordinates =
+        subimage_coordinates(image.coordinates(), &selection.start, &selection.shape)?;
+    let legacy_coordinates = legacy_subimage_coordinates(image, &selection.start, &selection.shape);
     let mut output = TempImage::<T>::new(
         selection.shape.clone(),
         output_coordinates,
@@ -4108,6 +4181,12 @@ where
     T: ImagePixel + fitsio::images::WriteImage + Copy + FitsBlank,
 {
     let layout = casa_fits_export_layout(image.coordinates(), image.shape());
+    let header = try_to_fits_header(&layout.coordinates, &layout.shape)?;
+    let velocity_overrides = if velocity {
+        velocity_fits_axis_overrides(&layout.coordinates)?
+    } else {
+        BTreeMap::new()
+    };
     let fits_dimensions = layout.shape.iter().rev().copied().collect::<Vec<_>>();
     let description = ImageDescription {
         data_type: match image_pixel_type::<T>() {
@@ -4140,12 +4219,6 @@ where
         .ok_or_else(|| ImageError::InvalidMetadata("image data is not contiguous".to_string()))?;
     hdu.write_image(&mut fits, flat)
         .map_err(|error| ImageError::Io(error.to_string()))?;
-    let header = to_fits_header(&layout.coordinates, &layout.shape);
-    let velocity_overrides = if velocity {
-        velocity_fits_axis_overrides(&layout.coordinates)
-    } else {
-        BTreeMap::new()
-    };
     for keyword in header.iter() {
         if keyword.name == "NAXIS"
             || keyword
@@ -4263,17 +4336,18 @@ fn casa_fits_coordinate_priority(coordinate_type: CoordinateType) -> usize {
     }
 }
 
-fn velocity_fits_axis_overrides(coordinates: &CoordinateSystem) -> BTreeMap<String, FitsValue> {
+fn velocity_fits_axis_overrides(
+    coordinates: &CoordinateSystem,
+) -> Result<BTreeMap<String, FitsValue>, ImageError> {
     let mut axis = 1usize;
     for coordinate_index in 0..coordinates.n_coordinates() {
         let coordinate = coordinates.coordinate(coordinate_index);
-        if coordinate.coordinate_type() == CoordinateType::Spectral {
-            let rest_frequency = spectral_rest_frequency(coordinates).unwrap_or(0.0);
+        if let casa_coordinates::CoordinateModel::Spectral(spectral) = coordinate {
+            let rest_frequency = spectral.rest_frequency_hz()?;
             if rest_frequency <= 0.0 {
                 break;
             }
-            let crval_hz = coordinate.reference_value()[0];
-            let cdelt_hz = coordinate.increment()[0];
+            let (_, crval_hz, cdelt_hz) = spectral.fits_linearized_axis_hz()?;
             let crval_m_s = SPEED_OF_LIGHT_M_S * (1.0 - crval_hz / rest_frequency);
             let cdelt_m_s = -SPEED_OF_LIGHT_M_S * cdelt_hz / rest_frequency;
             let mut overrides = BTreeMap::new();
@@ -4283,12 +4357,12 @@ fn velocity_fits_axis_overrides(coordinates: &CoordinateSystem) -> BTreeMap<Stri
             );
             overrides.insert(format!("CRVAL{axis}"), FitsValue::Float(crval_m_s));
             overrides.insert(format!("CDELT{axis}"), FitsValue::Float(cdelt_m_s));
-            overrides.insert(format!("CUNIT{axis}"), FitsValue::String("m".to_string()));
-            return overrides;
+            overrides.insert(format!("CUNIT{axis}"), FitsValue::String("m/s".to_string()));
+            return Ok(overrides);
         }
         axis += coordinate.n_pixel_axes();
     }
-    BTreeMap::new()
+    Ok(BTreeMap::new())
 }
 
 fn write_fits_key(
@@ -4368,7 +4442,7 @@ mod tests {
         assert_eq!(layout.axis_order, vec![0, 1, 3, 2]);
         assert_eq!(layout.shape, vec![10, 11, 7, 1]);
 
-        let header = to_fits_header(&layout.coordinates, &layout.shape);
+        let header = try_to_fits_header(&layout.coordinates, &layout.shape).unwrap();
         assert_eq!(
             header.get("CTYPE3"),
             Some(&FitsValue::String("FREQ".to_string()))
@@ -5180,7 +5254,7 @@ mod tests {
         let pixels = read_fits_pixels(&fits_path);
         assert_eq!(pixels.iter().filter(|value| value.is_nan()).count(), 2);
         assert_eq!(read_fits_key_as_string(&fits_path, "CTYPE3"), "VRAD");
-        assert_eq!(read_fits_key_as_string(&fits_path, "CUNIT3"), "m");
+        assert_eq!(read_fits_key_as_string(&fits_path, "CUNIT3"), "m/s");
         let crval3 = read_fits_key_as_f64(&fits_path, "CRVAL3");
         let cdelt3 = read_fits_key_as_f64(&fits_path, "CDELT3");
         assert!(crval3.abs() < 1.0e-9);

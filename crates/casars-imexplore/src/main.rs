@@ -73,6 +73,10 @@ fn run_imhead(
             imhead(&path).map_err(|error| image_error("imhead", &path, error))?
         }
         "add" | "del" | "put" => {
+            if path.is_file() {
+                casa_images::analysis::validate_imhead_writable(&path)
+                    .map_err(|error| TaskFailure::execution(error.to_string()))?;
+            }
             let hdkey = task.text("hdkey")?.ok_or_else(|| {
                 TaskFailure::validation("imhead mode put requires hdkey").at("hdkey")
             })?;
@@ -230,8 +234,14 @@ fn run_imhead(
         // CASA's put returns None.
         _ => CasaValue::None,
     };
-    let text = summary.format_text();
-    let result = TaskSuccess::new(value, &summary)?.with_text(text);
+    let result = TaskSuccess::new(value, &summary)?;
+    // The front end prints the complete returned value for read modes. The
+    // separate replayed log provides the human-oriented coordinate summary.
+    let result = if matches!(mode.as_str(), "summary" | "list" | "get") {
+        result
+    } else {
+        result.with_text(summary.format_text())
+    };
     emit_header_log(result, task, &path, &mode, &summary, default_logging)
 }
 

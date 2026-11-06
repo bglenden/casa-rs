@@ -451,38 +451,6 @@ fn imhead_edits_axis_units_and_rescales_coordinate_values() {
 }
 
 #[test]
-fn imhead_refuses_unit_spellings_not_supported_by_the_coordinate_reader() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
-    let workspace = tempfile::tempdir().unwrap();
-    let path = workspace.path().join("unit-spelling.im");
-    copy_tree(&fixture, &path);
-    let before = returned(
-        workspace.path(),
-        "imhead",
-        json!({"imagename": path, "mode": "summary"}),
-    );
-    for unit in ["deg^1", "deg**1", "arcsec*1"] {
-        let (_, reply) = json_run(
-            workspace.path(),
-            "imhead",
-            json!({
-                "imagename": path, "mode": "put", "hdkey": "cunit1", "hdvalue": unit
-            }),
-        );
-        assert!(
-            matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("#977")),
-            "{unit}"
-        );
-    }
-    let after = returned(
-        workspace.path(),
-        "imhead",
-        json!({"imagename": path, "mode": "summary"}),
-    );
-    assert_eq!(before, after);
-}
-
-#[test]
 fn imhead_validates_unit_axis_before_value_type() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix/normal.im");
     let workspace = tempfile::tempdir().unwrap();
@@ -500,42 +468,6 @@ fn imhead_validates_unit_axis_before_value_type() {
             matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains(expected)),
             "{key}"
         );
-    }
-}
-
-#[test]
-fn imhead_refuses_non_hz_spectral_units_without_mutation() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
-    let workspace = tempfile::tempdir().unwrap();
-    for (source, key, unit) in [
-        ("normal", "cunit4", "GHz"),
-        ("ghz", "cunit4", "MHz"),
-        ("transposed", "cunit2", "GHz"),
-    ] {
-        let path = workspace.path().join(format!("{source}.im"));
-        copy_tree(&fixture.join(format!("{source}.im")), &path);
-        let before = returned(
-            workspace.path(),
-            "imhead",
-            json!({"imagename": path, "mode": "summary"}),
-        );
-        let (_, reply) = json_run(
-            workspace.path(),
-            "imhead",
-            json!({
-                "imagename": path, "mode": "put", "hdkey": key, "hdvalue": unit
-            }),
-        );
-        assert!(
-            matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("#977")),
-            "{source}"
-        );
-        let after = returned(
-            workspace.path(),
-            "imhead",
-            json!({"imagename": path, "mode": "summary"}),
-        );
-        assert_eq!(before, after, "{source}");
     }
 }
 
@@ -573,7 +505,7 @@ fn imhead_spectral_unit_conversion_to_hz_remains_correct_for_fits_export() {
     assert_eq!(number, 1.4e9);
 }
 
-fn assert_header_value_near(actual: &Value, expected: &Value, case: usize) {
+pub(super) fn assert_header_value_near(actual: &Value, expected: &Value, case: usize) {
     match (actual, expected) {
         (Value::Number(a), Value::Number(b)) => {
             let (a, b) = (a.as_f64().unwrap(), b.as_f64().unwrap());
@@ -666,40 +598,6 @@ fn imhead_edits_coordinate_values_as_casa_quantities() {
         ] {
             assert_header_value_near(&summary[key], &case["after"][key], index);
         }
-    }
-}
-
-#[test]
-fn imhead_refuses_nonzenithal_direction_reference_edits_without_mutation() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/imhead_crpix");
-    let workspace = tempfile::tempdir().unwrap();
-    for projection in ["car", "sfl", "mer", "ait"] {
-        let path = workspace.path().join(format!("{projection}.im"));
-        copy_tree(&fixture.join(format!("{projection}.im")), &path);
-        let before = returned(
-            workspace.path(),
-            "imhead",
-            json!({"imagename": path, "mode": "summary"}),
-        );
-        for key in ["crval1", "crval2"] {
-            let (_, reply) = json_run(
-                workspace.path(),
-                "imhead",
-                json!({
-                    "imagename": path, "mode": "put", "hdkey": key, "hdvalue": "3deg"
-                }),
-            );
-            assert!(
-                matches!(reply, Some(TaskReply::Failed { message, .. }) if message.contains("#977")),
-                "{projection}: {key}"
-            );
-        }
-        let after = returned(
-            workspace.path(),
-            "imhead",
-            json!({"imagename": path, "mode": "summary"}),
-        );
-        assert_eq!(before, after, "{projection}");
     }
 }
 

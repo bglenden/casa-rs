@@ -454,6 +454,51 @@ def test_imhead_delete_ignores_compound_value(tmp_path: Path, key: str, ignored:
     assert tasks.imhead(str(image), mode="get", hdkey=key) == ""
 
 
+def test_imhead_fits_returns_casa_python_types(tmp_path: Path) -> None:
+    import json
+    import runpy
+    import numpy as np
+
+    require_executables("imhead")
+    root = REPO_ROOT / "crates/casars-imexplore/tests/data/imhead_fits"
+    oracle = json.loads((root / "expected.json").read_text())
+    describe = runpy.run_path(str(REPO_ROOT / "tools/casa-compat/record_casa_returns.py"))["describe"]
+    image = tmp_path / "image.fits"
+    shutil.copyfile(root / "image.fits", image)
+    before = image.read_bytes()
+
+    def compare(actual: object, expected: object) -> None:
+        if isinstance(expected, dict):
+            assert isinstance(actual, dict) and list(actual) == list(expected)
+            for key in expected:
+                compare(actual[key], expected[key])
+        elif isinstance(expected, list):
+            if isinstance(actual, np.ndarray):
+                if actual.dtype.kind in "fc":
+                    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+                else:
+                    assert actual.tolist() == expected
+            else:
+                assert isinstance(actual, list) and len(actual) == len(expected)
+                for a, b in zip(actual, expected):
+                    compare(a, b)
+        elif isinstance(expected, float):
+            assert actual == pytest.approx(expected, rel=1e-12, abs=1e-12)
+        else:
+            assert actual == expected
+
+    for name, case in oracle["cases"].items():
+        mode, _, key = name.partition(":")
+        if "error" in case:
+            with pytest.raises(tasks.TaskExecutionError, match="read-only"):
+                tasks.imhead(str(image), mode=mode, hdkey="bunit", hdvalue="Jy/beam")
+        else:
+            value = tasks.imhead(str(image), mode=mode, hdkey=key)
+            assert describe(value) == case["structure"]
+            compare(value, case["value"])
+        assert image.read_bytes() == before
+
+
 def test_imhead_zero_dim_numpy_record_values_match_casa(tmp_path: Path) -> None:
     import json
     import numpy as np

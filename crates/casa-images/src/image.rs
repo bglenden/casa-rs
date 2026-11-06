@@ -73,6 +73,9 @@ impl ImageHistoryEntry {
 /// Read the persistent image log for replay by `imhead(mode="history")`.
 pub fn image_history_entries(path: impl AsRef<Path>) -> Result<Vec<ImageHistoryEntry>, ImageError> {
     let image = path.as_ref();
+    if image.is_file() {
+        return crate::fits_read::history_entries(image);
+    }
     let path = image.join(LOGTABLE_NAME);
     if !path.exists() {
         let table = Table::open(TableOptions::new(image))?;
@@ -1758,6 +1761,36 @@ impl<T: ImagePixel> PagedImage<T> {
         self.table
             .keywords_mut()
             .upsert("imageinfo", Value::Record(info.to_record()));
+        Ok(())
+    }
+
+    /// Store image info while preserving the units and values of its beams.
+    pub(crate) fn set_image_info_with_beam_records(
+        &mut self,
+        info: &ImageInfo,
+        beams: &RecordValue,
+    ) -> Result<(), ImageError> {
+        let mut record = info.to_record();
+        if info.beam_set.is_multi() {
+            let mut stored = info.beam_set.to_record();
+            for index in 0..info.beam_set.nelements() {
+                let name = format!("*{index}");
+                let beam = beams
+                    .get(&name)
+                    .ok_or_else(|| ImageError::InvalidMetadata(format!("missing beam {name}")))?;
+                stored.upsert(name, beam.clone());
+            }
+            record.upsert("perplanebeams", Value::Record(stored));
+        } else if info.beam_set.is_single() {
+            let beam = beams
+                .get("*0")
+                .ok_or_else(|| ImageError::InvalidMetadata("missing beam *0".into()))?;
+            record.upsert("restoringbeam", beam.clone());
+        }
+        ImageInfo::from_record(&record)?;
+        self.table
+            .keywords_mut()
+            .upsert("imageinfo", Value::Record(record));
         Ok(())
     }
 

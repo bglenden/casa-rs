@@ -80,7 +80,7 @@ pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
         (
             "hasmask",
             CasaValue::Bool {
-                value: summary.default_mask.is_some(),
+                value: summary.has_mask || summary.default_mask.is_some(),
             },
         ),
         ("imagetype", CasaValue::string(summary.image_type.clone())),
@@ -369,6 +369,7 @@ mod tests {
             spectral: None,
             image_type: "Intensity".into(),
             default_mask: None,
+            has_mask: false,
             masks: Vec::new(),
             regions: Vec::new(),
             restoring_beam: Some(Box::new(RestoringBeamSummary {

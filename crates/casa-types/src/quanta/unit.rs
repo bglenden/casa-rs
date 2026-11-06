@@ -40,7 +40,10 @@ impl Unit {
     ///
     /// Returns `Err(UnitError)` if the string is not a valid unit expression.
     pub fn new(s: &str) -> Result<Self, UnitError> {
-        let val = parse_unit(s)?;
+        let val = match parse_unit(s) {
+            Ok(value) => value,
+            Err(_) => parse_unit(&normalize_casa_unit_name(s))?,
+        };
         Ok(Self {
             name: s.to_owned(),
             val,

@@ -10,7 +10,7 @@ mod tools;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use casa_coordinates::{CoordinateType, FitsValue, fits::to_fits_header};
+use casa_coordinates::{CoordinateType, FitsValue, fits::try_to_fits_header};
 use casa_images::{AnyPagedImage, ImageError, ImagePixelType};
 use casa_tables::{RowRange, Table as CasaTable, TableError, TableOptions};
 use casa_types::{
@@ -146,7 +146,9 @@ impl PyImage {
             return Ok(None);
         };
         let keywords = PyDict::new(py);
-        for keyword in to_fits_header(coordinates, shape).iter() {
+        let header = try_to_fits_header(coordinates, shape)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        for keyword in header.iter() {
             if matches!(keyword.name.as_str(), "TELESCOP" | "OBSERVER" | "DATE-OBS") {
                 continue;
             }

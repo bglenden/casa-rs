@@ -987,6 +987,15 @@ mod imhead_custom_cubes;
 #[path = "casa_returns/imhead_mutations.rs"]
 mod imhead_mutations;
 
+#[path = "casa_returns/imhead_fits.rs"]
+mod imhead_fits;
+#[path = "casa_returns/imhead_nonzenithal.rs"]
+mod imhead_nonzenithal;
+#[path = "casa_returns/imhead_spectral_units.rs"]
+mod imhead_spectral_units;
+#[path = "casa_returns/imhead_tabular_units.rs"]
+mod imhead_tabular_units;
+
 #[path = "casa_returns/imhead_list_log.rs"]
 mod imhead_list_log;
 

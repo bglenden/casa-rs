@@ -709,7 +709,7 @@ impl DirectionCoordinate {
     }
 }
 
-fn wcslib_sin_cos_degrees(angle_degrees: f64) -> (f64, f64) {
+pub(crate) fn wcslib_sin_cos_degrees(angle_degrees: f64) -> (f64, f64) {
     if angle_degrees % 90.0 == 0.0 {
         let quadrant = ((angle_degrees / 90.0 + 0.5).floor().abs() as i64) % 4;
         return match quadrant {

@@ -1,0 +1,4750 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": {
+    "summary:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "axisnames",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U15",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "axisunits",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U3",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "defaultmask",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "hasmask",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "imagetype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "incr",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "messages",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "ndim",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "refpix",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "refval",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "tileshape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Frequency",
+          "Stokes"
+        ],
+        "axisunits": [
+          "rad",
+          "rad",
+          "Hz",
+          ""
+        ],
+        "defaultmask": "",
+        "hasmask": true,
+        "imagetype": "Intensity",
+        "incr": [
+          -0.00029088820866577975,
+          0.00029088820866577975,
+          1000.0,
+          1.0
+        ],
+        "masks": [],
+        "messages": [],
+        "ndim": 4,
+        "refpix": [
+          2.0,
+          2.0,
+          1.0,
+          0.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1415000000.0,
+          1.0
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "tileshape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "unit": ""
+      }
+    },
+    "list:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "bunit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cdelt1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "ctype1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "datamax",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "datamin",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "date-obs",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "equinox",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "imtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "maxpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "maxpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "minpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "minpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "object",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "observer",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "projection",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "reffreqtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "restfreq",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "telescope",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "bunit": "",
+        "cdelt1": -0.00029088820866577975,
+        "cdelt2": 0.00029088820866577975,
+        "cdelt3": 1000.0,
+        "cdelt4": 1.0,
+        "crpix1": 2.0,
+        "crpix2": 2.0,
+        "crpix3": 1.0,
+        "crpix4": 0.0,
+        "crval1": 0.0,
+        "crval2": 0.0,
+        "crval3": 1415000000.0,
+        "crval4": 1.0,
+        "ctype1": "Right Ascension",
+        "ctype2": "Declination",
+        "ctype3": "Frequency",
+        "ctype4": "Stokes",
+        "cunit1": "rad",
+        "cunit2": "rad",
+        "cunit3": "Hz",
+        "cunit4": "",
+        "datamax": 21.0,
+        "datamin": -9.0,
+        "date-obs": "2000/01/01/00:00:00.000100",
+        "equinox": "J2000",
+        "imtype": "Intensity",
+        "masks": [],
+        "maxpixpos": [
+          3,
+          3,
+          1,
+          0
+        ],
+        "maxpos": "23:59:56.000 +00.01.00.000 1.415e+09Hz I",
+        "minpixpos": [
+          0,
+          0,
+          1,
+          0
+        ],
+        "minpos": "00:00:08.000 -00.02.00.000 1.415e+09Hz I",
+        "object": " ",
+        "observer": "Karl Jansky",
+        "projection": "SIN",
+        "reffreqtype": "LSRK",
+        "restfreq": [
+          1420405751.786
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "telescope": "ALMA"
+      }
+    },
+    "history:": {
+      "structure": {
+        "type": "None"
+      },
+      "value": null
+    },
+    "get:shape": {
+      "structure": {
+        "type": "ndarray",
+        "dtype": "int64",
+        "shape": [
+          4
+        ]
+      },
+      "value": [
+        4,
+        4,
+        2,
+        1
+      ]
+    },
+    "get:bunit": {
+      "structure": {
+        "type": "str"
+      },
+      "value": ""
+    },
+    "get:restfreq": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "value",
+            "str",
+            {
+              "type": "float"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "unit": "Hz",
+        "value": 1420405751.786
+      }
+    },
+    "get:datamin": {
+      "structure": {
+        "type": "float"
+      },
+      "value": -9.0
+    },
+    "get:datamax": {
+      "structure": {
+        "type": "float"
+      },
+      "value": 21.0
+    },
+    "get:minpixpos": {
+      "structure": {
+        "type": "ndarray",
+        "dtype": "int64",
+        "shape": [
+          4
+        ]
+      },
+      "value": [
+        0,
+        0,
+        1,
+        0
+      ]
+    },
+    "get:maxpixpos": {
+      "structure": {
+        "type": "ndarray",
+        "dtype": "int64",
+        "shape": [
+          4
+        ]
+      },
+      "value": [
+        3,
+        3,
+        1,
+        0
+      ]
+    },
+    "get:mykey": {
+      "structure": {
+        "type": "int"
+      },
+      "value": 123
+    },
+    "get:strkey": {
+      "structure": {
+        "type": "str"
+      },
+      "value": "tea"
+    },
+    "get:dblkey": {
+      "structure": {
+        "type": "float"
+      },
+      "value": 1.25
+    },
+    "put": {
+      "error": "RuntimeError",
+      "message": "Exception: This image is not writable; metadata may not be modified in it."
+    },
+    "add": {
+      "error": "RuntimeError",
+      "message": "Exception: This image is not writable; metadata may not be added to it."
+    },
+    "del": {
+      "error": "RuntimeError",
+      "message": "Exception: This image is not writable; metadata may not be removed from it."
+    }
+  },
+  "integer_cases": {
+    "summary:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "axisnames",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U15",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "axisunits",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U3",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "defaultmask",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "hasmask",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "imagetype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "incr",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "messages",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "ndim",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "refpix",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "refval",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "tileshape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Frequency",
+          "Stokes"
+        ],
+        "axisunits": [
+          "rad",
+          "rad",
+          "Hz",
+          ""
+        ],
+        "defaultmask": "",
+        "hasmask": true,
+        "imagetype": "Intensity",
+        "incr": [
+          -0.00029088820866577975,
+          0.00029088820866577975,
+          1000.0,
+          1.0
+        ],
+        "masks": [],
+        "messages": [],
+        "ndim": 4,
+        "refpix": [
+          2.0,
+          2.0,
+          1.0,
+          0.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1415000000.0,
+          1.0
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "tileshape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "unit": ""
+      }
+    },
+    "list:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "bunit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cdelt1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "ctype1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "datamax",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "datamin",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "date-obs",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "equinox",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "imtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "maxpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "maxpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "minpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "minpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "object",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "observer",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "projection",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "reffreqtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "restfreq",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "telescope",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "bunit": "",
+        "cdelt1": -0.00029088820866577975,
+        "cdelt2": 0.00029088820866577975,
+        "cdelt3": 1000.0,
+        "cdelt4": 1.0,
+        "crpix1": 2.0,
+        "crpix2": 2.0,
+        "crpix3": 1.0,
+        "crpix4": 0.0,
+        "crval1": 0.0,
+        "crval2": 0.0,
+        "crval3": 1415000000.0,
+        "crval4": 1.0,
+        "ctype1": "Right Ascension",
+        "ctype2": "Declination",
+        "ctype3": "Frequency",
+        "ctype4": "Stokes",
+        "cunit1": "rad",
+        "cunit2": "rad",
+        "cunit3": "Hz",
+        "cunit4": "",
+        "datamax": 21.0,
+        "datamin": -9.0,
+        "date-obs": "2000/01/01/00:00:00.000100",
+        "equinox": "J2000",
+        "imtype": "Intensity",
+        "masks": [],
+        "maxpixpos": [
+          3,
+          3,
+          1,
+          0
+        ],
+        "maxpos": "23:59:56.000 +00.01.00.000 1.415e+09Hz I",
+        "minpixpos": [
+          0,
+          0,
+          1,
+          0
+        ],
+        "minpos": "00:00:08.000 -00.02.00.000 1.415e+09Hz I",
+        "object": " ",
+        "observer": "Karl Jansky",
+        "projection": "SIN",
+        "reffreqtype": "LSRK",
+        "restfreq": [
+          1420405751.786
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "telescope": "ALMA"
+      }
+    },
+    "get:datamin": {
+      "structure": {
+        "type": "float"
+      },
+      "value": -9.0
+    },
+    "get:datamax": {
+      "structure": {
+        "type": "float"
+      },
+      "value": 21.0
+    }
+  },
+  "scaled_cases": {
+    "summary:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "axisnames",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U15",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "axisunits",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U3",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "defaultmask",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "hasmask",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "imagetype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "incr",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "messages",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "ndim",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "refpix",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "refval",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "tileshape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Frequency",
+          "Stokes"
+        ],
+        "axisunits": [
+          "rad",
+          "rad",
+          "Hz",
+          ""
+        ],
+        "defaultmask": "",
+        "hasmask": true,
+        "imagetype": "Intensity",
+        "incr": [
+          -0.00029088820866577975,
+          0.00029088820866577975,
+          1000.0,
+          1.0
+        ],
+        "masks": [],
+        "messages": [],
+        "ndim": 4,
+        "refpix": [
+          2.0,
+          2.0,
+          1.0,
+          0.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1415000000.0,
+          1.0
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "tileshape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "unit": ""
+      }
+    },
+    "list:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "bunit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cdelt1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "ctype1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "datamax",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "datamin",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "date-obs",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "equinox",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "imtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "maxpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "maxpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "minpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "minpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "object",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "observer",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "projection",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "reffreqtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "restfreq",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "telescope",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "bunit": "",
+        "cdelt1": -0.00029088820866577975,
+        "cdelt2": 0.00029088820866577975,
+        "cdelt3": 1000.0,
+        "cdelt4": 1.0,
+        "crpix1": 2.0,
+        "crpix2": 2.0,
+        "crpix3": 1.0,
+        "crpix4": 0.0,
+        "crval1": 0.0,
+        "crval2": 0.0,
+        "crval3": 1415000000.0,
+        "crval4": 1.0,
+        "ctype1": "Right Ascension",
+        "ctype2": "Declination",
+        "ctype3": "Frequency",
+        "ctype4": "Stokes",
+        "cunit1": "rad",
+        "cunit2": "rad",
+        "cunit3": "Hz",
+        "cunit4": "",
+        "datamax": 21.0,
+        "datamin": -9.0,
+        "date-obs": "2000/01/01/00:00:00.000100",
+        "equinox": "J2000",
+        "imtype": "Intensity",
+        "masks": [],
+        "maxpixpos": [
+          3,
+          3,
+          1,
+          0
+        ],
+        "maxpos": "23:59:56.000 +00.01.00.000 1.415e+09Hz I",
+        "minpixpos": [
+          0,
+          0,
+          1,
+          0
+        ],
+        "minpos": "00:00:08.000 -00.02.00.000 1.415e+09Hz I",
+        "object": " ",
+        "observer": "Karl Jansky",
+        "projection": "SIN",
+        "reffreqtype": "LSRK",
+        "restfreq": [
+          1420405751.786
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "telescope": "ALMA"
+      }
+    },
+    "get:restfreq": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "value",
+            "str",
+            {
+              "type": "float"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "unit": "Hz",
+        "value": 1420405751.786
+      }
+    }
+  },
+  "velocity_cases": {
+    "summary:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "axisnames",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U15",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "axisunits",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U3",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "defaultmask",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "hasmask",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "imagetype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "incr",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "messages",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "ndim",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "refpix",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "refval",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "tileshape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Frequency",
+          "Stokes"
+        ],
+        "axisunits": [
+          "rad",
+          "rad",
+          "Hz",
+          ""
+        ],
+        "defaultmask": "",
+        "hasmask": true,
+        "imagetype": "Intensity",
+        "incr": [
+          -0.00029088820866577975,
+          0.00029088820866577975,
+          1000.0333616522619,
+          1.0
+        ],
+        "masks": [],
+        "messages": [],
+        "ndim": 4,
+        "refpix": [
+          2.0,
+          2.0,
+          1.0,
+          0.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1415047206.8092263,
+          1.0
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "tileshape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "unit": ""
+      }
+    },
+    "list:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "bunit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cdelt1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "ctype1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "datamax",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "datamin",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "date-obs",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "equinox",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "imtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "maxpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "maxpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "minpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "minpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "object",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "observer",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "projection",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "reffreqtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "restfreq",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "telescope",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "bunit": "",
+        "cdelt1": -0.00029088820866577975,
+        "cdelt2": 0.00029088820866577975,
+        "cdelt3": 1000.0333616522619,
+        "cdelt4": 1.0,
+        "crpix1": 2.0,
+        "crpix2": 2.0,
+        "crpix3": 1.0,
+        "crpix4": 0.0,
+        "crval1": 0.0,
+        "crval2": 0.0,
+        "crval3": 1415047206.8092263,
+        "crval4": 1.0,
+        "ctype1": "Right Ascension",
+        "ctype2": "Declination",
+        "ctype3": "Frequency",
+        "ctype4": "Stokes",
+        "cunit1": "rad",
+        "cunit2": "rad",
+        "cunit3": "Hz",
+        "cunit4": "",
+        "datamax": 0.0,
+        "datamin": 0.0,
+        "date-obs": "2000/01/01/00:00:00.000100",
+        "equinox": "J2000",
+        "imtype": "Intensity",
+        "masks": [],
+        "maxpixpos": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "maxpos": "00:00:08.000 -00.02.00.000 1.415046e+09Hz I",
+        "minpixpos": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "minpos": "00:00:08.000 -00.02.00.000 1.415046e+09Hz I",
+        "object": " ",
+        "observer": "Karl Jansky",
+        "projection": "SIN",
+        "reffreqtype": "BARY",
+        "restfreq": [
+          1420405751.786
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "telescope": "ALMA"
+      }
+    },
+    "get:restfreq": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "value",
+            "str",
+            {
+              "type": "float"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "unit": "Hz",
+        "value": 1420405751.786
+      }
+    }
+  },
+  "no_rest_cases": {
+    "summary:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "axisnames",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U15",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "axisunits",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U3",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "defaultmask",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "hasmask",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "imagetype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "incr",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "messages",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "ndim",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "refpix",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "refval",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "tileshape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Frequency",
+          "Stokes"
+        ],
+        "axisunits": [
+          "rad",
+          "rad",
+          "Hz",
+          ""
+        ],
+        "defaultmask": "",
+        "hasmask": true,
+        "imagetype": "Intensity",
+        "incr": [
+          -0.00029088820866577975,
+          0.00029088820866577975,
+          -211.0681818873,
+          1.0
+        ],
+        "masks": [],
+        "messages": [],
+        "ndim": 4,
+        "refpix": [
+          2.0,
+          2.0,
+          1.0,
+          0.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1130980.614427,
+          1.0
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "tileshape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "unit": ""
+      }
+    },
+    "list:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "bunit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cdelt1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "ctype1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "datamax",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "datamin",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "date-obs",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "equinox",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "imtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "maxpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "maxpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "minpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "minpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "object",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "observer",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "projection",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "reffreqtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "restfreq",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "telescope",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "bunit": "",
+        "cdelt1": -0.00029088820866577975,
+        "cdelt2": 0.00029088820866577975,
+        "cdelt3": -211.0681818873,
+        "cdelt4": 1.0,
+        "crpix1": 2.0,
+        "crpix2": 2.0,
+        "crpix3": 1.0,
+        "crpix4": 0.0,
+        "crval1": 0.0,
+        "crval2": 0.0,
+        "crval3": 1130980.614427,
+        "crval4": 1.0,
+        "ctype1": "Right Ascension",
+        "ctype2": "Declination",
+        "ctype3": "Frequency",
+        "ctype4": "Stokes",
+        "cunit1": "rad",
+        "cunit2": "rad",
+        "cunit3": "Hz",
+        "cunit4": "",
+        "datamax": 0.0,
+        "datamin": 0.0,
+        "date-obs": "2000/01/01/00:00:00.000100",
+        "equinox": "J2000",
+        "imtype": "Intensity",
+        "masks": [],
+        "maxpixpos": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "maxpos": "00:00:08.000 -00.02.00.000 1.13119e+06Hz I",
+        "minpixpos": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "minpos": "00:00:08.000 -00.02.00.000 1.13119e+06Hz I",
+        "object": " ",
+        "observer": "Karl Jansky",
+        "projection": "SIN",
+        "reffreqtype": "BARY",
+        "restfreq": [
+          0.0
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "telescope": "ALMA"
+      }
+    },
+    "get:restfreq": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "value",
+            "str",
+            {
+              "type": "float"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "unit": "Hz",
+        "value": 0.0
+      }
+    }
+  },
+  "beam_cases": {
+    "summary:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "axisnames",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U15",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "axisunits",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U3",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "defaultmask",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "hasmask",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "imagetype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "incr",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "messages",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "ndim",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "perplanebeams",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "beams",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "*0",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "*0",
+                              "str",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "major",
+                                    "str",
+                                    {
+                                      "type": "dict",
+                                      "items": [
+                                        [
+                                          "unit",
+                                          "str",
+                                          {
+                                            "type": "str"
+                                          }
+                                        ],
+                                        [
+                                          "value",
+                                          "str",
+                                          {
+                                            "type": "float"
+                                          }
+                                        ]
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "minor",
+                                    "str",
+                                    {
+                                      "type": "dict",
+                                      "items": [
+                                        [
+                                          "unit",
+                                          "str",
+                                          {
+                                            "type": "str"
+                                          }
+                                        ],
+                                        [
+                                          "value",
+                                          "str",
+                                          {
+                                            "type": "float"
+                                          }
+                                        ]
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "positionangle",
+                                    "str",
+                                    {
+                                      "type": "dict",
+                                      "items": [
+                                        [
+                                          "unit",
+                                          "str",
+                                          {
+                                            "type": "str"
+                                          }
+                                        ],
+                                        [
+                                          "value",
+                                          "str",
+                                          {
+                                            "type": "float"
+                                          }
+                                        ]
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "*1",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "*0",
+                              "str",
+                              {
+                                "type": "dict",
+                                "items": [
+                                  [
+                                    "major",
+                                    "str",
+                                    {
+                                      "type": "dict",
+                                      "items": [
+                                        [
+                                          "unit",
+                                          "str",
+                                          {
+                                            "type": "str"
+                                          }
+                                        ],
+                                        [
+                                          "value",
+                                          "str",
+                                          {
+                                            "type": "float"
+                                          }
+                                        ]
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "minor",
+                                    "str",
+                                    {
+                                      "type": "dict",
+                                      "items": [
+                                        [
+                                          "unit",
+                                          "str",
+                                          {
+                                            "type": "str"
+                                          }
+                                        ],
+                                        [
+                                          "value",
+                                          "str",
+                                          {
+                                            "type": "float"
+                                          }
+                                        ]
+                                      ]
+                                    }
+                                  ],
+                                  [
+                                    "positionangle",
+                                    "str",
+                                    {
+                                      "type": "dict",
+                                      "items": [
+                                        [
+                                          "unit",
+                                          "str",
+                                          {
+                                            "type": "str"
+                                          }
+                                        ],
+                                        [
+                                          "value",
+                                          "str",
+                                          {
+                                            "type": "float"
+                                          }
+                                        ]
+                                      ]
+                                    }
+                                  ]
+                                ]
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "nChannels",
+                  "str",
+                  {
+                    "type": "int"
+                  }
+                ],
+                [
+                  "nStokes",
+                  "str",
+                  {
+                    "type": "int"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "refpix",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "refval",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "tileshape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Frequency",
+          "Stokes"
+        ],
+        "axisunits": [
+          "rad",
+          "rad",
+          "Hz",
+          ""
+        ],
+        "defaultmask": "",
+        "hasmask": true,
+        "imagetype": "Intensity",
+        "incr": [
+          -0.00029088820866577975,
+          0.00029088820866577975,
+          1000.0,
+          1.0
+        ],
+        "masks": [],
+        "messages": [],
+        "ndim": 4,
+        "perplanebeams": {
+          "beams": {
+            "*0": {
+              "*0": {
+                "major": {
+                  "unit": "arcsec",
+                  "value": 2.0
+                },
+                "minor": {
+                  "unit": "arcsec",
+                  "value": 1.0
+                },
+                "positionangle": {
+                  "unit": "deg",
+                  "value": 0.0
+                }
+              }
+            },
+            "*1": {
+              "*0": {
+                "major": {
+                  "unit": "arcsec",
+                  "value": 3.0
+                },
+                "minor": {
+                  "unit": "arcsec",
+                  "value": 1.0
+                },
+                "positionangle": {
+                  "unit": "deg",
+                  "value": 0.0
+                }
+              }
+            }
+          },
+          "nChannels": 2,
+          "nStokes": 1
+        },
+        "refpix": [
+          2.0,
+          2.0,
+          1.0,
+          0.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1415000000.0,
+          1.0
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "tileshape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "unit": ""
+      }
+    },
+    "list:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "bunit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cdelt1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "ctype1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "datamax",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "datamin",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "date-obs",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "equinox",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "imtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "maxpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "maxpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "minpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "minpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "object",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "observer",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "perplanebeams",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "*0",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "major",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "minor",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "positionangle",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "*1",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "major",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "minor",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "positionangle",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "median area beam",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "major",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "minor",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ],
+                      [
+                        "positionangle",
+                        "str",
+                        {
+                          "type": "dict",
+                          "items": [
+                            [
+                              "unit",
+                              "str",
+                              {
+                                "type": "str"
+                              }
+                            ],
+                            [
+                              "value",
+                              "str",
+                              {
+                                "type": "float"
+                              }
+                            ]
+                          ]
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "nChannels",
+                  "str",
+                  {
+                    "type": "int"
+                  }
+                ],
+                [
+                  "nStokes",
+                  "str",
+                  {
+                    "type": "int"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "projection",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "reffreqtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "restfreq",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "telescope",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "bunit": "",
+        "cdelt1": -0.00029088820866577975,
+        "cdelt2": 0.00029088820866577975,
+        "cdelt3": 1000.0,
+        "cdelt4": 1.0,
+        "crpix1": 2.0,
+        "crpix2": 2.0,
+        "crpix3": 1.0,
+        "crpix4": 0.0,
+        "crval1": 0.0,
+        "crval2": 0.0,
+        "crval3": 1415000000.0,
+        "crval4": 1.0,
+        "ctype1": "Right Ascension",
+        "ctype2": "Declination",
+        "ctype3": "Frequency",
+        "ctype4": "Stokes",
+        "cunit1": "rad",
+        "cunit2": "rad",
+        "cunit3": "Hz",
+        "cunit4": "",
+        "datamax": 0.0,
+        "datamin": 0.0,
+        "date-obs": "2000/01/01/00:00:00.000100",
+        "equinox": "J2000",
+        "imtype": "Intensity",
+        "masks": [],
+        "maxpixpos": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "maxpos": "00:00:08.000 -00.02.00.000 1.415e+09Hz I",
+        "minpixpos": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "minpos": "00:00:08.000 -00.02.00.000 1.415e+09Hz I",
+        "object": " ",
+        "observer": "Karl Jansky",
+        "perplanebeams": {
+          "*0": {
+            "major": {
+              "unit": "arcsec",
+              "value": 2.0
+            },
+            "minor": {
+              "unit": "arcsec",
+              "value": 1.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 0.0
+            }
+          },
+          "*1": {
+            "major": {
+              "unit": "arcsec",
+              "value": 3.0
+            },
+            "minor": {
+              "unit": "arcsec",
+              "value": 1.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 0.0
+            }
+          },
+          "median area beam": {
+            "major": {
+              "unit": "arcsec",
+              "value": 3.0
+            },
+            "minor": {
+              "unit": "arcsec",
+              "value": 1.0
+            },
+            "positionangle": {
+              "unit": "deg",
+              "value": 0.0
+            }
+          },
+          "nChannels": 2,
+          "nStokes": 1
+        },
+        "projection": "SIN",
+        "reffreqtype": "LSRK",
+        "restfreq": [
+          1420405751.786
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "telescope": "ALMA"
+      }
+    }
+  },
+  "single_cases": {
+    "summary:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "axisnames",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U15",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "axisunits",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U3",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "defaultmask",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "hasmask",
+            "str",
+            {
+              "type": "bool"
+            }
+          ],
+          [
+            "imagetype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "incr",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "messages",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "ndim",
+            "str",
+            {
+              "type": "int"
+            }
+          ],
+          [
+            "refpix",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "refval",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "restoringbeam",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "major",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "unit",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "value",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "minor",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "unit",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "value",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ],
+                [
+                  "positionangle",
+                  "str",
+                  {
+                    "type": "dict",
+                    "items": [
+                      [
+                        "unit",
+                        "str",
+                        {
+                          "type": "str"
+                        }
+                      ],
+                      [
+                        "value",
+                        "str",
+                        {
+                          "type": "float"
+                        }
+                      ]
+                    ]
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "tileshape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "unit",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "axisnames": [
+          "Right Ascension",
+          "Declination",
+          "Frequency",
+          "Stokes"
+        ],
+        "axisunits": [
+          "rad",
+          "rad",
+          "Hz",
+          ""
+        ],
+        "defaultmask": "",
+        "hasmask": true,
+        "imagetype": "Intensity",
+        "incr": [
+          -0.00029088820866577975,
+          0.00029088820866577975,
+          1000.0,
+          1.0
+        ],
+        "masks": [],
+        "messages": [],
+        "ndim": 4,
+        "refpix": [
+          2.0,
+          2.0,
+          1.0,
+          0.0
+        ],
+        "refval": [
+          0.0,
+          0.0,
+          1415000000.0,
+          1.0
+        ],
+        "restoringbeam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 180.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 2.00000000000016
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 20.0
+          }
+        },
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "tileshape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "unit": ""
+      }
+    },
+    "list:": {
+      "structure": {
+        "type": "dict",
+        "items": [
+          [
+            "beammajor",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "unit",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ],
+                [
+                  "value",
+                  "str",
+                  {
+                    "type": "float"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "beamminor",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "unit",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ],
+                [
+                  "value",
+                  "str",
+                  {
+                    "type": "float"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "beampa",
+            "str",
+            {
+              "type": "dict",
+              "items": [
+                [
+                  "unit",
+                  "str",
+                  {
+                    "type": "str"
+                  }
+                ],
+                [
+                  "value",
+                  "str",
+                  {
+                    "type": "float"
+                  }
+                ]
+              ]
+            }
+          ],
+          [
+            "bunit",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cdelt1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "cdelt4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crpix4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval1",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval2",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval3",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "crval4",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "ctype1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "ctype4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit1",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit2",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit3",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "cunit4",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "datamax",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "datamin",
+            "str",
+            {
+              "type": "float"
+            }
+          ],
+          [
+            "date-obs",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "equinox",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "imtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "masks",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "<U5",
+              "shape": [
+                0
+              ]
+            }
+          ],
+          [
+            "maxpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "maxpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "minpixpos",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "minpos",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "object",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "observer",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "projection",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "reffreqtype",
+            "str",
+            {
+              "type": "str"
+            }
+          ],
+          [
+            "restfreq",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "float64",
+              "shape": [
+                1
+              ]
+            }
+          ],
+          [
+            "shape",
+            "str",
+            {
+              "type": "ndarray",
+              "dtype": "int64",
+              "shape": [
+                4
+              ]
+            }
+          ],
+          [
+            "telescope",
+            "str",
+            {
+              "type": "str"
+            }
+          ]
+        ]
+      },
+      "value": {
+        "beammajor": {
+          "unit": "arcsec",
+          "value": 180.0
+        },
+        "beamminor": {
+          "unit": "arcsec",
+          "value": 2.00000000000016
+        },
+        "beampa": {
+          "unit": "deg",
+          "value": 20.0
+        },
+        "bunit": "",
+        "cdelt1": -0.00029088820866577975,
+        "cdelt2": 0.00029088820866577975,
+        "cdelt3": 1000.0,
+        "cdelt4": 1.0,
+        "crpix1": 2.0,
+        "crpix2": 2.0,
+        "crpix3": 1.0,
+        "crpix4": 0.0,
+        "crval1": 0.0,
+        "crval2": 0.0,
+        "crval3": 1415000000.0,
+        "crval4": 1.0,
+        "ctype1": "Right Ascension",
+        "ctype2": "Declination",
+        "ctype3": "Frequency",
+        "ctype4": "Stokes",
+        "cunit1": "rad",
+        "cunit2": "rad",
+        "cunit3": "Hz",
+        "cunit4": "",
+        "datamax": 0.0,
+        "datamin": 0.0,
+        "date-obs": "2000/01/01/00:00:00.000100",
+        "equinox": "J2000",
+        "imtype": "Intensity",
+        "masks": [],
+        "maxpixpos": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "maxpos": "00:00:08.000 -00.02.00.000 1.415e+09Hz I",
+        "minpixpos": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "minpos": "00:00:08.000 -00.02.00.000 1.415e+09Hz I",
+        "object": " ",
+        "observer": "Karl Jansky",
+        "projection": "SIN",
+        "reffreqtype": "LSRK",
+        "restfreq": [
+          1420405751.786
+        ],
+        "shape": [
+          4,
+          4,
+          2,
+          1
+        ],
+        "telescope": "ALMA"
+      }
+    }
+  },
+  "history": [
+    "Created Paged image 'crates/casars-imexplore/tests/data/imhead_crpix/normal.im' of shape [4, 4, 1, 2] with float valued pixels.",
+    "Ran ia.fromshape",
+    "ia.fromshape(outfile=\"crates/casars-imexplore/tests/data/imhead_crpix/normal.im\", shape=[4,4,1,2], csys={...}, linear=false, overwrite=true, lo=true, type=\"f\")",
+    "Ran ia.putchunk",
+    "ia.putchunk(pixels=..., blc=[-1], inc=[1], list=false, locking=true, replicate=false)",
+    "An external note continued"
+  ]
+}

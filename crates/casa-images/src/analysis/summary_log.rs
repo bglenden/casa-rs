@@ -28,6 +28,24 @@ pub fn imhead_summary_log(
     summary: &ImageHeaderSummary,
     verbose: bool,
 ) -> Result<Vec<String>, ImageError> {
+    let path = path.as_ref();
+    if path.is_file() {
+        let image = crate::fits_read::PrimaryHdu::open(path)?;
+        let coordinates = &image.coordinates;
+        let spectral = coordinates
+            .find_coordinate(CoordinateType::Spectral)
+            .and_then(|index| match coordinates.coordinate(index) {
+                CoordinateModel::Spectral(spectral) => Some(spectral.as_ref()),
+                _ => None,
+            });
+        return Ok(format_summary(
+            summary,
+            coordinates,
+            spectral,
+            verbose,
+            "FITSImage",
+        ));
+    }
     let image = AnyPagedImage::open(path)?;
     let (coordinates, spectral) = match &image {
         AnyPagedImage::Float32(image) => (image.coordinates(), image.first_spectral_coordinate()?),
@@ -44,6 +62,7 @@ pub fn imhead_summary_log(
         coordinates,
         spectral.as_ref(),
         verbose,
+        "PagedImage",
     ))
 }
 
@@ -52,12 +71,13 @@ fn format_summary(
     coords: &CoordinateSystem,
     first_spectral: Option<&SpectralCoordinate>,
     verbose: bool,
+    image_type: &str,
 ) -> Vec<String> {
     let mut lines = vec![
         format!("Image name: {}", header.imagename),
         format!("Object: {}", header.object_name),
         format!(
-            "Image type: PagedImage; quantity: {}; pixel type: {}",
+            "Image type: {image_type}; quantity: {}; pixel type: {}",
             header.image_type, header.pixel_type
         ),
         format!(
