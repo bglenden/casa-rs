@@ -78,6 +78,7 @@ pub struct TaskSuccess {
     result: Value,
     text: Option<String>,
     notes: Vec<String>,
+    output_lines: Vec<String>,
 }
 
 impl TaskSuccess {
@@ -94,6 +95,7 @@ impl TaskSuccess {
             result: to_json(result)?,
             text: None,
             notes: Vec::new(),
+            output_lines: Vec::new(),
         })
     }
 
@@ -110,6 +112,37 @@ impl TaskSuccess {
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
+    }
+
+    /// Add a task output line to stderr, including for JSON-run requests.
+    /// This is for tasks whose result is deliberately displayed as text
+    /// while their CASA return value remains `None`.
+    #[must_use]
+    pub fn with_output_line(mut self, line: impl Into<String>) -> Self {
+        self.output_lines.push(line.into());
+        self
+    }
+
+    /// Replay an INFO message with its original time through the log sinks.
+    /// If `fallback_to_text` is true and no INFO sink is enabled, display a
+    /// timestamped line on stderr instead. The CASA return value is unchanged.
+    #[must_use]
+    pub fn with_replayed_info(
+        self,
+        time_mjd_seconds: f64,
+        location: &str,
+        message: &str,
+        fallback_to_text: bool,
+    ) -> Self {
+        match casa_logging::replay_info_record(
+            time_mjd_seconds,
+            location,
+            message,
+            fallback_to_text,
+        ) {
+            Some(line) => self.with_output_line(line),
+            None => self,
+        }
     }
 }
 
@@ -588,6 +621,7 @@ where
         match outcome {
             Ok(success) => {
                 stderr.extend(success.notes);
+                stderr.extend(success.output_lines);
                 let stdout = match success.text {
                     Some(text) => text,
                     None if success.value == CasaValue::None => String::new(),
@@ -611,10 +645,19 @@ where
     }
 
     fn run_json(&self, default: &SurfaceContractBundle, source: &str) -> FrontEndOutput {
-        reply_output(&self.json_reply(default, source))
+        let mut lines = Vec::new();
+        let reply = self.json_reply(default, source, &mut lines);
+        let mut output = reply_output(&reply);
+        output.stderr.extend(lines);
+        output
     }
 
-    fn json_reply(&self, default: &SurfaceContractBundle, source: &str) -> TaskReply {
+    fn json_reply(
+        &self,
+        default: &SurfaceContractBundle,
+        source: &str,
+        output_lines: &mut Vec<String>,
+    ) -> TaskReply {
         let refuse =
             |surface: &str, message: String, parameter: Option<String>| TaskReply::Failed {
                 surface: surface.to_string(),
@@ -653,6 +696,60 @@ where
         };
         let mut overrides = ResolutionPatch::default();
         for (name, value) in &request.values {
+            let Some(binding) = bundle
+                .surface
+                .bindings()
+                .iter()
+                .find(|binding| binding.name == *name)
+            else {
+                return refuse(
+                    &request.surface,
+                    format!("unknown {} parameter {name:?}", request.surface),
+                    Some(name.clone()),
+                );
+            };
+            let is_variant = bundle
+                .catalog
+                .concept(&binding.concept)
+                .is_some_and(|concept| {
+                    matches!(
+                        concept.value_domain,
+                        casa_provider_contracts::ParameterType::Variant
+                    )
+                });
+            let variant_value = if is_variant {
+                #[derive(Deserialize)]
+                struct RawValues<'a> {
+                    #[serde(borrow, default)]
+                    values: BTreeMap<String, &'a RawValue>,
+                }
+                let parsed = serde_json::from_str::<RawValues<'_>>(&text)
+                    .ok()
+                    .and_then(|raw| {
+                        raw.values
+                            .get(name)
+                            .map(|raw| crate::casa_type_diagnostics::parse_variant_json(raw.get()))
+                    });
+                match parsed {
+                    Some(Ok(value)) => Some(value),
+                    Some(Err(error)) => {
+                        return refuse(
+                            &request.surface,
+                            format!("parameter {name:?}: {error}"),
+                            Some(name.clone()),
+                        );
+                    }
+                    None => {
+                        return refuse(
+                            &request.surface,
+                            format!("parameter {name:?} is missing from the request"),
+                            Some(name.clone()),
+                        );
+                    }
+                }
+            } else {
+                None
+            };
             // serde_json represents an out-of-range JSON integer as a float.
             // Inspect its original spelling only on this error path: CASA
             // accepts the integer, so it must not get a CASA cInt type error.
@@ -680,7 +777,8 @@ where
                     );
                 }
             }
-            let Some(value) = ParameterValue::from_plain_json(value) else {
+            let Some(value) = variant_value.or_else(|| ParameterValue::from_plain_json(value))
+            else {
                 return refuse(
                     &request.surface,
                     format!("parameter {name:?} is null; leave it out to take its default"),
@@ -688,22 +786,13 @@ where
                 );
             };
             // Checked here, so that a value the surface refuses is named.
-            let Some(binding) = bundle
-                .surface
-                .bindings()
-                .iter()
-                .find(|binding| binding.name == *name)
-            else {
-                return refuse(
-                    &request.surface,
-                    format!("unknown {} parameter {name:?}", request.surface),
-                    Some(name.clone()),
-                );
-            };
             if let Err(error) = crate::cli::checked_value(bundle, binding, &value) {
                 return refuse(&request.surface, error, Some(name.clone()));
             }
             overrides.values.insert(name.clone(), value);
+        }
+        if let Err((name, message)) = apply_typed_values(bundle, &request, &mut overrides) {
+            return refuse(&request.surface, message, Some(name));
         }
         drop(text);
         let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -727,11 +816,14 @@ where
             );
         }
         match self.execute(&session, &workspace) {
-            Ok(success) => TaskReply::Succeeded {
-                surface: request.surface,
-                value: success.value,
-                result: success.result,
-            },
+            Ok(success) => {
+                output_lines.extend(success.output_lines);
+                TaskReply::Succeeded {
+                    surface: request.surface,
+                    value: success.value,
+                    result: success.result,
+                }
+            }
             Err(failure) => TaskReply::Failed {
                 surface: request.surface,
                 kind: failure.kind,
@@ -855,6 +947,44 @@ fn open_session(request: OpenSessionRequest) -> Result<ParameterSession, String>
 
 /// The session `request` opens, or its refusal and the parameter the
 /// refusal names, if any.
+fn apply_typed_values(
+    bundle: &SurfaceContractBundle,
+    request: &TaskRunRequest,
+    overrides: &mut ResolutionPatch,
+) -> Result<(), (String, String)> {
+    for (name, value) in &request.typed_values {
+        let error = |message| (name.clone(), message);
+        if request.values.contains_key(name) {
+            return Err(error(format!(
+                "parameter {name:?} occurs in both value maps"
+            )));
+        }
+        let binding = bundle
+            .surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == *name)
+            .ok_or_else(|| error(format!("unknown {} parameter {name:?}", request.surface)))?;
+        if !bundle
+            .catalog
+            .concept(&binding.concept)
+            .is_some_and(|concept| {
+                matches!(
+                    concept.value_domain,
+                    casa_provider_contracts::ParameterType::Variant
+                )
+            })
+        {
+            return Err(error(format!(
+                "typed parameter {name:?} must use a variant domain"
+            )));
+        }
+        crate::cli::checked_value(bundle, binding, value).map_err(error)?;
+        overrides.values.insert(name.clone(), value.clone());
+    }
+    Ok(())
+}
+
 fn open_named_session(
     request: OpenSessionRequest,
 ) -> Result<ParameterSession, (String, Option<String>)> {

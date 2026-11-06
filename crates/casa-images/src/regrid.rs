@@ -273,6 +273,11 @@ fn plan_axes<'a>(
             output_direction.direction_ref()
         )));
     }
+    if input_direction.conversion_direction_ref() != output_direction.conversion_direction_ref() {
+        return Err(refuse(
+            "input and template direction conversion frames differ".into(),
+        ));
+    }
     Ok(AxesPlan {
         input: (input_direction, in_axis),
         output: (output_direction, out_axis),
@@ -780,6 +785,35 @@ fn bicubic_coefficients(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regrid_rejects_distinct_direction_conversion_frames() {
+        use casa_coordinates::{Projection, ProjectionType};
+        use casa_types::measures::direction::DirectionRef;
+        let direction = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [1.0, 0.3],
+            [-1e-4, 1e-4],
+            [2.0, 2.0],
+        );
+        let mut input = CoordinateSystem::new();
+        input.add_coordinate(direction.clone());
+        let mut output = CoordinateSystem::new();
+        output.add_coordinate(
+            direction
+                .with_reference_pixel([2.5, 2.0])
+                .with_conversion_direction_ref(DirectionRef::GALACTIC),
+        );
+        let template = RegridTemplate {
+            coordinates: output,
+            shape: vec![4, 4],
+        };
+        let error = plan_axes(false, &input, &[4, 4], &template)
+            .err()
+            .expect("frame mismatch");
+        assert!(error.to_string().contains("conversion frames differ"));
+    }
 
     fn plane(data: &[f64], shape: [usize; 2]) -> Plane<'_> {
         Plane {

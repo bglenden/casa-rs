@@ -168,6 +168,53 @@ pub enum DirectionRef {
 /// Total number of DirectionRef variants.
 const NUM_DIR_REFS: usize = 19;
 
+/// Resolve a CASA direction-frame name or unique prefix to its canonical name.
+///
+/// The returned name can be a CASA frame that [`DirectionRef`] does not yet
+/// represent; aliases such as `AZELNE` resolve to their canonical spelling.
+#[must_use]
+pub fn casa_direction_frame_name(input: &str) -> Option<&'static str> {
+    const NAMES: [(&str, &str); 35] = [
+        ("J2000", "J2000"),
+        ("JMEAN", "JMEAN"),
+        ("JTRUE", "JTRUE"),
+        ("APP", "APP"),
+        ("B1950", "B1950"),
+        ("B1950_VLA", "B1950_VLA"),
+        ("BMEAN", "BMEAN"),
+        ("BTRUE", "BTRUE"),
+        ("GALACTIC", "GALACTIC"),
+        ("HADEC", "HADEC"),
+        ("AZEL", "AZEL"),
+        ("AZELSW", "AZELSW"),
+        ("AZELNE", "AZEL"),
+        ("AZELGEO", "AZELGEO"),
+        ("AZELSWGEO", "AZELSWGEO"),
+        ("AZELNEGEO", "AZELGEO"),
+        ("JNAT", "JNAT"),
+        ("ECLIPTIC", "ECLIPTIC"),
+        ("MECLIPTIC", "MECLIPTIC"),
+        ("TECLIPTIC", "TECLIPTIC"),
+        ("SUPERGAL", "SUPERGAL"),
+        ("ITRF", "ITRF"),
+        ("TOPO", "TOPO"),
+        ("ICRS", "ICRS"),
+        ("MERCURY", "MERCURY"),
+        ("VENUS", "VENUS"),
+        ("MARS", "MARS"),
+        ("JUPITER", "JUPITER"),
+        ("SATURN", "SATURN"),
+        ("URANUS", "URANUS"),
+        ("NEPTUNE", "NEPTUNE"),
+        ("PLUTO", "PLUTO"),
+        ("SUN", "SUN"),
+        ("MOON", "MOON"),
+        ("COMET", "COMET"),
+    ];
+    crate::quanta::unique_prefix_position(input, &NAMES, |(name, _)| name)
+        .map(|index| NAMES[index].1)
+}
+
 impl DirectionRef {
     /// Returns the C++ casacore integer code for this reference type.
     ///
@@ -2031,6 +2078,16 @@ impl MDirection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn casa_direction_frame_names_resolve_aliases_and_ambiguous_prefixes() {
+        assert_eq!(casa_direction_frame_name("GAL"), Some("GALACTIC"));
+        assert_eq!(casa_direction_frame_name("j2"), Some("J2000"));
+        assert_eq!(casa_direction_frame_name("AZELNE"), Some("AZEL"));
+        assert_eq!(casa_direction_frame_name("B1950_VLA"), Some("B1950_VLA"));
+        assert_eq!(casa_direction_frame_name("J"), None);
+        assert_eq!(casa_direction_frame_name("not-a-frame"), None);
+    }
 
     use crate::measures::epoch::MEpoch;
     use crate::measures::position::MPosition;

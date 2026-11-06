@@ -1,0 +1,233 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": {
+    "degrees": {
+      "get": {
+        "beammajor": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "beamminor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "beampa": {
+          "unit": "deg",
+          "value": 20.0
+        },
+        "bmaj": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "bmin": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "bpa": {
+          "unit": "deg",
+          "value": 20.0
+        }
+      },
+      "list": {
+        "beammajor": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "beamminor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "beampa": {
+          "unit": "deg",
+          "value": 20.0
+        }
+      },
+      "summary": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": 200.0
+        }
+      }
+    },
+    "negative": {
+      "get": {
+        "beammajor": {
+          "unit": "deg",
+          "value": 0.1
+        },
+        "beamminor": {
+          "unit": "arcmin",
+          "value": 5.0
+        },
+        "beampa": {
+          "unit": "deg",
+          "value": 90.0
+        },
+        "bmaj": {
+          "unit": "deg",
+          "value": 0.1
+        },
+        "bmin": {
+          "unit": "arcmin",
+          "value": 5.0
+        },
+        "bpa": {
+          "unit": "deg",
+          "value": 90.0
+        }
+      },
+      "list": {
+        "beammajor": {
+          "unit": "deg",
+          "value": 0.1
+        },
+        "beamminor": {
+          "unit": "arcmin",
+          "value": 5.0
+        },
+        "beampa": {
+          "unit": "deg",
+          "value": 90.0
+        }
+      },
+      "summary": {
+        "major": {
+          "unit": "deg",
+          "value": 0.1
+        },
+        "minor": {
+          "unit": "arcmin",
+          "value": 5.0
+        },
+        "positionangle": {
+          "unit": "deg",
+          "value": -90.0
+        }
+      }
+    },
+    "radian_wrap": {
+      "get": {
+        "beammajor": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "beamminor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "beampa": {
+          "unit": "rad",
+          "value": 0.3584073464102069
+        },
+        "bmaj": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "bmin": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "bpa": {
+          "unit": "rad",
+          "value": 0.3584073464102069
+        }
+      },
+      "list": {
+        "beammajor": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "beamminor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "beampa": {
+          "unit": "rad",
+          "value": 0.3584073464102069
+        }
+      },
+      "summary": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 3.5
+        }
+      }
+    },
+    "radians": {
+      "get": {
+        "beammajor": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "beamminor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "beampa": {
+          "unit": "rad",
+          "value": 0.3
+        },
+        "bmaj": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "bmin": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "bpa": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "list": {
+        "beammajor": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "beamminor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "beampa": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      },
+      "summary": {
+        "major": {
+          "unit": "arcmin",
+          "value": 3.0
+        },
+        "minor": {
+          "unit": "arcsec",
+          "value": 2.0
+        },
+        "positionangle": {
+          "unit": "rad",
+          "value": 0.3
+        }
+      }
+    }
+  },
+  "errors": {
+    "multiple": "This image has multiple beams.",
+    "none": "This image has no beam(s)."
+  }
+}

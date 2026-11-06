@@ -513,6 +513,12 @@ pub(super) fn direction_model_spec(
     let CoordinateModel::Direction(direction) = coordinate else {
         unreachable!("find_coordinate(Direction) names a direction coordinate");
     };
+    if direction.direction_ref() != direction.conversion_direction_ref() {
+        return Err(PrepareError::MaskImageConversion {
+            native: direction.direction_ref(),
+            conversion: direction.conversion_direction_ref(),
+        });
+    }
     let reference = coordinate.reference_value();
     let projection = Projection::of_coordinate(direction.projection(), reference[1]).ok_or(
         PrepareError::MaskImageProjection {
@@ -583,6 +589,17 @@ mod tests {
             [-1e-5, 1e-5],
             [1.5, 0.0],
         )
+    }
+
+    #[test]
+    fn mask_grid_refuses_direction_conversion_metadata() {
+        let coordinate = CoordinateModel::Direction(
+            direction().with_conversion_direction_ref(DirectionRef::GALACTIC),
+        );
+        assert!(matches!(
+            direction_model_spec(&coordinate),
+            Err(PrepareError::MaskImageConversion { .. })
+        ));
     }
 
     /// A one-plane mask image of `T` pixels on a 3 by 2 direction plane:

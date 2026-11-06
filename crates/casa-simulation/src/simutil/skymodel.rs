@@ -160,6 +160,17 @@ pub(crate) fn pixel_axes(
     None
 }
 
+fn require_native_direction_frame(
+    coordinate: &casa_coordinates::DirectionCoordinate,
+) -> Result<(), SkyModelError> {
+    if coordinate.direction_ref() != coordinate.conversion_direction_ref() {
+        return Err(SkyModelError::Model(
+            "direction conversion frames are unsupported (#977)".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// The observation information of an image CASA makes from a shape
 /// (`CoordinateUtil::makeCoordinateSystem`): ALMA, observed by "Karl
 /// Jansky" at 2000-01-01T00:00:00.0001 UTC.
@@ -218,4 +229,30 @@ pub(crate) fn write_image(
 /// A zeroed array of `shape` in Fortran order, as images hold their pixels.
 pub(crate) fn zeros(shape: &[usize]) -> ArrayD<f32> {
     ArrayD::zeros(IxDyn(shape).f())
+}
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+    use casa_coordinates::DirectionCoordinate;
+    use casa_types::measures::direction::DirectionRef;
+
+    #[test]
+    fn sky_model_refuses_a_distinct_direction_conversion_frame() {
+        let direction = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            Projection::new(ProjectionType::SIN),
+            [0.0, 0.0],
+            [-1e-5, 1e-5],
+            [0.0, 0.0],
+        );
+        assert!(require_native_direction_frame(&direction).is_ok());
+        let converted = direction.with_conversion_direction_ref(DirectionRef::GALACTIC);
+        assert!(
+            require_native_direction_frame(&converted)
+                .unwrap_err()
+                .to_string()
+                .contains("#977")
+        );
+    }
 }

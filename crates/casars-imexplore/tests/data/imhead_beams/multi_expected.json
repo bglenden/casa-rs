@@ -1,0 +1,449 @@
+{
+  "casa_version": "6.7.6-14",
+  "cases": {
+    "multiple": {
+      "list": {
+        "*0": {
+          "major": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 1.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 0.0
+          }
+        },
+        "*1": {
+          "major": {
+            "unit": "arcsec",
+            "value": 3.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 1.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 0.0
+          }
+        },
+        "median area beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 3.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 1.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 0.0
+          }
+        },
+        "nChannels": 2,
+        "nStokes": 1
+      },
+      "summary": {
+        "beams": {
+          "*0": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 2.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 0.0
+              }
+            }
+          },
+          "*1": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 3.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 0.0
+              }
+            }
+          }
+        },
+        "nChannels": 2,
+        "nStokes": 1
+      }
+    },
+    "multiple_mixed": {
+      "list": {
+        "*0": {
+          "major": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 1.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 0.0
+          }
+        },
+        "*1": {
+          "major": {
+            "unit": "arcsec",
+            "value": 4.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "positionangle": {
+            "unit": "rad",
+            "value": 3.5
+          }
+        },
+        "*2": {
+          "major": {
+            "unit": "arcmin",
+            "value": 0.5
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 110.0
+          }
+        },
+        "*3": {
+          "major": {
+            "unit": "arcmin",
+            "value": 1.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 3.0
+          },
+          "positionangle": {
+            "unit": "rad",
+            "value": 0.3
+          }
+        },
+        "median area beam": {
+          "major": {
+            "unit": "arcmin",
+            "value": 0.5
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 110.0
+          }
+        },
+        "nChannels": 2,
+        "nStokes": 2
+      },
+      "summary": {
+        "beams": {
+          "*0": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 2.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 0.0
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcmin",
+                "value": 0.5
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 2.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 110.0
+              }
+            }
+          },
+          "*1": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 4.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 2.0
+              },
+              "positionangle": {
+                "unit": "rad",
+                "value": 3.5
+              }
+            },
+            "*1": {
+              "major": {
+                "unit": "arcmin",
+                "value": 1.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 3.0
+              },
+              "positionangle": {
+                "unit": "rad",
+                "value": 0.3
+              }
+            }
+          }
+        },
+        "nChannels": 2,
+        "nStokes": 2
+      }
+    },
+    "nearly_equal": {
+      "list": {
+        "*0": {
+          "major": {
+            "unit": "arcsec",
+            "value": 91.1866202824633
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 85.65483850596318
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 0.0
+          }
+        },
+        "*1": {
+          "major": {
+            "unit": "arcsec",
+            "value": 115.42127669563983
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 67.67015110043427
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 1.0
+          }
+        },
+        "median area beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 115.42127669563983
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 67.67015110043427
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 1.0
+          }
+        },
+        "nChannels": 2,
+        "nStokes": 1
+      },
+      "summary": {
+        "beams": {
+          "*0": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 91.1866202824633
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 85.65483850596318
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 0.0
+              }
+            }
+          },
+          "*1": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 115.42127669563983
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 67.67015110043427
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 1.0
+              }
+            }
+          }
+        },
+        "nChannels": 2,
+        "nStokes": 1
+      }
+    },
+    "spaced_units": {
+      "list": {
+        "*0": {
+          "major": {
+            "unit": "arcsec",
+            "value": 2.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 1.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 0.0
+          }
+        },
+        "*1": {
+          "major": {
+            "unit": "arcsec",
+            "value": 3.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 1.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 0.0
+          }
+        },
+        "median area beam": {
+          "major": {
+            "unit": "arcsec",
+            "value": 3.0
+          },
+          "minor": {
+            "unit": "arcsec",
+            "value": 1.0
+          },
+          "positionangle": {
+            "unit": "deg",
+            "value": 0.0
+          }
+        },
+        "nChannels": 2,
+        "nStokes": 1
+      },
+      "summary": {
+        "beams": {
+          "*0": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 2.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 0.0
+              }
+            }
+          },
+          "*1": {
+            "*0": {
+              "major": {
+                "unit": "arcsec",
+                "value": 3.0
+              },
+              "minor": {
+                "unit": "arcsec",
+                "value": 1.0
+              },
+              "positionangle": {
+                "unit": "deg",
+                "value": 0.0
+              }
+            }
+          }
+        },
+        "nChannels": 2,
+        "nStokes": 1
+      }
+    }
+  },
+  "invalid": {
+    "invalid_channels": "Exception: Number of channels is not consistent.\n... thrown by void casacore::ImageInfo::checkBeamSet(const casacore::CoordinateSystem&, const casacore::IPosition&, const casacore::String&) const",
+    "invalid_extra_field": "Beam record does not contain 3 fields",
+    "invalid_inf_pa": "Exception: The position angle value is not permitted to be infinity or NaN.\n... thrown by void casacore::GaussianBeam::setPA(const casacore::Quantity&, casacore::Bool)",
+    "invalid_major_less": "Exception: Major axis must be greater or equal to minor axis.\n... thrown by void casacore::GaussianBeam::setMajorMinor(const casacore::Quantity&, const casacore::Quantity&)",
+    "invalid_minor": "Exception: At least one of the beams in the beam set of <IMAGE> is null and thus invalid.\n... thrown by void casacore::ImageInfo::checkBeamSet(const casacore::CoordinateSystem&, const casacore::IPosition&, const casacore::String&) const",
+    "invalid_missing_channels": "Exception: no nChannels field found.\n... thrown by static casacore::ImageBeamSet casacore::ImageBeamSet::fromRecord(const casacore::Record&)",
+    "invalid_missing_stokes": "Exception: no nStokes field found.\n... thrown by static casacore::ImageBeamSet casacore::ImageBeamSet::fromRecord(const casacore::Record&)",
+    "invalid_nan_major": "Exception: Neither the major nor the minor axis value is permitted to be infinity or NaN.\n... thrown by void casacore::GaussianBeam::setMajorMinor(const casacore::Quantity&, const casacore::Quantity&)",
+    "invalid_negative": "Exception: Major axis cannot be less than zero..\n... thrown by void casacore::GaussianBeam::setMajorMinor(const casacore::Quantity&, const casacore::Quantity&)",
+    "invalid_single_minor": "Exception: Beam is null and therefore invalid..\n... thrown by void casacore::ImageInfo::setRestoringBeam(const casacore::GaussianBeam&)",
+    "invalid_single_plane": "Exception: At least one of the beams in the beam set of <IMAGE> is null and thus invalid.\n... thrown by void casacore::ImageInfo::checkBeamSet(const casacore::CoordinateSystem&, const casacore::IPosition&, const casacore::String&) const",
+    "invalid_stokes": "Exception: Number of polarizations is not consistent.\n... thrown by void casacore::ImageInfo::checkBeamSet(const casacore::CoordinateSystem&, const casacore::IPosition&, const casacore::String&) const"
+  },
+  "single_dual": {
+    "list": {
+      "beammajor": {
+        "unit": "arcsec",
+        "value": 3.0
+      },
+      "beamminor": {
+        "unit": "arcsec",
+        "value": 1.0
+      },
+      "beampa": {
+        "unit": "deg",
+        "value": 0.0
+      }
+    },
+    "summary": {
+      "major": {
+        "unit": "arcsec",
+        "value": 3.0
+      },
+      "minor": {
+        "unit": "arcsec",
+        "value": 1.0
+      },
+      "positionangle": {
+        "unit": "deg",
+        "value": 0.0
+      }
+    }
+  }
+}

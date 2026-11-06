@@ -11,6 +11,9 @@ use casa_provider_contracts::{CasaEntry, CasaKey, CasaValue};
 
 use crate::analysis::{ImageHeaderSummary, ImageStatisticsSummary, RestoringBeamSummary};
 
+mod imhead_get;
+pub use imhead_get::{ImheadGetError, imhead_get_value};
+
 /// `imstat`'s statistics record over the whole selection, as CASA returns
 /// it with `axes=[]`: each statistic a one-element `float64` array, and the
 /// corners and extremum positions `int64` pixel arrays. A selection with no
@@ -58,7 +61,6 @@ pub fn imstat_record(summary: &ImageStatisticsSummary) -> CasaValue {
 
 /// `imhead`'s `summary` record.
 ///
-/// Not computed yet (#977): `messages` and `tileshape`.
 pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
     let axes = &summary.axes;
     let mut entries = vec![
@@ -87,6 +89,9 @@ pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
             CasaValue::float64_vector(axes.iter().map(|axis| axis.increment)),
         ),
         ("masks", CasaValue::str_vector(summary.masks.clone())),
+        // imhead calls summary with list=True, so casacore posts the
+        // coordinate messages instead of collecting them in its return.
+        ("messages", CasaValue::str_vector(Vec::<String>::new())),
         (
             "ndim",
             CasaValue::Int {
@@ -102,10 +107,14 @@ pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
             CasaValue::float64_vector(axes.iter().map(|axis| axis.reference_value)),
         ),
         ("shape", pixels(&summary.shape)),
+        ("tileshape", pixels(&summary.tile_shape)),
         ("unit", CasaValue::string(summary.units.clone())),
     ];
     if let Some(beam) = &summary.restoring_beam {
         entries.push(("restoringbeam", beam_record(beam)));
+    }
+    if let Some(beams) = &summary.per_plane_beams {
+        entries.push(("perplanebeams", summary_beam_grid(beams)));
     }
     sorted(entries)
 }
@@ -114,14 +123,15 @@ pub fn imhead_summary_record(summary: &ImageHeaderSummary) -> CasaValue {
 /// `cdelt`, `ctype` and `cunit` per axis, numbered from 1 as FITS numbers
 /// them.
 ///
-/// Not computed yet (#977): `datamax`, `datamin`, `date-obs`, `equinox`,
-/// `maxpixpos`, `maxpos`, `minpixpos`, `minpos`, `observer`, `projection`,
-/// `reffreqtype`, `restfreq` and `telescope`.
 pub fn imhead_list_record(summary: &ImageHeaderSummary) -> CasaValue {
     let mut entries = vec![
         (
             "bunit".to_string(),
             CasaValue::string(summary.units.clone()),
+        ),
+        (
+            "date-obs".to_string(),
+            CasaValue::string(&summary.observation_date),
         ),
         (
             "imtype".to_string(),
@@ -135,8 +145,42 @@ pub fn imhead_list_record(summary: &ImageHeaderSummary) -> CasaValue {
             "object".to_string(),
             CasaValue::string(summary.object_name.clone()),
         ),
+        ("observer".to_string(), CasaValue::string(&summary.observer)),
         ("shape".to_string(), pixels(&summary.shape)),
+        (
+            "telescope".to_string(),
+            CasaValue::string(&summary.telescope),
+        ),
     ];
+    if let Some(beams) = &summary.per_plane_beams {
+        entries.push(("perplanebeams".to_string(), listed_beam_grid(beams)));
+    }
+    if let Some(frame) = &summary.direction_reference {
+        entries.push(("equinox".to_string(), CasaValue::string(frame)));
+    }
+    if let Some(projection) = &summary.direction_projection {
+        entries.push(("projection".to_string(), CasaValue::string(projection)));
+    }
+    if let Some(spectral) = &summary.spectral {
+        entries.push((
+            "reffreqtype".to_string(),
+            CasaValue::string(&spectral.reference_frame),
+        ));
+        entries.push((
+            "restfreq".to_string(),
+            CasaValue::float64_vector(spectral.rest_frequencies.iter().copied()),
+        ));
+    }
+    if let Some(extrema) = &summary.extrema {
+        entries.extend([
+            ("datamin".to_string(), CasaValue::float(extrema.min)),
+            ("datamax".to_string(), CasaValue::float(extrema.max)),
+            ("minpixpos".to_string(), pixels(&extrema.min_position)),
+            ("maxpixpos".to_string(), pixels(&extrema.max_position)),
+            ("minpos".to_string(), CasaValue::string(&extrema.min_world)),
+            ("maxpos".to_string(), CasaValue::string(&extrema.max_world)),
+        ]);
+    }
     for (index, axis) in summary.axes.iter().enumerate() {
         let number = index + 1;
         entries.extend([
@@ -163,15 +207,18 @@ pub fn imhead_list_record(summary: &ImageHeaderSummary) -> CasaValue {
         entries.extend([
             (
                 "beammajor".to_string(),
-                quantity(beam.major_arcsec, "arcsec"),
+                quantity(beam.major.value, &beam.major.unit),
             ),
             (
                 "beamminor".to_string(),
-                quantity(beam.minor_arcsec, "arcsec"),
+                quantity(beam.minor.value, &beam.minor.unit),
             ),
             (
                 "beampa".to_string(),
-                quantity(beam.position_angle_deg, "deg"),
+                quantity(
+                    beam.wrapped_position_angle.value,
+                    &beam.wrapped_position_angle.unit,
+                ),
             ),
         ]);
     }
@@ -193,10 +240,70 @@ fn quantity(value: f64, unit: &str) -> CasaValue {
 
 fn beam_record(beam: &RestoringBeamSummary) -> CasaValue {
     CasaValue::dict([
-        ("major", quantity(beam.major_arcsec, "arcsec")),
-        ("minor", quantity(beam.minor_arcsec, "arcsec")),
-        ("positionangle", quantity(beam.position_angle_deg, "deg")),
+        ("major", quantity(beam.major.value, &beam.major.unit)),
+        ("minor", quantity(beam.minor.value, &beam.minor.unit)),
+        (
+            "positionangle",
+            quantity(beam.position_angle.value, &beam.position_angle.unit),
+        ),
     ])
+}
+
+fn summary_beam_grid(grid: &crate::analysis::PerPlaneBeamSummary) -> CasaValue {
+    let channels = (0..grid.channels)
+        .map(|channel| {
+            let stokes = (0..grid.stokes)
+                .map(|polarization| {
+                    (
+                        format!("*{polarization}"),
+                        beam_record(&grid.beams[polarization * grid.channels + channel]),
+                    )
+                })
+                .collect();
+            (format!("*{channel}"), sorted(stokes))
+        })
+        .collect();
+    CasaValue::dict([
+        ("beams", sorted(channels)),
+        (
+            "nChannels",
+            CasaValue::Int {
+                value: grid.channels as i64,
+            },
+        ),
+        (
+            "nStokes",
+            CasaValue::Int {
+                value: grid.stokes as i64,
+            },
+        ),
+    ])
+}
+
+fn listed_beam_grid(grid: &crate::analysis::PerPlaneBeamSummary) -> CasaValue {
+    let mut entries: Vec<(String, CasaValue)> = grid
+        .beams
+        .iter()
+        .enumerate()
+        .map(|(index, beam)| (format!("*{index}"), beam_record(beam)))
+        .collect();
+    entries.push((
+        "median area beam".into(),
+        beam_record(&grid.beams[grid.median_index]),
+    ));
+    entries.push((
+        "nChannels".into(),
+        CasaValue::Int {
+            value: grid.channels as i64,
+        },
+    ));
+    entries.push((
+        "nStokes".into(),
+        CasaValue::Int {
+            value: grid.stokes as i64,
+        },
+    ));
+    sorted(entries)
 }
 
 /// A dictionary with its keys in alphabetical order, as CASA's records are.
@@ -220,7 +327,7 @@ fn sorted<K: Into<String>>(entries: Vec<(K, CasaValue)>) -> CasaValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::ImageAxisSummary;
+    use crate::analysis::{BeamQuantity, ImageAxisSummary};
 
     fn keys(value: &CasaValue) -> Vec<String> {
         let CasaValue::Dict { entries } = value else {
@@ -245,22 +352,49 @@ mod tests {
             reference_pixel: 8.0,
             increment: -1e-5,
             unit: unit.into(),
+            stokes: Vec::new(),
         };
         ImageHeaderSummary {
             imagename: "ramp.im".into(),
             pixel_type: "Float32".into(),
             shape: vec![16, 16],
+            tile_shape: vec![8, 8],
             units: "Jy/beam".into(),
             object_name: String::new(),
+            observer: String::new(),
+            telescope: String::new(),
+            observation_date: "1858/11/17/00:00:00.000000".into(),
+            direction_reference: None,
+            direction_projection: None,
+            spectral: None,
             image_type: "Intensity".into(),
             default_mask: None,
             masks: Vec::new(),
             regions: Vec::new(),
-            restoring_beam: Some(RestoringBeamSummary {
+            restoring_beam: Some(Box::new(RestoringBeamSummary {
                 major_arcsec: 3.0,
                 minor_arcsec: 2.0,
                 position_angle_deg: 10.0,
-            }),
+                major: BeamQuantity {
+                    value: 3.0,
+                    unit: "arcsec".into(),
+                },
+                minor: BeamQuantity {
+                    value: 2.0,
+                    unit: "arcsec".into(),
+                },
+                position_angle: BeamQuantity {
+                    value: 10.0,
+                    unit: "deg".into(),
+                },
+                wrapped_position_angle: BeamQuantity {
+                    value: 10.0,
+                    unit: "deg".into(),
+                },
+            })),
+            has_multiple_beams: false,
+            per_plane_beams: None,
+            extrema: None,
             axes: vec![
                 axis(0, "Right Ascension", "rad"),
                 axis(1, "Declination", "rad"),
@@ -319,11 +453,13 @@ mod tests {
                 "imagetype",
                 "incr",
                 "masks",
+                "messages",
                 "ndim",
                 "refpix",
                 "refval",
                 "restoringbeam",
                 "shape",
+                "tileshape",
                 "unit"
             ]
         );
@@ -350,10 +486,13 @@ mod tests {
                 "ctype2",
                 "cunit1",
                 "cunit2",
+                "date-obs",
                 "imtype",
                 "masks",
                 "object",
-                "shape"
+                "observer",
+                "shape",
+                "telescope"
             ]
         );
         assert_eq!(list.to_plain_json()["ctype2"], "Declination");

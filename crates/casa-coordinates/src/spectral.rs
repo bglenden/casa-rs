@@ -39,6 +39,16 @@ enum SpectralMapping {
     },
 }
 
+/// Index of casacore's nearest listed rest frequency (first on ties).
+pub(crate) fn closest_rest_frequency(values: &[f64], target: f64) -> Option<usize> {
+    values
+        .iter()
+        .copied()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| (a - target).abs().total_cmp(&(b - target).abs()))
+        .map(|(index, _)| index)
+}
+
 #[derive(Debug, Clone)]
 struct SpectralConversion {
     frequency_ref: FrequencyRef,
@@ -63,7 +73,7 @@ pub struct SpectralCoordinate {
     undefined_frame: bool,
     /// Optional CASA conversion-layer state for world-coordinate display.
     conversion: Option<SpectralConversion>,
-    /// The rest frequency in Hz (used for velocity conversions).
+    /// Active rest frequency (Hz for new coordinates, stored unit on restore).
     rest_frequency: f64,
     /// Every rest frequency the coordinate lists, the active one among them
     /// (C++ `restFrequencies()`).
@@ -214,7 +224,9 @@ impl SpectralCoordinate {
             .unwrap_or(self.frequency_ref)
     }
 
-    /// Returns the rest frequency in Hz.
+    /// Returns the active rest frequency. New coordinates take this value in
+    /// Hz; a coordinate restored from a CASA record retains its stored world
+    /// unit, which may differ from Hz (#977).
     pub fn rest_frequency(&self) -> f64 {
         self.rest_frequency
     }
@@ -230,8 +242,8 @@ impl SpectralCoordinate {
         self
     }
 
-    /// Returns every rest frequency in Hz the coordinate lists, the active
-    /// [`Self::rest_frequency`] among them (C++ `restFrequencies()`).
+    /// Returns every listed rest frequency in the same unit as
+    /// [`Self::rest_frequency`] (C++ `restFrequencies()`).
     pub fn rest_frequencies(&self) -> &[f64] {
         &self.rest_frequencies
     }
@@ -282,6 +294,11 @@ impl SpectralCoordinate {
         }
 
         let rest_frequency = get_required_f64(rec, "restfreq")?;
+        if !rest_frequency.is_finite() || rest_frequency < 0.0 {
+            return Err(CoordinateError::InvalidRecord(
+                "invalid rest frequency".into(),
+            ));
+        }
         let mut coord = if let Some((pixel_values, world_values)) = lookup_tables {
             Self::from_tabular(
                 frequency_ref,
@@ -311,10 +328,26 @@ impl SpectralCoordinate {
             coord = coord.with_conversion(conversion.frequency_ref, conversion.frame);
         }
         coord.undefined_frame = undefined_frame;
-        // C++ `restoreRestFrequencies`: the optional list, negative values
-        // clamped to zero; `restfreq` stays the active one.
-        if let Some(list) = get_optional_vec_f64(rec, "restfreqs").filter(|list| !list.is_empty()) {
+        // C++ `restoreRestFrequencies` clamps the optional list and selects
+        // the listed frequency nearest the saved `restfreq` selector.
+        if let Some(field) = rec.get("restfreqs") {
+            if matches!(field, Value::Array(array) if array.shape().len() != 1) {
+                return Err(CoordinateError::InvalidRecord(
+                    "invalid rest frequency list".into(),
+                ));
+            }
+            let list = get_optional_vec_f64(rec, "restfreqs").ok_or_else(|| {
+                CoordinateError::InvalidRecord("invalid rest frequency list".into())
+            })?;
+            if list.is_empty() || list.iter().any(|value| !value.is_finite()) {
+                return Err(CoordinateError::InvalidRecord(
+                    "invalid rest frequency list".into(),
+                ));
+            }
             coord.rest_frequencies = list.into_iter().map(|value| value.max(0.0)).collect();
+            if let Some(index) = closest_rest_frequency(&coord.rest_frequencies, rest_frequency) {
+                coord.rest_frequency = coord.rest_frequencies[index];
+            }
         }
         Ok(coord)
     }
@@ -587,6 +620,12 @@ fn parse_conversion(rec: &RecordValue) -> Option<SpectralConversion> {
         return None;
     };
     let target = FrequencyRef::from_str(&get_optional_string(conversion, "system")?).ok()?;
+    // An undefined conversion frame is a declaration, not a physical
+    // conversion. It was ignored before Undefined became a FrequencyRef;
+    // preserve the native coordinate rather than routing TOPO to Undefined.
+    if target == FrequencyRef::Undefined {
+        return None;
+    }
     let Value::Record(direction_rec) = conversion.get("direction")? else {
         return None;
     };
@@ -747,6 +786,17 @@ mod tests {
         assert_eq!(coord.frequency_ref(), FrequencyRef::LSRD);
         assert_eq!(coord.conversion_frequency_ref(), Some(FrequencyRef::LSRK));
         assert_eq!(coord.world_frequency_ref(), FrequencyRef::LSRK);
+    }
+
+    #[test]
+    fn undefined_conversion_record_preserves_native_pixel_world_mapping() {
+        let coordinate = SpectralCoordinate::new(FrequencyRef::TOPO, 1.4e9, 1000.0, 1.0, 1.4e9)
+            .with_conversion(FrequencyRef::Undefined, conversion_frame());
+        let restored = SpectralCoordinate::from_record(&coordinate.to_record()).unwrap();
+        assert_eq!(restored.conversion_frequency_ref(), None);
+        let world = restored.to_world(&[2.0]).unwrap();
+        assert_eq!(world, vec![1_400_001_000.0]);
+        assert_eq!(restored.to_pixel(&world).unwrap(), vec![2.0]);
     }
 
     #[test]

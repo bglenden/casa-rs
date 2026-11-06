@@ -71,6 +71,56 @@ impl Unit {
     }
 }
 
+/// Canonicalize the spelling of a casacore unit expression.
+///
+/// This mirrors the two spelling passes in `Unit::check`; it does not
+/// validate the expression, so callers should also parse it with [`Unit`].
+#[must_use]
+pub fn normalize_casa_unit_name(input: &str) -> String {
+    let mut chars = input.chars().peekable();
+    let mut first = String::new();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '^' => {}
+            '*' if chars.peek() == Some(&'*') => {
+                chars.next();
+            }
+            '*' => first.push('.'),
+            ' ' => {
+                let mut separator = '.';
+                while matches!(chars.peek(), Some(' ' | '/')) {
+                    if chars.next() == Some('/') {
+                        separator = '/';
+                    }
+                }
+                first.push(separator);
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                chars.next();
+                first.push('.');
+            }
+            _ => first.push(ch),
+        }
+    }
+    let first = first.trim_matches('.');
+    let mut chars = first.chars().peekable();
+    let mut output = String::new();
+    while let Some(ch) = chars.next() {
+        if ch == '.' {
+            let mut separator = '.';
+            while matches!(chars.peek(), Some('.' | '/')) {
+                if chars.next() == Some('/') {
+                    separator = '/';
+                }
+            }
+            output.push(separator);
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
 impl FromStr for Unit {
     type Err = UnitError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -96,6 +146,19 @@ impl Eq for Unit {}
 mod tests {
     use super::*;
     use crate::quanta::dim::Dimension;
+
+    #[test]
+    fn casacore_unit_spelling_is_available_to_all_consumers() {
+        for (source, expected) in [
+            (" Jy / beam ", "Jy/beam"),
+            ("Jy beam-1", "Jy.beam-1"),
+            ("Jy**2", "Jy2"),
+            ("Jy^2", "Jy2"),
+            ("  ", ""),
+        ] {
+            assert_eq!(normalize_casa_unit_name(source), expected);
+        }
+    }
 
     #[test]
     fn unit_new_base() {
